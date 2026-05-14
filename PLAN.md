@@ -543,9 +543,13 @@ Resolved:
 Still open:
 
 - Exact multi-root workspace behavior.
+  - Defer for now, consider only single-root workspaces initially.
 - Whether VS Code webview cookie auth works reliably enough for the existing `/api/auth/bootstrap` path.
+  - Assess best option after experimentation.
 - Whether the first packaged build should include all platform targets or start with a single target.
+  - Include only current platform target, same as the referenced codex extension, for local testing for now.
 - How much remote workspace support can be achieved without changing server assumptions.
+  - Assess best option after experimentation.
 
 ## Recommendation
 
