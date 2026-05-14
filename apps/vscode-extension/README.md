@@ -11,7 +11,7 @@ bun run --filter t3code-vscode package
 Install the generated `.vsix` with VS Code's "Install from VSIX..." command, or from the repository root:
 
 ```sh
-code --install-extension apps/vscode-extension/t3code-vscode-0.0.1.vsix
+code --install-extension $(ls -t apps/vscode-extension/*.vsix | head -1)
 ```
 
 ## Implementation Status
