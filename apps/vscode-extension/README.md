@@ -14,6 +14,12 @@ Install the generated `.vsix` with VS Code's "Install from VSIX..." command, or 
 code --install-extension $(ls -t apps/vscode-extension/*.vsix | head -1)
 ```
 
+## Auth Transport
+
+VS Code webviews use bearer auth for the extension-owned local backend, not browser cookies. The extension starts the backend with a one-time desktop bootstrap token, exchanges that token for a bearer session from the extension host, and injects the bearer token through `window.t3HostBridge`.
+
+The web app then sends authenticated HTTP requests with an `Authorization: Bearer ...` header and requests short-lived WebSocket tokens before opening `/ws`. This avoids relying on cross-origin cookie behavior between the VS Code webview origin and the loopback backend.
+
 ## Implementation Status
 
 Current status: locally installable experimental VSIX exists and uses stable VS Code APIs only.
@@ -35,6 +41,7 @@ Implemented so far:
   - allocates a loopback port
   - generates a bootstrap token
   - writes a desktop-compatible bootstrap envelope through fd 3
+  - exchanges the bootstrap token for a VS Code bearer session after backend readiness
   - starts the bundled `dist/server/bin.mjs` with `ELECTRON_RUN_AS_NODE=1`
   - falls back to a development checkout command when no bundled server exists
   - supports user-configurable server command, args, cwd, and T3 home
@@ -48,6 +55,7 @@ Implemented so far:
   - fall back to `window.desktopBridge.getLocalEnvironmentBootstrap()`
   - use hash history in VS Code webviews
   - read bootstrap credentials from either bridge
+  - use host-injected bearer auth for VS Code webview HTTP and WebSocket startup
   - support `VITE_BASE_URL` so extension-local web assets can be built with relative paths
 - Added webview rendering that:
   - reads extension-local `dist/webview/index.html`

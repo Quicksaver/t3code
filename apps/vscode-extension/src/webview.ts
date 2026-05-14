@@ -37,6 +37,7 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
       httpBaseUrl: input.connection.httpBaseUrl,
       wsBaseUrl: input.connection.wsBaseUrl,
       bootstrapToken: input.connection.bootstrapToken,
+      bearerToken: input.connection.bearerToken,
     },
     initialRoute: input.initialRoute ?? "/_chat/",
   });
@@ -56,6 +57,7 @@ function makeBridgeScript(input: {
     readonly httpBaseUrl: string;
     readonly wsBaseUrl: string;
     readonly bootstrapToken: string;
+    readonly bearerToken: string;
   };
   readonly initialRoute: string;
 }): string {

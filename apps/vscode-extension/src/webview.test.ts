@@ -43,6 +43,7 @@ describe("renderT3Webview", () => {
         httpBaseUrl: "http://127.0.0.1:49111",
         wsBaseUrl: "ws://127.0.0.1:49111",
         bootstrapToken: "bootstrap-token",
+        bearerToken: "bearer-token",
         cwd: "/workspace",
       },
       initialRoute: "/_chat/",
@@ -57,6 +58,7 @@ describe("renderT3Webview", () => {
     expect(html).toContain("window.__T3_IS_VSCODE_WEBVIEW = true");
     expect(html).toContain("window.t3HostBridge");
     expect(html).toContain('"bootstrapToken":"bootstrap-token"');
+    expect(html).toContain('"bearerToken":"bearer-token"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');
   });
 
@@ -73,6 +75,7 @@ describe("renderT3Webview", () => {
         httpBaseUrl: "http://127.0.0.1:49111",
         wsBaseUrl: "ws://127.0.0.1:49111",
         bootstrapToken: "bootstrap-token",
+        bearerToken: "bearer-token",
         cwd: "/workspace",
       },
     });

@@ -224,6 +224,7 @@ export interface DesktopEnvironmentBootstrap {
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
   bootstrapToken?: string;
+  bearerToken?: string;
 }
 
 export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
@@ -231,6 +232,7 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),
   bootstrapToken: Schema.optionalKey(Schema.String),
+  bearerToken: Schema.optionalKey(Schema.String),
 });
 
 export interface T3HostBridge {

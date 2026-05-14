@@ -23,6 +23,7 @@ export interface BackendConnection {
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly bootstrapToken: string;
+  readonly bearerToken: string;
   readonly cwd: string;
 }
 
@@ -184,11 +185,17 @@ export class BackendManager {
     const httpBaseUrl = `http://${host}:${port}`;
     const wsBaseUrl = `ws://${host}:${port}`;
     await waitForBackendReady(httpBaseUrl, this.#dependencies.fetch);
+    const bearerToken = await exchangeBootstrapBearerSession(
+      httpBaseUrl,
+      bootstrapToken,
+      this.#dependencies.fetch,
+    );
 
     this.#connection = {
       httpBaseUrl,
       wsBaseUrl,
       bootstrapToken,
+      bearerToken,
       cwd,
     };
     return this.#connection;
@@ -330,4 +337,30 @@ async function waitForBackendReady(
   }
 
   throw new Error(`Timed out waiting for T3 backend readiness at ${readinessUrl.toString()}.`);
+}
+
+async function exchangeBootstrapBearerSession(
+  httpBaseUrl: string,
+  bootstrapToken: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<string> {
+  const bootstrapUrl = new URL("/api/auth/bootstrap/bearer", httpBaseUrl);
+  const response = await fetchFn(bootstrapUrl, {
+    body: JSON.stringify({ credential: bootstrapToken }),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create VS Code backend bearer session (${response.status}).`);
+  }
+
+  const body = (await response.json()) as { readonly sessionToken?: unknown };
+  if (typeof body.sessionToken !== "string" || body.sessionToken.length === 0) {
+    throw new Error("Backend bearer session response did not include a session token.");
+  }
+
+  return body.sessionToken;
 }

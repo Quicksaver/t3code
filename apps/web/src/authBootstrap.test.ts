@@ -144,40 +144,21 @@ describe("resolveInitialServerAuthGateState", () => {
     });
   });
 
-  it("uses the VS Code host bridge bootstrap credential before the Electron desktop bridge", async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        sessionResponse({
-          authenticated: false,
-          auth: {
-            policy: "desktop-managed-local",
-            bootstrapMethods: ["desktop-bootstrap"],
-            sessionMethods: ["browser-session-cookie"],
-            sessionCookieName: "t3_session",
-          },
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          authenticated: true,
-          sessionMethod: "browser-session-cookie",
-          expiresAt: "2026-04-05T00:00:00.000Z",
-        }),
-      )
-      .mockResolvedValueOnce(
-        sessionResponse({
-          authenticated: true,
-          auth: {
-            policy: "desktop-managed-local",
-            bootstrapMethods: ["desktop-bootstrap"],
-            sessionMethods: ["browser-session-cookie"],
-            sessionCookieName: "t3_session",
-          },
-          sessionMethod: "browser-session-cookie",
-          expiresAt: "2026-04-05T00:00:00.000Z",
-        }),
-      );
+  it("uses an injected VS Code bearer token before the Electron desktop bridge", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      sessionResponse({
+        authenticated: true,
+        auth: {
+          policy: "desktop-managed-local",
+          bootstrapMethods: ["desktop-bootstrap"],
+          sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+          sessionCookieName: "t3_session",
+        },
+        sessionMethod: "bearer-session-token",
+        role: "owner",
+        expiresAt: "2026-04-05T00:00:00.000Z",
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const testWindow = installTestBrowser("https://webview.example/");
@@ -187,6 +168,7 @@ describe("resolveInitialServerAuthGateState", () => {
         httpBaseUrl: "http://127.0.0.1:4888",
         wsBaseUrl: "ws://127.0.0.1:4888",
         bootstrapToken: "vscode-bootstrap-token",
+        bearerToken: "vscode-bearer-token",
       }),
     };
     testWindow.desktopBridge = {
@@ -203,13 +185,117 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "authenticated",
     });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4888/api/auth/session");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:4888/api/auth/bootstrap");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        authorization: "Bearer vscode-bearer-token",
+      },
+    });
+  });
+
+  it("falls back to bearer bootstrap in VS Code when no bearer token is injected", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        sessionResponse({
+          authenticated: false,
+          auth: {
+            policy: "desktop-managed-local",
+            bootstrapMethods: ["desktop-bootstrap"],
+            sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+            sessionCookieName: "t3_session",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          authenticated: true,
+          role: "owner",
+          sessionMethod: "bearer-session-token",
+          sessionToken: "vscode-bearer-token",
+          expiresAt: "2026-04-05T00:00:00.000Z",
+        }),
+      )
+      .mockResolvedValueOnce(
+        sessionResponse({
+          authenticated: true,
+          auth: {
+            policy: "desktop-managed-local",
+            bootstrapMethods: ["desktop-bootstrap"],
+            sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+            sessionCookieName: "t3_session",
+          },
+          role: "owner",
+          sessionMethod: "bearer-session-token",
+          expiresAt: "2026-04-05T00:00:00.000Z",
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const testWindow = installTestBrowser("https://webview.example/");
+    testWindow.t3HostBridge = {
+      getLocalEnvironmentBootstrap: () => ({
+        label: "VS Code",
+        httpBaseUrl: "http://127.0.0.1:4888",
+        wsBaseUrl: "ws://127.0.0.1:4888",
+        bootstrapToken: "vscode-bootstrap-token",
+      }),
+    };
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4888/api/auth/session");
+    expect(fetchMock.mock.calls[0]?.[1]).not.toMatchObject({
+      credentials: "include",
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:4888/api/auth/bootstrap/bearer");
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
       body: JSON.stringify({ credential: "vscode-bootstrap-token" }),
       method: "POST",
     });
     expect(fetchMock.mock.calls[2]?.[0]).toBe("http://127.0.0.1:4888/api/auth/session");
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      headers: {
+        authorization: "Bearer vscode-bearer-token",
+      },
+    });
+  });
+
+  it("issues a websocket token for VS Code primary websocket connections", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse({
+        token: "ws-token",
+        expiresAt: "2026-04-05T00:00:00.000Z",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const testWindow = installTestBrowser("https://webview.example/");
+    testWindow.t3HostBridge = {
+      getLocalEnvironmentBootstrap: () => ({
+        label: "VS Code",
+        httpBaseUrl: "http://127.0.0.1:4888",
+        wsBaseUrl: "ws://127.0.0.1:4888",
+        bearerToken: "vscode-bearer-token",
+      }),
+    };
+
+    const { resolvePrimaryEnvironmentWebSocketConnectionUrl } =
+      await import("./environments/primary");
+
+    await expect(
+      resolvePrimaryEnvironmentWebSocketConnectionUrl("ws://127.0.0.1:4888/"),
+    ).resolves.toBe("ws://127.0.0.1:4888/?wsToken=ws-token");
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:4888/api/auth/ws-token", {
+      headers: {
+        authorization: "Bearer vscode-bearer-token",
+      },
+      method: "POST",
+    });
   });
 
   it("uses the current origin as an auth proxy base for local dev environments", async () => {

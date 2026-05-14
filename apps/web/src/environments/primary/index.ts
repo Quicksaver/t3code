@@ -20,6 +20,7 @@ export {
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,
+  resolvePrimaryEnvironmentWebSocketConnectionUrl,
   resolveInitialServerAuthGateState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,

@@ -94,7 +94,16 @@ function makeDependencies(input: {
 }): BackendManagerDependencies {
   return {
     fetch:
-      input.fetch ?? vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 })),
+      input.fetch ??
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(null, { status: 200 }))
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ sessionToken: "vscode-bearer-token" }), {
+            headers: { "content-type": "application/json" },
+            status: 200,
+          }),
+        ),
     findAvailablePort: input.findAvailablePort ?? vi.fn().mockResolvedValue(49111),
     mkdirSync: input.mkdirSync ?? vi.fn(),
     randomBytes:
@@ -129,7 +138,15 @@ describe("BackendManager", () => {
         bootstrapJson = value;
       }),
     );
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sessionToken: "vscode-bearer-token" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }),
+      );
     const mkdirSyncMock = vi.fn<typeof fs.mkdirSync>();
     const manager = new BackendManager(
       { extensionPath: extensionRoot } as never,
@@ -145,6 +162,7 @@ describe("BackendManager", () => {
       httpBaseUrl: "http://127.0.0.1:49111",
       wsBaseUrl: "ws://127.0.0.1:49111",
       bootstrapToken: "303132333435363738396162636465663031323334353637",
+      bearerToken: "vscode-bearer-token",
       cwd: "/workspace",
     });
 
@@ -181,6 +199,18 @@ describe("BackendManager", () => {
       expect.objectContaining({
         signal: expect.any(AbortSignal),
       }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("http://127.0.0.1:49111/api/auth/bootstrap/bearer"),
+      {
+        body: JSON.stringify({
+          credential: "303132333435363738396162636465663031323334353637",
+        }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      },
     );
   });
 
