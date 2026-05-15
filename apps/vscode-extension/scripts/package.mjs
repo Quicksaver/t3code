@@ -3,6 +3,8 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { filterPackagedDependencies } from "./package-dependencies.mjs";
+
 const extensionDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const packageJsonPath = join(extensionDir, "package.json");
 const packageJsonSource = readFileSync(packageJsonPath, "utf8");
@@ -104,7 +106,11 @@ try {
       `VSCE_PUBLISHER is not set; packaging a local VSIX with publisher "${publisher}".`,
     );
   }
-  const packagedPackageJson = { ...packageJson, publisher };
+  const packagedPackageJson = {
+    ...packageJson,
+    publisher,
+    dependencies: filterPackagedDependencies(packageJson.dependencies),
+  };
   delete packagedPackageJson.private;
   writeFileSync(packageJsonPath, `${JSON.stringify(packagedPackageJson, null, 2)}\n`);
   run("bun", ["run", "build"]);

@@ -14,10 +14,11 @@ const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 
 if (
   configuredBaseUrl &&
+  configuredBaseUrl !== "./" &&
   !configuredBaseUrl.startsWith("/") &&
   !/^https?:\/\//u.test(configuredBaseUrl)
 ) {
-  throw new Error('VITE_BASE_URL must be an absolute path starting with "/" or a full URL.');
+  throw new Error('VITE_BASE_URL must be "./", an absolute path starting with "/", or a full URL.');
 }
 
 const configuredHostedAppUrl = (() => {

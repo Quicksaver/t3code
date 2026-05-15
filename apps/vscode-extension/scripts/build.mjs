@@ -3,6 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import { filterPackagedDependencies } from "./package-dependencies.mjs";
+
 const extensionDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const repoRoot = join(extensionDir, "../..");
 const packageJson = JSON.parse(readFileSync(join(extensionDir, "package.json"), "utf8"));
@@ -143,7 +145,7 @@ writeFileSync(
     {
       private: true,
       type: "module",
-      dependencies: packageJson.dependencies,
+      dependencies: filterPackagedDependencies(packageJson.dependencies),
       trustedDependencies: ["node-pty"],
     },
     null,
