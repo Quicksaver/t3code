@@ -164,6 +164,7 @@
     "onCustomEditor:t3code.conversationEditor",
     "onView:t3code.sidebarView"
   ],
+  "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.96.0"
   }

@@ -71,7 +71,7 @@ Current status: locally installable experimental VSIX exists and uses stable VS 
 
 Implemented so far:
 
-- Created the `apps/vscode-extension` workspace package with `package.json`, `src/extension.ts`, `src/backendManager.ts`, `src/webview.ts`, `tsdown.config.ts`, build scripts, package scripts, and a minimal SVG icon.
+- Created the `apps/vscode-extension` workspace package with `package.json`, `src/extension.ts`, `src/backendManager.ts`, `src/webview.ts`, `tsdown.config.ts`, build scripts, package scripts, a desktop-logo package icon, and a VS Code Activity Bar SVG icon.
 - Added extension commands:
   - `t3code.open`
   - `t3code.newThread`
