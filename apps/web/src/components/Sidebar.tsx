@@ -166,6 +166,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarOptionsMenuVisibility,
   resolveThreadListClassName,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -2284,6 +2285,7 @@ function ProjectSortMenu({
   onThreadSortOrderChange,
   onProjectGroupingModeChange,
   onThreadPreviewCountChange,
+  showProjectOptions,
 }: {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
@@ -2293,6 +2295,7 @@ function ProjectSortMenu({
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
+  showProjectOptions: boolean;
 }) {
   const handleThreadPreviewCountChange = useCallback(
     (nextValue: number | null) => {
@@ -2321,27 +2324,34 @@ function ProjectSortMenu({
         <TooltipPopup side="right">Sidebar options</TooltipPopup>
       </Tooltip>
       <MenuPopup align="end" side="bottom" className="min-w-52">
-        <MenuGroup>
-          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
-            Sort projects
-          </div>
-          <MenuRadioGroup
-            value={projectSortOrder}
-            onValueChange={(value) => {
-              onProjectSortOrderChange(value as SidebarProjectSortOrder);
-            }}
-          >
-            {(Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>).map(
-              ([value, label]) => (
+        {showProjectOptions && (
+          <MenuGroup>
+            <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
+              Sort projects
+            </div>
+            <MenuRadioGroup
+              value={projectSortOrder}
+              onValueChange={(value) => {
+                onProjectSortOrderChange(value as SidebarProjectSortOrder);
+              }}
+            >
+              {(
+                Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>
+              ).map(([value, label]) => (
                 <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
                   {label}
                 </MenuRadioItem>
-              ),
-            )}
-          </MenuRadioGroup>
-        </MenuGroup>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        )}
         <MenuGroup>
-          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
+          <div
+            className={cn(
+              "px-2 pb-1 sm:text-xs font-medium text-muted-foreground",
+              showProjectOptions ? "pt-2" : "py-1",
+            )}
+          >
             Sort threads
           </div>
           <MenuRadioGroup
@@ -2395,30 +2405,38 @@ function ProjectSortMenu({
             </NumberField>
           </div>
         </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
-            Group projects
-          </div>
-          <MenuRadioGroup
-            value={projectGroupingMode}
-            onValueChange={(value) => {
-              if (value === "repository" || value === "repository_path" || value === "separate") {
-                onProjectGroupingModeChange(value);
-              }
-            }}
-          >
-            {(
-              Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
-                [SidebarProjectGroupingMode, string]
+        {showProjectOptions && (
+          <>
+            <MenuSeparator />
+            <MenuGroup>
+              <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
+                Group projects
+              </div>
+              <MenuRadioGroup
+                value={projectGroupingMode}
+                onValueChange={(value) => {
+                  if (
+                    value === "repository" ||
+                    value === "repository_path" ||
+                    value === "separate"
+                  ) {
+                    onProjectGroupingModeChange(value);
+                  }
+                }}
               >
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
+                {(
+                  Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
+                    [SidebarProjectGroupingMode, string]
+                  >
+                ).map(([value, label]) => (
+                  <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+                    {label}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          </>
+        )}
       </MenuPopup>
     </Menu>
   );
@@ -2654,6 +2672,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     },
     [updateSettings],
   );
+  const sidebarOptionsMenuVisibility = resolveSidebarOptionsMenuVisibility({ hideProjectChrome });
 
   return (
     <SidebarContent className="gap-0">
@@ -2704,17 +2723,25 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <SidebarGroup className="px-2 py-2">
-        {!hideProjectChrome && (
-          <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-              Projects
-            </span>
+        {sidebarOptionsMenuVisibility.showButton && (
+          <div
+            className={cn(
+              "mb-1 flex items-center pl-2 pr-1.5",
+              hideProjectChrome ? "justify-end" : "justify-between",
+            )}
+          >
+            {!hideProjectChrome && (
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                Projects
+              </span>
+            )}
             <div className="flex items-center gap-1">
               <ProjectSortMenu
                 projectSortOrder={projectSortOrder}
                 threadSortOrder={threadSortOrder}
                 projectGroupingMode={projectGroupingMode}
                 threadPreviewCount={threadPreviewCount}
+                showProjectOptions={sidebarOptionsMenuVisibility.showProjectOptions}
                 onProjectSortOrderChange={handleProjectSortOrderChange}
                 onThreadSortOrderChange={handleThreadSortOrderChange}
                 onProjectGroupingModeChange={handleProjectGroupingModeChange}

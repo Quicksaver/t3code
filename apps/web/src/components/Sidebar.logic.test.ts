@@ -16,6 +16,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarOptionsMenuVisibility,
   resolveThreadListClassName,
   resolveVscodeInitialThreadRef,
   resolveThreadRowClassName,
@@ -828,6 +829,24 @@ describe("resolveThreadListClassName", () => {
     const className = resolveThreadListClassName({ hideThreadGroupRail: true });
 
     expect(className).toContain("border-l-0");
+  });
+});
+
+describe("resolveSidebarOptionsMenuVisibility", () => {
+  it("keeps sidebar options visible when project chrome is shown", () => {
+    expect(resolveSidebarOptionsMenuVisibility({ hideProjectChrome: false })).toEqual({
+      showButton: true,
+      showProjectOptions: true,
+      showThreadOptions: true,
+    });
+  });
+
+  it("keeps sidebar options visible with only thread options when project chrome is hidden", () => {
+    expect(resolveSidebarOptionsMenuVisibility({ hideProjectChrome: true })).toEqual({
+      showButton: true,
+      showProjectOptions: false,
+      showThreadOptions: true,
+    });
   });
 });
 

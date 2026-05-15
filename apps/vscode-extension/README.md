@@ -41,6 +41,8 @@ All four settings default to `false`. Values are passed to the React app through
 
 Project management chrome is not configurable in the VS Code extension. The extension backend is started from the active workspace folder and receives the full VS Code workspace folder list, so the React app treats the VS Code surface as a workspace-scoped view: it filters the sidebar to the bootstrapped workspace projects, hides the add-project button, hides redundant project labels only when there is a single visible project, and renders only those projects' threads. This avoids showing unrelated desktop-app projects inside an editor-scoped surface while still supporting multi-root workspaces.
 
+The thread-history sidebar still shows the "Sidebar options" button when VS Code hides project chrome. In that project-scoped mode, the menu keeps thread controls such as thread sort order and visible thread count, but hides project controls such as project sort order and project grouping. Multi-root VS Code workspaces that show project chrome retain the full sidebar options menu.
+
 The sidebar toggle remains visible in VS Code webviews at all viewport widths. In desktop/browser surfaces the existing responsive behavior is preserved, but inside VS Code the user must always have a visible control for closing or reopening the thread-history sidebar.
 
 When the thread-history sidebar is open in the inline desktop layout, the VS Code webview shows only the sidebar-local toggle before the T3 Code wordmark, using the close-sidebar icon. The main header toggle before the thread title is hidden until the sidebar is closed, so the view never presents two equivalent sidebar controls at once. In the narrow floating-sidebar layout, the main header toggle remains visible while the floating sidebar is open and switches to the close-sidebar icon, avoiding header text reflow while keeping a local close control available.
@@ -115,6 +117,7 @@ Implemented so far:
   - keep the sidebar toggle visible at all VS Code webview widths
   - scope the sidebar to the bootstrapped VS Code workspace projects
   - hide project-management chrome in VS Code single-project mode
+  - keep the sidebar options button visible in VS Code single-project mode while limiting its menu to thread options
   - remove the thread group rail in VS Code single-project mode
   - show only one thread-sidebar toggle at a time
   - persist the thread-sidebar open state in shared `ClientSettings`
@@ -267,6 +270,24 @@ Automated coverage:
 
 - VS Code extension tests cover RemoteHub clone materialization before backend startup.
 - Virtual workspace cache tests cover stable checkout path resolution, initial clone metadata, existing-checkout reuse and metadata refresh, 15-day pruning with active and most-recently-used protection, retention-window protection, unowned directory protection, and explicit clean-command behavior.
+
+### 2026-05-15: Keep Thread Sidebar Options Available in VS Code
+
+Decision: when VS Code hides project chrome in single-project mode, keep the "Sidebar options" button visible but hide project-related menu sections.
+
+Reasoning:
+
+- Thread sorting and visible-thread count are still useful controls inside the VS Code thread-history sidebar.
+- Project sorting and project grouping do not apply when the VS Code surface has collapsed project chrome around a single visible workspace project.
+- Removing the whole options trigger hid valid thread controls as an accidental side effect of hiding project chrome.
+- Multi-root VS Code workspaces still show project chrome, so they keep the full menu with project and thread sections.
+
+Implemented:
+
+- The sidebar options trigger is rendered independently from the project label/add-project chrome.
+- In VS Code single-project mode, the menu shows only "Sort threads" and "Visible threads".
+- In normal desktop/browser sidebars and VS Code multi-root sidebars, the menu still includes project sort, thread sort, visible-thread count, and project grouping.
+- Automated coverage verifies that the sidebar options button remains available while project options are removed when project chrome is hidden.
 
 ### 2026-05-15: Remove the VS Code Thread Group Rail
 
