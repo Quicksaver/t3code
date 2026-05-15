@@ -8,6 +8,7 @@ const DEFAULT_DISPLAY_PREFERENCES: T3HostDisplayPreferences = {
   showCheckoutModeIndicator: true,
   showBranchSelector: true,
   enableTerminal: true,
+  threadConversationMaxWidthPx: null,
 };
 
 const VSCODE_DISPLAY_PREFERENCES: T3HostDisplayPreferences = {
@@ -15,6 +16,7 @@ const VSCODE_DISPLAY_PREFERENCES: T3HostDisplayPreferences = {
   showCheckoutModeIndicator: false,
   showBranchSelector: false,
   enableTerminal: false,
+  threadConversationMaxWidthPx: null,
 };
 
 export function resolveHostDisplayPreferences(input: {
@@ -29,7 +31,17 @@ export function resolveHostDisplayPreferences(input: {
       preferences?.showCheckoutModeIndicator ?? defaults.showCheckoutModeIndicator,
     showBranchSelector: preferences?.showBranchSelector ?? defaults.showBranchSelector,
     enableTerminal: preferences?.enableTerminal ?? defaults.enableTerminal,
+    threadConversationMaxWidthPx: normalizeThreadConversationMaxWidth(
+      preferences?.threadConversationMaxWidthPx,
+    ),
   };
+}
+
+function normalizeThreadConversationMaxWidth(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.round(Math.min(4096, Math.max(320, value)));
 }
 
 function normalizeDisplayPreferences(
@@ -46,7 +58,8 @@ function areDisplayPreferencesEqual(
     left.showOpenInPicker === right.showOpenInPicker &&
     left.showCheckoutModeIndicator === right.showCheckoutModeIndicator &&
     left.showBranchSelector === right.showBranchSelector &&
-    left.enableTerminal === right.enableTerminal
+    left.enableTerminal === right.enableTerminal &&
+    left.threadConversationMaxWidthPx === right.threadConversationMaxWidthPx
   );
 }
 

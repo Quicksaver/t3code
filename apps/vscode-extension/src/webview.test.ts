@@ -67,7 +67,14 @@ describe("renderT3Webview", () => {
     expect(html).toContain('message.type === "t3.hostAppearanceChanged"');
     expect(html).toContain('message.type === "t3.backendConnectionChanged"');
     expect(html).toContain('root.setAttribute("data-t3-host-theme", "vscode")');
+    expect(html).toContain("applyDisplayPreferences(displayPreferences)");
+    expect(html).toContain('root.setAttribute("data-t3-thread-conversation-width", "custom")');
+    expect(html).toContain(
+      'root.style.setProperty("--t3-thread-conversation-max-width", width + "px")',
+    );
+    expect(html).toContain('root.removeAttribute("data-t3-thread-conversation-width")');
     expect(html).toContain('"showOpenInPicker":false');
+    expect(html).toContain('"threadConversationMaxWidthPx":null');
     expect(html).toContain('"themeSource":"default"');
     expect(html).toContain("getClientSettings()");
     expect(html).toContain("setClientSettings(settings)");
@@ -129,6 +136,7 @@ describe("renderT3Webview", () => {
         showCheckoutModeIndicator: true,
         showBranchSelector: false,
         enableTerminal: true,
+        threadConversationMaxWidthPx: 960,
       },
       hostAppearance: {
         themeSource: "vscode",
@@ -140,6 +148,7 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"showOpenInPicker":true');
     expect(html).toContain('"showBranchSelector":false');
     expect(html).toContain('"enableTerminal":true');
+    expect(html).toContain('"threadConversationMaxWidthPx":960');
     expect(html).toContain('"themeSource":"vscode"');
     expect(html).toContain('"colorScheme":"dark"');
   });
@@ -153,6 +162,7 @@ describe("VS Code display preference settings", () => {
     expect(properties["t3code.ui.showCheckoutModeIndicator"]?.default).toBe(false);
     expect(properties["t3code.ui.showBranchSelector"]?.default).toBe(false);
     expect(properties["t3code.ui.enableTerminal"]?.default).toBe(false);
+    expect(properties["t3code.ui.threadConversationMaxWidth"]?.default).toBeNull();
     expect(properties["t3code.ui.restoreDefaultTheme"]?.default).toBe(false);
     expect("t3code.ui.showTerminalToggle" in properties).toBe(false);
   });

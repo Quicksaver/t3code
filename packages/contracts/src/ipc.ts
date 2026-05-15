@@ -243,6 +243,7 @@ export interface T3HostDisplayPreferences {
   showCheckoutModeIndicator: boolean;
   showBranchSelector: boolean;
   enableTerminal: boolean;
+  threadConversationMaxWidthPx: number | null;
 }
 
 export const T3HostDisplayPreferencesSchema = Schema.Struct({
@@ -250,6 +251,7 @@ export const T3HostDisplayPreferencesSchema = Schema.Struct({
   showCheckoutModeIndicator: Schema.Boolean,
   showBranchSelector: Schema.Boolean,
   enableTerminal: Schema.Boolean,
+  threadConversationMaxWidthPx: Schema.NullOr(Schema.Number),
 });
 
 export type T3HostThemeSource = "default" | "vscode";

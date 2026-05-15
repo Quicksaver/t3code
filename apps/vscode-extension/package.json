@@ -112,6 +112,16 @@
           "default": false,
           "description": "Enable the T3 Code terminal drawer, terminal actions, and terminal keybindings inside VS Code webviews."
         },
+        "t3code.ui.threadConversationMaxWidth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "default": null,
+          "minimum": 320,
+          "maximum": 4096,
+          "description": "Optional maximum width, in pixels, for the thread conversation timeline and prompt input inside VS Code webviews. Leave empty to use T3 Code's default width."
+        },
         "t3code.ui.restoreDefaultTheme": {
           "type": "boolean",
           "default": false,

@@ -9,6 +9,7 @@ export interface WebviewDisplayPreferences {
   readonly showCheckoutModeIndicator: boolean;
   readonly showBranchSelector: boolean;
   readonly enableTerminal: boolean;
+  readonly threadConversationMaxWidthPx: number | null;
 }
 
 export interface WebviewHostAppearance {
@@ -83,6 +84,7 @@ const DEFAULT_DISPLAY_PREFERENCES: WebviewDisplayPreferences = {
   showCheckoutModeIndicator: false,
   showBranchSelector: false,
   enableTerminal: false,
+  threadConversationMaxWidthPx: null,
 };
 
 const DEFAULT_HOST_APPEARANCE: WebviewHostAppearance = {
@@ -116,11 +118,27 @@ function makeBridgeScript(input: {
           root.removeAttribute("data-t3-host-theme");
         }
       }
+      function applyDisplayPreferences(preferences) {
+        const root = document.documentElement;
+        const width =
+          preferences && typeof preferences.threadConversationMaxWidthPx === "number" && Number.isFinite(preferences.threadConversationMaxWidthPx)
+            ? Math.round(Math.min(4096, Math.max(320, preferences.threadConversationMaxWidthPx)))
+            : null;
+        if (width === null) {
+          root.removeAttribute("data-t3-thread-conversation-width");
+          root.style.removeProperty("--t3-thread-conversation-max-width");
+          return;
+        }
+        root.setAttribute("data-t3-thread-conversation-width", "custom");
+        root.style.setProperty("--t3-thread-conversation-max-width", width + "px");
+      }
       applyHostAppearance(hostAppearance);
+      applyDisplayPreferences(displayPreferences);
       window.addEventListener("message", (event) => {
         const message = event.data;
         if (message && message.type === "t3.displayPreferencesChanged") {
           displayPreferences = message.preferences;
+          applyDisplayPreferences(displayPreferences);
           for (const listener of displayPreferenceListeners) {
             listener(displayPreferences);
           }

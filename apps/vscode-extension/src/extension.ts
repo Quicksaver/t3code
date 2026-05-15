@@ -233,6 +233,7 @@ const DISPLAY_PREFERENCE_SETTINGS = [
   "t3code.ui.showCheckoutModeIndicator",
   "t3code.ui.showBranchSelector",
   "t3code.ui.enableTerminal",
+  "t3code.ui.threadConversationMaxWidth",
 ] as const;
 
 const HOST_APPEARANCE_SETTINGS = ["t3code.ui.restoreDefaultTheme"] as const;
@@ -243,7 +244,10 @@ class WebviewDisplayPreferenceBroadcaster {
   constructor(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (!DISPLAY_PREFERENCE_SETTINGS.some((key) => event.affectsConfiguration(key))) {
+        if (
+          !event.affectsConfiguration("t3code.ui") &&
+          !DISPLAY_PREFERENCE_SETTINGS.some((key) => event.affectsConfiguration(key))
+        ) {
           return;
         }
         this.#broadcast();
@@ -345,7 +349,17 @@ function readWebviewDisplayPreferences(): WebviewDisplayPreferences {
     showCheckoutModeIndicator: configuration.get<boolean>("ui.showCheckoutModeIndicator", false),
     showBranchSelector: configuration.get<boolean>("ui.showBranchSelector", false),
     enableTerminal: configuration.get<boolean>("ui.enableTerminal", false),
+    threadConversationMaxWidthPx: normalizeThreadConversationMaxWidth(
+      configuration.get<number | null>("ui.threadConversationMaxWidth", null),
+    ),
   };
+}
+
+function normalizeThreadConversationMaxWidth(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.round(Math.min(4096, Math.max(320, value)));
 }
 
 function readWebviewHostAppearance(): WebviewHostAppearance {

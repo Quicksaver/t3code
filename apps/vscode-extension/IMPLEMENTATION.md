@@ -45,7 +45,11 @@ Each control can be restored individually with extension settings:
 - `t3code.ui.showBranchSelector`
 - `t3code.ui.enableTerminal`
 
-All four settings default to `false`. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view. When `t3code.ui.enableTerminal` is `false`, the embedded T3 terminal drawer is disabled, terminal keybindings are ignored, terminal-backed project actions are hidden, and any open terminal drawer is closed.
+The VS Code webview can also customize chat width with:
+
+- `t3code.ui.threadConversationMaxWidth`
+
+The first four settings default to `false`; `t3code.ui.threadConversationMaxWidth` defaults to an empty value, which keeps the React app's normal conversation and prompt input widths. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view. When `t3code.ui.enableTerminal` is `false`, the embedded T3 terminal drawer is disabled, terminal keybindings are ignored, terminal-backed project actions are hidden, and any open terminal drawer is closed.
 
 Project management chrome is not configurable in the VS Code extension. The extension backend is started from the active workspace folder and receives the full VS Code workspace folder list, so the React app treats the VS Code surface as a workspace-scoped view: it filters the sidebar to the bootstrapped workspace projects, hides the add-project button, hides redundant project labels only when there is a single visible project, and renders only those projects' threads. This avoids showing unrelated desktop-app projects inside an editor-scoped surface while still supporting multi-root workspaces.
 
@@ -164,6 +168,8 @@ Implemented so far:
   - `t3code.ui.showCheckoutModeIndicator`
   - `t3code.ui.showBranchSelector`
   - `t3code.ui.enableTerminal`
+- Added extension setting for customizing the thread conversation timeline and prompt input width:
+  - `t3code.ui.threadConversationMaxWidth`
 - Added extension setting for restoring the default T3 Code theme instead of matching VS Code:
   - `t3code.ui.restoreDefaultTheme`
 - Added shared T3 Code app `ClientSettings` persistence for VS Code:

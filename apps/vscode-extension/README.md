@@ -40,6 +40,7 @@ The extension hides T3 Code controls that duplicate VS Code-native surfaces by d
 - `t3code.ui.showCheckoutModeIndicator`: show the T3 Code checkout mode indicator inside VS Code webviews. Defaults to `false`.
 - `t3code.ui.showBranchSelector`: show the T3 Code branch/ref selector inside VS Code webviews. Defaults to `false`.
 - `t3code.ui.enableTerminal`: enable the T3 Code terminal drawer, terminal actions, and terminal keybindings inside VS Code webviews. Defaults to `false`.
+- `t3code.ui.threadConversationMaxWidth`: optional maximum width, in pixels, for the thread conversation timeline and prompt input inside VS Code webviews. Leave empty to use T3 Code's default width.
 - `t3code.ui.restoreDefaultTheme`: use T3 Code's default app theme instead of matching the active VS Code theme and fonts. Defaults to `false`.
 
 ## Some notes

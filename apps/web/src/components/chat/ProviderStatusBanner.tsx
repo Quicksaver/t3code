@@ -21,7 +21,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const title = `${providerLabel} provider status`;
 
   return (
-    <div className="pt-3 mx-auto max-w-3xl">
+    <div className="t3-thread-conversation-width mx-auto max-w-3xl pt-3">
       <Alert variant={status.status === "error" ? "error" : "warning"}>
         <CircleAlertIcon />
         <AlertTitle>{title}</AlertTitle>

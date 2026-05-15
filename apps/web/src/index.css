@@ -203,6 +203,10 @@
   --warning-foreground: var(--vscode-terminal-ansiYellow, var(--color-amber-400));
 }
 
+:root[data-t3-thread-conversation-width="custom"] .t3-thread-conversation-width {
+  max-width: var(--t3-thread-conversation-max-width);
+}
+
 body {
   font-family: var(
     --t3-font-family,

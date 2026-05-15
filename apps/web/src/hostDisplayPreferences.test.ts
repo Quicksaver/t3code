@@ -8,6 +8,7 @@ const allVisiblePreferences: T3HostDisplayPreferences = {
   showCheckoutModeIndicator: true,
   showBranchSelector: true,
   enableTerminal: true,
+  threadConversationMaxWidthPx: null,
 };
 
 const allHiddenPreferences: T3HostDisplayPreferences = {
@@ -15,6 +16,7 @@ const allHiddenPreferences: T3HostDisplayPreferences = {
   showCheckoutModeIndicator: false,
   showBranchSelector: false,
   enableTerminal: false,
+  threadConversationMaxWidthPx: null,
 };
 
 describe("resolveHostDisplayPreferences", () => {
@@ -43,13 +45,43 @@ describe("resolveHostDisplayPreferences", () => {
         preferences: {
           showBranchSelector: true,
           enableTerminal: true,
+          threadConversationMaxWidthPx: 960,
         },
       }),
     ).toEqual({
       ...allHiddenPreferences,
       showBranchSelector: true,
       enableTerminal: true,
+      threadConversationMaxWidthPx: 960,
     });
+  });
+
+  it("clamps the host thread conversation width preference", () => {
+    expect(
+      resolveHostDisplayPreferences({
+        isVscodeWebview: true,
+        preferences: {
+          threadConversationMaxWidthPx: 120,
+        },
+      }).threadConversationMaxWidthPx,
+    ).toBe(320);
+    expect(
+      resolveHostDisplayPreferences({
+        isVscodeWebview: true,
+        preferences: {
+          threadConversationMaxWidthPx: 5000,
+        },
+      }).threadConversationMaxWidthPx,
+    ).toBe(4096);
+  });
+
+  it("keeps the thread conversation width unset when the host does not provide a value", () => {
+    expect(
+      resolveHostDisplayPreferences({
+        isVscodeWebview: true,
+        preferences: {},
+      }).threadConversationMaxWidthPx,
+    ).toBeNull();
   });
 });
 
