@@ -159,17 +159,15 @@ Implemented so far:
   - `bun run --filter t3code-vscode package`
   - manual bundled-backend readiness smoke test
 
+Deferred until there is a concrete UX need:
+
+- Chat Sessions integration, including the proposed `chatSessionsProvider`, `chatSessions/newSession` menu contribution, and listing recent T3 threads as VS Code chat session items.
+- Thread-specific route reconstruction in the custom editor. The custom editor currently opens the T3 chat index route.
+- Webview-to-extension host actions beyond client settings persistence, including adding the current file/selection to T3 Code, reveal/open file host actions, and VS Code theme/font propagation into the web UI.
+
 Not implemented yet:
 
-- Proposed `chatSessionsProvider` integration.
-- `chatSessions/newSession` menu contribution.
-- Listing recent T3 threads as VS Code chat session items.
-- Thread-specific route reconstruction in the custom editor. The custom editor currently opens the T3 chat index route.
-- Webview-to-extension host actions beyond client settings persistence.
 - Containing keybinding collisions between T3 webview shortcuts and VS Code native keybindings. See the decision log entry below.
-- Add current file/selection to T3 Code.
-- Reveal/open file host actions.
-- VS Code theme/font propagation into the web UI.
 - Platform-specific VSIX build matrix.
 - Package size optimization.
 - Marketplace publishing hardening.
@@ -516,6 +514,23 @@ Implementation direction:
 - Preserve the server/client settings boundary: shared client settings should not be folded into `settings.json` or the `ServerSettings` schema.
 - Keep the existing web app fallback behavior for non-hosted/browser contexts: when no host persistence API is available, browser storage remains the fallback.
 - Desktop should continue using its existing `window.desktopBridge` persistence path and file format.
+
+### 2026-05-15: Defer Native Chat Session, Thread Tab, and Host Action Expansion
+
+Decision: keep the current stable webview integration as the baseline and defer Chat Sessions integration, thread-specific custom editor routing, and additional webview-to-extension host actions until real usage exposes a concrete problem those features would solve.
+
+Reasoning:
+
+- The existing Activity Bar webview already presents T3 Code's native thread history and workspace-scoped thread behavior in a way that feels intuitive during current use.
+- VS Code Chat Sessions integration would mainly add native VS Code discoverability and session navigation around the same T3 threads, not fix the core T3 thread model.
+- Thread-specific custom editor routing matters most for deep links, native session items, and multiple editor tabs tied to specific threads. The current webview-first workflow does not depend on that behavior.
+- Additional host actions such as add current file/selection, reveal/open file, and theme/font propagation should be driven by observed workflow friction rather than added speculatively.
+
+Deferred work:
+
+- Reassess Chat Sessions integration if users need T3 threads to appear in VS Code's native chat/session surfaces.
+- Reassess thread-specific custom editor routing if editor tabs, deep links, or restored resources need to point at exact T3 threads.
+- Reassess host action expansion if file-context, reveal/open, command execution, or theme/font gaps become noticeable in daily use.
 
 ### 2026-05-14: Defer VS Code Native Keybinding Conflict Handling
 
