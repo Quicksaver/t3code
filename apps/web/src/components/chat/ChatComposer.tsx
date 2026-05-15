@@ -108,6 +108,7 @@ import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { ThreadConversationWidthForm } from "./ThreadConversationWidth";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -1932,10 +1933,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Render
   // ------------------------------------------------------------------
   return (
-    <form
+    <ThreadConversationWidthForm
       ref={composerFormRef}
       onSubmit={submitComposer}
-      className="t3-thread-conversation-width mx-auto w-full min-w-0 max-w-208"
+      variant="composer"
+      className="w-full min-w-0"
       data-chat-composer-form="true"
     >
       <div
@@ -2396,6 +2398,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           )}
         </div>
       </div>
-    </form>
+    </ThreadConversationWidthForm>
   );
 });

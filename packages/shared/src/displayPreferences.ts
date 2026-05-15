@@ -1,5 +1,9 @@
-export const THREAD_CONVERSATION_MIN_WIDTH_PX = 320;
-export const THREAD_CONVERSATION_MAX_WIDTH_PX = 4096;
+import {
+  THREAD_CONVERSATION_MAX_WIDTH_PX,
+  THREAD_CONVERSATION_MIN_WIDTH_PX,
+} from "@t3tools/contracts/ipc";
+
+export { THREAD_CONVERSATION_MAX_WIDTH_PX, THREAD_CONVERSATION_MIN_WIDTH_PX };
 
 export function normalizeThreadConversationMaxWidth(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {

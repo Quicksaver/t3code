@@ -1,6 +1,7 @@
 import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,
   THREAD_CONVERSATION_MIN_WIDTH_PX,
+  normalizeThreadConversationMaxWidth,
 } from "@t3tools/shared/displayPreferences";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
@@ -111,6 +112,9 @@ function makeBridgeScript(input: {
       const initialRoute = ${JSON.stringify(input.initialRoute)};
       const threadConversationMinWidthPx = ${THREAD_CONVERSATION_MIN_WIDTH_PX};
       const threadConversationMaxWidthPx = ${THREAD_CONVERSATION_MAX_WIDTH_PX};
+      const THREAD_CONVERSATION_MIN_WIDTH_PX = threadConversationMinWidthPx;
+      const THREAD_CONVERSATION_MAX_WIDTH_PX = threadConversationMaxWidthPx;
+      const normalizeThreadConversationMaxWidth = ${normalizeThreadConversationMaxWidth.toString()};
       const displayPreferenceListeners = new Set();
       const hostAppearanceListeners = new Set();
       window.__T3_IS_VSCODE_WEBVIEW = true;
@@ -126,18 +130,10 @@ function makeBridgeScript(input: {
       }
       function applyDisplayPreferences(preferences) {
         const root = document.documentElement;
-        let width = null;
-        if (
-          preferences &&
-          typeof preferences.threadConversationMaxWidthPx === "number" &&
-          Number.isFinite(preferences.threadConversationMaxWidthPx)
-        ) {
-          width = Math.round(
-            Math.min(
-              threadConversationMaxWidthPx,
-              Math.max(threadConversationMinWidthPx, preferences.threadConversationMaxWidthPx),
-            ),
-          );
+        const value = preferences && preferences.threadConversationMaxWidthPx;
+        const width = normalizeThreadConversationMaxWidth(value);
+        if (value != null && width === null) {
+          console.warn("Ignoring invalid T3 thread conversation max width preference.", value);
         }
         if (width === null) {
           root.removeAttribute("data-t3-thread-conversation-width");

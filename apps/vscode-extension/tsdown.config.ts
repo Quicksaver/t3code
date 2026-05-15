@@ -7,5 +7,6 @@ export default defineConfig({
   platform: "node",
   target: "node20",
   external: ["vscode"],
+  noExternal: (id) => id.startsWith("@t3tools/"),
   sourcemap: true,
 });

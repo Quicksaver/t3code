@@ -78,6 +78,8 @@ describe("renderT3Webview", () => {
     expect(html).toContain(
       `const threadConversationMaxWidthPx = ${THREAD_CONVERSATION_MAX_WIDTH_PX}`,
     );
+    expect(html).toContain("const normalizeThreadConversationMaxWidth = function");
+    expect(html).toContain("Ignoring invalid T3 thread conversation max width preference.");
     expect(html).toContain('root.setAttribute("data-t3-thread-conversation-width", "custom")');
     expect(html).toContain(
       'root.style.setProperty("--t3-thread-conversation-max-width", width + "px")',
@@ -172,7 +174,8 @@ describe("VS Code display preference settings", () => {
     expect(properties["t3code.ui.showCheckoutModeIndicator"]?.default).toBe(false);
     expect(properties["t3code.ui.showBranchSelector"]?.default).toBe(false);
     expect(properties["t3code.ui.enableTerminal"]?.default).toBe(false);
-    expect(properties["t3code.ui.threadConversationMaxWidth"]?.default).toBeNull();
+    expect(properties["t3code.ui.threadConversationMaxWidth"]?.type).toBe("number");
+    expect("default" in properties["t3code.ui.threadConversationMaxWidth"]).toBe(false);
     expect(properties["t3code.ui.threadConversationMaxWidth"]?.minimum).toBe(
       THREAD_CONVERSATION_MIN_WIDTH_PX,
     );

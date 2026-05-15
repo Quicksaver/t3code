@@ -203,9 +203,12 @@
   --warning-foreground: var(--vscode-terminal-ansiYellow, var(--color-amber-400));
 }
 
+.t3-thread-conversation-width {
+  transition: max-width 180ms ease-out;
+}
+
 :root[data-t3-thread-conversation-width="custom"] .t3-thread-conversation-width {
   max-width: var(--t3-thread-conversation-max-width);
-  transition: max-width 180ms ease-out;
 }
 
 body {

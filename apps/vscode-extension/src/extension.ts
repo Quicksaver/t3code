@@ -348,7 +348,7 @@ function readWebviewDisplayPreferences(): WebviewDisplayPreferences {
     showBranchSelector: configuration.get<boolean>("ui.showBranchSelector", false),
     enableTerminal: configuration.get<boolean>("ui.enableTerminal", false),
     threadConversationMaxWidthPx: normalizeThreadConversationMaxWidth(
-      configuration.get<number | null>("ui.threadConversationMaxWidth", null),
+      configuration.get<number>("ui.threadConversationMaxWidth"),
     ),
   };
 }

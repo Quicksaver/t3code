@@ -246,12 +246,22 @@ export interface T3HostDisplayPreferences {
   threadConversationMaxWidthPx: number | null;
 }
 
+export const THREAD_CONVERSATION_MIN_WIDTH_PX = 320;
+export const THREAD_CONVERSATION_MAX_WIDTH_PX = 4096;
+
+const ThreadConversationMaxWidthPxSchema = Schema.Number.check(
+  Schema.isBetween({
+    minimum: THREAD_CONVERSATION_MIN_WIDTH_PX,
+    maximum: THREAD_CONVERSATION_MAX_WIDTH_PX,
+  }),
+);
+
 export const T3HostDisplayPreferencesSchema = Schema.Struct({
   showOpenInPicker: Schema.Boolean,
   showCheckoutModeIndicator: Schema.Boolean,
   showBranchSelector: Schema.Boolean,
   enableTerminal: Schema.Boolean,
-  threadConversationMaxWidthPx: Schema.NullOr(Schema.Number),
+  threadConversationMaxWidthPx: Schema.NullOr(ThreadConversationMaxWidthPxSchema),
 });
 
 export type T3HostThemeSource = "default" | "vscode";

@@ -3,6 +3,7 @@ import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { CircleAlertIcon } from "lucide-react";
 import { formatProviderDriverKindLabel } from "../../providerModels";
+import { ThreadConversationWidthContainer } from "./ThreadConversationWidth";
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,
@@ -21,7 +22,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const title = `${providerLabel} provider status`;
 
   return (
-    <div className="t3-thread-conversation-width mx-auto max-w-3xl pt-3">
+    <ThreadConversationWidthContainer className="pt-3">
       <Alert variant={status.status === "error" ? "error" : "warning"}>
         <CircleAlertIcon />
         <AlertTitle>{title}</AlertTitle>
@@ -29,6 +30,6 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           {status.message ?? defaultMessage}
         </AlertDescription>
       </Alert>
-    </div>
+    </ThreadConversationWidthContainer>
   );
 });

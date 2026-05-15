@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { CircleAlertIcon, XIcon } from "lucide-react";
+import { ThreadConversationWidthContainer } from "./ThreadConversationWidth";
 
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
@@ -11,7 +12,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
 }) {
   if (!error) return null;
   return (
-    <div className="t3-thread-conversation-width mx-auto max-w-3xl pt-3">
+    <ThreadConversationWidthContainer className="pt-3">
       <Alert variant="error">
         <CircleAlertIcon />
         <AlertDescription className="line-clamp-3" title={error}>
@@ -30,6 +31,6 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           </AlertAction>
         )}
       </Alert>
-    </div>
+    </ThreadConversationWidthContainer>
   );
 });
