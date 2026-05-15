@@ -9,7 +9,7 @@ type ClientSettings = Record<string, unknown>;
 interface HostRequest {
   readonly type: "t3.hostRequest";
   readonly id: string;
-  readonly method: "getClientSettings" | "setClientSettings";
+  readonly method: "getClientSettings" | "setClientSettings" | "confirm";
   readonly args?: readonly unknown[];
 }
 
@@ -56,6 +56,7 @@ export function registerClientSettingsHostBridge(input: {
   readonly webview: vscode.Webview;
   readonly persistence: ClientSettingsPersistence;
   readonly outputChannel: vscode.OutputChannel;
+  readonly confirm?: (message: string) => Promise<boolean>;
 }): vscode.Disposable {
   return input.webview.onDidReceiveMessage(async (message: unknown) => {
     const request = parseHostRequest(message);
@@ -64,10 +65,7 @@ export function registerClientSettingsHostBridge(input: {
     }
 
     try {
-      const result =
-        request.method === "getClientSettings"
-          ? await input.persistence.get()
-          : await setClientSettingsFromRequest(input.persistence, request);
+      const result = await handleHostRequest(input, request);
       await input.webview.postMessage({
         type: "t3.hostResponse",
         id: request.id,
@@ -87,6 +85,23 @@ export function registerClientSettingsHostBridge(input: {
   });
 }
 
+async function handleHostRequest(
+  input: {
+    readonly persistence: ClientSettingsPersistence;
+    readonly confirm?: (message: string) => Promise<boolean>;
+  },
+  request: HostRequest,
+): Promise<unknown> {
+  switch (request.method) {
+    case "getClientSettings":
+      return input.persistence.get();
+    case "setClientSettings":
+      return setClientSettingsFromRequest(input.persistence, request);
+    case "confirm":
+      return confirmFromRequest(input.confirm, request);
+  }
+}
+
 async function setClientSettingsFromRequest(
   persistence: ClientSettingsPersistence,
   request: HostRequest,
@@ -98,6 +113,20 @@ async function setClientSettingsFromRequest(
   await persistence.set(settings);
 }
 
+async function confirmFromRequest(
+  confirm: ((message: string) => Promise<boolean>) | undefined,
+  request: HostRequest,
+): Promise<boolean> {
+  if (!confirm) {
+    throw new Error("confirm is unavailable.");
+  }
+  const message = request.args?.[0];
+  if (typeof message !== "string") {
+    throw new Error("confirm requires a message string.");
+  }
+  return confirm(message);
+}
+
 function parseHostRequest(message: unknown): HostRequest | null {
   if (!isObject(message)) {
     return null;
@@ -107,7 +136,9 @@ function parseHostRequest(message: unknown): HostRequest | null {
   if (
     candidate.type !== "t3.hostRequest" ||
     typeof candidate.id !== "string" ||
-    (candidate.method !== "getClientSettings" && candidate.method !== "setClientSettings")
+    (candidate.method !== "getClientSettings" &&
+      candidate.method !== "setClientSettings" &&
+      candidate.method !== "confirm")
   ) {
     return null;
   }

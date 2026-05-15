@@ -183,6 +183,9 @@ function makeBridgeScript(input: {
         setClientSettings(settings) {
           return requestHost("setClientSettings", settings);
         },
+        confirm(message) {
+          return requestHost("confirm", message);
+        },
         postMessage(message) {
           vscode.postMessage(message);
         },

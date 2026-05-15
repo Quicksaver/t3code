@@ -70,6 +70,8 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"themeSource":"default"');
     expect(html).toContain("getClientSettings()");
     expect(html).toContain("setClientSettings(settings)");
+    expect(html).toContain("confirm(message)");
+    expect(html).toContain('return requestHost("confirm", message)');
     expect(html).toContain('"bootstrapToken":"bootstrap-token"');
     expect(html).toContain('"bearerToken":"bearer-token"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');

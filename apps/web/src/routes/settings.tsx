@@ -6,6 +6,7 @@ import {
   useCanGoBack,
   useLocation,
   useNavigate,
+  useRouter,
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 
@@ -13,7 +14,8 @@ import { useSettingsRestore } from "../components/settings/SettingsPanels";
 import { MainSidebarTrigger } from "../components/sidebar/MainSidebarTrigger";
 import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
-import { isElectron } from "../env";
+import { isElectron, isVscodeWebview } from "../env";
+import { navigateToSettingsBackTarget } from "../settingsNavigation";
 
 function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -34,17 +36,22 @@ function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
 function SettingsContentLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const router = useRouter();
   const canGoBack = useCanGoBack();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showRestoreDefaults = location.pathname === "/settings/general";
   const handleRestored = () => setRestoreSignal((value) => value + 1);
   const navigateBackWithinApp = useCallback(() => {
+    if (isVscodeWebview) {
+      navigateToSettingsBackTarget(router.history);
+      return;
+    }
     if (canGoBack) {
       window.history.back();
       return;
     }
     void navigate({ to: "/" });
-  }, [canGoBack, navigate]);
+  }, [canGoBack, navigate, router]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

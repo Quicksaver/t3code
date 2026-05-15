@@ -128,6 +128,7 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
       webview: webviewView.webview,
       persistence: createClientSettingsPersistence(resolveClientSettingsPath(connection.t3Home)),
       outputChannel: this.#outputChannel,
+      confirm: showHostConfirmDialog,
     });
     const displayPreferencesDisposable = this.#displayPreferences.track(webviewView.webview);
     const hostAppearanceDisposable = this.#hostAppearance.track(webviewView.webview);
@@ -192,6 +193,7 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
       webview: webviewPanel.webview,
       persistence: createClientSettingsPersistence(resolveClientSettingsPath(connection.t3Home)),
       outputChannel: this.#outputChannel,
+      confirm: showHostConfirmDialog,
     });
     const displayPreferencesDisposable = this.#displayPreferences.track(webviewPanel.webview);
     const hostAppearanceDisposable = this.#hostAppearance.track(webviewPanel.webview);
@@ -331,6 +333,12 @@ function configureWebview(webview: vscode.Webview, extensionUri: vscode.Uri) {
     enableScripts: true,
     localResourceRoots: [vscode.Uri.joinPath(extensionUri, "dist", "webview")],
   };
+}
+
+async function showHostConfirmDialog(message: string): Promise<boolean> {
+  const confirmLabel = "Confirm";
+  const result = await vscode.window.showWarningMessage(message, { modal: true }, confirmLabel);
+  return result === confirmLabel;
 }
 
 function routeFromUri(uri: vscode.Uri): string {

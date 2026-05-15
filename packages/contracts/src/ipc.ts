@@ -272,6 +272,7 @@ export interface T3HostBridge {
   onHostAppearanceChanged?: (callback: (appearance: T3HostAppearance) => void) => () => void;
   getClientSettings?: () => Promise<ClientSettings | null>;
   setClientSettings?: (settings: ClientSettings) => Promise<void>;
+  confirm?: (message: string) => Promise<boolean>;
   postMessage?: (message: unknown) => void;
 }
 

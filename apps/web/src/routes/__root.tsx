@@ -64,6 +64,7 @@ import {
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isVscodeWebview } from "../env";
 import { resolveVscodeInitialThreadRef } from "../components/Sidebar.logic";
+import { rememberSettingsBackTarget } from "../settingsNavigation";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -102,7 +103,8 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const location = useLocation();
+  const pathname = location.pathname;
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
 
@@ -114,6 +116,10 @@ function RootRouteView() {
       window.cancelAnimationFrame(frame);
     };
   }, [pathname]);
+
+  useEffect(() => {
+    rememberSettingsBackTarget(location);
+  }, [location]);
 
   if (pathname === "/pair") {
     return <Outlet />;

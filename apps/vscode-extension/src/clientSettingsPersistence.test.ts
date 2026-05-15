@@ -56,9 +56,10 @@ describe("client settings persistence", () => {
     });
   });
 
-  it("routes webview host bridge get and set requests", async () => {
+  it("routes webview host bridge get, set, and confirm requests", async () => {
     const listeners = new Set<(message: unknown) => void>();
     const postMessage = vi.fn().mockResolvedValue(true);
+    const confirm = vi.fn().mockResolvedValue(true);
     const webview = {
       onDidReceiveMessage: (listener: (message: unknown) => void) => {
         listeners.add(listener);
@@ -79,6 +80,7 @@ describe("client settings persistence", () => {
       webview: webview as never,
       persistence,
       outputChannel: { appendLine: vi.fn() } as never,
+      confirm,
     });
 
     await [...listeners][0]?.({
@@ -92,9 +94,16 @@ describe("client settings persistence", () => {
       method: "setClientSettings",
       args: [{ timestampFormat: "24-hour" }],
     });
+    await [...listeners][0]?.({
+      type: "t3.hostRequest",
+      id: "confirm-1",
+      method: "confirm",
+      args: ["Delete thread?"],
+    });
 
     expect(persistence.get).toHaveBeenCalledWith();
     expect(persistence.set).toHaveBeenCalledWith({ timestampFormat: "24-hour" });
+    expect(confirm).toHaveBeenCalledWith("Delete thread?");
     expect(postMessage).toHaveBeenCalledWith({
       type: "t3.hostResponse",
       id: "read-1",
@@ -106,6 +115,12 @@ describe("client settings persistence", () => {
       id: "write-1",
       ok: true,
       result: undefined,
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "t3.hostResponse",
+      id: "confirm-1",
+      ok: true,
+      result: true,
     });
 
     disposable.dispose();

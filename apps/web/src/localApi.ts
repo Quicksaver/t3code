@@ -43,6 +43,9 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         if (window.desktopBridge) {
           return window.desktopBridge.confirm(message);
         }
+        if (window.t3HostBridge?.confirm) {
+          return window.t3HostBridge.confirm(message);
+        }
         return window.confirm(message);
       },
     },

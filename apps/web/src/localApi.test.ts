@@ -740,6 +740,21 @@ describe("wsApi", () => {
     expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
   });
 
+  it("confirms through the neutral host bridge when desktop is missing", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    const hostBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      confirm,
+    };
+    getWindowForTest().t3HostBridge = hostBridge;
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.dialogs.confirm("Delete thread?")).resolves.toBe(true);
+    expect(confirm).toHaveBeenCalledWith("Delete thread?");
+  });
+
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
