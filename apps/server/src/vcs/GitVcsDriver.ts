@@ -228,6 +228,7 @@ export class GitVcsDriver extends Context.Service<GitVcsDriver, GitVcsDriverShap
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const CHECKPOINT_CAPTURE_TIMEOUT_MS = 120_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -622,31 +623,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const cleanupTempIndex = fileSystem
         .remove(tempIndexPath, { force: true })
         .pipe(Effect.ignore);
+      const executeCheckpointGit = (args: ReadonlyArray<string>) =>
+        execute({
+          operation,
+          cwd: input.cwd,
+          args,
+          env: commitEnv,
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
+        });
 
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+          yield* executeCheckpointGit(["read-tree", "HEAD"]);
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["add", "-A", "--", "."],
-          env: commitEnv,
-        });
+        yield* executeCheckpointGit([
+          ...WORKSPACE_GIT_HARDENED_CONFIG_ARGS,
+          "add",
+          "-A",
+          "--",
+          ".",
+        ]);
 
-        const writeTreeResult = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["write-tree"],
-          env: commitEnv,
-        });
+        const writeTreeResult = yield* executeCheckpointGit(["write-tree"]);
         const treeOid = writeTreeResult.stdout.trim();
         if (treeOid.length === 0) {
           return yield* new VcsProcessExitError({
@@ -659,12 +659,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
 
         const message = `t3 checkpoint ref=${input.checkpointRef}`;
-        const commitTreeResult = yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["commit-tree", treeOid, "-m", message],
-          env: commitEnv,
-        });
+        const commitTreeResult = yield* executeCheckpointGit([
+          "commit-tree",
+          treeOid,
+          "-m",
+          message,
+        ]);
         const commitOid = commitTreeResult.stdout.trim();
         if (commitOid.length === 0) {
           return yield* new VcsProcessExitError({
@@ -680,6 +680,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: ["update-ref", input.checkpointRef, commitOid],
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
     }),
