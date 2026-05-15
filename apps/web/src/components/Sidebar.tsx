@@ -2083,6 +2083,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </Tooltip>
         </div>
       )}
+      {hideProjectChrome && (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            render={<button type="button" />}
+            size="sm"
+            className="mb-1 h-7 w-full justify-start gap-2 px-2 text-left text-xs text-muted-foreground/80 hover:bg-accent hover:text-foreground"
+            data-testid="new-thread-button"
+            onClick={handleCreateThreadClick}
+          >
+            <SquarePenIcon className="size-3.5" />
+            <span className="min-w-0 flex-1 truncate">New thread</span>
+            {newThreadShortcutLabel ? (
+              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                {newThreadShortcutLabel}
+              </Kbd>
+            ) : null}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      )}
 
       <SidebarProjectThreadList
         projectKey={project.projectKey}

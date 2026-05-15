@@ -65,7 +65,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider
       className="h-dvh! min-h-0!"
-      defaultOpen={threadSidebarOpen}
       open={threadSidebarOpen}
       onOpenChange={handleThreadSidebarOpenChange}
     >

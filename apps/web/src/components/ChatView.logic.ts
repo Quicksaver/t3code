@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type EnvironmentApi,
   type KeybindingCommand,
   ProjectId,
   type ModelSelection,
@@ -45,6 +46,40 @@ export function terminalThreadRefsToCloseWhenDisabled(input: {
     return [];
   }
   return input.openTerminalThreadKeys.map(parseScopedThreadKey).filter(isScopedThreadRef);
+}
+
+export function closeTerminalSession(input: {
+  readonly api: EnvironmentApi;
+  readonly threadId: ThreadId;
+  readonly terminalId?: string;
+  readonly isFinalTerminal?: boolean;
+}): void {
+  const fallbackExitWrite = () => {
+    if (!input.terminalId) {
+      return Promise.resolve();
+    }
+    return input.api.terminal
+      .write({ threadId: input.threadId, terminalId: input.terminalId, data: "exit\n" })
+      .catch(() => undefined);
+  };
+  const terminalClose = (input.api.terminal as Partial<EnvironmentApi["terminal"]>).close;
+
+  if (typeof terminalClose === "function") {
+    void (async () => {
+      if (input.terminalId && input.isFinalTerminal) {
+        await input.api.terminal
+          .clear({ threadId: input.threadId, terminalId: input.terminalId })
+          .catch(() => undefined);
+      }
+      await terminalClose({
+        threadId: input.threadId,
+        ...(input.terminalId ? { terminalId: input.terminalId } : {}),
+        deleteHistory: true,
+      });
+    })().catch(() => fallbackExitWrite());
+  } else {
+    void fallbackExitWrite();
+  }
 }
 
 function isScopedThreadRef(threadRef: ScopedThreadRef | null): threadRef is ScopedThreadRef {

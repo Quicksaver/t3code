@@ -8,7 +8,6 @@ describe("shouldRenderMainSidebarTrigger", () => {
       shouldRenderMainSidebarTrigger({
         isMobile: false,
         open: true,
-        openMobile: false,
       }),
     ).toBe(false);
   });
@@ -18,24 +17,15 @@ describe("shouldRenderMainSidebarTrigger", () => {
       shouldRenderMainSidebarTrigger({
         isMobile: false,
         open: false,
-        openMobile: false,
       }),
     ).toBe(true);
   });
 
-  it("keeps the main header trigger visible while the mobile sheet is open", () => {
+  it("keeps the main header trigger visible on mobile", () => {
     expect(
       shouldRenderMainSidebarTrigger({
         isMobile: true,
         open: true,
-        openMobile: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldRenderMainSidebarTrigger({
-        isMobile: true,
-        open: true,
-        openMobile: false,
       }),
     ).toBe(true);
   });

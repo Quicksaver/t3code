@@ -10,6 +10,11 @@ const packageJson = JSON.parse(packageJsonSource);
 const packageOptions = parsePackageOptions(process.argv.slice(2));
 const configuredPublisher = process.env.VSCE_PUBLISHER?.trim();
 const publisher = configuredPublisher || "t3tools";
+if (!/^[a-z0-9][a-z0-9-]*$/i.test(publisher)) {
+  throw new Error(
+    `Invalid VSCE publisher name: "${publisher}". Must start with an alphanumeric character and contain only alphanumeric characters or hyphens.`,
+  );
+}
 const targetSuffix = packageOptions.target ? `-${packageOptions.target}` : "";
 const vsixName = `${packageJson.name}-${packageJson.version}${targetSuffix}.vsix`;
 const vsixPath = packageOptions.out

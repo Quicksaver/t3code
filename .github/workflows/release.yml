@@ -476,7 +476,7 @@ jobs:
           - target: darwin-arm64
             runner: blacksmith-12vcpu-macos-26
           - target: darwin-x64
-            runner: macos-26-large
+            runner: blacksmith-12vcpu-macos-26
           - target: linux-x64
             runner: blacksmith-32vcpu-ubuntu-2404
           - target: win32-x64
@@ -720,7 +720,7 @@ jobs:
             exit 1
           fi
 
-          args=(publish --packagePath "${packages[@]}" --pat "$VSCE_PAT")
+          args=(publish --packagePath "${packages[@]}")
           if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
             args+=(--pre-release)
           fi

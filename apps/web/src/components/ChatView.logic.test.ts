@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  type EnvironmentApi,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -14,6 +15,7 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  closeTerminalSession,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
@@ -217,6 +219,23 @@ describe("terminal host preference behavior", () => {
         openTerminalThreadKeys: [`${threadRef.environmentId}:${threadRef.threadId}`],
       }),
     ).toEqual([]);
+  });
+
+  it("closes all backend terminals for a thread without requiring a visible terminal id", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const api = {
+      terminal: {
+        close,
+        clear: vi.fn(),
+        write: vi.fn(),
+      },
+    } as unknown as EnvironmentApi;
+    const threadId = ThreadId.make("thread-open");
+
+    closeTerminalSession({ api, threadId });
+    await Promise.resolve();
+
+    expect(close).toHaveBeenCalledWith({ threadId, deleteHistory: true });
   });
 });
 

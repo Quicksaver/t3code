@@ -5,15 +5,14 @@ import { SidebarTrigger, useSidebar } from "../ui/sidebar";
 export function shouldRenderMainSidebarTrigger(input: {
   isMobile: boolean;
   open: boolean;
-  openMobile: boolean;
 }): boolean {
   return input.isMobile || !input.open;
 }
 
 export function MainSidebarTrigger({ className }: { className?: string }) {
-  const { isMobile, open, openMobile } = useSidebar();
+  const { isMobile, open } = useSidebar();
 
-  if (!shouldRenderMainSidebarTrigger({ isMobile, open, openMobile })) {
+  if (!shouldRenderMainSidebarTrigger({ isMobile, open })) {
     return null;
   }
 

@@ -3,7 +3,7 @@ import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,
   THREAD_CONVERSATION_MIN_WIDTH_PX,
 } from "@t3tools/shared/displayPreferences";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resolveHostDisplayPreferences } from "./hostDisplayPreferences";
 
@@ -90,13 +90,16 @@ describe("resolveHostDisplayPreferences", () => {
 });
 
 describe("host display preference subscription", () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
   });
 
   it("updates the readable snapshot when the host pushes new preferences", async () => {
-    vi.resetModules();
     const listeners: Array<(preferences: T3HostDisplayPreferences) => void> = [];
     const bridge: T3HostBridge = {
       getLocalEnvironmentBootstrap: () => null,
@@ -126,7 +129,6 @@ describe("host display preference subscription", () => {
   });
 
   it("notifies subscribers when the host bridge changes preferences", async () => {
-    vi.resetModules();
     const firstBridge: T3HostBridge = {
       getLocalEnvironmentBootstrap: () => null,
       getDisplayPreferences: () => allHiddenPreferences,

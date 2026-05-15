@@ -59,8 +59,14 @@ type ServerAuthGateState =
       errorMessage?: string;
     };
 
-let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
-let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+let bootstrapPromise: {
+  readonly bootstrapCredential: string | null;
+  readonly promise: Promise<ServerAuthGateState>;
+} | null = null;
+let resolvedAuthenticatedGateState: {
+  readonly bootstrapCredential: string | null;
+  readonly state: ServerAuthGateState;
+} | null = null;
 let hostBearerToken: {
   readonly bootstrapCredential: string;
   readonly sessionToken: string;
@@ -116,8 +122,6 @@ function getActiveBearerToken(): string | null {
   const bootstrapCredential = getHostBootstrapCredential();
   if (hostBearerToken && hostBearerToken.bootstrapCredential !== bootstrapCredential) {
     hostBearerToken = null;
-    resolvedAuthenticatedGateState = null;
-    bootstrapPromise = null;
   }
 
   return hostBearerToken?.sessionToken ?? getInjectedBearerToken();
@@ -228,10 +232,13 @@ async function exchangeBootstrapCredentialForBearerSession(
     }
 
     const result = (await response.json()) as AuthBearerBootstrapResult;
-    hostBearerToken = {
-      bootstrapCredential: credential,
-      sessionToken: result.sessionToken,
-    };
+    const activeBootstrapCredential = getHostBootstrapCredential();
+    if (activeBootstrapCredential === null || activeBootstrapCredential === credential) {
+      hostBearerToken = {
+        bootstrapCredential: credential,
+        sessionToken: result.sessionToken,
+      };
+    }
     return result;
   });
 }
@@ -303,6 +310,10 @@ export async function resolvePrimaryEnvironmentWebSocketConnectionUrl(
 
   const issued = await issuePrimaryWebSocketToken(bearerToken);
   const url = new URL(wsBaseUrl, window.location.origin);
+  // VS Code webviews cannot set arbitrary WebSocket headers or subprotocol
+  // credentials reliably, so localhost bearer sessions use a short-lived
+  // one-time token in the URL. The backend only accepts these tokens on the
+  // local environment connection.
   url.searchParams.set("wsToken", issued.token);
   return url.toString();
 }
@@ -512,25 +523,32 @@ export async function revokeOtherServerClientSessions(): Promise<number> {
 }
 
 export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGateState> {
-  if (resolvedAuthenticatedGateState?.status === "authenticated") {
-    return resolvedAuthenticatedGateState;
+  const bootstrapCredential = getHostBootstrapCredential();
+  if (
+    resolvedAuthenticatedGateState?.bootstrapCredential === bootstrapCredential &&
+    resolvedAuthenticatedGateState.state.status === "authenticated"
+  ) {
+    return resolvedAuthenticatedGateState.state;
   }
 
-  if (bootstrapPromise) {
-    return bootstrapPromise;
+  if (bootstrapPromise?.bootstrapCredential === bootstrapCredential) {
+    return bootstrapPromise.promise;
   }
 
   const nextPromise = bootstrapServerAuth();
-  bootstrapPromise = nextPromise;
+  bootstrapPromise = { bootstrapCredential, promise: nextPromise };
   return nextPromise
-    .then((result) => {
+    .then(async (result) => {
+      if (getHostBootstrapCredential() !== bootstrapCredential) {
+        return await resolveInitialServerAuthGateState();
+      }
       if (result.status === "authenticated") {
-        resolvedAuthenticatedGateState = result;
+        resolvedAuthenticatedGateState = { bootstrapCredential, state: result };
       }
       return result;
     })
     .finally(() => {
-      if (bootstrapPromise === nextPromise) {
+      if (bootstrapPromise?.promise === nextPromise) {
         bootstrapPromise = null;
       }
     });

@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,
   THREAD_CONVERSATION_MIN_WIDTH_PX,
@@ -175,6 +176,7 @@ function makeBridgeScript(input: {
           return;
         }
         pendingRequests.delete(message.id);
+        clearTimeout(pending.timeoutId);
         if (message.ok) {
           pending.resolve(message.result);
         } else {
@@ -184,7 +186,11 @@ function makeBridgeScript(input: {
       function requestHost(method, ...args) {
         const id = String(Date.now()) + ":" + Math.random().toString(16).slice(2);
         return new Promise((resolve, reject) => {
-          pendingRequests.set(id, { resolve, reject });
+          const timeoutId = setTimeout(() => {
+            pendingRequests.delete(id);
+            reject(new Error("T3 host bridge request timed out."));
+          }, 30000);
+          pendingRequests.set(id, { resolve, reject, timeoutId });
           vscode.postMessage({
             type: "t3.hostRequest",
             id,

@@ -170,6 +170,7 @@ import {
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
+  closeTerminalSession,
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
@@ -696,24 +697,12 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     (terminalId: string) => {
       const api = readEnvironmentApi(threadRef.environmentId);
       if (!api) return;
-      const isFinalTerminal = terminalUiState.terminalIds.length <= 1;
-      const fallbackExitWrite = () =>
-        api.terminal.write({ threadId, terminalId, data: "exit\n" }).catch(() => undefined);
-
-      if ("close" in api.terminal && typeof api.terminal.close === "function") {
-        void (async () => {
-          if (isFinalTerminal) {
-            await api.terminal.clear({ threadId, terminalId }).catch(() => undefined);
-          }
-          await api.terminal.close({
-            threadId,
-            terminalId,
-            deleteHistory: true,
-          });
-        })().catch(() => fallbackExitWrite());
-      } else {
-        void fallbackExitWrite();
-      }
+      closeTerminalSession({
+        api,
+        threadId,
+        terminalId,
+        isFinalTerminal: terminalUiState.terminalIds.length <= 1,
+      });
 
       storeCloseTerminal(threadRef, terminalId);
       bumpFocusRequestId();
@@ -2110,29 +2099,16 @@ export default function ChatView(props: ChatViewProps) {
     (terminalId: string) => {
       if (!terminalEnabled) return;
       const api = readEnvironmentApi(environmentId);
-      if (!activeThreadId || !api || !activeThreadRef) return;
-      const isFinalTerminal = activeKnownTerminalIds.length <= 1;
-      const fallbackExitWrite = () =>
-        api.terminal
-          .write({ threadId: activeThreadId, terminalId, data: "exit\n" })
-          .catch(() => undefined);
-      if ("close" in api.terminal && typeof api.terminal.close === "function") {
-        void (async () => {
-          if (isFinalTerminal) {
-            await api.terminal
-              .clear({ threadId: activeThreadId, terminalId })
-              .catch(() => undefined);
-          }
-          await api.terminal.close({
-            threadId: activeThreadId,
-            terminalId,
-            deleteHistory: true,
-          });
-        })().catch(() => fallbackExitWrite());
-      } else {
-        void fallbackExitWrite();
+      if (!activeThreadId || !api) return;
+      closeTerminalSession({
+        api,
+        threadId: activeThreadId,
+        terminalId,
+        isFinalTerminal: activeKnownTerminalIds.length <= 1,
+      });
+      if (activeThreadRef) {
+        storeCloseTerminal(activeThreadRef, terminalId);
       }
-      storeCloseTerminal(activeThreadRef, terminalId);
       setTerminalFocusRequestId((value) => value + 1);
     },
     [
@@ -2561,6 +2537,13 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     for (const threadRefToClose of disabledTerminalThreadRefsToClose) {
+      const api = readEnvironmentApi(threadRefToClose.environmentId);
+      if (api) {
+        closeTerminalSession({
+          api,
+          threadId: threadRefToClose.threadId,
+        });
+      }
       storeSetTerminalOpen(threadRefToClose, false);
     }
     setTerminalUiLaunchContext(null);

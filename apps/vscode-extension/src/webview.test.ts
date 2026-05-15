@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -92,6 +93,8 @@ describe("renderT3Webview", () => {
     expect(html).toContain("setClientSettings(settings)");
     expect(html).toContain("confirm(message)");
     expect(html).toContain('return requestHost("confirm", message)');
+    expect(html).toContain('reject(new Error("T3 host bridge request timed out."))');
+    expect(html).toContain("clearTimeout(pending.timeoutId)");
     expect(html).toContain('"bootstrapToken":"bootstrap-token"');
     expect(html).toContain('"bearerToken":"bearer-token"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');

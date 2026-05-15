@@ -106,18 +106,6 @@ export function applyHostAppearanceToDocument(
 }
 
 function setHostThemeAttribute(element: HTMLElement, value: "vscode" | null): void {
-  const dataset = element.dataset as DOMStringMap | undefined;
-  if (!element.setAttribute || !element.removeAttribute) {
-    if (dataset) {
-      if (value) {
-        dataset.t3HostTheme = value;
-      } else {
-        delete dataset.t3HostTheme;
-      }
-    }
-    return;
-  }
-
   if (value) {
     element.setAttribute("data-t3-host-theme", value);
   } else {

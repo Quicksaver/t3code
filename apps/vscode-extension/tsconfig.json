@@ -3,8 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node", "vscode"],
-    "lib": ["ESNext"],
-    "plugins": []
+    "lib": ["ESNext"]
   },
   "include": ["src", "scripts", "tsdown.config.ts"]
 }
