@@ -26,8 +26,6 @@ const DEFAULT_ALLOWED_RUN_COMMAND_PATTERNS = [
   "vscode.diff",
   "revealLine",
 ] as const;
-let allowedRunCommandPatternsCache: readonly string[] | null = null;
-let allowedRunCommandPatternsSubscription: vscode.Disposable | null = null;
 
 export interface VscodeMcpServerBootstrap {
   readonly name: string;
@@ -1105,23 +1103,6 @@ function isAllowedRunCommand(command: string): boolean {
 }
 
 function getAllowedRunCommandPatterns(): readonly string[] {
-  ensureAllowedRunCommandPatternsCacheRefresh();
-  allowedRunCommandPatternsCache ??= resolveAllowedRunCommandPatterns();
-  return allowedRunCommandPatternsCache;
-}
-
-function ensureAllowedRunCommandPatternsCacheRefresh(): void {
-  if (allowedRunCommandPatternsSubscription) {
-    return;
-  }
-  allowedRunCommandPatternsSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
-    if (event.affectsConfiguration(`t3code.${MCP_RUN_COMMAND_ALLOWLIST_SETTING}`)) {
-      allowedRunCommandPatternsCache = null;
-    }
-  });
-}
-
-function resolveAllowedRunCommandPatterns(): readonly string[] {
   const configured = vscode.workspace
     .getConfiguration("t3code")
     .get<unknown>(MCP_RUN_COMMAND_ALLOWLIST_SETTING);
