@@ -200,6 +200,10 @@ describe("VS Code MCP settings", () => {
       "vscode.diff",
       "revealLine",
     ]);
-    expect(properties["t3code.mcp.allowedRunCommands"]?.items).toEqual({ type: "string" });
+    expect(properties["t3code.mcp.allowedRunCommands"]?.items).toEqual({
+      type: "string",
+      minLength: 1,
+      pattern: "^[^*]+\\*?$",
+    });
   });
 });

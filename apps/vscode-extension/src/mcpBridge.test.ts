@@ -4,9 +4,22 @@ const vscodeState = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
 }));
 
+type ConfigurationChangeListener = (event: {
+  affectsConfiguration: (key: string) => boolean;
+}) => void;
+
 const executeCommand = vi.fn();
 const getCommands = vi.fn();
 const getDiagnostics = vi.fn();
+const configurationChangeListeners = new Set<ConfigurationChangeListener>();
+const onDidChangeConfiguration = vi.fn((listener: ConfigurationChangeListener) => {
+  configurationChangeListeners.add(listener);
+  return {
+    dispose: () => {
+      configurationChangeListeners.delete(listener);
+    },
+  };
+});
 const uriFile = vi.fn((value: string) => ({
   scheme: "file",
   fsPath: value,
@@ -51,8 +64,11 @@ vi.mock("vscode", () => ({
   workspace: {
     getConfiguration: () => ({
       get: (key: string, defaultValue: unknown) =>
-        key in vscodeState.settings ? vscodeState.settings[key] : defaultValue,
+        Object.prototype.hasOwnProperty.call(vscodeState.settings, key)
+          ? vscodeState.settings[key]
+          : defaultValue,
     }),
+    onDidChangeConfiguration,
     workspaceFolders: [
       {
         uri: {
@@ -82,6 +98,20 @@ vi.mock("vscode", () => ({
   },
 }));
 
+function setT3CodeSetting(key: string, value: unknown): void {
+  vscodeState.settings[key] = value;
+  fireT3CodeConfigurationChanged(`t3code.${key}`);
+}
+
+function fireT3CodeConfigurationChanged(changedKey: string): void {
+  const event = {
+    affectsConfiguration: (key: string) => key === changedKey,
+  };
+  for (const listener of configurationChangeListeners) {
+    listener(event);
+  }
+}
+
 describe("executeVsCodeRunCommand", () => {
   beforeEach(() => {
     executeCommand.mockReset();
@@ -90,6 +120,7 @@ describe("executeVsCodeRunCommand", () => {
     uriFile.mockClear();
     uriParse.mockClear();
     vscodeState.settings = {};
+    fireT3CodeConfigurationChanged("t3code.mcp.allowedRunCommands");
   });
 
   it("runs a registered VS Code command and returns structured MCP content", async () => {
@@ -156,7 +187,7 @@ describe("executeVsCodeRunCommand", () => {
 
   it("allows custom command ids from the VS Code setting", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
-    vscodeState.settings["mcp.allowedRunCommands"] = ["workbench.action.files.save"];
+    setT3CodeSetting("mcp.allowedRunCommands", ["workbench.action.files.save"]);
     getCommands.mockResolvedValue(["workbench.action.files.save"]);
     executeCommand.mockResolvedValue(undefined);
 
@@ -173,7 +204,7 @@ describe("executeVsCodeRunCommand", () => {
 
   it("allows custom command prefixes from the VS Code setting", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
-    vscodeState.settings["mcp.allowedRunCommands"] = ["workbench.action.quickOpen*"];
+    setT3CodeSetting("mcp.allowedRunCommands", ["workbench.action.quickOpen*"]);
     getCommands.mockResolvedValue(["workbench.action.quickOpenNavigateNext"]);
     executeCommand.mockResolvedValue(undefined);
 
@@ -186,7 +217,7 @@ describe("executeVsCodeRunCommand", () => {
 
   it("uses the custom command setting instead of adding it to the defaults", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
-    vscodeState.settings["mcp.allowedRunCommands"] = ["workbench.action.files.save"];
+    setT3CodeSetting("mcp.allowedRunCommands", ["workbench.action.files.save"]);
 
     await expect(
       executeVsCodeRunCommand({
@@ -199,7 +230,7 @@ describe("executeVsCodeRunCommand", () => {
 
   it("does not treat a wildcard-only setting entry as allow all", async () => {
     const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
-    vscodeState.settings["mcp.allowedRunCommands"] = ["*"];
+    setT3CodeSetting("mcp.allowedRunCommands", ["*"]);
 
     await expect(
       executeVsCodeRunCommand({
@@ -208,6 +239,64 @@ describe("executeVsCodeRunCommand", () => {
     ).rejects.toThrow("VS Code command is not allowed through MCP: workbench.action.files.save");
     expect(getCommands).not.toHaveBeenCalled();
     expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the command allowlist setting has a malformed type", async () => {
+    const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    setT3CodeSetting("mcp.allowedRunCommands", "workbench.action.files.save");
+
+    await expect(
+      executeVsCodeRunCommand({
+        command: "vscode.open",
+      }),
+    ).rejects.toThrow("VS Code command is not allowed through MCP: vscode.open");
+    expect(getCommands).not.toHaveBeenCalled();
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
+  it("ignores invalid command allowlist entries and deduplicates valid patterns", async () => {
+    const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    setT3CodeSetting("mcp.allowedRunCommands", [
+      "",
+      "   ",
+      "*",
+      "workbench.*.invalid",
+      "workbench.action.files.save",
+      "workbench.action.files.save",
+    ]);
+    getCommands.mockResolvedValue(["workbench.action.files.save"]);
+    executeCommand.mockResolvedValue(undefined);
+
+    await executeVsCodeRunCommand({
+      command: "workbench.action.files.save",
+    });
+
+    expect(executeCommand).toHaveBeenCalledWith("workbench.action.files.save");
+  });
+
+  it("refreshes cached command allowlist patterns after VS Code configuration changes", async () => {
+    const { executeVsCodeRunCommand } = await import("./mcpBridge.ts");
+    setT3CodeSetting("mcp.allowedRunCommands", ["workbench.action.files.save"]);
+    getCommands.mockResolvedValue(["workbench.action.files.save", "workbench.action.files.saveAs"]);
+    executeCommand.mockResolvedValue(undefined);
+
+    await executeVsCodeRunCommand({
+      command: "workbench.action.files.save",
+    });
+
+    setT3CodeSetting("mcp.allowedRunCommands", ["workbench.action.files.saveAs"]);
+
+    await expect(
+      executeVsCodeRunCommand({
+        command: "workbench.action.files.save",
+      }),
+    ).rejects.toThrow("VS Code command is not allowed through MCP: workbench.action.files.save");
+    await executeVsCodeRunCommand({
+      command: "workbench.action.files.saveAs",
+    });
+
+    expect(executeCommand).toHaveBeenCalledWith("workbench.action.files.save");
+    expect(executeCommand).toHaveBeenCalledWith("workbench.action.files.saveAs");
   });
 });
 
@@ -219,6 +308,7 @@ describe("VS Code language-service MCP tools", () => {
     uriFile.mockClear();
     uriParse.mockClear();
     vscodeState.settings = {};
+    fireT3CodeConfigurationChanged("t3code.mcp.allowedRunCommands");
   });
 
   it("returns filtered diagnostics from VS Code", async () => {

@@ -26,6 +26,8 @@ const DEFAULT_ALLOWED_RUN_COMMAND_PATTERNS = [
   "vscode.diff",
   "revealLine",
 ] as const;
+let allowedRunCommandPatternsCache: readonly string[] | null = null;
+let allowedRunCommandPatternsSubscription: vscode.Disposable | null = null;
 
 export interface VscodeMcpServerBootstrap {
   readonly name: string;
@@ -1103,18 +1105,51 @@ function isAllowedRunCommand(command: string): boolean {
 }
 
 function getAllowedRunCommandPatterns(): readonly string[] {
+  ensureAllowedRunCommandPatternsCacheRefresh();
+  allowedRunCommandPatternsCache ??= resolveAllowedRunCommandPatterns();
+  return allowedRunCommandPatternsCache;
+}
+
+function ensureAllowedRunCommandPatternsCacheRefresh(): void {
+  if (allowedRunCommandPatternsSubscription) {
+    return;
+  }
+  allowedRunCommandPatternsSubscription = vscode.workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration(`t3code.${MCP_RUN_COMMAND_ALLOWLIST_SETTING}`)) {
+      allowedRunCommandPatternsCache = null;
+    }
+  });
+}
+
+function resolveAllowedRunCommandPatterns(): readonly string[] {
   const configured = vscode.workspace
     .getConfiguration("t3code")
-    .get<readonly unknown[]>(
-      MCP_RUN_COMMAND_ALLOWLIST_SETTING,
-      DEFAULT_ALLOWED_RUN_COMMAND_PATTERNS,
-    );
-  if (!Array.isArray(configured)) {
+    .get<unknown>(MCP_RUN_COMMAND_ALLOWLIST_SETTING);
+  if (configured === undefined) {
     return DEFAULT_ALLOWED_RUN_COMMAND_PATTERNS;
   }
-  return configured
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim());
+  if (!Array.isArray(configured)) {
+    return [];
+  }
+  const patterns = new Set<string>();
+  for (const entry of configured) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const pattern = entry.trim();
+    if (isValidAllowedRunCommandPattern(pattern)) {
+      patterns.add(pattern);
+    }
+  }
+  return [...patterns];
+}
+
+function isValidAllowedRunCommandPattern(pattern: string): boolean {
+  if (!pattern) {
+    return false;
+  }
+  const prefix = pattern.endsWith("*") ? pattern.slice(0, -1) : pattern;
+  return prefix.length > 0 && !prefix.includes("*");
 }
 
 function matchesAllowedRunCommandPattern(command: string, pattern: string): boolean {

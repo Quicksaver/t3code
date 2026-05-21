@@ -113,7 +113,9 @@
             "revealLine"
           ],
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^*]+\\*?$"
           },
           "description": "VS Code command ids that the vscodeRunCommand MCP tool may execute. Entries ending in * are treated as non-empty command-prefix rules."
         },
