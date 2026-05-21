@@ -328,6 +328,13 @@ export function deriveLockedProvider(input: {
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
 }
 
+export function resolveComposerLockedProvider(input: {
+  lockedProvider: ProviderDriverKind | null;
+  isVscodeWebview: boolean;
+}): ProviderDriverKind | null {
+  return input.isVscodeWebview ? null : input.lockedProvider;
+}
+
 export async function waitForStartedServerThread(
   threadRef: ScopedThreadRef,
   timeoutMs = 1_000,

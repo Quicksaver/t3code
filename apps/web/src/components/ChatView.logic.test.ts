@@ -21,6 +21,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isTerminalKeybindingCommand,
   reconcileMountedTerminalThreadIds,
+  resolveComposerLockedProvider,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   terminalThreadRefsToCloseWhenDisabled,
@@ -304,6 +305,26 @@ const makeThread = (input?: {
   worktreePath: null,
   turnDiffSummaries: [],
   activities: [],
+});
+
+describe("resolveComposerLockedProvider", () => {
+  it("preserves the conversation lock outside VS Code", () => {
+    expect(
+      resolveComposerLockedProvider({
+        lockedProvider: ProviderDriverKind.make("codex"),
+        isVscodeWebview: false,
+      }),
+    ).toBe(ProviderDriverKind.make("codex"));
+  });
+
+  it("unlocks only the VS Code webview composer model picker", () => {
+    expect(
+      resolveComposerLockedProvider({
+        lockedProvider: ProviderDriverKind.make("codex"),
+        isVscodeWebview: true,
+      }),
+    ).toBeNull();
+  });
 });
 
 function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
