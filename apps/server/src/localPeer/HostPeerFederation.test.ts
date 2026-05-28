@@ -23,6 +23,7 @@ import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/Pro
 import { makeHostPeerFederation } from "./HostPeerFederation.ts";
 
 const now = "2026-05-28T12:00:00.000Z";
+const advertisementNowMs = Date.UTC(2099, 0, 1, 0, 0, 0);
 const projectId = "project-1" as ProjectId;
 const threadId = "thread-1" as ThreadId;
 const workspaceRoot = "/repo/project";
@@ -79,6 +80,32 @@ describe("HostPeerFederation", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("falls back to local dispatch when no matching backend peer is advertised", async () => {
+    const baseDir = makeTempDir();
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
+    const result = await Effect.runPromise(federation.dispatchCommand(interruptCommand()));
+
+    expect(Option.isNone(result)).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send peer bearer tokens to non-loopback peer URLs", async () => {
+    const baseDir = makeTempDir();
+    writePeerAdvertisement(baseDir, { httpBaseUrl: "http://192.0.2.1:49111" });
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
+
+    await expect(Effect.runPromise(federation.dispatchCommand(interruptCommand()))).rejects.toThrow(
+      "No reachable local owner backend is available",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("is disabled inside VS Code-hosted backend processes", async () => {
     const baseDir = makeTempDir();
     writePeerAdvertisement(baseDir);
@@ -102,12 +129,15 @@ function makeTempDir(): string {
   return dir;
 }
 
-function writePeerAdvertisement(baseDir: string): void {
+function writePeerAdvertisement(
+  baseDir: string,
+  overrides: Partial<Parameters<typeof createLocalBackendAdvertisement>[0]> = {},
+): void {
   writeLocalBackendAdvertisement({
     t3Home: baseDir,
     advertisement: createLocalBackendAdvertisement({
       backendId: "vscode-peer",
-      nowMs: Date.UTC(2026, 4, 28, 12, 0, 0),
+      nowMs: advertisementNowMs,
       httpBaseUrl: "http://127.0.0.1:49111",
       bearerToken: "peer-token",
       workspaceFolders: [
@@ -120,6 +150,7 @@ function writePeerAdvertisement(baseDir: string): void {
         },
       ],
       activeWorkspaceFolderKey: "file::/repo/project",
+      ...overrides,
     }),
   });
 }

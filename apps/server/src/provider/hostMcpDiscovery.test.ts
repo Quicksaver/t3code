@@ -149,4 +149,21 @@ describe("host MCP discovery", () => {
       }),
     ).resolves.toEqual([bootstrapServer]);
   });
+
+  it("falls back to bootstrap servers when direct workspace discovery fails", async () => {
+    const t3Home = path.join(makeT3Home(), "not-a-directory");
+    fs.writeFileSync(t3Home, "");
+    const bootstrapServer = {
+      name: "bootstrap",
+      socketPath: "/tmp/bootstrap.sock",
+    };
+
+    await expect(
+      resolveHostMcpServersForWorkspace({
+        t3Home,
+        workspaceRoot: "/repo",
+        bootstrapServers: [bootstrapServer],
+      }),
+    ).resolves.toEqual([bootstrapServer]);
+  });
 });

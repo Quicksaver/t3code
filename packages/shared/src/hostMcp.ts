@@ -9,6 +9,13 @@ import {
   type DesktopBootstrapMcpServer,
   type DesktopBootstrapWorkspaceFolder,
 } from "@t3tools/contracts";
+import {
+  readAdvertisementFilenames,
+  readAdvertisementJson,
+  sanitizeAdvertisementId,
+  workspaceRootsMatch as workspaceRootsMatchShared,
+  writeAdvertisementJson,
+} from "./advertisementFiles.ts";
 
 export const HOST_MCP_ADVERTISEMENT_TTL_MS = 30_000;
 export const HOST_MCP_ADVERTISEMENT_HEARTBEAT_MS = 10_000;
@@ -84,17 +91,13 @@ export function writeHostMcpAdvertisement(input: {
   readonly advertisement: HostMcpAdvertisement;
 }): void {
   const dir = resolveHostMcpAdvertisementDir(input.t3Home);
-  fs.mkdirSync(dir, { recursive: true });
   const targetPath = resolveHostMcpAdvertisementPath(input.t3Home, input.advertisement.hostId);
-  const tempPath = path.join(
+  writeAdvertisementJson({
     dir,
-    `.${input.advertisement.hostId}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
-  );
-  fs.writeFileSync(tempPath, `${JSON.stringify(input.advertisement, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
+    targetPath,
+    id: input.advertisement.hostId,
+    value: input.advertisement,
   });
-  fs.renameSync(tempPath, targetPath);
 }
 
 export function removeHostMcpAdvertisement(input: {
@@ -115,13 +118,14 @@ export function readHostMcpAdvertisements(
 
   for (const entry of entries) {
     const filePath = path.join(dir, entry);
-    let advertisement: HostMcpAdvertisement;
-    try {
-      advertisement = decodeHostMcpAdvertisement(JSON.parse(fs.readFileSync(filePath, "utf8")));
-    } catch {
-      malformed += 1;
+    const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
+    if (readResult._tag !== "ok") {
+      if (readResult._tag === "invalid") {
+        malformed += 1;
+      }
       continue;
     }
+    const advertisement = readResult.value;
 
     if (isExpired(advertisement, nowMs)) {
       continue;
@@ -160,12 +164,11 @@ export function cleanupHostMcpAdvertisements(
       break;
     }
     const filePath = path.join(dir, entry);
-    let advertisement: HostMcpAdvertisement;
-    try {
-      advertisement = decodeHostMcpAdvertisement(JSON.parse(fs.readFileSync(filePath, "utf8")));
-    } catch {
+    const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
+    if (readResult._tag !== "ok") {
       continue;
     }
+    const advertisement = readResult.value;
     const expiresAtMs = Date.parse(advertisement.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs + graceMs > nowMs) {
       continue;
@@ -198,32 +201,15 @@ export function mergeHostMcpServers(
 }
 
 export function workspaceRootsMatch(left: string, right: string): boolean {
-  return normalizeWorkspaceRootForMatch(left) === normalizeWorkspaceRootForMatch(right);
-}
-
-function readAdvertisementFilenames(dir: string): string[] {
-  try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name)
-      .toSorted();
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
+  return workspaceRootsMatchShared(left, right);
 }
 
 function sanitizeHostId(hostId: string): string {
-  const trimmed = hostId.trim();
-  if (!trimmed || !HOST_ID_PATTERN.test(trimmed)) {
-    throw new Error(
-      "Host MCP advertisement hostId must contain only letters, numbers, '.', '_', or '-'.",
-    );
-  }
-  return trimmed;
+  return sanitizeAdvertisementId({
+    id: hostId,
+    pattern: HOST_ID_PATTERN,
+    label: "Host MCP advertisement hostId",
+  });
 }
 
 function isExpired(advertisement: HostMcpAdvertisement, nowMs: number): boolean {
@@ -245,13 +231,4 @@ function compareHostMcpAdvertisements(
     return activeLeft ? -1 : 1;
   }
   return left.hostId.localeCompare(right.hostId);
-}
-
-function normalizeWorkspaceRootForMatch(value: string): string {
-  const normalized = path.normalize(value.trim());
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }

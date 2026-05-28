@@ -1,3 +1,4 @@
+import * as net from "node:net";
 import {
   DispatchResult as DispatchResultSchema,
   OrchestrationDispatchCommandError,
@@ -103,28 +104,35 @@ export function makeHostPeerFederation(
       }
 
       const peers = yield* discoverPeers(threadContext.workspaceRoot);
-      for (const peer of peers) {
-        const result = yield* requestPeerJson({
-          peer,
-          pathname: "/api/local-peer/orchestration/dispatch",
-          method: "POST",
-          body: command,
-          decode: decodeDispatchResult,
-        }).pipe(
-          Effect.map(Option.some),
-          Effect.catch((cause) =>
-            Effect.logDebug("local peer command route failed", {
-              backendId: peer.backendId,
-              projectId: threadContext.projectId,
-              threadId: routing.threadId,
-              commandType: command.type,
-              cause,
-            }).pipe(Effect.as(Option.none<DispatchResult>())),
+      if (peers.length === 0) {
+        return Option.none();
+      }
+      const results = yield* Effect.forEach(
+        peers,
+        (peer) =>
+          requestPeerJson({
+            peer,
+            pathname: "/api/local-peer/orchestration/dispatch",
+            method: "POST",
+            body: command,
+            decode: decodeDispatchResult,
+          }).pipe(
+            Effect.map(Option.some),
+            Effect.catch((cause) =>
+              Effect.logDebug("local peer command route failed", {
+                backendId: peer.backendId,
+                projectId: threadContext.projectId,
+                threadId: routing.threadId,
+                commandType: command.type,
+                cause,
+              }).pipe(Effect.as(Option.none<DispatchResult>())),
+            ),
           ),
-        );
-        if (Option.isSome(result)) {
-          return result;
-        }
+        { concurrency: "unbounded" },
+      );
+      const result = results.find(Option.isSome);
+      if (result) {
+        return result;
       }
 
       return yield* new OrchestrationDispatchCommandError({
@@ -141,30 +149,35 @@ export function makeHostPeerFederation(
 
     const poll = Effect.gen(function* () {
       const peers = yield* discoverPeers();
-      const events: OrchestrationEvent[] = [];
-      const seenSequences = new Set<number>();
-      for (const peer of peers) {
-        const response = yield* requestPeerJson({
-          peer,
-          pathname: "/api/local-peer/orchestration/events",
-          searchParams: { fromSequenceExclusive: String(cursor) },
-          decode: decodePeerEventsResponse,
-        }).pipe(
-          Effect.catch((cause) =>
-            Effect.logDebug("local peer event poll failed", {
-              backendId: peer.backendId,
-              cause,
-            }).pipe(Effect.as(null)),
+      const peerResponses = yield* Effect.forEach(
+        peers,
+        (peer) =>
+          requestPeerJson({
+            peer,
+            pathname: "/api/local-peer/orchestration/events",
+            searchParams: { fromSequenceExclusive: String(cursor) },
+            decode: decodePeerEventsResponse,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logDebug("local peer event poll failed", {
+                backendId: peer.backendId,
+                cause,
+              }).pipe(Effect.as(null)),
+            ),
           ),
-        );
+        { concurrency: "unbounded" },
+      );
+      const events: OrchestrationEvent[] = [];
+      const seenEventIds = new Set<string>();
+      for (const response of peerResponses) {
         if (!response) {
           continue;
         }
         for (const event of response.events) {
-          if (seenSequences.has(event.sequence)) {
+          if (seenEventIds.has(event.eventId)) {
             continue;
           }
-          seenSequences.add(event.sequence);
+          seenEventIds.add(event.eventId);
           events.push(event);
         }
       }
@@ -230,6 +243,9 @@ function requestPeerJson<A>(input: {
 }): Effect.Effect<A, LocalPeerRequestError> {
   return Effect.tryPromise({
     try: async () => {
+      if (!isLoopbackPeerBaseUrl(input.peer.httpBaseUrl)) {
+        throw new Error("Local peer base URL must be loopback HTTP without credentials.");
+      }
       const url = new URL(input.pathname, input.peer.httpBaseUrl);
       for (const [key, value] of Object.entries(input.searchParams ?? {})) {
         url.searchParams.set(key, value);
@@ -246,7 +262,12 @@ function requestPeerJson<A>(input: {
       if (!response.ok) {
         throw new Error(`Local peer request failed (${response.status}).`);
       }
-      return input.decode(await response.json());
+      const payload = await response.json();
+      try {
+        return input.decode(payload);
+      } catch (cause) {
+        throw new Error("Unexpected local peer response shape.", { cause });
+      }
     },
     catch: (cause) =>
       new LocalPeerRequestError({
@@ -254,4 +275,21 @@ function requestPeerJson<A>(input: {
         cause,
       }),
   });
+}
+
+function isLoopbackPeerBaseUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" || url.username || url.password) {
+    return false;
+  }
+  const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/u, "$1");
+  if (hostname === "localhost" || hostname === "::1") {
+    return true;
+  }
+  return net.isIP(hostname) === 4 && hostname.startsWith("127.");
 }

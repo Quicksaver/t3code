@@ -1074,6 +1074,79 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("rejects local peer routes outside VS Code-hosted backends", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const url = yield* getHttpServerUrl("/api/local-peer/health");
+      const response = yield* Effect.promise(() =>
+        fetch(url, {
+          headers: {
+            cookie,
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as { readonly error: string };
+
+      assert.equal(response.status, 403);
+      assert.equal(body.error, "Local peer API is available only from VS Code-hosted backends.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects non-owner sessions on local peer routes", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { hostIntegration: "vscode" } });
+
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const pairingUrl = yield* getHttpServerUrl("/api/auth/pairing-token");
+      const pairingResponse = yield* Effect.promise(() =>
+        fetch(pairingUrl, {
+          method: "POST",
+          headers: {
+            cookie: ownerCookie,
+          },
+        }),
+      );
+      const pairingBody = (yield* Effect.promise(() => pairingResponse.json())) as {
+        readonly credential: string;
+      };
+      const pairedCookie = yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
+      const localPeerUrl = yield* getHttpServerUrl("/api/local-peer/health");
+      const response = yield* Effect.promise(() =>
+        fetch(localPeerUrl, {
+          headers: {
+            cookie: pairedCookie,
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as { readonly error: string };
+
+      assert.equal(response.status, 403);
+      assert.equal(body.error, "Only owner sessions can use the local peer API.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("allows owner sessions on VS Code local peer routes", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({ config: { hostIntegration: "vscode" } });
+
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const url = yield* getHttpServerUrl("/api/local-peer/health");
+      const response = yield* Effect.promise(() =>
+        fetch(url, {
+          headers: {
+            cookie,
+          },
+        }),
+      );
+      const body = (yield* Effect.promise(() => response.json())) as { readonly ok: boolean };
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("bootstraps a browser session and authenticates the session endpoint via cookie", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();

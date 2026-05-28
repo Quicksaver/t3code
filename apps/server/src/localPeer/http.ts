@@ -226,13 +226,12 @@ function isLoopbackRequest(request: HttpServerRequest.HttpServerRequest): boolea
       readonly remoteAddress?: string | null;
     };
   };
-  const address = normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
-  return (
-    address === "127.0.0.1" ||
-    address === "::1" ||
-    address === "localhost" ||
-    address?.startsWith("127.") === true
-  );
+  return isLoopbackRemoteAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
+}
+
+export function isLoopbackRemoteAddress(value: string | null | undefined): boolean {
+  const address = normalizeIpAddress(value);
+  return address === "127.0.0.1" || address === "::1" || address?.startsWith("127.") === true;
 }
 
 function normalizeIpAddress(value: string | null | undefined): string | undefined {

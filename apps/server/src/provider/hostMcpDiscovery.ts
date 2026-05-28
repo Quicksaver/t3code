@@ -27,11 +27,16 @@ export async function resolveHostMcpServersForWorkspace(
     return input.bootstrapServers;
   }
 
-  cleanupHostMcpAdvertisements({ t3Home: input.t3Home });
-  const readResult = readHostMcpAdvertisements({
-    t3Home: input.t3Home,
-    workspaceRoot: input.workspaceRoot,
-  });
+  let readResult: ReturnType<typeof readHostMcpAdvertisements>;
+  try {
+    cleanupHostMcpAdvertisements({ t3Home: input.t3Home });
+    readResult = readHostMcpAdvertisements({
+      t3Home: input.t3Home,
+      workspaceRoot: input.workspaceRoot,
+    });
+  } catch {
+    return input.bootstrapServers;
+  }
   const socketPathExists = input.socketPathExists ?? defaultSocketPathExists;
   const probe = input.probe ?? probeMcpSocket;
   const bootstrapNames = new Set(input.bootstrapServers.map((server) => server.name));

@@ -8,7 +8,13 @@ import {
   LocalBackendAdvertisement,
   type DesktopBootstrapWorkspaceFolder,
 } from "@t3tools/contracts";
-import { workspaceRootsMatch } from "./hostMcp.ts";
+import {
+  readAdvertisementFilenames,
+  readAdvertisementJson,
+  sanitizeAdvertisementId,
+  workspaceRootsMatch,
+  writeAdvertisementJson,
+} from "./advertisementFiles.ts";
 
 export const LOCAL_BACKEND_ADVERTISEMENT_TTL_MS = 30_000;
 export const LOCAL_BACKEND_ADVERTISEMENT_HEARTBEAT_MS = 10_000;
@@ -96,20 +102,16 @@ export function writeLocalBackendAdvertisement(input: {
   readonly advertisement: LocalBackendAdvertisement;
 }): void {
   const dir = resolveLocalBackendAdvertisementDir(input.t3Home);
-  fs.mkdirSync(dir, { recursive: true });
   const targetPath = resolveLocalBackendAdvertisementPath(
     input.t3Home,
     input.advertisement.backendId,
   );
-  const tempPath = path.join(
+  writeAdvertisementJson({
     dir,
-    `.${input.advertisement.backendId}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
-  );
-  fs.writeFileSync(tempPath, `${JSON.stringify(input.advertisement, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
+    targetPath,
+    id: input.advertisement.backendId,
+    value: input.advertisement,
   });
-  fs.renameSync(tempPath, targetPath);
 }
 
 export function removeLocalBackendAdvertisement(input: {
@@ -130,15 +132,14 @@ export function readLocalBackendAdvertisements(
 
   for (const entry of entries) {
     const filePath = path.join(dir, entry);
-    let advertisement: LocalBackendAdvertisement;
-    try {
-      advertisement = decodeLocalBackendAdvertisement(
-        JSON.parse(fs.readFileSync(filePath, "utf8")),
-      );
-    } catch {
-      malformed += 1;
+    const readResult = readAdvertisementJson(filePath, decodeLocalBackendAdvertisement);
+    if (readResult._tag !== "ok") {
+      if (readResult._tag === "invalid") {
+        malformed += 1;
+      }
       continue;
     }
+    const advertisement = readResult.value;
 
     if (isExpired(advertisement, nowMs)) {
       continue;
@@ -177,14 +178,11 @@ export function cleanupLocalBackendAdvertisements(
       break;
     }
     const filePath = path.join(dir, entry);
-    let advertisement: LocalBackendAdvertisement;
-    try {
-      advertisement = decodeLocalBackendAdvertisement(
-        JSON.parse(fs.readFileSync(filePath, "utf8")),
-      );
-    } catch {
+    const readResult = readAdvertisementJson(filePath, decodeLocalBackendAdvertisement);
+    if (readResult._tag !== "ok") {
       continue;
     }
+    const advertisement = readResult.value;
     const expiresAtMs = Date.parse(advertisement.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs + graceMs > nowMs) {
       continue;
@@ -200,29 +198,12 @@ export function cleanupLocalBackendAdvertisements(
   return { deleted, errors };
 }
 
-function readAdvertisementFilenames(dir: string): string[] {
-  try {
-    return fs
-      .readdirSync(dir, { withFileTypes: true })
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => entry.name)
-      .toSorted();
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
-      return [];
-    }
-    throw error;
-  }
-}
-
 function sanitizeBackendId(backendId: string): string {
-  const trimmed = backendId.trim();
-  if (!trimmed || !BACKEND_ID_PATTERN.test(trimmed)) {
-    throw new Error(
-      "Local backend advertisement backendId must contain only letters, numbers, '.', '_', or '-'.",
-    );
-  }
-  return trimmed;
+  return sanitizeAdvertisementId({
+    id: backendId,
+    pattern: BACKEND_ID_PATTERN,
+    label: "Local backend advertisement backendId",
+  });
 }
 
 function isExpired(advertisement: LocalBackendAdvertisement, nowMs: number): boolean {
@@ -244,8 +225,4 @@ function compareLocalBackendAdvertisements(
     return activeLeft ? -1 : 1;
   }
   return left.backendId.localeCompare(right.backendId);
-}
-
-function isNodeError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
 }
