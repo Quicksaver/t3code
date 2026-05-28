@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { hostMcpServersToStdioServers } from "../hostMcpServers.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -538,12 +539,16 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
+          const hostMcpServers = yield* Effect.promise(() =>
+            resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+          );
+
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
-            mcpServers: buildCursorAcpMcpServers(serverConfig.hostMcpServers),
+            mcpServers: buildCursorAcpMcpServers(hostMcpServers),
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             ...acpNativeLoggers,

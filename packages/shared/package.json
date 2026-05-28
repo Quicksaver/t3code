@@ -114,6 +114,10 @@
     "./mcp": {
       "types": "./src/mcp.ts",
       "import": "./src/mcp.ts"
+    },
+    "./hostMcp": {
+      "types": "./src/hostMcp.ts",
+      "import": "./src/hostMcp.ts"
     }
   },
   "scripts": {

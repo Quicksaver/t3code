@@ -9,6 +9,14 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { DEFAULT_MCP_TOOL_TIMEOUT_SEC, normalizeMcpToolTimeoutSec } from "@t3tools/shared/mcp";
+import {
+  cleanupHostMcpAdvertisements,
+  createHostMcpAdvertisement,
+  HOST_MCP_ADVERTISEMENT_HEARTBEAT_MS,
+  removeHostMcpAdvertisement,
+  writeHostMcpAdvertisement,
+  type CleanupHostMcpAdvertisementsResult,
+} from "@t3tools/shared/hostMcp";
 import * as vscode from "vscode";
 
 import {
@@ -121,6 +129,9 @@ export interface BackendManagerDependencies {
   readonly randomBytes: typeof crypto.randomBytes;
   readonly spawn: BackendSpawn;
   readonly runCommand: BackendRunCommand;
+  readonly writeHostMcpAdvertisement: typeof writeHostMcpAdvertisement;
+  readonly removeHostMcpAdvertisement: typeof removeHostMcpAdvertisement;
+  readonly cleanupHostMcpAdvertisements: typeof cleanupHostMcpAdvertisements;
 }
 
 const defaultBackendManagerDependencies: BackendManagerDependencies = {
@@ -136,12 +147,20 @@ const defaultBackendManagerDependencies: BackendManagerDependencies = {
       stdio: [...options.stdio],
     }) as ChildProcessWithoutNullStreams,
   runCommand,
+  writeHostMcpAdvertisement,
+  removeHostMcpAdvertisement,
+  cleanupHostMcpAdvertisements,
 };
 
 export class BackendManager {
   #process: ChildProcessWithoutNullStreams | null = null;
   #connection: BackendConnection | null = null;
   #starting: Promise<BackendConnection> | null = null;
+  #hostMcpAdvertisement: {
+    readonly t3Home: string;
+    readonly hostId: string;
+    readonly interval: NodeJS.Timeout;
+  } | null = null;
   #outputChannel: vscode.OutputChannel;
   readonly #context: vscode.ExtensionContext;
   readonly #dependencies: BackendManagerDependencies;
@@ -186,6 +205,7 @@ export class BackendManager {
   }
 
   async stop(): Promise<void> {
+    this.#stopHostMcpAdvertisement();
     const child = this.#process;
     this.#starting = null;
     this.#process = null;
@@ -229,6 +249,12 @@ export class BackendManager {
     const command = resolveServerCommand(this.#context, cwd);
     const mcpServer = await this.#mcpBridge?.ensureStarted();
     const mcpToolTimeoutSec = resolveMcpToolTimeoutSec();
+    this.#refreshHostMcpAdvertisement({
+      t3Home,
+      mcpServer: mcpServer ? { ...mcpServer, toolTimeoutSec: mcpToolTimeoutSec } : null,
+      workspaceFolders,
+      activeWorkspaceFolderKey: activeWorkspaceFolder?.key,
+    });
     const bootstrap: BackendBootstrap = {
       mode: "desktop",
       hostIntegration: "vscode",
@@ -319,8 +345,19 @@ export class BackendManager {
           );
         }
       });
+      void Promise.resolve().then(() => {
+        try {
+          const result = this.#dependencies.cleanupHostMcpAdvertisements({ t3Home });
+          logHostMcpCleanupResult(this.#outputChannel, result);
+        } catch (error) {
+          this.#outputChannel.appendLine(
+            `[mcp] Failed to clean host MCP advertisements: ${errorMessage(error)}`,
+          );
+        }
+      });
       return this.#connection;
     } catch (error) {
+      this.#stopHostMcpAdvertisement();
       if (this.#process === child) {
         this.#process = null;
         this.#connection = null;
@@ -330,6 +367,96 @@ export class BackendManager {
       }
       throw error;
     }
+  }
+
+  #refreshHostMcpAdvertisement(input: {
+    readonly t3Home: string;
+    readonly mcpServer: BackendMcpServerBootstrap | null;
+    readonly workspaceFolders: readonly BootstrapWorkspaceFolder[];
+    readonly activeWorkspaceFolderKey?: string | undefined;
+  }): void {
+    this.#stopHostMcpAdvertisement();
+    if (!input.mcpServer || input.workspaceFolders.length === 0) {
+      return;
+    }
+
+    const mcpServer = input.mcpServer;
+    const hostId = `vscode-${process.pid}-${this.#dependencies.randomBytes(8).toString("hex")}`;
+    const writeAdvertisement = () => {
+      this.#dependencies.writeHostMcpAdvertisement({
+        t3Home: input.t3Home,
+        advertisement: createHostMcpAdvertisement({
+          hostId,
+          mcpServer,
+          workspaceFolders: input.workspaceFolders,
+          activeWorkspaceFolderKey: input.activeWorkspaceFolderKey,
+        }),
+      });
+    };
+
+    try {
+      writeAdvertisement();
+    } catch (error) {
+      this.#outputChannel.appendLine(
+        `[mcp] Failed to write host MCP advertisement: ${errorMessage(error)}`,
+      );
+      return;
+    }
+
+    // @effect-diagnostics-next-line globalTimers:off
+    const interval = setInterval(() => {
+      try {
+        writeAdvertisement();
+        const result = this.#dependencies.cleanupHostMcpAdvertisements({
+          t3Home: input.t3Home,
+        });
+        logHostMcpCleanupResult(this.#outputChannel, result);
+      } catch (error) {
+        this.#outputChannel.appendLine(
+          `[mcp] Failed to refresh host MCP advertisement: ${errorMessage(error)}`,
+        );
+      }
+    }, HOST_MCP_ADVERTISEMENT_HEARTBEAT_MS);
+    interval.unref?.();
+    this.#hostMcpAdvertisement = {
+      t3Home: input.t3Home,
+      hostId,
+      interval,
+    };
+  }
+
+  #stopHostMcpAdvertisement(): void {
+    const advertisement = this.#hostMcpAdvertisement;
+    this.#hostMcpAdvertisement = null;
+    if (!advertisement) {
+      return;
+    }
+    clearInterval(advertisement.interval);
+    try {
+      this.#dependencies.removeHostMcpAdvertisement({
+        t3Home: advertisement.t3Home,
+        hostId: advertisement.hostId,
+      });
+    } catch (error) {
+      this.#outputChannel.appendLine(
+        `[mcp] Failed to remove host MCP advertisement: ${errorMessage(error)}`,
+      );
+    }
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logHostMcpCleanupResult(
+  outputChannel: vscode.OutputChannel,
+  result: CleanupHostMcpAdvertisementsResult,
+): void {
+  if (result.deleted > 0 || result.errors > 0) {
+    outputChannel.appendLine(
+      `[mcp] Cleaned ${result.deleted} expired host MCP advertisement(s); errors ${result.errors}.`,
+    );
   }
 }
 

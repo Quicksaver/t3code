@@ -104,6 +104,9 @@ function makeDependencies(input: {
   readonly pruneVirtualWorkspaceCache?: BackendManagerDependencies["pruneVirtualWorkspaceCache"];
   readonly randomBytes?: typeof import("node:crypto").randomBytes;
   readonly runCommand?: BackendManagerDependencies["runCommand"];
+  readonly writeHostMcpAdvertisement?: BackendManagerDependencies["writeHostMcpAdvertisement"];
+  readonly removeHostMcpAdvertisement?: BackendManagerDependencies["removeHostMcpAdvertisement"];
+  readonly cleanupHostMcpAdvertisements?: BackendManagerDependencies["cleanupHostMcpAdvertisements"];
 }): BackendManagerDependencies {
   return {
     fetch:
@@ -133,6 +136,10 @@ function makeDependencies(input: {
       ) as unknown as typeof import("node:crypto").randomBytes),
     spawn: input.spawn,
     runCommand: input.runCommand ?? vi.fn().mockResolvedValue(undefined),
+    writeHostMcpAdvertisement: input.writeHostMcpAdvertisement ?? vi.fn(),
+    removeHostMcpAdvertisement: input.removeHostMcpAdvertisement ?? vi.fn(),
+    cleanupHostMcpAdvertisements:
+      input.cleanupHostMcpAdvertisements ?? vi.fn(() => ({ deleted: 0, errors: 0 })),
   };
 }
 
@@ -261,6 +268,7 @@ describe("BackendManager", () => {
 
   it("includes VS Code MCP server bootstrap data when the bridge is enabled", async () => {
     let bootstrapJson = "";
+    const writeHostMcpAdvertisement = vi.fn();
     const spawnMock = vi.fn<BackendSpawn>(() =>
       makeChildProcess((value) => {
         bootstrapJson = value;
@@ -269,7 +277,7 @@ describe("BackendManager", () => {
     const manager = new BackendManager(
       { extensionPath: extensionRoot } as never,
       makeOutputChannel() as never,
-      makeDependencies({ spawn: spawnMock }),
+      makeDependencies({ spawn: spawnMock, writeHostMcpAdvertisement }),
       {
         ensureStarted: async () => ({
           name: "t3code-vscode",
@@ -289,6 +297,29 @@ describe("BackendManager", () => {
         },
       ],
     });
+    expect(writeHostMcpAdvertisement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        t3Home: path.join(os.homedir(), ".t3"),
+        advertisement: expect.objectContaining({
+          hostKind: "vscode",
+          mcpServer: {
+            name: "t3code-vscode",
+            socketPath: "/tmp/t3code-vscode-mcp/mcp.sock",
+            toolTimeoutSec: 120,
+          },
+          workspaceFolders: [
+            {
+              key: "file::/workspace",
+              name: "workspace",
+              cwd: "/workspace",
+              uriScheme: "file",
+              uriAuthority: "",
+            },
+          ],
+          activeWorkspaceFolderKey: "file::/workspace",
+        }),
+      }),
+    );
   });
 
   it("includes the configured MCP tool timeout in bootstrap data", async () => {

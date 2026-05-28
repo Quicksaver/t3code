@@ -23,6 +23,20 @@ export const DesktopBootstrapMcpServer = Schema.Struct({
 });
 export type DesktopBootstrapMcpServer = typeof DesktopBootstrapMcpServer.Type;
 
+export const HOST_MCP_ADVERTISEMENT_VERSION = 1;
+
+export const HostMcpAdvertisement = Schema.Struct({
+  version: Schema.Literal(HOST_MCP_ADVERTISEMENT_VERSION),
+  hostId: TrimmedNonEmptyString,
+  hostKind: Schema.Literal("vscode"),
+  updatedAt: TrimmedNonEmptyString,
+  expiresAt: TrimmedNonEmptyString,
+  mcpServer: DesktopBootstrapMcpServer,
+  workspaceFolders: Schema.Array(DesktopBootstrapWorkspaceFolder),
+  activeWorkspaceFolderKey: Schema.optional(TrimmedNonEmptyString),
+});
+export type HostMcpAdvertisement = typeof HostMcpAdvertisement.Type;
+
 export const DesktopBackendBootstrap = Schema.Struct({
   mode: Schema.Literal("desktop"),
   hostIntegration: Schema.optional(Schema.Literal("vscode")),

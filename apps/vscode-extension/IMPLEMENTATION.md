@@ -41,6 +41,61 @@ The bridge setting defaults to `true`, the tool timeout setting defaults to `120
 
 The extension MCP server is generic, so that provider integrations translate the same bootstrap MCP server list into their provider-native MCP/tool configuration.
 
+### Shared Host MCP Discovery
+
+The VS Code extension still starts its own backend with direct MCP bootstrap metadata, but any local T3 backend, including the desktop app backend or a browser connected to that same local backend, can also discover and use an already-running VS Code MCP bridge for the matching project.
+
+The intended model is host-MCP discovery, not a VS Code-only provider special case:
+
+- A host process that owns editor-aware MCP tools advertises its MCP endpoint in shared local T3 state.
+- The VS Code extension is the first host implementation. It advertises the same temporary socket endpoint it already passes through desktop bootstrap today: `{ name, socketPath, toolTimeoutSec }`.
+- Advertisements include the VS Code workspace folder metadata already used by the extension backend bootstrap: stable workspace folder key, display name, resolved local `cwd`, URI scheme, URI authority, and the active workspace folder key.
+- Provider session startup in any local backend looks up host MCP advertisements for the thread's project workspace root and injects the first matching endpoint into the provider's MCP config.
+- Matching should follow the same project/workspace scoping rules the VS Code extension uses for sidebar visibility and startup selection. The extension currently resolves workspace folders into stable keys and executable `cwd`s, the server maps those folders to T3 projects in `bootstrapProjects[]`, and the VS Code webview filters by those project ids with a cwd fallback while the welcome payload is settling. Discovery should reuse that metadata shape and extract shared project/workspace matching helpers if they can live outside the React-only sidebar code.
+- If multiple VS Code windows advertise the same project, use the first live match. This is an acceptable edge case and does not need special UI or selection semantics initially.
+- If no matching live advertisement exists, no VS Code MCP server is injected. The provider should fail normally if the user asks for a VS Code MCP tool that is unavailable.
+- Discovery is local-machine only. A web client can use a VS Code MCP bridge only when the backend it is connected to can reach the advertised local socket. Remote browsers or remote saved environments cannot use a socket that exists only on the user's workstation.
+
+Advertisement storage:
+
+- Use one JSON advertisement file per host instance under a shared T3 runtime directory, for example `<T3 home>/host-mcp/advertisements/<host-id>.json`.
+- Do not use one aggregate JSON registry file. VS Code restarts can launch several extension hosts at roughly the same time; per-instance files avoid read/modify/write races, interleaved content, and lost updates without requiring every extension host to coordinate through one writer.
+- Writers update only their own file by writing a temporary file in the same directory and atomically replacing the advertisement path.
+- Each advertisement has a stable random `hostId` for the extension host lifetime, `updatedAt`, `expiresAt`, endpoint metadata, workspace folder metadata, and a protocol/version field so old or malformed records can be ignored.
+- Extension shutdown should best-effort delete its own advertisement, but consumers must rely on heartbeat expiry because extension hosts can crash or be killed during VS Code update/restart flows.
+- Consumers scan the directory, parse files independently, ignore malformed records, ignore expired records, and sort deterministically before choosing the first matching live endpoint.
+- Expired files should also be cleaned up opportunistically after a conservative grace period, for example `expiresAt + 15 minutes`. Cleanup is best-effort, must tolerate another process deleting the file first, must never remove another host's non-expired advertisement, and must not block provider startup.
+
+Lightweight liveness probe:
+
+- Before injecting a discovered endpoint, the consumer should verify that the socket path still exists and run a short bounded MCP probe against the endpoint.
+- The probe should be cheap: connect through the existing stdio-to-UDS relay path and perform MCP `initialize` with a small timeout. If initialization fails, the record is treated as stale.
+- `tools/list` is not required for the first implementation because the extension server enforces the real tool catalog and allowlist during normal MCP startup and tool invocation. It can be added later if providers need a stronger preflight.
+
+Security requirements:
+
+- The VS Code extension remains the trust boundary for VS Code API access. `t3code.mcp.allowedRunCommands`, `t3code.mcp.allowedActivateExtensions`, result serialization limits, registered-command validation, and internal-command rejection continue to be enforced inside the extension-owned MCP server.
+- Other T3 backends must not broaden the extension's allowlist or bypass the extension bridge by calling VS Code APIs directly.
+- Advertisements must be treated as hints, not authority. Consumers should ignore expired records, missing sockets, malformed data, and endpoints that do not match the target project.
+- Endpoint records should have a short heartbeat/expiry so stale VS Code windows do not leave durable tool access behind.
+- The implementation should avoid exposing the socket beyond local filesystem access and should preserve the current per-window unique MCP server name to avoid provider-side name collisions.
+
+Provider behavior:
+
+- MCP config is injected at provider session creation/resume time for the providers supported today. Existing active sessions should not be assumed to gain newly discovered MCP servers mid-turn unless that provider exposes a reliable dynamic MCP registration path.
+- The ideal behavior is that if VS Code is opened for a project while another surface is already managing that project, the next provider session or turn started from desktop/web can use the matching VS Code MCP tools without manually restarting T3 Code.
+- If a provider later supports dynamic MCP registration safely, this discovery layer can be reused to add MCP endpoints to an existing session, but that should be implemented provider by provider.
+
+Implemented:
+
+- `HostMcpAdvertisement` is a versioned shared contract in `packages/contracts`, with runtime advertisement helpers in `packages/shared/hostMcp`.
+- The VS Code extension writes and heartbeats its per-instance advertisement after `VsCodeMcpBridge.ensureStarted()` succeeds. The advertised workspace folders come from the same `resolveBootstrapWorkspaceFolders(...)` output used for backend bootstrap, with the same active workspace folder key selected by `resolveActiveWorkspaceFolder(...)`.
+- Provider startup receives the thread's project workspace root, scans live advertisements, matches the target against advertised workspace folders, probes the first live match, and merges it with bootstrap-provided `hostMcpServers`.
+- Producers and consumers run opportunistic advertisement garbage collection. Producers sweep after writing their own heartbeat, and consumers sweep during discovery scans. Both paths cap work per pass and treat deletion failures as non-fatal.
+- The existing per-window MCP server name is preserved. When merging bootstrap and discovered MCP servers, duplicate names are skipped so a VS Code-launched backend does not inject the same bridge twice.
+- Initial injection stays at session creation/resume and next-turn startup boundaries. Dynamic MCP registration remains deferred until a provider-specific reliability pass shows it is safe.
+- Tests cover concurrent per-window advertisement writes, stale and malformed advertisement filtering, expired-file cleanup, missing-socket and failed-probe handling, duplicate-name merging, and the no-match/provider-native failure path.
+
 Provider mappings:
 
 - Codex receives `mcp_servers` thread config. `t3code.mcp.toolTimeoutSec` is passed as Codex `tool_timeout_sec`.
@@ -332,6 +387,36 @@ Deferred work:
 
 - Validate provider-specific subagent MCP inheritance and add targeted fixes only if a harness requires explicit subagent MCP propagation.
 - Consider expanding the VS Code MCP tool catalog further after the initial command and language-service tools have enough real usage.
+
+### 2026-05-28: Plan Project-scoped Host MCP Discovery
+
+Decision: add project-scoped host MCP discovery so local desktop and web backends can use an already-running VS Code extension MCP bridge for a matching project. Keep VS Code as the security boundary, and treat discovery records as local hints that must be matched, probed, and passed through the existing provider-native MCP injection paths.
+
+Status: implemented.
+
+Reasoning:
+
+- Users should be able to manage the same project from VS Code, desktop, or web on the same machine while still using VS Code-aware MCP tools when a matching VS Code extension host is running.
+- The current bridge already exposes provider-neutral endpoint metadata and keeps VS Code API access inside the extension host, so the new work should extend endpoint discovery rather than create provider-specific VS Code integrations.
+- VS Code updates and restarts can launch several extension hosts concurrently. One JSON file per host instance with atomic replace and heartbeat expiry avoids shared-registry write races without requiring a heavier coordination service.
+- The existing multi-root bootstrap path already defines the project scoping model: VS Code folders become stable workspace keys and executable `cwd`s, the server maps those to T3 project ids, and the webview filters by those project ids with cwd fallback.
+- A short MCP initialization probe is enough to avoid injecting obviously stale sockets while keeping provider startup cheap.
+
+Implemented behavior:
+
+- The VS Code extension advertises its MCP socket, timeout, unique MCP server name, active workspace folder key, and bootstrapped workspace folder metadata in `<T3 home>/host-mcp/advertisements/<host-id>.json`.
+- Each extension host writes only its own advertisement file by atomic replace, heartbeats it while alive, and best-effort removes it on shutdown. Consumers rely on expiry for crash and update flows.
+- Local backends scan advertisements at provider session creation/resume or next-turn startup, ignore expired, malformed, missing-socket, or failed-probe records, and inject the first live endpoint matching the target thread project.
+- Producers and consumers opportunistically delete expired advertisement files after a conservative grace period. Cleanup is bounded, best-effort, and not required for security because expired records are ignored before cleanup.
+- Duplicate matching VS Code windows are intentionally resolved by first live match for the first implementation.
+- If no matching endpoint exists, no VS Code MCP server is injected and provider-native failure behavior is allowed when the user asks for unavailable VS Code tools.
+- Remote browsers do not gain access to workstation-local sockets unless the backend they are connected to is on that same machine and can reach the socket.
+
+Security boundaries:
+
+- `t3code.mcp.allowedRunCommands`, `t3code.mcp.allowedActivateExtensions`, registered-command validation, internal-command rejection, result bounding, and command argument hydration remain enforced by the extension-owned MCP server.
+- Desktop/web backends must not use advertisements to broaden VS Code command allowlists or call VS Code APIs directly.
+- Advertisement parsing must be defensive, versioned, bounded, and local-filesystem-only.
 
 ### 2026-05-15: Default VS Code View Into Secondary Side Bar
 

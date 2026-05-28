@@ -69,6 +69,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
 import { hostMcpServersToStdioServers } from "../hostMcpServers.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -2981,7 +2982,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
       };
-      const mcpServers = buildClaudeMcpServers(serverConfig.hostMcpServers);
+      const hostMcpServers = yield* Effect.promise(() =>
+        resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+      );
+      const mcpServers = buildClaudeMcpServers(hostMcpServers);
       const mcpServersDiagnostics = buildClaudeMcpServersDiagnostics(mcpServers);
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),

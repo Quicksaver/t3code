@@ -53,6 +53,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveHostMcpServersForProviderStart } from "../hostMcpDiscovery.ts";
 import {
   type CodexMcpServerConfig,
   CodexResumeCursorSchema,
@@ -1407,13 +1408,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const hostMcpServers = yield* Effect.promise(() =>
+          resolveHostMcpServersForProviderStart({ serverConfig, sessionInput: input }),
+        );
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
           mcpServers: codexMcpServersFromHostConfig({
-            hostMcpServers: serverConfig.hostMcpServers,
+            hostMcpServers,
             codexBinaryPath: codexConfig.binaryPath,
           }),
           ...(options?.environment ? { environment: options.environment } : {}),
