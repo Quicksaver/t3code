@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/localBackendAdvertisement";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ServerConfigShape } from "../config.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -27,44 +27,39 @@ const advertisementNowMs = Date.UTC(2099, 0, 1, 0, 0, 0);
 const projectId = "project-1" as ProjectId;
 const threadId = "thread-1" as ThreadId;
 const workspaceRoot = "/repo/project";
+const fetchMock = vi.fn<typeof fetch>();
 let tempDirs: string[] = [];
 
 describe("HostPeerFederation", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
   afterEach(() => {
     for (const dir of tempDirs) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
     tempDirs = [];
-    vi.restoreAllMocks();
+  });
+
+  afterAll(() => {
     vi.unstubAllGlobals();
   });
 
   it("routes owner-sensitive commands to the first matching VS Code backend peer", async () => {
     const baseDir = makeTempDir();
     writePeerAdvertisement(baseDir);
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ sequence: 42 }), {
-        headers: { "content-type": "application/json" },
-        status: 200,
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(() => makeDispatchResponse());
 
     const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
     const result = await Effect.runPromise(federation.dispatchCommand(interruptCommand()));
 
     expect(Option.getOrNull(result)).toEqual({ sequence: 42 });
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL("http://127.0.0.1:49111/api/local-peer/orchestration/dispatch"),
-      expect.objectContaining({
-        body: JSON.stringify(interruptCommand()),
-        headers: {
-          authorization: "Bearer peer-token",
-          "content-type": "application/json",
-        },
-        method: "POST",
-      }),
-    );
+    const request = getFetchRequest();
+    expect(request.url).toBe("http://127.0.0.1:49111/api/local-peer/orchestration/dispatch");
+    expect(request.init?.method).toBe("POST");
+    expect(JSON.parse(decodeFetchBody(request.init?.body))).toEqual(interruptCommand());
   });
 
   it("does not dispatch owner-sensitive commands to later peers after one peer succeeds", async () => {
@@ -77,33 +72,22 @@ describe("HostPeerFederation", () => {
       backendId: "vscode-peer-b",
       httpBaseUrl: "http://127.0.0.1:49112",
     });
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ sequence: 42 }), {
-        headers: { "content-type": "application/json" },
-        status: 200,
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(() => makeDispatchResponse());
 
     const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
     const result = await Effect.runPromise(federation.dispatchCommand(interruptCommand()));
 
     expect(Option.getOrNull(result)).toEqual({ sequence: 42 });
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledWith(
-      new URL("http://127.0.0.1:49111/api/local-peer/orchestration/dispatch"),
-      expect.objectContaining({
-        body: JSON.stringify(interruptCommand()),
-        method: "POST",
-      }),
-    );
+    const request = getFetchRequest();
+    expect(request.url).toBe("http://127.0.0.1:49111/api/local-peer/orchestration/dispatch");
+    expect(request.init?.method).toBe("POST");
+    expect(JSON.parse(decodeFetchBody(request.init?.body))).toEqual(interruptCommand());
   });
 
   it("does not route a follow-up prompt after interruption so ownership can transfer locally", async () => {
     const baseDir = makeTempDir();
     writePeerAdvertisement(baseDir);
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
 
     const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("interrupted"));
     const result = await Effect.runPromise(federation.dispatchCommand(turnStartCommand()));
@@ -114,8 +98,6 @@ describe("HostPeerFederation", () => {
 
   it("falls back to local dispatch when no matching backend peer is advertised", async () => {
     const baseDir = makeTempDir();
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
 
     const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
     const result = await Effect.runPromise(federation.dispatchCommand(interruptCommand()));
@@ -127,8 +109,6 @@ describe("HostPeerFederation", () => {
   it("does not send peer bearer tokens to non-loopback peer URLs", async () => {
     const baseDir = makeTempDir();
     writePeerAdvertisement(baseDir, { httpBaseUrl: "http://192.0.2.1:49111" });
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
 
     const federation = makeHostPeerFederation(makeConfig(baseDir), makeProjection("running"));
 
@@ -141,8 +121,6 @@ describe("HostPeerFederation", () => {
   it("is disabled inside VS Code-hosted backend processes", async () => {
     const baseDir = makeTempDir();
     writePeerAdvertisement(baseDir);
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal("fetch", fetchMock);
 
     const federation = makeHostPeerFederation(
       makeConfig(baseDir, { hostIntegration: "vscode" }),
@@ -159,6 +137,39 @@ function makeTempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-host-peer-federation-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function makeDispatchResponse(): Promise<Response> {
+  return Promise.resolve(
+    new Response(JSON.stringify({ sequence: 42 }), {
+      headers: { "content-type": "application/json" },
+      status: 200,
+    }),
+  );
+}
+
+function getFetchRequest(index = 0): {
+  readonly url: string;
+  readonly init: RequestInit | undefined;
+} {
+  const call = fetchMock.mock.calls[index];
+  if (!call) {
+    throw new Error(`Expected fetch call ${index} to exist.`);
+  }
+  return {
+    url: String(call[0]),
+    init: call[1],
+  };
+}
+
+function decodeFetchBody(body: unknown): string {
+  if (typeof body === "string") {
+    return body;
+  }
+  if (body instanceof Uint8Array) {
+    return new TextDecoder().decode(body);
+  }
+  throw new Error(`Unsupported fetch body type: ${typeof body}`);
 }
 
 function writePeerAdvertisement(

@@ -1194,6 +1194,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(sessionResponse.status, 200);
         assert.equal(sessionBody.authenticated, true);
         assert.equal(sessionBody.sessionMethod, "bearer-session-token");
+
+        const revokeResponse = yield* HttpClient.post("/api/auth/session/revoke", {
+          headers: {
+            authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+          },
+        });
+        const revokedSessionResponse = yield* HttpClient.get("/api/auth/session", {
+          headers: {
+            authorization: `Bearer ${bootstrapBody.sessionToken ?? ""}`,
+          },
+        });
+        const revokedSessionBody = (yield* revokedSessionResponse.json) as {
+          readonly authenticated: boolean;
+        };
+
+        assert.equal(revokeResponse.status, 200);
+        assert.equal(revokedSessionResponse.status, 200);
+        assert.equal(revokedSessionBody.authenticated, false);
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

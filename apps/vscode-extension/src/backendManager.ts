@@ -227,9 +227,24 @@ export class BackendManager {
     this.#stopLocalBackendAdvertisement();
     this.#stopHostMcpAdvertisement();
     const child = this.#process;
+    const connection = this.#connection;
     this.#starting = null;
     this.#process = null;
     this.#connection = null;
+
+    if (connection) {
+      try {
+        await revokeBearerSession(
+          connection.httpBaseUrl,
+          connection.bearerToken,
+          this.#dependencies.fetch,
+        );
+      } catch (error) {
+        this.#outputChannel.appendLine(
+          `[backend] Failed to revoke backend bearer session: ${errorMessage(error)}`,
+        );
+      }
+    }
 
     if (!child || child.killed) {
       return;
@@ -843,4 +858,23 @@ async function exchangeBootstrapBearerSession(
   }
 
   return body.sessionToken;
+}
+
+async function revokeBearerSession(
+  httpBaseUrl: string,
+  bearerToken: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<void> {
+  const revokeUrl = new URL("/api/auth/session/revoke", httpBaseUrl);
+  const response = await fetchFn(revokeUrl, {
+    headers: {
+      authorization: `Bearer ${bearerToken}`,
+    },
+    method: "POST",
+    signal: AbortSignal.timeout(1_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to revoke VS Code backend bearer session (${response.status}).`);
+  }
 }

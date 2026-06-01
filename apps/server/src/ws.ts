@@ -70,7 +70,10 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
-import { makeHostPeerFederation } from "./localPeer/HostPeerFederation.ts";
+import {
+  makeHostPeerFederation,
+  type HostPeerThreadRoutingContext,
+} from "./localPeer/HostPeerFederation.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -573,8 +576,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
+        options?: {
+          readonly peerThreadContext?: HostPeerThreadRoutingContext | null;
+          readonly skipPeerFederation?: boolean;
+        },
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect = hostPeerFederation.dispatchCommand(normalizedCommand).pipe(
+        const peerDispatch =
+          options?.skipPeerFederation === true
+            ? Effect.succeed(Option.none())
+            : options?.peerThreadContext
+              ? hostPeerFederation.dispatchCommandWithThreadContext(
+                  normalizedCommand,
+                  options.peerThreadContext,
+                )
+              : hostPeerFederation.dispatchCommand(normalizedCommand);
+        const dispatchEffect = peerDispatch.pipe(
           Effect.flatMap(
             Option.match({
               onNone: () =>
@@ -642,24 +658,66 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              const shouldStopSessionAfterArchive =
+              const archiveSessionStopRouting =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery
                       .getThreadShellById(normalizedCommand.threadId)
                       .pipe(
-                        Effect.map(
+                        Effect.flatMap(
                           Option.match({
-                            onNone: () => false,
-                            onSome: (thread) =>
-                              thread.session !== null && thread.session.status !== "stopped",
+                            onNone: () =>
+                              Effect.succeed({
+                                shouldStop: false,
+                                peerThreadContext: null,
+                              }),
+                            onSome: (thread) => {
+                              const sessionStatus = thread.session?.status ?? null;
+                              if (sessionStatus === null || sessionStatus === "stopped") {
+                                return Effect.succeed({
+                                  shouldStop: false,
+                                  peerThreadContext: null,
+                                });
+                              }
+                              return projectionSnapshotQuery
+                                .getProjectShellById(thread.projectId)
+                                .pipe(
+                                  Effect.map(
+                                    Option.match({
+                                      onNone: () => ({
+                                        shouldStop: true,
+                                        peerThreadContext: null,
+                                      }),
+                                      onSome: (project) => ({
+                                        shouldStop: true,
+                                        peerThreadContext: {
+                                          projectId: project.id,
+                                          workspaceRoot: project.workspaceRoot,
+                                          sessionStatus,
+                                        } satisfies HostPeerThreadRoutingContext,
+                                      }),
+                                    }),
+                                  ),
+                                  Effect.catch(() =>
+                                    Effect.succeed({
+                                      shouldStop: true,
+                                      peerThreadContext: null,
+                                    }),
+                                  ),
+                                );
+                            },
                           }),
                         ),
-                        Effect.catch(() => Effect.succeed(false)),
+                        Effect.catch(() =>
+                          Effect.succeed({
+                            shouldStop: false,
+                            peerThreadContext: null,
+                          }),
+                        ),
                       )
-                  : false;
+                  : { shouldStop: false, peerThreadContext: null };
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
-                if (shouldStopSessionAfterArchive) {
+                if (archiveSessionStopRouting.shouldStop) {
                   yield* Effect.gen(function* () {
                     const stopCommand = yield* normalizeDispatchCommand({
                       type: "thread.session.stop",
@@ -670,7 +728,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       createdAt: yield* nowIso,
                     });
 
-                    yield* dispatchNormalizedCommand(stopCommand);
+                    yield* dispatchNormalizedCommand(stopCommand, {
+                      peerThreadContext: archiveSessionStopRouting.peerThreadContext,
+                      skipPeerFederation: archiveSessionStopRouting.peerThreadContext === null,
+                    });
                   }).pipe(
                     Effect.catchCause((cause) =>
                       Effect.logWarning("failed to stop provider session during archive", {

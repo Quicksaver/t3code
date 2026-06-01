@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -38,6 +39,16 @@ const makeCookieRequest = (
       t3_session: sessionToken,
     },
     headers: {},
+  }) as unknown as Parameters<ServerAuthShape["authenticateHttpRequest"]>[0];
+
+const makeBearerRequest = (
+  sessionToken: string,
+): Parameters<ServerAuthShape["authenticateHttpRequest"]>[0] =>
+  ({
+    cookies: {},
+    headers: {
+      authorization: `Bearer ${sessionToken}`,
+    },
   }) as unknown as Parameters<ServerAuthShape["authenticateHttpRequest"]>[0];
 
 const requestMetadata = {
@@ -116,6 +127,37 @@ it.layer(NodeServices.layer)("ServerAuthLive", (it) => {
       expect(verified.role).toBe("owner");
       expect(verified.subject).toBe("owner-bootstrap");
     }).pipe(Effect.provide(makeServerAuthLayer())),
+  );
+
+  it.effect("labels VS Code desktop-bootstrap bearer sessions and shortens their TTL", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* ServerAuth;
+
+      const exchanged = yield* serverAuth.exchangeBootstrapCredentialForBearerSession(
+        "desktop-bootstrap-token",
+        requestMetadata,
+      );
+      const verified = yield* serverAuth.authenticateHttpRequest(
+        makeBearerRequest(exchanged.sessionToken),
+      );
+      const clients = yield* serverAuth.listClientSessions(verified.sessionId);
+      const current = clients.find((client) => client.current);
+      const now = yield* DateTime.now;
+      const remainingMs = (verified.expiresAt?.epochMilliseconds ?? 0) - now.epochMilliseconds;
+
+      expect(verified.role).toBe("owner");
+      expect(verified.subject).toBe("desktop-bootstrap");
+      expect(current?.client.label).toBe("VS Code");
+      expect(remainingMs).toBeGreaterThan(0);
+      expect(remainingMs).toBeLessThanOrEqual(12 * 60 * 60 * 1_000);
+    }).pipe(
+      Effect.provide(
+        makeServerAuthLayer({
+          desktopBootstrapToken: "desktop-bootstrap-token",
+          hostIntegration: "vscode",
+        }),
+      ),
+    ),
   );
 
   it.effect("lists pairing links and revokes other client sessions while keeping the owner", () =>

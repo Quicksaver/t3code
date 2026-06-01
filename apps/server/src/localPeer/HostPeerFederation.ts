@@ -45,9 +45,19 @@ export interface HostPeerFederationShape {
   readonly dispatchCommand: (
     command: OrchestrationCommand,
   ) => Effect.Effect<Option.Option<DispatchResult>, OrchestrationDispatchCommandError>;
+  readonly dispatchCommandWithThreadContext: (
+    command: OrchestrationCommand,
+    threadContext: HostPeerThreadRoutingContext,
+  ) => Effect.Effect<Option.Option<DispatchResult>, OrchestrationDispatchCommandError>;
   readonly streamEvents: (input: {
     readonly fromSequenceExclusive: number;
   }) => Stream.Stream<OrchestrationEvent>;
+}
+
+export interface HostPeerThreadRoutingContext {
+  readonly projectId: string;
+  readonly workspaceRoot: string;
+  readonly sessionStatus: OrchestrationSessionStatus | null;
 }
 
 const decodePeerEventsResponse = Schema.decodeUnknownSync(PeerEventsResponse);
@@ -95,6 +105,53 @@ export function makeHostPeerFederation(
       };
     }).pipe(Effect.catch(() => Effect.succeed(null)));
 
+  const dispatchCommandWithThreadContext: HostPeerFederationShape["dispatchCommandWithThreadContext"] =
+    (command, threadContext) =>
+      Effect.gen(function* () {
+        if (!isFederationEnabled) {
+          return Option.none();
+        }
+        const routing = resolveCommandRouting(command);
+        if (!routing) {
+          return Option.none();
+        }
+        if (!shouldRouteCommandToPeer(command, threadContext.sessionStatus)) {
+          return Option.none();
+        }
+
+        const peers = yield* discoverPeers(threadContext.workspaceRoot);
+        if (peers.length === 0) {
+          return Option.none();
+        }
+        for (const peer of peers) {
+          const result = yield* requestPeerJson({
+            peer,
+            pathname: "/api/local-peer/orchestration/dispatch",
+            method: "POST",
+            body: command,
+            decode: decodeDispatchResult,
+          }).pipe(
+            Effect.map(Option.some),
+            Effect.catch((cause) =>
+              Effect.logDebug("local peer command route failed", {
+                backendId: peer.backendId,
+                projectId: threadContext.projectId,
+                threadId: routing.threadId,
+                commandType: command.type,
+                cause,
+              }).pipe(Effect.as(Option.none<DispatchResult>())),
+            ),
+          );
+          if (Option.isSome(result)) {
+            return result;
+          }
+        }
+
+        return yield* new OrchestrationDispatchCommandError({
+          message: `No reachable local owner backend is available for thread ${routing.threadId}.`,
+        });
+      });
+
   const dispatchCommand: HostPeerFederationShape["dispatchCommand"] = (command) =>
     Effect.gen(function* () {
       if (!isFederationEnabled) {
@@ -105,41 +162,10 @@ export function makeHostPeerFederation(
         return Option.none();
       }
       const threadContext = yield* resolveThreadProjectWorkspaceRoot(routing.threadId);
-      if (!threadContext || !shouldRouteCommandToPeer(command, threadContext.sessionStatus)) {
+      if (!threadContext) {
         return Option.none();
       }
-
-      const peers = yield* discoverPeers(threadContext.workspaceRoot);
-      if (peers.length === 0) {
-        return Option.none();
-      }
-      for (const peer of peers) {
-        const result = yield* requestPeerJson({
-          peer,
-          pathname: "/api/local-peer/orchestration/dispatch",
-          method: "POST",
-          body: command,
-          decode: decodeDispatchResult,
-        }).pipe(
-          Effect.map(Option.some),
-          Effect.catch((cause) =>
-            Effect.logDebug("local peer command route failed", {
-              backendId: peer.backendId,
-              projectId: threadContext.projectId,
-              threadId: routing.threadId,
-              commandType: command.type,
-              cause,
-            }).pipe(Effect.as(Option.none<DispatchResult>())),
-          ),
-        );
-        if (Option.isSome(result)) {
-          return result;
-        }
-      }
-
-      return yield* new OrchestrationDispatchCommandError({
-        message: `No reachable local owner backend is available for thread ${routing.threadId}.`,
-      });
+      return yield* dispatchCommandWithThreadContext(command, threadContext);
     });
 
   const streamEvents: HostPeerFederationShape["streamEvents"] = (input) => {
@@ -197,6 +223,7 @@ export function makeHostPeerFederation(
 
   return {
     dispatchCommand,
+    dispatchCommandWithThreadContext,
     streamEvents,
   };
 }

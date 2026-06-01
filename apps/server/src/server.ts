@@ -71,6 +71,7 @@ import {
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authSessionRevokeRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
 } from "./auth/http.ts";
@@ -316,6 +317,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   authPairingLinksRevokeRouteLayer,
   authPairingLinksRouteLayer,
   authPairingCredentialRouteLayer,
+  authSessionRevokeRouteLayer,
   authSessionRouteLayer,
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,

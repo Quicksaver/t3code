@@ -46,6 +46,27 @@ export const authSessionRouteLayer = HttpRouter.add(
   }),
 );
 
+export const authSessionRevokeRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/auth/session/revoke",
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const serverAuth = yield* ServerAuth;
+    const sessions = yield* SessionCredentialService;
+    const session = yield* serverAuth.authenticateHttpRequest(request);
+    const revoked = yield* sessions.revoke(session.sessionId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new AuthError({
+            message: "Failed to revoke authenticated session.",
+            cause,
+          }),
+      ),
+    );
+    return HttpServerResponse.jsonUnsafe({ revoked }, { status: 200 });
+  }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
+);
+
 const PairingCredentialRequestHeaders = Schema.Struct({
   "content-length": Schema.optionalKey(Schema.String),
   "content-type": Schema.optionalKey(Schema.String),

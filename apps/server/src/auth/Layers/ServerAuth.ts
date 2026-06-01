@@ -27,6 +27,7 @@ import {
   SessionCredentialError,
   SessionCredentialService,
 } from "../Services/SessionCredentialService.ts";
+import { DESKTOP_BOOTSTRAP_BEARER_SESSION_TTL } from "../sessionPolicy.ts";
 import { AuthControlPlaneLive, AuthCoreLive } from "./AuthControlPlane.ts";
 
 type BootstrapExchangeResult = {
@@ -181,6 +182,9 @@ export const makeServerAuth = Effect.gen(function* () {
               method: "bearer-session-token",
               subject: grant.subject,
               role: grant.role,
+              ...(grant.method === "desktop-bootstrap"
+                ? { ttl: DESKTOP_BOOTSTRAP_BEARER_SESSION_TTL }
+                : {}),
               client: {
                 ...requestMetadata,
                 ...(grant.label ? { label: grant.label } : {}),

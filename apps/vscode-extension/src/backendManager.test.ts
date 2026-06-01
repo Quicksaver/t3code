@@ -122,7 +122,8 @@ function makeDependencies(input: {
             headers: { "content-type": "application/json" },
             status: 200,
           }),
-        ),
+        )
+        .mockResolvedValue(new Response(JSON.stringify({ revoked: true }), { status: 200 })),
     findAvailablePort: input.findAvailablePort ?? vi.fn().mockResolvedValue(49111),
     mkdirSync: input.mkdirSync ?? vi.fn(),
     pruneVirtualWorkspaceCache:
@@ -276,11 +277,22 @@ describe("BackendManager", () => {
   it("advertises the running local backend and removes the advertisement on stop", async () => {
     const writeLocalBackendAdvertisement = vi.fn();
     const removeLocalBackendAdvertisement = vi.fn();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ sessionToken: "vscode-bearer-token" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ revoked: true }), { status: 200 }));
     const spawnMock = vi.fn<BackendSpawn>(() => makeChildProcess(() => {}));
     const manager = new BackendManager(
       { extensionPath: extensionRoot } as never,
       makeOutputChannel() as never,
       makeDependencies({
+        fetch: fetchMock,
         removeLocalBackendAdvertisement,
         spawn: spawnMock,
         writeLocalBackendAdvertisement,
@@ -319,6 +331,16 @@ describe("BackendManager", () => {
       t3Home: path.join(os.homedir(), ".t3"),
       backendId,
     });
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("http://127.0.0.1:49111/api/auth/session/revoke"),
+      {
+        headers: {
+          authorization: "Bearer vscode-bearer-token",
+        },
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      },
+    );
   });
 
   it("includes VS Code MCP server bootstrap data when the bridge is enabled", async () => {

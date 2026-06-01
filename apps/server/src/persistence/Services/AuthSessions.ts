@@ -62,6 +62,13 @@ export const RevokeOtherAuthSessionsInput = Schema.Struct({
 });
 export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.Type;
 
+export const RevokeStaleDesktopBootstrapBearerSessionsInput = Schema.Struct({
+  issuedBefore: Schema.DateTimeUtcFromString,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeStaleDesktopBootstrapBearerSessionsInput =
+  typeof RevokeStaleDesktopBootstrapBearerSessionsInput.Type;
+
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
@@ -83,6 +90,9 @@ export interface AuthSessionRepositoryShape {
   ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
   readonly revokeAllExcept: (
     input: RevokeOtherAuthSessionsInput,
+  ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+  readonly revokeStaleDesktopBootstrapBearerSessions: (
+    input: RevokeStaleDesktopBootstrapBearerSessionsInput,
   ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
   readonly setLastConnectedAt: (
     input: SetAuthSessionLastConnectedAtInput,

@@ -30,6 +30,7 @@ import {
   signPayload,
   timingSafeEqualBase64Url,
 } from "../utils.ts";
+import { DESKTOP_BOOTSTRAP_BEARER_SESSION_TTL } from "../sessionPolicy.ts";
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
@@ -120,6 +121,33 @@ export const makeSessionCredentialService = Effect.gen(function* () {
       type: "clientRemoved",
       sessionId,
     }).pipe(Effect.asVoid);
+
+  yield* DateTime.now.pipe(
+    Effect.flatMap((revokedAt) =>
+      authSessions.revokeStaleDesktopBootstrapBearerSessions({
+        issuedBefore: DateTime.subtract(revokedAt, {
+          milliseconds: Duration.toMillis(DESKTOP_BOOTSTRAP_BEARER_SESSION_TTL),
+        }),
+        revokedAt,
+      }),
+    ),
+    Effect.flatMap((revokedSessionIds) =>
+      revokedSessionIds.length > 0
+        ? Effect.logInfo("Revoked stale desktop bootstrap bearer sessions.").pipe(
+            Effect.annotateLogs({
+              count: revokedSessionIds.length,
+            }),
+          )
+        : Effect.void,
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to revoke stale desktop bootstrap bearer sessions.").pipe(
+        Effect.annotateLogs({
+          cause,
+        }),
+      ),
+    ),
+  );
 
   const loadActiveSession = (sessionId: AuthSessionId) =>
     Effect.gen(function* () {

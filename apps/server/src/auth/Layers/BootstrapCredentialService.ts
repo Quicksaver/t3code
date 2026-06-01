@@ -91,6 +91,7 @@ export const makeBootstrapCredentialService = Effect.gen(function* () {
       method: "desktop-bootstrap",
       role: "owner",
       subject: "desktop-bootstrap",
+      ...(config.hostIntegration === "vscode" ? { label: "VS Code" } : {}),
       expiresAt: DateTime.add(now, {
         milliseconds: Duration.toMillis(DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES),
       }),
