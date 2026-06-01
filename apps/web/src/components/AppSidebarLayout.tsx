@@ -7,6 +7,7 @@ import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
+import { isElectron } from "~/env";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
@@ -14,13 +15,18 @@ const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const threadSidebarOpen = useSettings((settings) => settings.threadSidebarOpen ?? true);
+  const isDesktopHost = isElectron;
+  const savedThreadSidebarOpen = useSettings((settings) => settings.threadSidebarOpen ?? true);
+  const threadSidebarOpen = isDesktopHost ? true : savedThreadSidebarOpen;
   const { updateSettings } = useUpdateSettings();
   const handleThreadSidebarOpenChange = useCallback(
     (open: boolean) => {
+      if (isDesktopHost) {
+        return;
+      }
       updateSettings({ threadSidebarOpen: open });
     },
-    [updateSettings],
+    [isDesktopHost, updateSettings],
   );
 
   useEffect(() => {
@@ -65,6 +71,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <SidebarProvider
       className="h-dvh! min-h-0!"
+      forceDesktopLayout={isDesktopHost}
       open={threadSidebarOpen}
       onOpenChange={handleThreadSidebarOpenChange}
     >
