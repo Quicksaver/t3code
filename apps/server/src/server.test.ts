@@ -1079,15 +1079,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest();
 
       const cookie = yield* getAuthenticatedSessionCookieHeader();
-      const url = yield* getHttpServerUrl("/api/local-peer/health");
-      const response = yield* Effect.promise(() =>
-        fetch(url, {
-          headers: {
-            cookie,
-          },
-        }),
-      );
-      const body = (yield* Effect.promise(() => response.json())) as { readonly error: string };
+      const response = yield* HttpClient.get("/api/local-peer/health", {
+        headers: {
+          cookie,
+        },
+      });
+      const body = (yield* response.json) as { readonly error: string };
 
       assert.equal(response.status, 403);
       assert.equal(body.error, "Local peer API is available only from VS Code-hosted backends.");
@@ -1099,28 +1096,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({ config: { hostIntegration: "vscode" } });
 
       const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-      const pairingUrl = yield* getHttpServerUrl("/api/auth/pairing-token");
-      const pairingResponse = yield* Effect.promise(() =>
-        fetch(pairingUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-          },
-        }),
-      );
-      const pairingBody = (yield* Effect.promise(() => pairingResponse.json())) as {
+      const pairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: {
+          cookie: ownerCookie,
+        },
+      });
+      const pairingBody = (yield* pairingResponse.json) as {
         readonly credential: string;
       };
       const pairedCookie = yield* getAuthenticatedSessionCookieHeader(pairingBody.credential);
-      const localPeerUrl = yield* getHttpServerUrl("/api/local-peer/health");
-      const response = yield* Effect.promise(() =>
-        fetch(localPeerUrl, {
-          headers: {
-            cookie: pairedCookie,
-          },
-        }),
-      );
-      const body = (yield* Effect.promise(() => response.json())) as { readonly error: string };
+      const response = yield* HttpClient.get("/api/local-peer/health", {
+        headers: {
+          cookie: pairedCookie,
+        },
+      });
+      const body = (yield* response.json) as { readonly error: string };
 
       assert.equal(response.status, 403);
       assert.equal(body.error, "Only owner sessions can use the local peer API.");
@@ -1132,15 +1122,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({ config: { hostIntegration: "vscode" } });
 
       const cookie = yield* getAuthenticatedSessionCookieHeader();
-      const url = yield* getHttpServerUrl("/api/local-peer/health");
-      const response = yield* Effect.promise(() =>
-        fetch(url, {
-          headers: {
-            cookie,
-          },
-        }),
-      );
-      const body = (yield* Effect.promise(() => response.json())) as { readonly ok: boolean };
+      const response = yield* HttpClient.get("/api/local-peer/health", {
+        headers: {
+          cookie,
+        },
+      });
+      const body = (yield* response.json) as { readonly ok: boolean };
 
       assert.equal(response.status, 200);
       assert.equal(body.ok, true);

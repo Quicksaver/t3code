@@ -19,6 +19,12 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 import type { ServerConfigShape } from "../config.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -237,40 +243,76 @@ function requestPeerJson<A>(input: {
   readonly body?: unknown;
   readonly decode: (value: unknown) => A;
 }): Effect.Effect<A, LocalPeerRequestError> {
-  return Effect.tryPromise({
-    try: async () => {
-      if (!isLoopbackPeerBaseUrl(input.peer.httpBaseUrl)) {
-        throw new Error("Local peer base URL must be loopback HTTP without credentials.");
-      }
-      const url = new URL(input.pathname, input.peer.httpBaseUrl);
-      for (const [key, value] of Object.entries(input.searchParams ?? {})) {
-        url.searchParams.set(key, value);
-      }
-      const response = await fetch(url, {
-        method: input.method ?? "GET",
-        headers: {
-          authorization: `Bearer ${input.peer.bearerToken}`,
-          ...(input.body === undefined ? {} : { "content-type": "application/json" }),
-        },
-        ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-        signal: AbortSignal.timeout(PEER_REQUEST_TIMEOUT_MS),
+  return Effect.gen(function* () {
+    if (!isLoopbackPeerBaseUrl(input.peer.httpBaseUrl)) {
+      return yield* new LocalPeerRequestError({
+        message: "Local peer base URL must be loopback HTTP without credentials.",
       });
-      if (!response.ok) {
-        throw new Error(`Local peer request failed (${response.status}).`);
-      }
-      const payload = await response.json();
-      try {
-        return input.decode(payload);
-      } catch (cause) {
-        throw new Error("Unexpected local peer response shape.", { cause });
-      }
-    },
-    catch: (cause) =>
-      new LocalPeerRequestError({
-        message: cause instanceof Error ? cause.message : "Local peer request failed.",
-        cause,
-      }),
-  });
+    }
+    const url = new URL(input.pathname, input.peer.httpBaseUrl);
+    for (const [key, value] of Object.entries(input.searchParams ?? {})) {
+      url.searchParams.set(key, value);
+    }
+
+    const baseRequest =
+      input.method === "POST"
+        ? HttpClientRequest.post(url.toString())
+        : HttpClientRequest.get(url.toString());
+    const authedRequest = baseRequest.pipe(
+      HttpClientRequest.acceptJson,
+      HttpClientRequest.bearerToken(input.peer.bearerToken),
+    );
+    const request =
+      input.body === undefined
+        ? authedRequest
+        : yield* authedRequest.pipe(
+            HttpClientRequest.bodyJson(input.body),
+            Effect.mapError(
+              (cause) =>
+                new LocalPeerRequestError({
+                  message: "Failed to encode local peer request body.",
+                  cause,
+                }),
+            ),
+          );
+    const httpClient = yield* HttpClient.HttpClient;
+    const response = yield* httpClient.execute(request).pipe(
+      Effect.timeout(Duration.millis(PEER_REQUEST_TIMEOUT_MS)),
+      Effect.mapError(
+        (cause) =>
+          new LocalPeerRequestError({
+            message: "Local peer request failed.",
+            cause,
+          }),
+      ),
+    );
+    const payload = yield* HttpClientResponse.matchStatus({
+      "2xx": (success) =>
+        success.json.pipe(
+          Effect.mapError(
+            (cause) =>
+              new LocalPeerRequestError({
+                message: "Local peer returned invalid JSON.",
+                cause,
+              }),
+          ),
+        ),
+      orElse: (failed) =>
+        Effect.fail(
+          new LocalPeerRequestError({
+            message: `Local peer request failed (${failed.status}).`,
+          }),
+        ),
+    })(response);
+    return yield* Effect.try({
+      try: () => input.decode(payload),
+      catch: (cause) =>
+        new LocalPeerRequestError({
+          message: "Unexpected local peer response shape.",
+          cause,
+        }),
+    });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
 }
 
 function isLoopbackPeerBaseUrl(value: string): boolean {

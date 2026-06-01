@@ -250,7 +250,9 @@ it.effect("decodes normalized dispatchable thread.turn.start attachments", () =>
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.strictEqual(parsed.type, "thread.turn.start");
+    if (parsed.type !== "thread.turn.start") {
+      throw new Error(`Expected thread.turn.start, received ${parsed.type}.`);
+    }
     assert.strictEqual(parsed.message.attachments[0]?.id, "attachment-1");
   }),
 );
