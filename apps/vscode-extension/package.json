@@ -25,7 +25,7 @@
     "build": "node scripts/build.mjs",
     "build:extension": "tsdown",
     "package": "node scripts/package.mjs",
-    "test": "vitest run --passWithNoTests",
+    "test": "vp test run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
