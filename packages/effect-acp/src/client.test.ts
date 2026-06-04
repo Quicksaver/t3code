@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -12,7 +14,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, assert } from "@effect/vitest";
+import { it } from "@effect/vitest";
 
 import * as AcpClient from "./client.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -27,13 +29,14 @@ const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
+const mockPeerArgs = (path: string) => [path];
 
 it.layer(NodeServices.layer)("effect-acp client", (it) => {
   const makeHandle = (env?: Record<string, string>) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const command = ChildProcess.make("bun", ["run", yield* mockPeerPath], {
+      const command = ChildProcess.make("node", mockPeerArgs(yield* mockPeerPath), {
         cwd: path.join(import.meta.dirname, ".."),
         shell: process.platform === "win32",
         ...(env ? { env: { ...process.env, ...env } } : {}),
@@ -209,12 +212,12 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           );
         }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
 
-        if (result._tag !== "Failure") {
+        if (Exit.isSuccess(result)) {
           assert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        assert.include(rendered, "Invalid x/typed_request payload:");
-        assert.include(rendered, "Expected string, got 123");
+        assert.ok(rendered.includes("Invalid x/typed_request payload:"));
+        assert.ok(rendered.includes("Expected string, got 123"));
       }),
   );
 

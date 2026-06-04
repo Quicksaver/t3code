@@ -33,7 +33,7 @@ import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { ProviderSessionReaper } from "./provider/Services/ProviderSessionReaper.ts";
 import {
   formatHeadlessServeOutput,
@@ -294,7 +294,7 @@ function makeFallbackWorkspaceTarget(
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
-  const serverAuth = yield* ServerAuth;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const localUrl = `http://localhost:${serverConfig.port}`;
   const bindUrl =
     serverConfig.host && !isWildcardHost(serverConfig.host)

@@ -113,7 +113,7 @@ try {
   };
   delete packagedPackageJson.private;
   writeFileSync(packageJsonPath, `${JSON.stringify(packagedPackageJson, null, 2)}\n`);
-  run("bun", ["run", "build"]);
+  run("pnpm", ["run", "build"]);
   const vsceArgs = ["x", "vsce", "package", "--no-dependencies", "--out", vsixPath];
   if (packageOptions.target) {
     vsceArgs.push("--target", packageOptions.target);
@@ -121,7 +121,7 @@ try {
   if (packageOptions.preRelease) {
     vsceArgs.push("--pre-release");
   }
-  run("bun", vsceArgs);
+  run("pnpm", vsceArgs);
 } finally {
   restorePackageJson();
 }

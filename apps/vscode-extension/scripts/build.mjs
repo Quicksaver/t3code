@@ -27,11 +27,11 @@ rmSync(join(distDir, "webview"), { force: true, recursive: true });
 rmSync(join(distDir, "server"), { force: true, recursive: true });
 rmSync(join(distDir, "node_modules"), { force: true, recursive: true });
 
-run("bun", ["run", "build"], {
+run("pnpm", ["run", "build"], {
   cwd: join(repoRoot, "apps/web"),
   env: { VITE_BASE_URL: "./" },
 });
-run("bun", ["run", "build:extension"], {
+run("pnpm", ["run", "build:extension"], {
   cwd: extensionDir,
 });
 
@@ -49,4 +49,6 @@ writeFileSync(
     2,
   )}\n`,
 );
-run("bun", ["install", "--production"], { cwd: distDir });
+run("pnpm", ["install", "--prod", "--config.node-linker=hoisted", "--ignore-workspace"], {
+  cwd: distDir,
+});

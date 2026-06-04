@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mockCreateEnvironmentConnection = vi.fn();
 const mockCreateWsRpcClient = vi.fn();
@@ -222,7 +222,7 @@ describe("saved environment startup", () => {
 
     mockFetchRemoteSessionState.mockResolvedValue({
       authenticated: true,
-      role: "owner",
+      scopes: ["orchestration:read", "access:write"],
     });
     mockGetSavedEnvironmentRecord.mockImplementation((environmentId: EnvironmentId) =>
       environmentId === savedRecord.environmentId ? savedRecord : null,

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as path from "node:path";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -22,7 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -34,7 +35,7 @@ const VscodeWorkspaceBootstrapRequest = Schema.Struct({
 
 class VscodeWorkspaceBootstrapError extends Data.TaggedError("VscodeWorkspaceBootstrapError")<{
   readonly message: string;
-  readonly status?: 400 | 500;
+  readonly status?: 400 | 401 | 403 | 500;
   readonly cause?: unknown;
 }> {}
 
@@ -43,15 +44,8 @@ const DEFAULT_MODEL_SELECTION: ModelSelection = {
   model: DEFAULT_MODEL,
 };
 
-const respondToBootstrapError = (error: AuthError | VscodeWorkspaceBootstrapError) =>
+const respondToBootstrapError = (error: VscodeWorkspaceBootstrapError) =>
   Effect.gen(function* () {
-    if (error._tag === "AuthError") {
-      return HttpServerResponse.jsonUnsafe(
-        { error: error.message },
-        { status: error.status ?? 500 },
-      );
-    }
-
     if (error.status === 500) {
       yield* Effect.logError("VS Code workspace bootstrap route failed", {
         message: error.message,
@@ -63,11 +57,20 @@ const respondToBootstrapError = (error: AuthError | VscodeWorkspaceBootstrapErro
 
 const authenticateOwnerSession = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const serverAuth = yield* ServerAuth;
-  const session = yield* serverAuth.authenticateHttpRequest(request);
-  if (session.role !== "owner") {
-    return yield* new AuthError({
-      message: "Only owner sessions can bootstrap VS Code workspaces.",
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const session = yield* serverAuth.authenticateHttpRequest(request).pipe(
+    Effect.mapError(
+      (cause) =>
+        new VscodeWorkspaceBootstrapError({
+          message: "Authentication required to bootstrap VS Code workspaces.",
+          status: cause._tag === "ServerAuthInternalError" ? 500 : 401,
+          cause,
+        }),
+    ),
+  );
+  if (!session.scopes.includes(AuthOrchestrationOperateScope)) {
+    return yield* new VscodeWorkspaceBootstrapError({
+      message: "Insufficient scope to bootstrap VS Code workspaces.",
       status: 403,
     });
   }
@@ -93,7 +96,6 @@ export const vscodeWorkspaceBootstrapRouteLayer = HttpRouter.add(
     return HttpServerResponse.jsonUnsafe(result);
   }).pipe(
     Effect.catchTags({
-      AuthError: respondToBootstrapError,
       VscodeWorkspaceBootstrapError: respondToBootstrapError,
     }),
   ),

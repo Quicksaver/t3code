@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+
 import * as Path from "effect/Path";
 import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
@@ -9,7 +11,7 @@ import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { it, assert } from "@effect/vitest";
+import { it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
@@ -51,18 +53,34 @@ const decodeRequestPermissionResponse = Schema.decodeEffect(
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
+const mockPeerArgs = (path: string) => [path];
 
 const makeHandle = (env?: Record<string, string>) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const path = yield* Path.Path;
-    const command = ChildProcess.make("bun", ["run", yield* mockPeerPath], {
+    const command = ChildProcess.make("node", mockPeerArgs(yield* mockPeerPath), {
       cwd: path.join(import.meta.dirname, ".."),
       shell: process.platform === "win32",
       ...(env ? { env: { ...process.env, ...env } } : {}),
     });
     return yield* spawner.spawn(command);
   });
+
+const isAcpProtocolParseError = Schema.is(AcpError.AcpProtocolParseError);
+const isAcpProcessExitedError = Schema.is(AcpError.AcpProcessExitedError);
+
+function assertAcpProtocolParseError(
+  value: unknown,
+): asserts value is AcpError.AcpProtocolParseError {
+  assert.ok(isAcpProtocolParseError(value));
+}
+
+function assertAcpProcessExitedError(
+  value: unknown,
+): asserts value is AcpError.AcpProcessExitedError {
+  assert.ok(isAcpProcessExitedError(value));
+}
 
 it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
   it.effect(
@@ -181,13 +199,13 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       });
 
       const bigintError = yield* transport.notify("x/test", 1n).pipe(Effect.flip);
-      assert.instanceOf(bigintError, AcpError.AcpProtocolParseError);
+      assertAcpProtocolParseError(bigintError);
       assert.equal(bigintError.detail, "Failed to encode ACP message");
 
       const circular: Record<string, unknown> = {};
       circular.self = circular;
       const circularError = yield* transport.notify("x/test", circular).pipe(Effect.flip);
-      assert.instanceOf(circularError, AcpError.AcpProtocolParseError);
+      assertAcpProtocolParseError(circularError);
       assert.equal(circularError.detail, "Failed to encode ACP message");
     }),
   );
@@ -376,16 +394,16 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       const message = yield* Deferred.await(firstMessage);
       const exitError = yield* Deferred.await(termination);
-      assert.instanceOf(exitError, AcpError.AcpProcessExitedError);
-      assert.equal((exitError as AcpError.AcpProcessExitedError).code, 7);
+      assertAcpProcessExitedError(exitError);
+      assert.equal(exitError.code, 7);
       assert.equal((message as { readonly _tag?: string })._tag, "ClientProtocolError");
       const defect = (message as { readonly error: { readonly reason: unknown } }).error.reason as {
         readonly _tag: string;
         readonly cause: unknown;
       };
       assert.equal(defect._tag, "RpcClientDefect");
-      assert.instanceOf(defect.cause, AcpError.AcpProcessExitedError);
-      assert.equal((defect.cause as AcpError.AcpProcessExitedError).code, 7);
+      assertAcpProcessExitedError(defect.cause);
+      assert.equal(defect.cause.code, 7);
     }),
   );
 
@@ -416,7 +434,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         readonly cause: unknown;
       };
       assert.equal(defect._tag, "RpcClientDefect");
-      assert.instanceOf(defect.cause, AcpError.AcpProtocolParseError);
+      assertAcpProtocolParseError(defect.cause);
     }),
   );
 
@@ -441,7 +459,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           onSuccess: () => assert.fail("Expected request to fail after process exit"),
         }),
       );
-      assert.instanceOf(error, AcpError.AcpProcessExitedError);
+      assertAcpProcessExitedError(error);
       assert.equal(error.code, 0);
     }),
   );

@@ -2,9 +2,9 @@
 
 ## Task Completion Requirements
 
-- All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
-  - If changing native mobile code, `bun lint:mobile` must also pass.
-- NEVER run `bun test`. Always use `bun run test` (runs Vitest).
+- `vp check` and `vp run typecheck` must pass before considering tasks completed.
+  - If changing native mobile code, `vp run lint:mobile` must also pass.
+- Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
 
 ## Project Snapshot
 
@@ -67,3 +67,5 @@ agents.
   `.repos/` matches the installed dependency version.
 - When writing Effect code, read `.repos/effect-smol/LLMS.md` first and inspect `.repos/effect-smol/` for
   examples of idiomatic usage, tests, module structure, and API design.
+- When writing relay infrastructure code with Alchemy, inspect `.repos/alchemy-effect/` for examples of
+  idiomatic usage, tests, module structure, and API design.

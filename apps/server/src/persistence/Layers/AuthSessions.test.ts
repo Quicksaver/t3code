@@ -37,8 +37,8 @@ testLayer("AuthSessionRepository", (it) => {
       yield* repository.create({
         sessionId: staleId,
         subject: "desktop-bootstrap",
-        role: "owner",
-        method: "bearer-session-token",
+        scopes: ["access:read", "access:write"],
+        method: "bearer-access-token",
         client,
         issuedAt: oldIssuedAt,
         expiresAt,
@@ -46,8 +46,8 @@ testLayer("AuthSessionRepository", (it) => {
       yield* repository.create({
         sessionId: staleControlId,
         subject: "desktop-control",
-        role: "owner",
-        method: "bearer-session-token",
+        scopes: ["access:read", "access:write"],
+        method: "bearer-access-token",
         client,
         issuedAt: oldIssuedAt,
         expiresAt,
@@ -55,8 +55,8 @@ testLayer("AuthSessionRepository", (it) => {
       yield* repository.create({
         sessionId: freshId,
         subject: "desktop-bootstrap",
-        role: "owner",
-        method: "bearer-session-token",
+        scopes: ["access:read", "access:write"],
+        method: "bearer-access-token",
         client,
         issuedAt: freshIssuedAt,
         expiresAt,
@@ -64,7 +64,7 @@ testLayer("AuthSessionRepository", (it) => {
       yield* repository.create({
         sessionId: browserId,
         subject: "desktop-bootstrap",
-        role: "owner",
+        scopes: ["access:read", "access:write"],
         method: "browser-session-cookie",
         client,
         issuedAt: oldIssuedAt,
@@ -73,8 +73,8 @@ testLayer("AuthSessionRepository", (it) => {
       yield* repository.create({
         sessionId: otherBearerId,
         subject: "one-time-token",
-        role: "client",
-        method: "bearer-session-token",
+        scopes: ["access:read"],
+        method: "bearer-access-token",
         client,
         issuedAt: oldIssuedAt,
         expiresAt,

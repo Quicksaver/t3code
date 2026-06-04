@@ -1,13 +1,15 @@
+import { EnvironmentHttpApi } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { ServerConfig } from "./config.ts";
 import {
   attachmentsRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
-  serverEnvironmentRouteLayer,
+  serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
 } from "./http.ts";
@@ -63,21 +65,14 @@ import { ProjectSetupScriptRunnerLive } from "./project/Layers/ProjectSetupScrip
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts";
 import {
-  authBearerBootstrapRouteLayer,
-  authBootstrapRouteLayer,
-  authClientsRevokeOthersRouteLayer,
-  authClientsRevokeRouteLayer,
-  authClientsRouteLayer,
+  authBearerBootstrapCompatibilityRouteLayer,
   authDesktopBootstrapTicketRouteLayer,
-  authPairingLinksRevokeRouteLayer,
-  authPairingLinksRouteLayer,
-  authPairingCredentialRouteLayer,
-  authSessionRevokeRouteLayer,
-  authSessionRouteLayer,
-  authWebSocketTokenRouteLayer,
+  authHttpApiLayer,
+  authSessionRevokeCompatibilityRouteLayer,
+  environmentAuthenticatedAuthLayer,
 } from "./auth/http.ts";
-import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
-import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -87,18 +82,8 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
-import {
-  orchestrationDispatchRouteLayer,
-  orchestrationSnapshotRouteLayer,
-} from "./orchestration/http.ts";
+import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { vscodeWorkspaceBootstrapRouteLayer } from "./vscodeWorkspaceBootstrap/http.ts";
-import {
-  localPeerDescriptorRouteLayer,
-  localPeerDispatchRouteLayer,
-  localPeerEventsRouteLayer,
-  localPeerHealthRouteLayer,
-  localPeerShellSnapshotRouteLayer,
-} from "./localPeer/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 
@@ -248,9 +233,9 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspaceFileSystemLayerLive,
 );
 
-const AuthLayerLive = ServerAuthLive.pipe(
+const AuthLayerLive = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(PersistenceLayerLive),
-  Layer.provide(ServerSecretStoreLive),
+  Layer.provide(ServerSecretStore.layer),
 );
 
 const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
@@ -311,31 +296,20 @@ const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
-  authBearerBootstrapRouteLayer,
-  authBootstrapRouteLayer,
-  authClientsRevokeOthersRouteLayer,
-  authClientsRevokeRouteLayer,
-  authClientsRouteLayer,
-  authDesktopBootstrapTicketRouteLayer,
-  authPairingLinksRevokeRouteLayer,
-  authPairingLinksRouteLayer,
-  authPairingCredentialRouteLayer,
-  authSessionRevokeRouteLayer,
-  authSessionRouteLayer,
-  authWebSocketTokenRouteLayer,
+  HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
+    Layer.provide(authHttpApiLayer),
+    Layer.provide(orchestrationHttpApiLayer),
+    Layer.provide(serverEnvironmentHttpApiLayer),
+    Layer.provide(environmentAuthenticatedAuthLayer),
+  ),
   attachmentsRouteLayer,
-  orchestrationDispatchRouteLayer,
-  orchestrationSnapshotRouteLayer,
-  vscodeWorkspaceBootstrapRouteLayer,
-  localPeerDescriptorRouteLayer,
-  localPeerDispatchRouteLayer,
-  localPeerEventsRouteLayer,
-  localPeerHealthRouteLayer,
-  localPeerShellSnapshotRouteLayer,
+  authBearerBootstrapCompatibilityRouteLayer,
+  authDesktopBootstrapTicketRouteLayer,
+  authSessionRevokeCompatibilityRouteLayer,
   otlpTracesProxyRouteLayer,
   projectFaviconRouteLayer,
-  serverEnvironmentRouteLayer,
   staticAndDevRouteLayer,
+  vscodeWorkspaceBootstrapRouteLayer,
   websocketRpcRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));
 

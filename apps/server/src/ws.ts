@@ -11,7 +11,14 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthReviewWriteScope,
+  AuthTerminalOperateScope,
+  AuthAccessReadScope,
+  AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  type AuthEnvironmentScope,
   AuthSessionId,
   CommandId,
   EventId,
@@ -29,6 +36,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  EnvironmentAuthorizationError,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -38,7 +46,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { clamp } from "effect/Number";
-import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
@@ -49,9 +57,9 @@ import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
-  observeRpcEffect,
-  observeRpcStream,
-  observeRpcStreamEffect,
+  observeRpcEffect as instrumentRpcEffect,
+  observeRpcStream as instrumentRpcStream,
+  observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
@@ -69,11 +77,8 @@ import { ReviewService } from "./review/ReviewService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
-import { ServerAuth } from "./auth/Services/ServerAuth.ts";
-import {
-  makeHostPeerFederation,
-  type HostPeerThreadRoutingContext,
-} from "./localPeer/HostPeerFederation.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import type { AuthenticatedSession } from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
@@ -88,15 +93,9 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
-import {
-  BootstrapCredentialService,
-  type BootstrapCredentialChange,
-} from "./auth/Services/BootstrapCredentialService.ts";
-import {
-  SessionCredentialService,
-  type SessionCredentialChange,
-} from "./auth/Services/SessionCredentialService.ts";
-import { respondToAuthError } from "./auth/http.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as SessionStore from "./auth/SessionStore.ts";
+import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
@@ -126,8 +125,62 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
+  [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
+  [ORCHESTRATION_WS_METHODS.getTurnDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getFullThreadDiff, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
+  [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
+  [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetProcessResourceHistory, AuthOrchestrationReadScope],
+  [WS_METHODS.serverSignalProcess, AuthOrchestrationOperateScope],
+  [WS_METHODS.sourceControlLookupRepository, AuthOrchestrationReadScope],
+  [WS_METHODS.sourceControlCloneRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.sourceControlPublishRepository, AuthOrchestrationOperateScope],
+  [WS_METHODS.projectsSearchEntries, AuthOrchestrationReadScope],
+  [WS_METHODS.projectsWriteFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
+  [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
+  [WS_METHODS.gitRunStackedAction, AuthOrchestrationOperateScope],
+  [WS_METHODS.gitResolvePullRequest, AuthOrchestrationOperateScope],
+  [WS_METHODS.gitPreparePullRequestThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsListRefs, AuthOrchestrationReadScope],
+  [WS_METHODS.vcsCreateWorktree, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsRemoveWorktree, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsCreateRef, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsSwitchRef, AuthOrchestrationOperateScope],
+  [WS_METHODS.vcsInit, AuthOrchestrationOperateScope],
+  [WS_METHODS.reviewGetDiffPreview, AuthReviewWriteScope],
+  [WS_METHODS.terminalOpen, AuthTerminalOperateScope],
+  [WS_METHODS.terminalAttach, AuthTerminalOperateScope],
+  [WS_METHODS.terminalWrite, AuthTerminalOperateScope],
+  [WS_METHODS.terminalResize, AuthTerminalOperateScope],
+  [WS_METHODS.terminalClear, AuthTerminalOperateScope],
+  [WS_METHODS.terminalRestart, AuthTerminalOperateScope],
+  [WS_METHODS.terminalClose, AuthTerminalOperateScope],
+  [WS_METHODS.subscribeTerminalEvents, AuthTerminalOperateScope],
+  [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
+  [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeServerLifecycle, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeAuthAccess, AuthAccessReadScope],
+]);
+
 function toAuthAccessStreamEvent(
-  change: BootstrapCredentialChange | SessionCredentialChange,
+  change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
   revision: number,
   currentSessionId: AuthSessionId,
 ): AuthAccessStreamEvent {
@@ -166,9 +219,10 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
+const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
+      const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngineService;
@@ -191,8 +245,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
-      const serverAuth = yield* ServerAuth;
-      const hostPeerFederation = makeHostPeerFederation(config, projectionSnapshotQuery);
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map((settings) => settings.automaticGitFetchInterval),
@@ -203,10 +256,70 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         ),
       );
       const sourceControlRepositories = yield* SourceControlRepositoryService;
-      const bootstrapCredentials = yield* BootstrapCredentialService;
-      const sessions = yield* SessionCredentialService;
+      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+      const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const authorizationError = (requiredScope: AuthEnvironmentScope) =>
+        new EnvironmentAuthorizationError({
+          message: `The authenticated token is missing required scope: ${requiredScope}.`,
+          requiredScope,
+        });
+      const authorizeEffect = <A, E, R>(
+        requiredScope: AuthEnvironmentScope,
+        effect: Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
+        currentSession.scopes.includes(requiredScope)
+          ? effect
+          : Effect.fail(authorizationError(requiredScope));
+      const authorizeStream = <A, E, R>(
+        requiredScope: AuthEnvironmentScope,
+        stream: Stream.Stream<A, E, R>,
+      ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
+        currentSession.scopes.includes(requiredScope)
+          ? stream
+          : Stream.fail(authorizationError(requiredScope));
+      const requiredScopeForMethod = (method: string): AuthEnvironmentScope => {
+        const requiredScope = RPC_REQUIRED_SCOPE.get(method);
+        if (requiredScope === undefined) {
+          throw new Error(`RPC method ${method} has no declared authorization scope.`);
+        }
+        return requiredScope;
+      };
+      const observeRpcEffect = <A, E, R>(
+        method: string,
+        effect: Effect.Effect<A, E, R>,
+        traceAttributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        instrumentRpcEffect(
+          method,
+          authorizeEffect(requiredScopeForMethod(method), effect),
+          traceAttributes,
+        );
+      const observeRpcStream = <A, E, R>(
+        method: string,
+        stream: Stream.Stream<A, E, R>,
+        traceAttributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        instrumentRpcStream(
+          method,
+          authorizeStream(requiredScopeForMethod(method), stream),
+          traceAttributes,
+        );
+      const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
+        method: string,
+        effect: Effect.Effect<
+          Stream.Stream<A, StreamError, StreamContext>,
+          EffectError,
+          EffectContext
+        >,
+        traceAttributes?: Readonly<Record<string, unknown>>,
+      ) =>
+        instrumentRpcStreamEffect(
+          method,
+          authorizeEffect(requiredScopeForMethod(method), effect),
+          traceAttributes,
+        );
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
         isOrchestrationDispatchCommandError(cause)
           ? cause
@@ -225,9 +338,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const loadAuthAccessSnapshot = () =>
         Effect.all({
-          pairingLinks: serverAuth.listPairingLinks().pipe(Effect.orDie),
-          clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(Effect.orDie),
-        });
+          pairingLinks: serverAuth.listPairingLinks(),
+          clientSessions: serverAuth.listClientSessions(currentSessionId),
+        }).pipe(
+          Effect.mapError(
+            (error) =>
+              new AuthAccessStreamError({
+                message: error.message,
+              }),
+          ),
+        );
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
@@ -576,34 +696,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
-        options?: {
-          readonly peerThreadContext?: HostPeerThreadRoutingContext | null;
-        },
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const peerDispatch =
-          options?.peerThreadContext !== undefined && options.peerThreadContext !== null
-            ? hostPeerFederation.dispatchCommandWithThreadContext(
-                normalizedCommand,
-                options.peerThreadContext,
-              )
-            : hostPeerFederation.dispatchCommand(normalizedCommand);
-        const dispatchEffect = peerDispatch.pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-                  ? dispatchBootstrapTurnStart(normalizedCommand)
-                  : orchestrationEngine
-                      .dispatch(normalizedCommand)
-                      .pipe(
-                        Effect.mapError((cause) =>
-                          toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                        ),
-                      ),
-              onSome: (result) => Effect.succeed(result),
-            }),
-          ),
-        );
+        const dispatchEffect =
+          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+            ? dispatchBootstrapTurnStart(normalizedCommand)
+            : orchestrationEngine
+                .dispatch(normalizedCommand)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                  ),
+                );
 
         return startup
           .enqueueCommand(dispatchEffect)
@@ -655,82 +758,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
-              const archiveSessionStopRouting =
+              const shouldStopSessionAfterArchive =
                 normalizedCommand.type === "thread.archive"
                   ? yield* projectionSnapshotQuery
                       .getThreadShellById(normalizedCommand.threadId)
                       .pipe(
-                        Effect.flatMap(
+                        Effect.map(
                           Option.match({
-                            onNone: () =>
-                              Effect.succeed({
-                                shouldStop: false,
-                                peerThreadContext: null,
-                              }),
-                            onSome: (thread) => {
-                              const sessionStatus = thread.session?.status ?? null;
-                              if (sessionStatus === null || sessionStatus === "stopped") {
-                                return Effect.succeed({
-                                  shouldStop: false,
-                                  peerThreadContext: null,
-                                });
-                              }
-                              return projectionSnapshotQuery
-                                .getProjectShellById(thread.projectId)
-                                .pipe(
-                                  Effect.map(
-                                    Option.match({
-                                      onNone: () => ({
-                                        shouldStop: true,
-                                        peerThreadContext: null,
-                                      }),
-                                      onSome: (project) => ({
-                                        shouldStop: true,
-                                        peerThreadContext: {
-                                          projectId: project.id,
-                                          workspaceRoot: project.workspaceRoot,
-                                          sessionStatus,
-                                        } satisfies HostPeerThreadRoutingContext,
-                                      }),
-                                    }),
-                                  ),
-                                  Effect.catch(() =>
-                                    Effect.logWarning(
-                                      "failed to resolve project context for archive session stop routing",
-                                      {
-                                        threadId: normalizedCommand.threadId,
-                                        projectId: thread.projectId,
-                                      },
-                                    ).pipe(
-                                      Effect.as({
-                                        shouldStop: true,
-                                        peerThreadContext: null,
-                                      }),
-                                    ),
-                                  ),
-                                );
-                            },
+                            onNone: () => false,
+                            onSome: (thread) =>
+                              thread.session !== null && thread.session.status !== "stopped",
                           }),
                         ),
-                        Effect.catch((cause) =>
-                          Effect.logWarning(
-                            "failed to resolve thread context for archive session stop routing",
-                            {
-                              threadId: normalizedCommand.threadId,
-                              cause,
-                            },
-                          ).pipe(
-                            Effect.as({
-                              shouldStop: true,
-                              peerThreadContext: null,
-                            }),
-                          ),
-                        ),
+                        Effect.catch(() => Effect.succeed(false)),
                       )
-                  : { shouldStop: false, peerThreadContext: null };
+                  : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
               if (normalizedCommand.type === "thread.archive") {
-                if (archiveSessionStopRouting.shouldStop) {
+                if (shouldStopSessionAfterArchive) {
                   yield* Effect.gen(function* () {
                     const stopCommand = yield* normalizeDispatchCommand({
                       type: "thread.session.stop",
@@ -741,9 +786,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       createdAt: yield* nowIso,
                     });
 
-                    yield* dispatchNormalizedCommand(stopCommand, {
-                      peerThreadContext: archiveSessionStopRouting.peerThreadContext,
-                    });
+                    yield* dispatchNormalizedCommand(stopCommand);
                   }).pipe(
                     Effect.catchCause((cause) =>
                       Effect.logWarning("failed to stop provider session during archive", {
@@ -844,23 +887,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ),
               );
 
-              const localLiveStream = orchestrationEngine.streamDomainEvents.pipe(
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.mapEffect(toShellStreamEvent),
                 Stream.flatMap((event) =>
                   Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
                 ),
               );
-              const peerLiveStream = hostPeerFederation
-                .streamEvents({
-                  fromSequenceExclusive: snapshot.snapshotSequence,
-                })
-                .pipe(
-                  Stream.mapEffect(toShellStreamEvent),
-                  Stream.flatMap((event) =>
-                    Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                  ),
-                );
-              const liveStream = Stream.merge(localLiveStream, peerLiveStream);
 
               return Stream.concat(
                 Stream.make({
@@ -922,7 +954,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 });
               }
 
-              const localLiveStream = orchestrationEngine.streamDomainEvents.pipe(
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter(
                   (event) =>
                     event.aggregateKind === "thread" &&
@@ -934,21 +966,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   event,
                 })),
               );
-              const peerLiveStream = hostPeerFederation
-                .streamEvents({ fromSequenceExclusive: snapshotSequence })
-                .pipe(
-                  Stream.filter(
-                    (event) =>
-                      event.aggregateKind === "thread" &&
-                      event.aggregateId === input.threadId &&
-                      isThreadDetailEvent(event),
-                  ),
-                  Stream.map((event) => ({
-                    kind: "event" as const,
-                    event,
-                  })),
-                );
-              const liveStream = Stream.merge(localLiveStream, peerLiveStream);
 
               return Stream.concat(
                 Stream.make({
@@ -1366,7 +1383,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<
-                BootstrapCredentialChange | SessionCredentialChange
+                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
               > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
 
               const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
@@ -1402,14 +1419,19 @@ export const websocketRpcRouteLayer = Layer.unwrap(
       "/ws",
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const serverAuth = yield* ServerAuth;
-        const sessions = yield* SessionCredentialService;
-        const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
+          Effect.catchTags({
+            ServerAuthInvalidCredentialError: (error) => failEnvironmentAuthInvalid(error.reason),
+            ServerAuthInternalError: (error) => failEnvironmentInternal("internal_error", error),
+          }),
+        );
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session.sessionId).pipe(
+            makeWsRpcLayer(session).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
@@ -1441,7 +1463,12 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           () => rpcWebSocketHttpEffect,
           () => sessions.markDisconnected(session.sessionId),
         );
-      }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+      }).pipe(
+        Effect.catchTags({
+          EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+          EnvironmentInternalError: HttpServerRespondable.toResponse,
+        }),
+      ),
     ),
   ),
 );

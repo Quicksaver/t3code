@@ -1,4 +1,4 @@
-import { AuthSessionId } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, AuthSessionId, ServerAuthSessionMethod } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -27,8 +27,8 @@ import {
 const AuthSessionDbRow = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
-  role: Schema.Literals(["owner", "client"]),
-  method: Schema.Literals(["browser-session-cookie", "bearer-session-token"]),
+  scopes: Schema.fromJsonString(AuthEnvironmentScopes),
+  method: ServerAuthSessionMethod,
   clientLabel: Schema.NullOr(Schema.String),
   clientIpAddress: Schema.NullOr(Schema.String),
   clientUserAgent: Schema.NullOr(Schema.String),
@@ -45,7 +45,7 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
   return {
     sessionId: row.sessionId,
     subject: row.subject,
-    role: row.role,
+    scopes: row.scopes,
     method: row.method,
     client: {
       label: row.clientLabel,
@@ -79,7 +79,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
         INSERT INTO auth_sessions (
           session_id,
           subject,
-          role,
+          scopes,
           method,
           client_label,
           client_ip_address,
@@ -94,7 +94,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
         VALUES (
           ${input.sessionId},
           ${input.subject},
-          ${input.role},
+          ${JSON.stringify(input.scopes)},
           ${input.method},
           ${input.client.label},
           ${input.client.ipAddress},
@@ -117,7 +117,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
         SELECT
           session_id AS "sessionId",
           subject AS "subject",
-          role AS "role",
+          scopes AS "scopes",
           method AS "method",
           client_label AS "clientLabel",
           client_ip_address AS "clientIpAddress",
@@ -142,7 +142,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
         SELECT
           session_id AS "sessionId",
           subject AS "subject",
-          role AS "role",
+          scopes AS "scopes",
           method AS "method",
           client_label AS "clientLabel",
           client_ip_address AS "clientIpAddress",
@@ -206,7 +206,7 @@ const makeAuthSessionRepository = Effect.gen(function* () {
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE subject IN ('desktop-bootstrap', 'desktop-control')
-          AND method = 'bearer-session-token'
+          AND method = 'bearer-access-token'
           AND issued_at < ${issuedBefore}
           AND revoked_at IS NULL
         RETURNING session_id AS "sessionId"

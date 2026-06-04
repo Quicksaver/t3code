@@ -85,26 +85,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cache: true
+          run-install: true
 
       - name: Ensure Electron runtime is installed
-        run: |
-          if ! node -e "require('./apps/desktop/node_modules/electron')" >/dev/null 2>&1; then
-            rm -rf apps/desktop/node_modules/electron/dist apps/desktop/node_modules/electron/path.txt
-            bun apps/desktop/node_modules/electron/install.js
-          fi
-          node -e "require('./apps/desktop/node_modules/electron')"
+        run: vp run --filter @t3tools/desktop ensure:electron
 
       - id: release_meta
         name: Resolve release version
@@ -160,14 +149,14 @@ jobs:
             fi
           fi
 
-      - name: Lint
-        run: bun run lint
+      - name: Check
+        run: vp check
 
       - name: Typecheck
-        run: bun run typecheck
+        run: vp run typecheck
 
       - name: Test
-        run: bun run test
+        run: vp run test
 
       - id: previous_tag
         name: Resolve previous release tag
@@ -219,18 +208,12 @@ jobs:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+          cache: true
+          run-install: true
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
@@ -240,17 +223,32 @@ jobs:
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-             $installPath = & $vswhere -products * -latest -property installationPath
-             $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
-             $proc = Start-Process -FilePath $setupExe `
-              -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-              "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
-              -Wait -PassThru -NoNewWindow
-             if ($null -eq $proc -or $proc.ExitCode -ne 0) {
-               $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
-               Write-Error "Visual Studio Installer failed with exit code $code"
-               exit $code
-             }
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Install ImageMagick
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y imagemagick
+          fi
+
+          if command -v magick >/dev/null 2>&1; then
+              magick -version
+          else
+              convert -version
+          fi
 
       - name: Prepare Azure Trusted Signing
         if: matrix.platform == 'win'
@@ -375,7 +373,7 @@ jobs:
             echo "Signing disabled for ${{ matrix.platform }}."
           fi
 
-          bun run dist:desktop:artifact -- "${args[@]}"
+          vp run dist:desktop:artifact "${args[@]}"
 
       - name: Collect release assets
         shell: bash
@@ -437,107 +435,33 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
       - name: Build web package
-        run: bun --filter=@t3tools/web run build
+        run: vp run --filter @t3tools/web build
 
       - name: Build CLI package
-        run: bun --filter=t3 run build
+        run: vp run --filter t3 build
 
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
 
-  build_vscode_extension:
-    name: Build VS Code extension ${{ matrix.target }}
-    needs: preflight
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            runner: blacksmith-12vcpu-macos-26
-          - target: darwin-x64
-            runner: blacksmith-12vcpu-macos-26
-          - target: linux-x64
-            runner: blacksmith-32vcpu-ubuntu-2404
-          - target: win32-x64
-            runner: blacksmith-32vcpu-windows-2025
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
-
-      - name: Package VS Code extension
-        shell: bash
-        env:
-          VSCE_PUBLISHER: ${{ vars.VSCE_PUBLISHER }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${VSCE_PUBLISHER:-}" ]]; then
-            echo "Missing required VS Code Marketplace variable: VSCE_PUBLISHER." >&2
-            exit 1
-          fi
-
-          mkdir -p apps/vscode-extension/release-publish
-          args=(
-            --target "${{ matrix.target }}"
-            --out "release-publish/t3code-vscode-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.vsix"
-          )
-
-          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
-            args+=(--pre-release)
-          fi
-
-          bun run --filter t3code-vscode package -- "${args[@]}"
-
-      - name: Upload VS Code extension artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: vscode-extension-${{ matrix.target }}
-          path: apps/vscode-extension/release-publish/*.vsix
-          if-no-files-found: error
-
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli, build_vscode_extension]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' && needs.build_vscode_extension.result == 'success' }}
+    needs: [preflight, build, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -554,30 +478,19 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
-          merge-multiple: true
-          path: release-assets
-
-      - name: Download VS Code extension artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: vscode-extension-*
           merge-multiple: true
           path: release-assets
 
@@ -639,7 +552,6 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
-            release-assets/*.vsix
           fail_on_unmatched_files: true
           token: ${{ steps.app_token.outputs.token }}
 
@@ -660,72 +572,8 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
-            release-assets/*.vsix
           fail_on_unmatched_files: true
           token: ${{ steps.app_token.outputs.token }}
-
-  publish_vscode_extension:
-    name: Publish VS Code extension to Marketplace
-    needs: [preflight, build_vscode_extension, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_vscode_extension.result == 'success' && needs.release.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
-    env:
-      VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      VSCE_PUBLISHER: ${{ vars.VSCE_PUBLISHER }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: package.json
-
-      - name: Install VS Code publishing tooling
-        run: bun install --frozen-lockfile --filter=t3code-vscode
-
-      - name: Download VS Code extension artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: vscode-extension-*
-          merge-multiple: true
-          path: vscode-extension-vsix
-
-      - name: Publish VS Code extension
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${VSCE_PAT:-}" ]]; then
-            echo "Missing required VS Code Marketplace secret: VSCE_PAT." >&2
-            exit 1
-          fi
-          if [[ -z "${VSCE_PUBLISHER:-}" ]]; then
-            echo "Missing required VS Code Marketplace variable: VSCE_PUBLISHER." >&2
-            exit 1
-          fi
-
-          shopt -s nullglob
-          packages=("$PWD"/vscode-extension-vsix/*.vsix)
-          if (( ${#packages[@]} == 0 )); then
-            echo "No VS Code extension VSIX artifacts found." >&2
-            exit 1
-          fi
-
-          args=(publish --pat "$VSCE_PAT" --packagePath "${packages[@]}")
-          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
-            args+=(--pre-release)
-          fi
-
-          (cd apps/vscode-extension && bun x vsce "${args[@]}")
 
   deploy_web:
     name: Deploy hosted web app
@@ -747,24 +595,21 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install release tooling dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts --filter=@t3tools/web
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+              - --filter=@t3tools/web...
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
       - name: Refresh release lockfile
-        run: bun install --lockfile-only --ignore-scripts
+        run: vp install --lockfile-only --ignore-scripts
 
       - name: Deploy and alias channel
         shell: bash
@@ -796,7 +641,7 @@ jobs:
 
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
-            bunx vercel@53.1.1 deploy \
+            vp dlx vercel@53.1.1 deploy \
               --prod \
               --skip-domain \
               --yes \
@@ -808,13 +653,13 @@ jobs:
           )"
 
           echo "Aliasing $deployment_url to $channel_domain."
-          bunx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
+          vp dlx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
             --token "$VERCEL_TOKEN" \
             "${vercel_scope_args[@]}"
 
           if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
             echo "Aliasing $deployment_url to router domain $router_domain."
-            bunx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
+            vp dlx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
               --token "$VERCEL_TOKEN" \
               "${vercel_scope_args[@]}"
           fi
@@ -852,18 +697,14 @@ jobs:
           echo "name=${APP_SLUG}[bot]" >> "$GITHUB_OUTPUT"
           echo "email=${user_id}+${APP_SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - id: update_versions
         name: Update version strings
@@ -873,11 +714,11 @@ jobs:
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json
+        run: vp fmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
-        run: bun install --lockfile-only --ignore-scripts
+        run: vp install --lockfile-only --ignore-scripts
 
       - name: Commit and push version bump
         if: steps.update_versions.outputs.changed == 'true'
@@ -885,7 +726,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json bun.lock; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -893,7 +734,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json bun.lock
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
 
@@ -903,10 +744,9 @@ jobs:
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.release.result == 'success' &&
-      needs.publish_vscode_extension.result == 'success' &&
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, release, publish_vscode_extension, deploy_web, finalize]
+    needs: [preflight, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -915,18 +755,14 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --filter=@t3tools/scripts
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
 
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'

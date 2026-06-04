@@ -2,7 +2,6 @@ export {
   getPrimaryKnownEnvironment,
   readPrimaryEnvironmentDescriptor,
   resetPrimaryEnvironmentDescriptorForTests,
-  refreshPrimaryEnvironmentDescriptor,
   resolveInitialPrimaryEnvironmentDescriptor,
   usePrimaryEnvironmentId,
   writePrimaryEnvironmentDescriptor,
@@ -21,7 +20,6 @@ export {
   listServerClientSessions,
   listServerPairingLinks,
   peekPairingTokenFromUrl,
-  resolvePrimaryEnvironmentWebSocketConnectionUrl,
   resolveInitialServerAuthGateState,
   revokeOtherServerClientSessions,
   revokeServerClientSession,
@@ -33,5 +31,7 @@ export {
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
 } from "./auth";
+
+export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
 
 export { resolvePrimaryEnvironmentHttpUrl, isLoopbackHostname } from "./target";

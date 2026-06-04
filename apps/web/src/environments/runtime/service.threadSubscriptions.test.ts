@@ -8,7 +8,7 @@ import {
   TurnId,
   type OrchestrationShellSnapshot,
 } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mockSubscribeThread = vi.fn();
 const mockThreadUnsubscribe = vi.fn();
@@ -153,7 +153,6 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
     ...actual,
     createWsRpcClient: vi.fn(() => stubWsClient),
     fetchRemoteSessionState: mockFetchRemoteSessionState,
-    isRemoteEnvironmentAuthHttpError: vi.fn(() => false),
     resolveRemoteWebSocketConnectionUrl: mockResolveRemoteWebSocketConnectionUrl,
   };
 });
@@ -304,7 +303,7 @@ describe("retainThreadDetailSubscription", () => {
     mockReadSavedEnvironmentBearerToken.mockResolvedValue(null);
     mockFetchRemoteSessionState.mockResolvedValue({
       authenticated: true,
-      role: "client",
+      scopes: ["orchestration:read"],
     });
     mockConnectionReconnects.length = 0;
   });

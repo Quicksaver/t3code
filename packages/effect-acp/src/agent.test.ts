@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -8,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { assert, it } from "@effect/vitest";
+import { it } from "@effect/vitest";
 
 import * as AcpAgent from "./agent.ts";
 import * as AcpSchema from "./_generated/schema.gen.ts";
