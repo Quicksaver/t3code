@@ -42,6 +42,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           scopes,
           subject,
           label,
+          proof_key_thumbprint,
           created_at,
           expires_at,
           consumed_at,
@@ -54,6 +55,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           ${JSON.stringify(input.scopes)},
           ${input.subject},
           ${input.label},
+          ${input.proofKeyThumbprint},
           ${input.createdAt},
           ${input.expiresAt},
           NULL,
@@ -65,7 +67,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
   const consumeAvailablePairingLinkRow = SqlSchema.findOneOption({
     Request: ConsumeAuthPairingLinkInput,
     Result: AuthPairingLinkRecord,
-    execute: ({ credential, consumedAt, now }) =>
+    execute: ({ credential, proofKeyThumbprint, consumedAt, now }) =>
       sql`
         UPDATE auth_pairing_links
         SET consumed_at = ${consumedAt}
@@ -73,6 +75,10 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           AND revoked_at IS NULL
           AND consumed_at IS NULL
           AND expires_at > ${now}
+          AND (
+            proof_key_thumbprint IS NULL
+            OR proof_key_thumbprint = ${proofKeyThumbprint}
+          )
         RETURNING
           id AS "id",
           credential AS "credential",
@@ -80,6 +86,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           scopes AS "scopes",
           subject AS "subject",
           label AS "label",
+          proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
@@ -99,6 +106,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           scopes AS "scopes",
           subject AS "subject",
           label AS "label",
+          proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",
@@ -149,6 +157,7 @@ const makeAuthPairingLinkRepository = Effect.gen(function* () {
           scopes AS "scopes",
           subject AS "subject",
           label AS "label",
+          proof_key_thumbprint AS "proofKeyThumbprint",
           created_at AS "createdAt",
           expires_at AS "expiresAt",
           consumed_at AS "consumedAt",

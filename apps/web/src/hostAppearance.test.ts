@@ -1,5 +1,5 @@
 import type { T3HostAppearance, T3HostBridge } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { applyHostAppearanceToDocument, resolveHostResolvedTheme } from "./hostAppearance";
 

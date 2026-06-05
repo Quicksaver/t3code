@@ -3,7 +3,7 @@ import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,
   THREAD_CONVERSATION_MIN_WIDTH_PX,
 } from "@t3tools/shared/displayPreferences";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { resolveHostDisplayPreferences } from "./hostDisplayPreferences";
 

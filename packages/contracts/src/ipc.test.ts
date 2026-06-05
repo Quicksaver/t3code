@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,

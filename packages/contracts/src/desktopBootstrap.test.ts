@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import { DesktopBootstrapMcpServer } from "./desktopBootstrap.ts";
@@ -18,7 +18,7 @@ describe("DesktopBootstrapMcpServer", () => {
 
   it.each([0, -1, 4, 5.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects invalid MCP tool timeout %s",
-    (toolTimeoutSec) => {
+    (toolTimeoutSec: number) => {
       expect(() =>
         decodeDesktopBootstrapMcpServer({
           name: "t3code-vscode",

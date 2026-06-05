@@ -27,6 +27,7 @@ testLayer("AuthPairingLinkRepository", (it) => {
         scopes: ["access:read", "access:write"],
         subject: "desktop-bootstrap",
         label: "VS Code",
+        proofKeyThumbprint: null,
         createdAt: old,
         expiresAt: old,
       });
@@ -37,6 +38,7 @@ testLayer("AuthPairingLinkRepository", (it) => {
         scopes: ["access:read", "access:write"],
         subject: "desktop-bootstrap",
         label: "VS Code",
+        proofKeyThumbprint: null,
         createdAt: now,
         expiresAt: future,
       });
@@ -47,6 +49,7 @@ testLayer("AuthPairingLinkRepository", (it) => {
         scopes: ["access:read"],
         subject: "one-time-token",
         label: null,
+        proofKeyThumbprint: null,
         createdAt: old,
         expiresAt: old,
       });
