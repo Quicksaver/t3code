@@ -28,7 +28,7 @@ Build the installable Android preview APK locally, avoiding the EAS cloud worker
 
 ```sh
 cd apps/mobile
-JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools PATH="/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/share/android-commandlinetools/platform-tools:$PATH" EAS_SKIP_AUTO_FINGERPRINT=1 pnpm dlx eas-cli@latest build --profile preview -p android --local --output ./build/android/t3-code-preview.apk
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ANDROID_HOME=/opt/homebrew/share/android-commandlinetools ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools PATH="/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/share/android-commandlinetools/platform-tools:$PATH" EAS_SKIP_AUTO_FINGERPRINT=1 EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP=1 pnpm dlx eas-cli@latest build --profile preview -p android --local --output ./build/android/t3-code-preview.apk
 adb install -r ./build/android/t3-code-preview.apk
 ```
 
@@ -37,12 +37,6 @@ Upload the local APK to EAS when a shareable install link is needed:
 ```sh
 cd apps/mobile
 pnpm dlx eas-cli@latest upload -p android --build-path ./build/android/t3-code-preview.apk --non-interactive
-```
-
-Sometimes it may be needed to disable the expo doctor step, we're not interested in fixing unrelated Expo environment issues when the goal is just to get a local build installed:
-
-```sh
-EAS_BUILD_DISABLE_EXPO_DOCTOR_STEP=1
 ```
 
 This branch carries local conversation-rendering changes that are not assumed to exist upstream. Keep this file current when changing local behavior so future merges can preserve the intended UX, and so these patches can be removed when upstream covers the same behavior.
