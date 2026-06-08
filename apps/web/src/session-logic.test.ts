@@ -962,6 +962,30 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("does not overwrite subagent output with command result fallbacks", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-with-output",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          data: {
+            rawOutput: {
+              content: "Subagent result",
+            },
+            item: {
+              aggregatedOutput: "Command-like fallback",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.output).toBe("Subagent result");
+  });
+
   it("extracts changed file paths for file-change tool activities", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1040,10 +1064,57 @@ describe("deriveWorkLogEntries", () => {
     const [entry] = deriveWorkLogEntries(activities, undefined);
     expect(entry?.changedFiles).toEqual(["/Users/example/t3code/SMOKE_TEST_CHANGE.md"]);
     expect(entry?.patch).toContain(
-      "diff --git a/Users/example/t3code/SMOKE_TEST_CHANGE.md b/Users/example/t3code/SMOKE_TEST_CHANGE.md",
+      "diff --git a//Users/example/t3code/SMOKE_TEST_CHANGE.md b//Users/example/t3code/SMOKE_TEST_CHANGE.md",
     );
     expect(entry?.patch).toContain("--- /dev/null");
     expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("extracts top-level tool patches", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          patch,
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("keeps add hunk-only diffs rooted at dev null", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-add-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_ADD.md",
+                  kind: { type: "add" },
+                  diff: "@@ -0,0 +1 @@\n+Smoke test file-change row.",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.patch).toContain("--- /dev/null");
+    expect(entry?.patch).toContain("+++ b/SMOKE_TEST_ADD.md");
   });
 
   it("normalizes Codex file-change diffs for gitignored paths when the provider emits a patch", () => {

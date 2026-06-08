@@ -1297,19 +1297,23 @@ function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
 }
 
 function isCommandWorkEntry(workEntry: TimelineWorkEntry): boolean {
-  return (
-    workEntry.itemType === "command_execution" ||
-    workEntry.requestKind === "command" ||
-    Boolean(workEntry.command || workEntry.rawCommand)
-  );
+  if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
+    return true;
+  }
+  if (workEntry.itemType || workEntry.requestKind) {
+    return false;
+  }
+  return Boolean(workEntry.command || workEntry.rawCommand);
 }
 
 function isFileChangeWorkEntry(workEntry: TimelineWorkEntry): boolean {
-  return (
-    workEntry.itemType === "file_change" ||
-    workEntry.requestKind === "file-change" ||
-    Boolean(workEntry.patch)
-  );
+  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
+    return true;
+  }
+  if (workEntry.itemType || workEntry.requestKind) {
+    return false;
+  }
+  return Boolean(workEntry.patch);
 }
 
 function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
@@ -1376,6 +1380,7 @@ function CommandOutputBlock(props: { title: string; value: string; tone?: "defau
   const [showFull, setShowFull] = useState(false);
   const lines = useMemo(() => getRenderableCommandOutputLines(props.value), [props.value]);
   const isTruncated = lines.length > COMMAND_OUTPUT_TAIL_LINES;
+  const toggleLabel = `${showFull ? "Collapse" : "Expand"} ${props.title}`;
   const visibleValue =
     showFull || !isTruncated
       ? lines.join("\n")
@@ -1390,7 +1395,13 @@ function CommandOutputBlock(props: { title: string; value: string; tone?: "defau
     <div className="space-y-1">
       <button
         type="button"
-        className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors hover:text-foreground/75 focus-visible:outline-2 focus-visible:outline-ring"
+        className={cn(
+          "flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+          isTruncated ? "cursor-pointer hover:text-foreground/75" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
         onClick={() => {
           if (isTruncated) {
             setShowFull((value) => !value);
@@ -1406,8 +1417,11 @@ function CommandOutputBlock(props: { title: string; value: string; tone?: "defau
           "block max-h-80 w-full overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-left font-mono text-[11px] leading-5 whitespace-pre-wrap wrap-break-word text-foreground/78",
           props.tone === "error" &&
             "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
-          isTruncated && "cursor-pointer",
+          isTruncated ? "cursor-pointer" : "cursor-default",
         )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
         onClick={() => {
           if (isTruncated) {
             setShowFull((value) => !value);
@@ -1458,7 +1472,7 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
               />
             )}
             options={{
-              collapsed: false,
+              collapsed: true,
               diffStyle: "unified",
               theme: resolveDiffThemeName(ctx.resolvedTheme),
             }}

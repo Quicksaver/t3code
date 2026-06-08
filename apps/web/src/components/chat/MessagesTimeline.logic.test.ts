@@ -219,9 +219,11 @@ describe("hasRenderableCommandOutput", () => {
     expect(hasRenderableCommandOutput("\n\t\n")).toBe(false);
   });
 
-  it("removes empty and whitespace-only command output lines", () => {
+  it("preserves intentional blank command output lines", () => {
     expect(getRenderableCommandOutputLines("\nstdout\n   \n\t\nstderr\n")).toEqual([
       "stdout",
+      "   ",
+      "\t",
       "stderr",
     ]);
   });

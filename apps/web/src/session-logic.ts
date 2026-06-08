@@ -68,6 +68,11 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
 }
 
+const MAX_PATCH_SEARCH_DEPTH = 4;
+const MAX_PATCH_STRINGS = 4;
+const MAX_INLINE_PATCH_CHARS = 200_000;
+const PATCH_TOO_LARGE_MESSAGE = `[patch omitted: exceeds ${MAX_INLINE_PATCH_CHARS} characters]`;
+
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
@@ -578,7 +583,17 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (subagentOutput) {
     entry.output = subagentOutput;
   }
-  if (commandResult.output && !commandResult.stdout && !commandResult.stderr) {
+  const isCommandEntry =
+    itemType === "command_execution" ||
+    requestKind === "command" ||
+    Boolean(commandPreview.command || commandPreview.rawCommand);
+  if (
+    commandResult.output &&
+    !commandResult.stdout &&
+    !commandResult.stderr &&
+    !entry.output &&
+    isCommandEntry
+  ) {
     entry.output = commandResult.output;
   }
   if (commandResult.stdout) {
@@ -1017,8 +1032,9 @@ function extractCommandResult(payload: Record<string, unknown> | null): {
   const item = asRecord(data?.item);
   const itemResult = asRecord(item?.result);
   const rawOutput = asRecord(data?.rawOutput);
+  const rawOutputStdout = firstRawStringFromRecord(rawOutput, ["stdout"]);
   const stdout =
-    firstRawStringFromRecord(rawOutput, ["stdout"]) ??
+    rawOutputStdout ??
     firstRawStringFromRecord(itemResult, ["stdout"]) ??
     firstRawStringFromRecord(data, ["stdout"]) ??
     firstRawStringFromRecord(payload, ["stdout"]);
@@ -1057,11 +1073,12 @@ function extractCommandResult(payload: Record<string, unknown> | null): {
     firstNumberFromRecord(data, ["durationMs", "elapsedMs"]) ??
     firstNumberFromRecord(payload, ["durationMs", "elapsedMs"]) ??
     (elapsedSeconds !== null ? elapsedSeconds * 1000 : null);
-  const strippedStdout = stdout ? stripTrailingExitCode(stdout) : null;
+  const strippedStdout = rawOutputStdout ? stripTrailingExitCode(rawOutputStdout) : null;
   const normalizedOutput =
     strippedContent?.exitCode !== undefined ? strippedContent.output : (content ?? null);
 
   return {
+    // `output` is the legacy fallback stream; callers should prefer stdout/stderr when present.
     output: normalizedOutput,
     stdout: strippedStdout?.exitCode !== undefined ? strippedStdout.output : stdout,
     stderr,
@@ -1273,7 +1290,7 @@ function patchPathFromRecord(record: Record<string, unknown>): string | null {
 }
 
 function normalizeDiffHeaderPath(path: string): string {
-  return path.replace(/\\/gu, "/").replace(/^\/+/, "");
+  return path.replace(/\\/gu, "/");
 }
 
 function toUnifiedPatchFromRecordDiff(
@@ -1294,14 +1311,17 @@ function toUnifiedPatchFromRecordDiff(
   }
   const path = normalizeDiffHeaderPath(rawPath);
 
-  if (trimmed.startsWith("@@ ")) {
-    return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${trimmed}`;
-  }
-
   if (codexChangeKindType(record) === "add") {
+    if (trimmed.startsWith("@@ ")) {
+      return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n${trimmed}`;
+    }
     const lines = trimmed.length > 0 ? trimmed.split(/\r?\n/u) : [];
     const addedLines = lines.map((line) => `+${line}`).join("\n");
     return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${addedLines}`;
+  }
+
+  if (trimmed.startsWith("@@ ")) {
+    return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${trimmed}`;
   }
 
   return null;
@@ -1313,13 +1333,13 @@ function collectPatchStrings(
   seen: Set<string>,
   depth: number,
 ): void {
-  if (depth > 4 || patches.length >= 4) {
+  if (depth > MAX_PATCH_SEARCH_DEPTH || patches.length >= MAX_PATCH_STRINGS) {
     return;
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
       collectPatchStrings(entry, patches, seen, depth + 1);
-      if (patches.length >= 4) {
+      if (patches.length >= MAX_PATCH_STRINGS) {
         return;
       }
     }
@@ -1332,7 +1352,15 @@ function collectPatchStrings(
   for (const key of ["patch", "diff", "unifiedDiff"]) {
     const rawCandidate = typeof record[key] === "string" ? record[key] : null;
     const candidate = rawCandidate ? toUnifiedPatchFromRecordDiff(record, rawCandidate) : null;
-    if (!candidate || !looksLikeUnifiedDiff(candidate) || seen.has(candidate)) {
+    if (!candidate || seen.has(candidate)) {
+      continue;
+    }
+    if (candidate.length > MAX_INLINE_PATCH_CHARS) {
+      seen.add(candidate);
+      patches.push(PATCH_TOO_LARGE_MESSAGE);
+      continue;
+    }
+    if (!looksLikeUnifiedDiff(candidate)) {
       continue;
     }
     seen.add(candidate);
@@ -1343,7 +1371,7 @@ function collectPatchStrings(
       continue;
     }
     collectPatchStrings(record[nestedKey], patches, seen, depth + 1);
-    if (patches.length >= 4) {
+    if (patches.length >= MAX_PATCH_STRINGS) {
       return;
     }
   }
@@ -1351,8 +1379,9 @@ function collectPatchStrings(
 
 function extractToolPatch(payload: Record<string, unknown> | null): string | null {
   const patches: string[] = [];
-  collectPatchStrings(asRecord(payload?.data), patches, new Set<string>(), 0);
-  return patches.length > 0 ? patches.join("\n") : null;
+  // Keep traversal bounded; provider payloads can nest raw tool data deeply.
+  collectPatchStrings(payload, patches, new Set<string>(), 0);
+  return patches.length > 0 ? patches.join("\n\n") : null;
 }
 
 function extractSubagentOutput(payload: Record<string, unknown> | null): string | null {
