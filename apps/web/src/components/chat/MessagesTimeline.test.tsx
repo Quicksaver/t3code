@@ -292,6 +292,98 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Expand Ran command"');
   });
 
+  it("renders dynamic tool command metadata as expandable command rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Dynamic tool",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              command: "vp test",
+              stdout: "passed",
+              exitCode: 0,
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Dynamic tool");
+    expect(markup).toContain("vp test");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Dynamic tool"');
+  });
+
+  it("renders MCP tool command metadata as expandable command rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "MCP tool",
+              tone: "tool",
+              itemType: "mcp_tool_call",
+              command: "rg TODO",
+              stdout: "apps/web/src/session-logic.ts:1:TODO",
+              exitCode: 0,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("MCP tool");
+    expect(markup).toContain("rg TODO");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand MCP tool"');
+  });
+
+  it("does not render typed non-command stdout as command details", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Web search",
+              tone: "tool",
+              itemType: "web_search",
+              stdout: "search results",
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Web search");
+    expect(markup).not.toContain('aria-expanded="false"');
+    expect(markup).not.toContain('aria-label="Expand Web search"');
+  });
+
   it("renders file-change work entries as expandable rows", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -321,6 +413,38 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("apps/web/src/session-logic.ts");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('aria-label="Expand Changed files"');
+  });
+
+  it("renders dynamic tool patch metadata as expandable file-change rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Dynamic patch tool",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              patch:
+                "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts\n--- a/apps/web/src/session-logic.ts\n+++ b/apps/web/src/session-logic.ts\n@@ -1 +1 @@\n-old\n+new\n",
+              stdout: "applied patch",
+              exitCode: 0,
+              durationMs: 1234,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Dynamic patch tool");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Dynamic patch tool"');
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {

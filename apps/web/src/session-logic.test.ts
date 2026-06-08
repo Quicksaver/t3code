@@ -929,6 +929,34 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("strips fallback stdout exit-code metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-result-stdout-exit-code",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            item: {
+              command: "node script.js",
+              result: {
+                stdout: "done\n<exited with exit code 7>",
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry).toMatchObject({
+      command: "node script.js",
+      stdout: "done",
+      exitCode: 7,
+    });
+  });
+
   it("keeps Codex command execution item output, exit code, and duration", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1070,6 +1098,38 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.patch).toContain("+Smoke test file-change row.");
   });
 
+  it("keeps nested result file-change patches within the traversal budget", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-result-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              result: {
+                changes: [
+                  {
+                    path: "apps/web/src/session-logic.ts",
+                    diff: "@@ -1 +1 @@\n-old\n+new",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.changedFiles).toEqual(["apps/web/src/session-logic.ts"]);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts",
+    );
+    expect(entry?.patch).toContain("+new");
+  });
+
   it("extracts top-level tool patches", () => {
     const patch =
       "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
@@ -1087,6 +1147,28 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities, undefined);
     expect(entry?.patch).toBe(patch);
+  });
+
+  it("normalizes top-level hunk-only diffs with sibling path metadata", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-file-tool-hunk",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          path: "apps/web/src/session-logic.ts",
+          diff: "@@ -1 +1 @@\n-old\n+new",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.patch).toContain(
+      "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts",
+    );
+    expect(entry?.patch).toContain("--- a/apps/web/src/session-logic.ts");
+    expect(entry?.patch).toContain("+++ b/apps/web/src/session-logic.ts");
   });
 
   it("keeps add hunk-only diffs rooted at dev null", () => {

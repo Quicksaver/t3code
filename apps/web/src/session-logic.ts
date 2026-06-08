@@ -1039,7 +1039,7 @@ function extractCommandResult(payload: Record<string, unknown> | null): {
     firstNumberFromRecord(data, ["durationMs", "elapsedMs"]) ??
     firstNumberFromRecord(payload, ["durationMs", "elapsedMs"]) ??
     (elapsedSeconds !== null ? elapsedSeconds * 1000 : null);
-  const strippedStdout = rawOutputStdout ? stripTrailingExitCode(rawOutputStdout) : null;
+  const strippedStdout = stdout ? stripTrailingExitCode(stdout) : null;
   const normalizedOutput =
     strippedContent?.exitCode !== undefined ? strippedContent.output : (content ?? null);
 
