@@ -1461,10 +1461,11 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
     workEntry.patch,
     `tool-file-change:${workEntry.id}:${ctx.resolvedTheme}`,
   );
+  const hasInlineDiff = renderablePatch?.kind === "files";
 
   return (
     <div className="mt-2 space-y-2 pl-7">
-      {(workEntry.changedFiles?.length ?? 0) > 0 && (
+      {!hasInlineDiff && (workEntry.changedFiles?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1">
           {workEntry.changedFiles?.map((filePath) => {
             const displayPath = formatWorkspaceRelativePath(filePath, ctx.workspaceRoot);
@@ -1480,7 +1481,7 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
           })}
         </div>
       )}
-      {renderablePatch?.kind === "files" &&
+      {hasInlineDiff &&
         renderablePatch.files.map((fileDiff) => (
           <FileDiff
             key={resolveFileDiffPath(fileDiff)}
@@ -1493,7 +1494,7 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
               />
             )}
             options={{
-              collapsed: true,
+              collapsed: false,
               diffStyle: "unified",
               theme: resolveDiffThemeName(ctx.resolvedTheme),
             }}
