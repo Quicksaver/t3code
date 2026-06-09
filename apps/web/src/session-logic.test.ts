@@ -929,6 +929,52 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("uses completed cumulative command output instead of duplicating updated output", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\n",
+              stderr: "warning 1\n",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "line 1\nline 2\n",
+              stderr: "warning 1\nwarning 2\n",
+              exitCode: 0,
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.stdout).toBe("line 1\nline 2\n");
+    expect(entry?.stderr).toBe("warning 1\nwarning 2\n");
+  });
+
   it("strips fallback stdout exit-code metadata", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1142,6 +1188,31 @@ describe("deriveWorkLogEntries", () => {
           itemType: "file_change",
           patch,
         },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.patch).toBe(patch);
+  });
+
+  it("does not traverse nested patch keys when extracting top-level array patches", () => {
+    const patch =
+      "diff --git a/app.ts b/app.ts\n--- a/app.ts\n+++ b/app.ts\n@@ -1 +1 @@\n-old\n+new\n";
+    const nestedPatch =
+      "diff --git a/nested.ts b/nested.ts\n--- a/nested.ts\n+++ b/nested.ts\n@@ -1 +1 @@\n-old\n+nested\n";
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "top-level-array-file-tool-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: [
+          {
+            patch,
+            item: {
+              patch: nestedPatch,
+            },
+          },
+        ] as unknown as Record<string, unknown>,
       }),
     ];
 

@@ -752,7 +752,17 @@ function mergeTextOutput(
   if (!next) {
     return previous;
   }
-  return `${previous}${next}`;
+  if (previous === next) {
+    return next;
+  }
+  if (next.startsWith(previous)) {
+    return next;
+  }
+  if (previous.startsWith(next)) {
+    return previous;
+  }
+  const separator = previous.endsWith("\n") || next.startsWith("\n") ? "" : "\n";
+  return `${previous}${separator}${next}`;
 }
 
 function mergeChangedFiles(
@@ -1339,7 +1349,7 @@ function collectPatchStrings(
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      collectPatchStrings(entry, patches, seen, depth + 1);
+      collectPatchStrings(entry, patches, seen, depth + 1, includeNested);
       if (patches.length >= MAX_PATCH_STRINGS) {
         return;
       }
