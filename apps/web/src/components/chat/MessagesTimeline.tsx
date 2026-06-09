@@ -1306,10 +1306,7 @@ function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
     return false;
   }
   if (workEntry.itemType || workEntry.requestKind) {
-    return (
-      (workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call") &&
-      hasCommandWorkEntryCommand(workEntry)
-    );
+    return workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call";
   }
   return hasCommandWorkEntryCommand(workEntry);
 }
