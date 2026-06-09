@@ -1237,10 +1237,7 @@ function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
     return false;
   }
   if (workEntry.itemType || workEntry.requestKind) {
-    return (
-      (workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call") &&
-      hasCommandWorkEntryCommand(workEntry)
-    );
+    return workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call";
   }
   return hasCommandWorkEntryCommand(workEntry);
 }
@@ -1265,11 +1262,7 @@ function hasFileChangeWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
   if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
     return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
   }
-  if (
-    workEntry.itemType === "command_execution" ||
-    workEntry.itemType === "collab_agent_tool_call" ||
-    workEntry.requestKind === "command"
-  ) {
+  if (workEntry.itemType === "collab_agent_tool_call") {
     return false;
   }
   return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);

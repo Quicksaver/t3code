@@ -447,6 +447,66 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Expand Dynamic patch tool"');
   });
 
+  it("renders dynamic tool output metadata as expandable command rows without a command", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Dynamic output tool",
+              tone: "tool",
+              itemType: "dynamic_tool_call",
+              stdout: "updated files",
+              exitCode: 0,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Dynamic output tool");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Dynamic output tool"');
+  });
+
+  it("renders command execution patch metadata as expandable file-change rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              changedFiles: ["apps/web/src/session-logic.ts"],
+              patch:
+                "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts\n--- a/apps/web/src/session-logic.ts\n+++ b/apps/web/src/session-logic.ts\n@@ -1 +1 @@\n-old\n+new\n",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran command");
+    expect(markup).toContain("apps/web/src/session-logic.ts");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('aria-label="Expand Ran command"');
+  });
+
   it("renders mixed dynamic tool command and patch metadata", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
