@@ -704,7 +704,10 @@ function mergeDerivedWorkLogEntries(
       : (next.detail ?? previous.detail);
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
-  const output = mergeTextOutput(previous.output, next.output);
+  const output =
+    itemType === "collab_agent_tool_call"
+      ? mergeTextOutputChunk(previous.output, next.output)
+      : mergeTextOutput(previous.output, next.output);
   const stdout = mergeTextOutput(previous.stdout, next.stdout);
   const stderr = mergeTextOutput(previous.stderr, next.stderr);
   const exitCode = next.exitCode ?? previous.exitCode;
@@ -763,6 +766,19 @@ function mergeTextOutput(
   }
   const separator = previous.endsWith("\n") || next.startsWith("\n") ? "" : "\n";
   return `${previous}${separator}${next}`;
+}
+
+function mergeTextOutputChunk(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next) {
+    return previous;
+  }
+  return `${previous}${next}`;
 }
 
 function mergeChangedFiles(
