@@ -103,12 +103,19 @@ export const ChatHeader = memo(function ChatHeader({
       <div className="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden sm:flex-1 sm:flex-nowrap sm:gap-3">
         <MainSidebarTrigger />
         <div className="flex min-w-0 flex-1 basis-40 items-center gap-1.5">
-          <h2
-            className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-            title={activeThreadTitle}
-          >
-            {activeThreadTitle}
-          </h2>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <h2
+                  aria-label={activeThreadTitle}
+                  className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+                >
+                  {activeThreadTitle}
+                </h2>
+              }
+            />
+            <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+          </Tooltip>
           {onOpenParentThread && (
             <Tooltip>
               <TooltipTrigger
