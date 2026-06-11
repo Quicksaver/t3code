@@ -1409,9 +1409,7 @@ function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
   const showCommandDetails = hasCommandWorkEntryDetails(workEntry);
   const showFileChangeDetails = hasFileChangeWorkEntryDetails(workEntry);
   const supplementalDetails =
-    showCommandDetails || showFileChangeDetails
-      ? buildSupplementalToolDetailBody(workEntry)
-      : null;
+    showCommandDetails || showFileChangeDetails ? buildSupplementalToolDetailBody(workEntry) : null;
   if (showCommandDetails || showFileChangeDetails) {
     return (
       <>
