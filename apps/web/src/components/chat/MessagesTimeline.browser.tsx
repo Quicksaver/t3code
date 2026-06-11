@@ -278,6 +278,46 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("keeps file-change supplemental detail when it matches unrendered output", async () => {
+    const detail = "Patch applied";
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "work-file-change",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-file-change",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Changed files",
+              detail,
+              command: "apply_patch",
+              stdout: detail,
+              changedFiles: ["apps/web/src/components/chat/MessagesTimeline.tsx"],
+              patch:
+                "diff --git a/apps/web/src/components/chat/MessagesTimeline.tsx b/apps/web/src/components/chat/MessagesTimeline.tsx\n--- a/apps/web/src/components/chat/MessagesTimeline.tsx\n+++ b/apps/web/src/components/chat/MessagesTimeline.tsx\n@@ -1 +1 @@\n-old\n+new\n",
+              tone: "tool",
+              itemType: "file_change",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const row = page.getByRole("button", { name: "Expand Changed files" });
+      await row.click();
+
+      await expect.element(page.getByText(detail)).toBeVisible();
+      const occurrences = document.body.textContent?.match(new RegExp(detail, "gu")) ?? [];
+      expect(occurrences).toHaveLength(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("snaps to the bottom when timeline rows appear after an initially empty render", async () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")
