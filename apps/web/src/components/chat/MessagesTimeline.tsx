@@ -1341,6 +1341,8 @@ function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
   const hasCommandDetails = hasCommandWorkEntryDetails(workEntry);
   const hasFileChangeDetails = hasFileChangeWorkEntryDetails(workEntry);
   const genericDetails = buildToolCallExpandedBody(workEntry);
+  const supplementalDetails =
+    hasCommandDetails || hasFileChangeDetails ? buildSupplementalToolDetailBody(workEntry) : null;
   if (!hasCommandDetails && !hasFileChangeDetails && !genericDetails) {
     return null;
   }
@@ -1348,11 +1350,25 @@ function ToolEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
     <>
       {hasCommandDetails ? <CommandEntryDetails workEntry={workEntry} /> : null}
       {hasFileChangeDetails ? <FileChangeEntryDetails workEntry={workEntry} /> : null}
+      {supplementalDetails ? <GenericToolEntryDetails value={supplementalDetails} /> : null}
       {!hasCommandDetails && !hasFileChangeDetails && genericDetails ? (
         <GenericToolEntryDetails value={genericDetails} />
       ) : null}
     </>
   );
+}
+
+function buildSupplementalToolDetailBody(workEntry: TimelineWorkEntry): string | null {
+  const detail = workEntry.detail?.trim();
+  if (!detail) {
+    return null;
+  }
+  const command = workEntry.command?.trim();
+  const rawCommand = workEntry.rawCommand?.trim();
+  if (detail === command || detail === rawCommand) {
+    return null;
+  }
+  return detail;
 }
 
 function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
