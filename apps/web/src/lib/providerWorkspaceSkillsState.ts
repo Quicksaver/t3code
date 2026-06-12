@@ -27,6 +27,7 @@ interface InternalProviderWorkspaceSkillsState extends ProviderWorkspaceSkillsSt
 
 const cache = new Map<string, ReadonlyArray<ServerProviderSkill>>();
 const CACHE_MAX_ENTRIES = 100;
+const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 
 const listeners = new Set<() => void>();
 let unsubscribeEnvironmentConnections: (() => void) | null = null;
@@ -88,6 +89,16 @@ function targetKey(target: Omit<ProviderWorkspaceSkillsTarget, "fallbackSkills">
 
 export function invalidateProviderWorkspaceSkills(): void {
   cache.clear();
+}
+
+export function resolvePendingProviderWorkspaceSkills(input: {
+  readonly currentKey: string | null;
+  readonly nextKey: string;
+  readonly currentSkills: ReadonlyArray<ServerProviderSkill>;
+}): ReadonlyArray<ServerProviderSkill> {
+  return input.currentKey === input.nextKey && input.currentSkills.length > 0
+    ? input.currentSkills
+    : EMPTY_SKILLS;
 }
 
 export function useProviderWorkspaceSkills(
@@ -155,10 +166,11 @@ export function useProviderWorkspaceSkills(
     let cancelled = false;
     setState((current) => ({
       key,
-      skills:
-        current.key === key && current.skills.length > 0
-          ? current.skills
-          : fallbackSkillsRef.current,
+      skills: resolvePendingProviderWorkspaceSkills({
+        currentKey: current.key,
+        nextKey: key,
+        currentSkills: current.skills,
+      }),
       isPending: true,
       error: null,
     }));
@@ -176,7 +188,7 @@ export function useProviderWorkspaceSkills(
         if (cancelled) return;
         setState({
           key,
-          skills: fallbackSkillsRef.current,
+          skills: EMPTY_SKILLS,
           isPending: false,
           error: error instanceof Error ? error.message : "Failed to list provider skills.",
         });

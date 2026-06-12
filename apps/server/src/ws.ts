@@ -131,6 +131,13 @@ function describeUnknownCause(cause: unknown): string {
   return "Unknown error";
 }
 
+function describeCodexSkillListFailure(cause: unknown, input: { instanceId: string; cwd: string }) {
+  if (Cause.isTimeoutError(cause)) {
+    return `Timed out listing Codex skills after ${Duration.toSeconds(CODEX_SKILL_LIST_TIMEOUT)}s (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
+  }
+  return `Failed to list Codex skills (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
+}
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
@@ -156,6 +163,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
@@ -377,11 +385,15 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
           environment: mergeProviderInstanceEnvironment(instanceConfig.environment ?? []),
         }).pipe(
           Effect.scoped,
+          Effect.timeout(CODEX_SKILL_LIST_TIMEOUT),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.mapError(
             (cause) =>
               new ServerProviderSkillsListError({
-                message: `Failed to list Codex skills (provider: '${input.instanceId}', cwd: '${normalizedCwd}').`,
+                message: describeCodexSkillListFailure(cause, {
+                  instanceId: input.instanceId,
+                  cwd: normalizedCwd,
+                }),
                 cause,
               }),
           ),

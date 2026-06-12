@@ -896,7 +896,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
-  const isSkillTrigger = composerTriggerKind === "skill";
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -906,7 +905,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentId,
     instanceId: selectedProviderStatus?.instanceId ?? null,
     cwd: gitCwd,
-    enabled: isSkillTrigger,
+    enabled: true,
     fallbackSkills: selectedProviderFallbackSkills,
   });
 
@@ -1054,12 +1053,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (composerTriggerKind === "skill" && providerWorkspaceSkills.isPending);
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
-      return "No skills found. Try / to browse provider commands.";
+      return providerWorkspaceSkills.error ?? "No skills found. Try / to browse provider commands.";
     }
     return composerTriggerKind === "path"
       ? "No matching files or folders."
       : "No matching command.";
-  }, [composerTriggerKind]);
+  }, [composerTriggerKind, providerWorkspaceSkills.error]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
