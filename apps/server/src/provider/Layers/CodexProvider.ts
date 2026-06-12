@@ -267,6 +267,41 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   return models;
 });
 
+export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(function* (input: {
+  readonly binaryPath: string;
+  readonly homePath?: string;
+  readonly cwd: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
+  const clientContext = yield* Layer.build(
+    CodexClient.layerCommand({
+      command: input.binaryPath,
+      args: ["app-server"],
+      cwd: input.cwd,
+      env: {
+        ...(input.environment ?? process.env),
+        ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+      },
+    }),
+  );
+  const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+    Effect.provide(clientContext),
+  );
+
+  yield* client.request("initialize", buildCodexInitializeParams());
+  yield* client.notify("initialized", undefined);
+  const accountResponse = yield* client.request("account/read", {});
+  if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
+    return [];
+  }
+
+  const response = yield* client.request("skills/list", {
+    cwds: [input.cwd],
+  });
+  return parseCodexSkillsListResponse(response, input.cwd);
+});
+
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
@@ -438,6 +473,7 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
+  cwd: string,
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
@@ -478,7 +514,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    cwd: process.cwd(),
+    cwd,
     customModels: codexSettings.customModels,
     environment,
   }).pipe(

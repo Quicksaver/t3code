@@ -422,6 +422,7 @@ describe("checkCursorProviderStatus", () => {
           apiEndpoint: "",
           customModels: [],
         },
+        process.cwd(),
         {
           ...process.env,
           T3_ACP_REQUEST_LOG_PATH: requestLogPath,
@@ -444,12 +445,15 @@ describe("discoverCursorModelsViaAcp", () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 
     const models = await Effect.runPromise(
-      discoverCursorModelsViaAcp({
-        enabled: true,
-        binaryPath: wrapperPath,
-        apiEndpoint: "",
-        customModels: [],
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      discoverCursorModelsViaAcp(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        process.cwd(),
+      ).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
 
     expect(models.map((model) => model.slug)).toEqual([
@@ -466,12 +470,15 @@ describe("discoverCursorModelsViaAcp", () => {
     );
 
     await Effect.runPromise(
-      discoverCursorModelsViaAcp({
-        enabled: true,
-        binaryPath: wrapperPath,
-        apiEndpoint: "",
-        customModels: [],
-      }).pipe(Effect.provide(NodeServices.layer)),
+      discoverCursorModelsViaAcp(
+        {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        },
+        process.cwd(),
+      ).pipe(Effect.provide(NodeServices.layer)),
     );
 
     const exitLog = await runNode(waitForFileContent(exitLogPath));

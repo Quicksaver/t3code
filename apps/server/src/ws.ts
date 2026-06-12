@@ -5,6 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -40,6 +42,10 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   EnvironmentAuthorizationError,
+  CodexSettings,
+  ServerProviderSkillsListError,
+  type ServerProviderSkillsListResult,
+  type ProviderInstanceId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -51,6 +57,7 @@ import {
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
@@ -65,6 +72,13 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { deriveProviderInstanceConfigMap } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
+import { listCodexProviderSkills } from "./provider/Layers/CodexProvider.ts";
+import {
+  materializeCodexShadowHome,
+  resolveCodexHomeLayout,
+} from "./provider/Drivers/CodexHomeLayout.ts";
+import { mergeProviderInstanceEnvironment } from "./provider/ProviderInstanceEnvironment.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -102,6 +116,7 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
+const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -139,6 +154,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverListProviderSkills, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateProvider, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpsertKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
@@ -243,6 +259,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const providerRegistry = yield* ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
       const startup = yield* ServerRuntimeStartup;
@@ -267,6 +286,82 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
+      const listProviderSkills = Effect.fn("ws.listProviderSkills")(function* (input: {
+        readonly instanceId: ProviderInstanceId;
+        readonly cwd: string;
+      }): Effect.fn.Return<ServerProviderSkillsListResult, ServerProviderSkillsListError> {
+        const providers = yield* providerRegistry.getProviders;
+        const snapshot = providers.find((provider) => provider.instanceId === input.instanceId);
+        if (!snapshot) {
+          return yield* new ServerProviderSkillsListError({
+            message: `Provider instance '${input.instanceId}' was not found.`,
+          });
+        }
+        if (snapshot.driver !== "codex") {
+          return { skills: snapshot.skills };
+        }
+
+        const settings = yield* serverSettings.getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerProviderSkillsListError({
+                message: "Failed to read provider settings.",
+                cause,
+              }),
+          ),
+        );
+        const instanceConfig = deriveProviderInstanceConfigMap(settings)[input.instanceId];
+        if (!instanceConfig || instanceConfig.driver !== "codex") {
+          return yield* new ServerProviderSkillsListError({
+            message: `Codex provider instance '${input.instanceId}' is not configured.`,
+          });
+        }
+
+        const decodedConfig = yield* decodeCodexSettings(instanceConfig.config ?? {}).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerProviderSkillsListError({
+                message: `Failed to decode Codex provider settings for '${input.instanceId}'.`,
+                cause,
+              }),
+          ),
+        );
+        const effectiveConfig = {
+          ...decodedConfig,
+          enabled: instanceConfig.enabled ?? decodedConfig.enabled,
+        };
+        const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+        yield* materializeCodexShadowHome(homeLayout).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError(
+            (cause) =>
+              new ServerProviderSkillsListError({
+                message: `Failed to prepare Codex home for '${input.instanceId}': ${cause.message}`,
+                cause,
+              }),
+          ),
+        );
+        const skills = yield* listCodexProviderSkills({
+          binaryPath: effectiveConfig.binaryPath,
+          ...(homeLayout.effectiveHomePath ? { homePath: homeLayout.effectiveHomePath } : {}),
+          cwd: input.cwd,
+          environment: mergeProviderInstanceEnvironment(instanceConfig.environment ?? []),
+        }).pipe(
+          Effect.scoped,
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.mapError(
+            (cause) =>
+              new ServerProviderSkillsListError({
+                message: `Failed to list Codex skills for '${input.cwd}'.`,
+                cause,
+              }),
+          ),
+        );
+        return { skills };
+      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1000,6 +1095,10 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverListProviderSkills]: (input) =>
+          observeRpcEffect(WS_METHODS.serverListProviderSkills, listProviderSkills(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateProvider,

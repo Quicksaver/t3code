@@ -44,6 +44,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
           enabled: true,
           binaryPath: "/definitely/not/installed/grok-binary",
         }),
+        process.cwd(),
       );
       expect(snapshot.enabled).toBe(true);
       expect(snapshot.installed).toBe(false);
@@ -68,6 +69,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.cwd(),
           );
         }),
       );
@@ -95,6 +97,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
 
           return yield* checkGrokProviderStatus(
             decodeGrokSettings({ enabled: true, binaryPath: grokPath }),
+            process.cwd(),
           );
         }),
       );
