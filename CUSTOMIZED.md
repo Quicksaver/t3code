@@ -8,6 +8,12 @@ For web/server debug work in this branch, start the backend with browser auto-op
 T3CODE_NO_BROWSER=1 pnpm exec node scripts/dev-runner.ts --dev-url http://127.0.0.1:5173 dev:server
 ```
 
+Then in a separate terminal:
+
+```sh
+VITE_DEV_SERVER_URL=http://127.0.0.1:5173 VITE_WS_URL=ws://127.0.0.1:13773 pnpm exec vp run --filter @t3tools/web dev -- --host 127.0.0.1 --port 5173
+```
+
 If a pairing URL is required, open the printed `/pair#token=...` URL in the already-open browser window being used for the debug session.
 
 ## Installable Build Commands
