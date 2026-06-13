@@ -1457,6 +1457,21 @@ const make = Effect.gen(function* () {
                   parentRelation,
                   createdAt: now,
                 });
+                if (parentRelation.titleSeed?.trim()) {
+                  yield* orchestrationEngine.dispatch({
+                    type: "thread.message.user.append",
+                    commandId: CommandId.make(
+                      `provider:subagent-thread-prompt:${child.childThreadId}:${child.parentItemId}`,
+                    ),
+                    threadId: child.childThreadId,
+                    messageId: MessageId.make(
+                      `subagent-prompt:${child.childThreadId}:${child.parentItemId}`,
+                    ),
+                    text: parentRelation.titleSeed.trim(),
+                    ...(parentRelation.parentTurnId ? { turnId: parentRelation.parentTurnId } : {}),
+                    createdAt: now,
+                  });
+                }
                 yield* maybeGenerateSubagentThreadTitle({
                   childThreadId: child.childThreadId,
                   titleSeed: parentRelation.titleSeed,

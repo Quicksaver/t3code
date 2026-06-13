@@ -2599,6 +2599,66 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("projects the subagent launch prompt as the child thread's initial user message", async () => {
+    const rawPrompt =
+      "CHILD_INITIAL_PROMPT_MARKER_TEST: Do not edit files. Return CHILD_OUTPUT_MARKER_TEST.";
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Marker test" }),
+      },
+    });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-prompt-test");
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-subagent-prompt-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-9"),
+      itemId: asItemId("parent-item-prompt-test"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "completed",
+        title: "Subagent",
+        detail: rawPrompt,
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-prompt-test",
+              childThreadId,
+              parentItemId: "parent-item-prompt-test",
+              titleSeed: rawPrompt,
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "user" && message.text === rawPrompt,
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-prompt-test:parent-item-prompt-test",
+          role: "user",
+          text: rawPrompt,
+          streaming: false,
+        }),
+      ]),
+    );
+  });
+
   it("consumes P1 runtime events into thread metadata, diff checkpoints, and activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
