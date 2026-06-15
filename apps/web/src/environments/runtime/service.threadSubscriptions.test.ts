@@ -151,6 +151,7 @@ vi.mock("@t3tools/client-runtime", async (importOriginal) => {
       pullBranch: vi.fn(),
       pushBranch: vi.fn(),
       deleteBranch: vi.fn(),
+      fetchBranch: vi.fn(),
       fetchRemote: vi.fn(),
       fetchAllRemotes: vi.fn(),
       addRemote: vi.fn(),

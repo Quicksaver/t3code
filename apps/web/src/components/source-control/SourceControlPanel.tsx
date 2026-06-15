@@ -85,6 +85,10 @@ const COLLAPSED_SECTION_HEIGHT = 32;
 const MIN_SECTION_WEIGHT = 0.35;
 const ACTION_LOCK_TIMEOUT_MS = 15_000;
 const COMMIT_PAGE_SIZE = 10;
+const commitDateFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Source control action failed.";
@@ -222,6 +226,13 @@ function formatRelativeDate(value: string | null | undefined): string | null {
   return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
+function formatReadableDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return null;
+  return commitDateFormatter.format(new Date(time));
+}
+
 function shortRemoteBranchName(details: VcsPanelBranchDetails): string {
   return details.remoteName && details.fullRefName.startsWith(`${details.remoteName}/`)
     ? details.fullRefName.slice(details.remoteName.length + 1)
@@ -298,6 +309,67 @@ function BranchSyncLabels({
     <span className="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-muted-foreground">
       {label}
     </span>
+  );
+}
+
+function AuthorAvatar({
+  commit,
+  className,
+}: {
+  readonly commit: VcsPanelCommitSummary;
+  readonly className?: string;
+}) {
+  if (!commit.authorAvatarUrl) return null;
+  return (
+    <img
+      alt={commit.authorName ? `${commit.authorName} avatar` : "Author avatar"}
+      className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
+      referrerPolicy="no-referrer"
+      src={commit.authorAvatarUrl}
+      onError={(event) => {
+        event.currentTarget.hidden = true;
+      }}
+    />
+  );
+}
+
+function RefLabels({ commit }: { readonly commit: VcsPanelCommitSummary }) {
+  if (commit.headRefs.length === 0 && commit.tags.length === 0) return null;
+  return (
+    <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
+      {commit.headRefs.map((ref) => (
+        <CompactBadge key={`head:${ref}`}>{ref}</CompactBadge>
+      ))}
+      {commit.tags.map((tag) => (
+        <CompactBadge key={`tag:${tag}`}>{tag}</CompactBadge>
+      ))}
+    </span>
+  );
+}
+
+function CommitTooltip({ commit }: { readonly commit: VcsPanelCommitSummary }) {
+  const relativeDate = formatRelativeDate(commit.authoredAt);
+  const readableDate = formatReadableDate(commit.authoredAt);
+  return (
+    <div className="w-72 space-y-2 py-1 text-left">
+      <div className="flex min-w-0 items-center gap-2">
+        <AuthorAvatar commit={commit} className="size-6" />
+        <div className="min-w-0">
+          <div className="truncate font-medium">{commit.authorName ?? "Unknown author"}</div>
+          <div className="truncate font-mono text-[10px] text-muted-foreground">
+            {commit.shortSha}
+          </div>
+        </div>
+      </div>
+      {relativeDate || readableDate ? (
+        <div className="text-muted-foreground">
+          {relativeDate ?? "Unknown time"}
+          {readableDate ? ` (${readableDate})` : null}
+        </div>
+      ) : null}
+      <div className="line-clamp-3">{commit.message}</div>
+      <RefLabels commit={commit} />
+    </div>
   );
 }
 
@@ -517,7 +589,7 @@ export function SourceControlPanel({
   const previousChangedPathsRef = useRef<ReadonlySet<string>>(new Set());
   const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [actionRunning, setActionRunning] = useState(false);
+  const [runningActions, setRunningActions] = useState<ReadonlySet<string>>(() => new Set());
   const [panelBusyLabel, setPanelBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(() => new Set(["remotes"]));
@@ -561,17 +633,13 @@ export function SourceControlPanel({
     () => changedFiles.filter((file) => selectedChangePaths.has(file.path)),
     [changedFiles, selectedChangePaths],
   );
-  const unselectedChangedFiles = useMemo(
-    () => changedFiles.filter((file) => !selectedChangePaths.has(file.path)),
-    [changedFiles, selectedChangePaths],
-  );
   const selectedChangePathList = useMemo(
     () => selectedChangedFiles.map((file) => file.path),
     [selectedChangedFiles],
   );
-  const unselectedChangePathList = useMemo(
-    () => unselectedChangedFiles.map((file) => file.path),
-    [unselectedChangedFiles],
+  const isActionRunning = useCallback(
+    (actionKey: string) => runningActions.has(actionKey),
+    [runningActions],
   );
 
   const syncChangedPathSelection = useCallback((groups: readonly VcsPanelChangeGroup[]) => {
@@ -650,12 +718,16 @@ export function SourceControlPanel({
   }, [refresh]);
 
   const runAction = useCallback(
-    async (action: () => Promise<void>) => {
-      setActionRunning(true);
+    async (actionKey: string, action: () => Promise<void>) => {
+      setRunningActions((current) => new Set(current).add(actionKey));
       setError(null);
       let timeoutId: number | null = window.setTimeout(() => {
         timeoutId = null;
-        setActionRunning(false);
+        setRunningActions((current) => {
+          const next = new Set(current);
+          next.delete(actionKey);
+          return next;
+        });
         void refresh();
       }, ACTION_LOCK_TIMEOUT_MS);
       try {
@@ -666,7 +738,11 @@ export function SourceControlPanel({
         setError(errorMessage(nextError));
       } finally {
         if (timeoutId !== null) window.clearTimeout(timeoutId);
-        setActionRunning(false);
+        setRunningActions((current) => {
+          const next = new Set(current);
+          next.delete(actionKey);
+          return next;
+        });
       }
     },
     [cwd, environmentId, refresh],
@@ -694,7 +770,7 @@ export function SourceControlPanel({
 
   const switchRef = useCallback(
     (refName: string) =>
-      runAction(async () => {
+      runAction(`branch-switch:${refName}`, async () => {
         if (!api) return;
         const result = await api.vcs.switchRef({ cwd, refName });
         await readEnvironmentApi(environmentId)?.orchestration.dispatchCommand({
@@ -715,7 +791,10 @@ export function SourceControlPanel({
           ? `remote branch ${branch.name}`
           : `branch ${branch.name}`;
         if (!(await confirm(`Delete ${branchLabel}?`))) return;
-        await runAction(() => api?.vcs.deleteBranch({ cwd, branch, force }) ?? Promise.resolve());
+        await runAction(
+          `branch-delete:${branch.name}`,
+          () => api?.vcs.deleteBranch({ cwd, branch, force }) ?? Promise.resolve(),
+        );
       })(),
     [api, confirm, cwd, runAction],
   );
@@ -727,17 +806,20 @@ export function SourceControlPanel({
       const fetchFirst = shouldFetchBeforePull(event);
       const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
       if (!branch.current) {
-        void runAction(() => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve());
+        void runAction(
+          `branch-fetch:${branch.name}`,
+          () => api?.vcs.fetchBranch({ cwd, branchName: branch.name }) ?? Promise.resolve(),
+        );
         return;
       }
       if (aheadCount > 0 && behindCount > 0) {
         setDivergedSyncBranch(branch);
         return;
       }
-      void runAction(async () => {
+      void runAction(`branch-sync:${branch.name}`, async () => {
         if (!api) return;
         if (fetchFirst) {
-          await api.vcs.fetchAllRemotes({ cwd });
+          await api.vcs.fetchBranch({ cwd, branchName: branch.name });
         }
         if (!snapshot.status.hasUpstream || aheadCount > 0) {
           await api.vcs.pushBranch({ cwd, branchName: branch.name });
@@ -751,7 +833,7 @@ export function SourceControlPanel({
           });
           return;
         }
-        await api.vcs.fetchAllRemotes({ cwd });
+        await api.vcs.fetchBranch({ cwd, branchName: branch.name });
       });
     },
     [api, cwd, runAction, snapshot],
@@ -762,7 +844,7 @@ export function SourceControlPanel({
       const branch = divergedSyncBranch;
       setDivergedSyncBranch(null);
       if (!branch) return;
-      void runAction(async () => {
+      void runAction(`branch-sync:${branch.name}`, async () => {
         if (!api) return;
         if (mode === "force-push") {
           await api.vcs.pushBranch({ cwd, branchName: branch.name, force: true });
@@ -784,7 +866,7 @@ export function SourceControlPanel({
     setPanelBusyLabel(
       commitMessage ? "Committing staged changes..." : "Generating commit message...",
     );
-    return runAction(async () => {
+    return runAction("changes-commit", async () => {
       setCommitDialogOpen(false);
       setDialogCommitMessage("");
       await gitAction.run({
@@ -800,7 +882,7 @@ export function SourceControlPanel({
     (paths: readonly string[], message?: string) => {
       const stashMessage = message?.trim();
       setPanelBusyLabel(stashMessage ? "Stashing changes..." : "Generating stash message...");
-      return runAction(async () => {
+      return runAction("changes-stash", async () => {
         if (!api) return;
         await api.vcs.createStash({
           cwd,
@@ -1082,6 +1164,7 @@ export function SourceControlPanel({
 
   const renderWorkingFile = (file: PanelChangedFile) => {
     const selected = selectedChangePaths.has(file.path);
+    const discardKey = `file-discard:${file.path}`;
     return (
       <div
         key={file.path}
@@ -1089,7 +1172,7 @@ export function SourceControlPanel({
       >
         <Checkbox
           checked={selected}
-          disabled={actionRunning}
+          disabled={isActionRunning(discardKey)}
           aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
           onCheckedChange={(checked) => toggleChangedFileSelection(file.path, checked === true)}
         />
@@ -1105,13 +1188,14 @@ export function SourceControlPanel({
         <StatLabels insertions={file.insertions} deletions={file.deletions} />
         <div className="flex shrink-0 items-center gap-0.5">
           <IconButton
-            label="Discard file"
+            label="Discard changes"
             destructive
-            disabled={actionRunning}
+            disabled={isActionRunning(discardKey)}
             onClick={() =>
               void (async () => {
                 if (!(await confirm(`Discard changes in ${file.path}?`))) return;
                 await runAction(
+                  discardKey,
                   () =>
                     api?.vcs.discardFiles({
                       cwd,
@@ -1139,25 +1223,36 @@ export function SourceControlPanel({
     const relativeDate = formatRelativeDate(commit.authoredAt);
     return (
       <div key={commit.sha} className="space-y-0.5">
-        <div
-          role="button"
-          tabIndex={0}
-          className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
-          onClick={() => toggleTree(key)}
-          onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
-        >
-          {expanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span className="shrink-0 font-mono text-muted-foreground">{commit.shortSha}</span>
-          <span className="min-w-0 flex-1 truncate">{commit.message}</span>
-          {relativeDate ? (
-            <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
-          ) : null}
-          <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div
+                role="button"
+                tabIndex={0}
+                className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+                onClick={() => toggleTree(key)}
+                onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
+              >
+                {expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="shrink-0 font-mono text-muted-foreground">{commit.shortSha}</span>
+                <AuthorAvatar commit={commit} />
+                <span className="min-w-0 flex-1 truncate">{commit.message}</span>
+                <RefLabels commit={commit} />
+                {relativeDate ? (
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
+                ) : null}
+                <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+              </div>
+            }
+          />
+          <TooltipPopup side="top" className="max-w-80">
+            <CommitTooltip commit={commit} />
+          </TooltipPopup>
+        </Tooltip>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">
             <FileChangeList files={commit.files} emptyLabel="No file changes." />
@@ -1232,8 +1327,8 @@ export function SourceControlPanel({
         ? renderBranchSubsection({
             details,
             id: "ahead",
-            title: "Ahead",
-            count: details.aheadCommits.length,
+            title: `${details.aheadCommits.length} Ahead`,
+            count: null,
             children: details.aheadCommits.map(renderCommit),
           })
         : null}
@@ -1241,8 +1336,8 @@ export function SourceControlPanel({
         ? renderBranchSubsection({
             details,
             id: "behind",
-            title: "Behind",
-            count: details.behindCommits.length,
+            title: `${details.behindCommits.length} Behind`,
+            count: null,
             children: details.behindCommits.map(renderCommit),
           })
         : null}
@@ -1250,7 +1345,7 @@ export function SourceControlPanel({
         details,
         id: "commits",
         title: "Commits",
-        count: details.commits.length,
+        count: null,
         defaultExpanded: true,
         children: (
           <div className="space-y-0.5">
@@ -1283,6 +1378,9 @@ export function SourceControlPanel({
     const loadingDetails = loadingBranchDetails.has(branch.name);
     const current = branch.current;
     const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
+    const switchKey = `branch-switch:${branch.name}`;
+    const syncKey = `branch-sync:${branch.name}`;
+    const deleteKey = `branch-delete:${branch.name}`;
     const syncLabel = !current
       ? "Fetch"
       : aheadCount > 0 && behindCount > 0
@@ -1323,14 +1421,14 @@ export function SourceControlPanel({
           >
             <IconButton
               label="Switch branch"
-              disabled={current || actionRunning}
+              disabled={current || isActionRunning(switchKey)}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
             </IconButton>
             <IconButton
               label={syncLabel}
-              disabled={actionRunning}
+              disabled={isActionRunning(syncKey) || isActionRunning(`branch-fetch:${branch.name}`)}
               onClick={(event) => syncBranch(branch, event)}
             >
               <RefreshCw className="size-3.5" />
@@ -1338,7 +1436,7 @@ export function SourceControlPanel({
             <IconButton
               label="Delete branch. Shift: force."
               destructive
-              disabled={current || actionRunning}
+              disabled={current || isActionRunning(deleteKey)}
               onClick={(event) => deleteBranch(branch, isActionForced(event))}
             >
               <Trash2 className="size-3.5" />
@@ -1361,6 +1459,9 @@ export function SourceControlPanel({
     const expanded = expandedTree.has(key);
     const loadingDetails = loadingBranchDetails.has(branch.name);
     const relativeDate = formatRelativeDate(branch.lastActivityAt);
+    const switchKey = `branch-switch:${branch.name}`;
+    const fetchKey = `branch-fetch:${branch.name}`;
+    const deleteKey = `branch-delete:${branch.name}`;
     return (
       <div key={branch.name} className="space-y-0.5">
         <div
@@ -1391,20 +1492,18 @@ export function SourceControlPanel({
           >
             <IconButton
               label="Switch branch"
-              disabled={actionRunning}
+              disabled={isActionRunning(switchKey)}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
             </IconButton>
             <IconButton
-              label="Fetch remote"
-              disabled={actionRunning || !branch.remoteName}
+              label="Fetch branch"
+              disabled={isActionRunning(fetchKey)}
               onClick={() =>
-                void runAction(() =>
-                  branch.remoteName
-                    ? (api?.vcs.fetchRemote({ cwd, remoteName: branch.remoteName }) ??
-                      Promise.resolve())
-                    : Promise.resolve(),
+                void runAction(
+                  fetchKey,
+                  () => api?.vcs.fetchBranch({ cwd, branchName: branch.name }) ?? Promise.resolve(),
                 )
               }
             >
@@ -1413,7 +1512,7 @@ export function SourceControlPanel({
             <IconButton
               label="Delete remote branch"
               destructive
-              disabled={actionRunning}
+              disabled={isActionRunning(deleteKey)}
               onClick={() => deleteBranch(branch, false)}
             >
               <Trash2 className="size-3.5" />
@@ -1433,6 +1532,8 @@ export function SourceControlPanel({
   const remoteRow = (remote: VcsPanelRemote) => {
     const key = treeKey("remote", remote.name);
     const expanded = expandedTree.has(key);
+    const fetchKey = `remote-fetch:${remote.name}`;
+    const removeKey = `remote-remove:${remote.name}`;
     return (
       <div key={remote.name} className="space-y-0.5">
         <div
@@ -1457,9 +1558,10 @@ export function SourceControlPanel({
           >
             <IconButton
               label="Fetch remote"
-              disabled={actionRunning}
+              disabled={isActionRunning(fetchKey)}
               onClick={() =>
                 void runAction(
+                  fetchKey,
                   () => api?.vcs.fetchRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
                 )
               }
@@ -1469,11 +1571,12 @@ export function SourceControlPanel({
             <IconButton
               label="Remove remote"
               destructive
-              disabled={actionRunning}
+              disabled={isActionRunning(removeKey)}
               onClick={() =>
                 void (async () => {
                   if (!(await confirm(`Remove remote ${remote.name}?`))) return;
                   await runAction(
+                    removeKey,
                     () =>
                       api?.vcs.removeRemote({ cwd, remoteName: remote.name }) ?? Promise.resolve(),
                   );
@@ -1504,6 +1607,9 @@ export function SourceControlPanel({
     const expanded = expandedTree.has(key);
     const details = stashDetailsByRef.get(stash.refName);
     const loadingDetails = loadingStashDetails.has(stash.refName);
+    const applyKey = `stash-apply:${stash.refName}`;
+    const popKey = `stash-pop:${stash.refName}`;
+    const dropKey = `stash-drop:${stash.refName}`;
     return (
       <div key={stash.refName} className="space-y-0.5">
         <div
@@ -1530,9 +1636,10 @@ export function SourceControlPanel({
           >
             <IconButton
               label="Apply stash"
-              disabled={actionRunning}
+              disabled={isActionRunning(applyKey)}
               onClick={() =>
                 void runAction(
+                  applyKey,
                   () => api?.vcs.applyStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
                 )
               }
@@ -1541,9 +1648,10 @@ export function SourceControlPanel({
             </IconButton>
             <IconButton
               label="Pop stash"
-              disabled={actionRunning}
+              disabled={isActionRunning(popKey)}
               onClick={() =>
                 void runAction(
+                  popKey,
                   () => api?.vcs.popStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
                 )
               }
@@ -1553,11 +1661,12 @@ export function SourceControlPanel({
             <IconButton
               label="Drop stash"
               destructive
-              disabled={actionRunning}
+              disabled={isActionRunning(dropKey)}
               onClick={() =>
                 void (async () => {
                   if (!(await confirm(`Drop ${stash.refName}?`))) return;
                   await runAction(
+                    dropKey,
                     () => api?.vcs.dropStash({ cwd, stashRef: stash.refName }) ?? Promise.resolve(),
                   );
                 })()
@@ -1628,36 +1737,33 @@ export function SourceControlPanel({
             <div className="flex items-center gap-1">
               <IconButton
                 label="Select all changes"
-                disabled={actionRunning || selectedChangedFiles.length === changedFiles.length}
+                disabled={selectedChangedFiles.length === changedFiles.length}
                 onClick={() => setSelectedChangePaths(new Set(changedPaths))}
               >
                 <Check className="size-3.5" />
               </IconButton>
               <IconButton
                 label="Clear all changes"
-                disabled={actionRunning || selectedChangedFiles.length === 0}
+                disabled={selectedChangedFiles.length === 0}
                 onClick={() => setSelectedChangePaths(new Set())}
               >
                 <X className="size-3.5" />
               </IconButton>
               <IconButton
                 label="Commit selected changes"
-                disabled={actionRunning || gitAction.isPending || selectedChangedFiles.length === 0}
+                disabled={
+                  isActionRunning("changes-commit") ||
+                  gitAction.isPending ||
+                  selectedChangedFiles.length === 0
+                }
                 onClick={() => setCommitDialogOpen(true)}
               >
                 <GitCommit className="size-3.5" />
               </IconButton>
               <IconButton
                 label="Stash selected changes"
-                disabled={actionRunning || selectedChangedFiles.length === 0}
+                disabled={isActionRunning("changes-stash") || selectedChangedFiles.length === 0}
                 onClick={() => openStashDialog("selected", selectedChangePathList)}
-              >
-                <Archive className="size-3.5" />
-              </IconButton>
-              <IconButton
-                label="Stash unselected changes"
-                disabled={actionRunning || unselectedChangedFiles.length === 0}
-                onClick={() => openStashDialog("unselected", unselectedChangePathList)}
               >
                 <Archive className="size-3.5" />
               </IconButton>
@@ -1717,9 +1823,12 @@ export function SourceControlPanel({
                   <div className="flex items-center gap-0.5">
                     <IconButton
                       label="Fetch all remotes"
-                      disabled={actionRunning}
+                      disabled={isActionRunning("remotes-fetch-all")}
                       onClick={() =>
-                        void runAction(() => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve())
+                        void runAction(
+                          "remotes-fetch-all",
+                          () => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve(),
+                        )
                       }
                     >
                       <RefreshCw className="size-3.5" />
@@ -1772,10 +1881,12 @@ export function SourceControlPanel({
             <Button
               size="sm"
               disabled={
-                actionRunning || remoteName.trim().length === 0 || remoteUrl.trim().length === 0
+                isActionRunning("remote-add") ||
+                remoteName.trim().length === 0 ||
+                remoteUrl.trim().length === 0
               }
               onClick={() =>
-                void runAction(async () => {
+                void runAction("remote-add", async () => {
                   if (!api) return;
                   await api.vcs.addRemote({ cwd, name: remoteName.trim(), url: remoteUrl.trim() });
                   setRemoteName("");
@@ -1810,18 +1921,22 @@ export function SourceControlPanel({
             <Button
               size="sm"
               variant="destructive"
-              disabled={actionRunning}
+              disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
               onClick={() => runDivergedSync("force-pull")}
             >
               Force pull
             </Button>
-            <Button size="sm" disabled={actionRunning} onClick={() => runDivergedSync("merge")}>
+            <Button
+              size="sm"
+              disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
+              onClick={() => runDivergedSync("merge")}
+            >
               Merge sync
             </Button>
             <Button
               size="sm"
               variant="destructive"
-              disabled={actionRunning}
+              disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
               onClick={() => runDivergedSync("force-push")}
             >
               Force push
@@ -1847,7 +1962,7 @@ export function SourceControlPanel({
               value={dialogCommitMessage}
               placeholder="Leave empty to auto-generate"
               aria-label="Commit message (optional)"
-              disabled={actionRunning || gitAction.isPending}
+              disabled={isActionRunning("changes-commit") || gitAction.isPending}
               onChange={(event) => setDialogCommitMessage(event.currentTarget.value)}
             />
           </DialogPanel>
@@ -1864,7 +1979,11 @@ export function SourceControlPanel({
             </Button>
             <Button
               size="sm"
-              disabled={selectedChangedFiles.length === 0 || actionRunning || gitAction.isPending}
+              disabled={
+                selectedChangedFiles.length === 0 ||
+                isActionRunning("changes-commit") ||
+                gitAction.isPending
+              }
               onClick={() => void runPanelCommit()}
             >
               Commit
@@ -1897,7 +2016,7 @@ export function SourceControlPanel({
               value={dialogStashMessage}
               placeholder="Leave empty to auto-generate"
               aria-label="Stash message (optional)"
-              disabled={actionRunning}
+              disabled={isActionRunning("changes-stash")}
               onChange={(event) => setDialogStashMessage(event.currentTarget.value)}
             />
           </DialogPanel>
@@ -1914,7 +2033,7 @@ export function SourceControlPanel({
             </Button>
             <Button
               size="sm"
-              disabled={actionRunning || !stashDialogTarget}
+              disabled={isActionRunning("changes-stash") || !stashDialogTarget}
               onClick={runPanelStash}
             >
               Stash

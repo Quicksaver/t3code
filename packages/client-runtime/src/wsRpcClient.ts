@@ -131,6 +131,7 @@ export interface WsRpcClient {
     readonly pullBranch: RpcUnaryMethod<typeof WS_METHODS.vcsPanelPullBranch>;
     readonly pushBranch: RpcUnaryMethod<typeof WS_METHODS.vcsPanelPushBranch>;
     readonly deleteBranch: RpcUnaryMethod<typeof WS_METHODS.vcsPanelDeleteBranch>;
+    readonly fetchBranch: RpcUnaryMethod<typeof WS_METHODS.vcsPanelFetchBranch>;
     readonly fetchRemote: RpcUnaryMethod<typeof WS_METHODS.vcsPanelFetchRemote>;
     readonly fetchAllRemotes: RpcUnaryMethod<typeof WS_METHODS.vcsPanelFetchAllRemotes>;
     readonly addRemote: RpcUnaryMethod<typeof WS_METHODS.vcsPanelAddRemote>;
@@ -341,6 +342,8 @@ export function createWsRpcClient(
         transport.request((client) => client[WS_METHODS.vcsPanelPushBranch](input)),
       deleteBranch: (input) =>
         transport.request((client) => client[WS_METHODS.vcsPanelDeleteBranch](input)),
+      fetchBranch: (input) =>
+        transport.request((client) => client[WS_METHODS.vcsPanelFetchBranch](input)),
       fetchRemote: (input) =>
         transport.request((client) => client[WS_METHODS.vcsPanelFetchRemote](input)),
       fetchAllRemotes: (input) =>

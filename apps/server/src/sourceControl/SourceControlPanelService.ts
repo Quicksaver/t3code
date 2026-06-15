@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -66,6 +68,7 @@ export interface SourceControlPanelServiceShape {
   ) => Effect.Effect<VcsPullResult, GitCommandError>;
   readonly pushBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
   readonly deleteBranch: (input: VcsPanelDeleteBranchInput) => Effect.Effect<void, GitCommandError>;
+  readonly fetchBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
   readonly fetchRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
   readonly fetchAllRemotes: (input: VcsPanelSnapshotInput) => Effect.Effect<void, GitCommandError>;
   readonly addRemote: (input: VcsPanelAddRemoteInput) => Effect.Effect<void, GitCommandError>;
@@ -406,9 +409,24 @@ function compareBranchActivity(
   return activity !== 0 ? activity : left.name.localeCompare(right.name);
 }
 
+function avatarUrlForEmail(email: string | null | undefined): string | null {
+  const normalized = email?.trim().toLowerCase();
+  if (!normalized || !normalized.includes("@")) return null;
+  const hash = createHash("md5").update(normalized).digest("hex");
+  return `https://www.gravatar.com/avatar/${hash}?d=404&s=32`;
+}
+
+function parseRefLines(output: string): string[] {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.endsWith("/HEAD") && !line.includes(" -> "))
+    .toSorted((left, right) => left.localeCompare(right));
+}
+
 function parseCommits(output: string): VcsPanelSnapshotResult["recentCommits"] {
   return output.split("\n").flatMap((line) => {
-    const [sha, shortSha, authorName, authoredAt, message] = line.split("\t");
+    const [sha, shortSha, authorName, authorEmail, authoredAt, message] = line.split("\t");
     if (!sha || !shortSha || !message) return [];
     return [
       {
@@ -416,7 +434,11 @@ function parseCommits(output: string): VcsPanelSnapshotResult["recentCommits"] {
         shortSha,
         message,
         authorName: authorName ?? null,
+        authorEmail: authorEmail ?? null,
+        authorAvatarUrl: avatarUrlForEmail(authorEmail),
         authoredAt: authoredAt ?? null,
+        headRefs: [],
+        tags: [],
         files: [],
       },
     ];
@@ -540,17 +562,80 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.orElseSucceed(() => []),
     );
 
-  const withCommitFiles = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) =>
-    Effect.forEach(
-      commits,
-      (commit) =>
-        commitFiles(cwd, commit.sha).pipe(
-          Effect.map((files) => ({
-            ...commit,
-            files,
-          })),
+  const commitRefsBySha = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) => {
+    const commitShas = new Set(commits.map((commit) => commit.sha));
+    if (commitShas.size === 0) {
+      return Effect.succeed(
+        new Map<
+          string,
+          { readonly headRefs: readonly string[]; readonly tags: readonly string[] }
+        >(),
+      );
+    }
+
+    return run("vcs.panel.commitRefs", cwd, [
+      "for-each-ref",
+      "--format=%(objectname)%09%(*objectname)%09%(refname:short)%09%(refname)",
+      "refs/heads",
+      "refs/remotes",
+      "refs/tags",
+    ]).pipe(
+      Effect.map((output) => {
+        const refs = new Map<
+          string,
+          { readonly headRefs: readonly string[]; readonly tags: readonly string[] }
+        >();
+        for (const line of output.split(/\r?\n/u)) {
+          const [objectName, peeledObjectName, shortRefName, fullRefName] = line.split("\t");
+          const sha = peeledObjectName || objectName;
+          if (!sha || !shortRefName || !fullRefName || !commitShas.has(sha)) continue;
+          if (shortRefName.endsWith("/HEAD") || shortRefName.includes(" -> ")) continue;
+
+          const current = refs.get(sha) ?? { headRefs: [], tags: [] };
+          if (fullRefName.startsWith("refs/tags/")) {
+            refs.set(sha, {
+              headRefs: current.headRefs,
+              tags: [...current.tags, shortRefName].toSorted((left, right) =>
+                left.localeCompare(right),
+              ),
+            });
+            continue;
+          }
+          refs.set(sha, {
+            headRefs: [...current.headRefs, shortRefName].toSorted((left, right) =>
+              left.localeCompare(right),
+            ),
+            tags: current.tags,
+          });
+        }
+        return refs;
+      }),
+      Effect.orElseSucceed(
+        () =>
+          new Map<
+            string,
+            { readonly headRefs: readonly string[]; readonly tags: readonly string[] }
+          >(),
+      ),
+    );
+  };
+
+  const withCommitDetails = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) =>
+    commitRefsBySha(cwd, commits).pipe(
+      Effect.flatMap((refsBySha) =>
+        Effect.forEach(
+          commits,
+          (commit) =>
+            commitFiles(cwd, commit.sha).pipe(
+              Effect.map((files) => ({
+                ...commit,
+                ...(refsBySha.get(commit.sha) ?? { headRefs: [], tags: [] }),
+                files,
+              })),
+            ),
+          { concurrency: 2 },
         ),
-      { concurrency: 2 },
+      ),
     );
 
   const parseCount = (value: string) => {
@@ -574,11 +659,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       "log",
       `--skip=${skip}`,
       `--max-count=${maxCount}`,
-      "--format=%H%x09%h%x09%an%x09%aI%x09%s",
+      "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
       range,
     ]).pipe(
       Effect.map(parseCommits),
-      Effect.flatMap((commits) => withCommitFiles(cwd, commits)),
+      Effect.flatMap((commits) => withCommitDetails(cwd, commits)),
     );
 
   const branchCommits = (
@@ -996,6 +1081,28 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     },
   );
 
+  const fetchBranch: SourceControlPanelServiceShape["fetchBranch"] = Effect.fn("fetchBranch")(
+    function* (input) {
+      const remotes = yield* run("vcs.panel.fetchBranch.remotes", input.cwd, ["remote"]).pipe(
+        Effect.map(parseRefLines),
+      );
+      const remotePrefix = remotes.find((remote) => input.branchName.startsWith(`${remote}/`));
+      const upstream = remotePrefix
+        ? `${remotePrefix}/${input.branchName.slice(remotePrefix.length + 1)}`
+        : yield* upstreamForRef(input.cwd, input.branchName);
+      const [remoteNameRaw, ...remoteBranchParts] = upstream
+        ? upstream.split("/")
+        : [remotes[0] ?? "origin", input.branchName];
+      const remoteName = remoteNameRaw ?? "origin";
+      const remoteBranchName = remoteBranchParts.join("/") || input.branchName;
+      yield* run("vcs.panel.fetchBranch", input.cwd, [
+        "fetch",
+        remoteName,
+        `refs/heads/${remoteBranchName}:refs/remotes/${remoteName}/${remoteBranchName}`,
+      ]).pipe(Effect.asVoid);
+    },
+  );
+
   const deleteBranch: SourceControlPanelServiceShape["deleteBranch"] = Effect.fn("deleteBranch")(
     function* (input) {
       if (input.branch.current) {
@@ -1039,6 +1146,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     pullBranch,
     pushBranch,
     deleteBranch,
+    fetchBranch,
     fetchRemote: (input) =>
       run("vcs.panel.fetchRemote", input.cwd, ["fetch", input.remoteName]).pipe(Effect.asVoid),
     fetchAllRemotes: (input) =>

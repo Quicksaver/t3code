@@ -376,7 +376,11 @@ export const VcsPanelCommitSummary = Schema.Struct({
   shortSha: TrimmedNonEmptyStringSchema,
   message: TrimmedNonEmptyStringSchema,
   authorName: Schema.NullOr(Schema.String),
+  authorEmail: Schema.NullOr(Schema.String),
+  authorAvatarUrl: Schema.NullOr(Schema.String),
   authoredAt: Schema.NullOr(Schema.String),
+  headRefs: Schema.Array(TrimmedNonEmptyStringSchema),
+  tags: Schema.Array(TrimmedNonEmptyStringSchema),
   files: Schema.Array(VcsPanelFileChange),
 });
 export type VcsPanelCommitSummary = typeof VcsPanelCommitSummary.Type;
