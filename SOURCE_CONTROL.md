@@ -100,14 +100,22 @@ Smart sync handles diverged branches by prompting for one of three choices: forc
 
 Expanding a branch reveals collapsible subsections:
 
-- `Compare vs ...`
+- `Compare with ...`
 - `X Ahead`
 - `Y Behind`
 - `History`
 
-Empty compare, ahead, and behind subsections are hidden. Compare rows do not show count prefixes. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is expanded by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
+Every expanded branch shows `Compare with ...`, even when the current comparison has no file changes. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. The inline `choose` action opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is expanded by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
 
-Compare, ahead, behind, and history file lists use the shared compact file-change row model.
+Expanding `Compare with ...` shows its own nested rows:
+
+- `X Ahead` and `Y Behind` relative to the selected compare base, hidden when empty.
+- `History`, starting at the most recent commit shared by both compared refs.
+- `Changes`, summarized as file count and line stats before expanding to the changed-file list.
+
+Branch-level `X Ahead` and `Y Behind` rows are only shown for branches that have an upstream. Local-only branches still support `Compare with ...`, but they do not render upstream ahead/behind rows because there is no upstream relationship.
+
+Compare, ahead, behind, history, and changes file lists use the shared compact file-change row model.
 
 ## Commit Rows
 
@@ -150,7 +158,9 @@ Creating a stash is done from the dirty `Working tree` row through `Stash select
 
 Each remote row shows the remote name and fetch URL. Remote action buttons appear on hover/focus and include fetch and remove.
 
-Expanding a remote lists actual remote branches; pseudo-ref rows such as the remote name itself are de-duplicated. Remote branch rows use the same branch item model as `Work in Progress`, including local tracking state, `↑x`/`↓y` sync indicators, synced-local target icons, expandable compare/ahead/behind/history subsections, and branch actions.
+When local-only branches exist, `Remotes` also shows a `local` tree row with those unpublished branches. Publishing one local-only branch sets its upstream. If the repository has multiple remotes, the panel prompts for the remote to publish to.
+
+Expanding a remote lists actual remote branches; pseudo-ref rows such as the remote name itself are de-duplicated. Remote branch rows use the same branch item model as `Work in Progress`, including local tracking state, `↑x`/`↓y` sync indicators, synced-local target icons, expandable compare/ahead/behind/history subsections, selectable compare bases, and branch actions.
 
 ## Git Operations
 

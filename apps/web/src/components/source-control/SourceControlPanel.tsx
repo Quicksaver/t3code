@@ -40,7 +40,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   ReactNode,
 } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 import { openInPreferredEditor } from "~/editorPreferences";
 import { readEnvironmentApi } from "~/environmentApi";
@@ -50,9 +50,19 @@ import { cn, newCommandId } from "~/lib/utils";
 import { useVcsStatus } from "~/lib/vcsStatusState";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
+import { shouldIncludeBranchPickerItem } from "../BranchToolbar.logic";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxTrigger,
+} from "../ui/combobox";
 import {
   Dialog,
   DialogDescription,
@@ -286,12 +296,37 @@ function localBranchForRemoteBranch(
   );
 }
 
+function localOnlyBranches(snapshot: VcsPanelSnapshotResult): VcsRef[] {
+  return snapshot.localBranches
+    .filter((branch) => !branchHasUpstream(branch, snapshot))
+    .toSorted((left, right) => branchActivityTimestamp(right) - branchActivityTimestamp(left));
+}
+
+function compareBaseRefNames(snapshot: VcsPanelSnapshotResult | null): string[] {
+  if (!snapshot) return [];
+  const refs = new Set<string>();
+  if (snapshot.defaultCompareRef) refs.add(snapshot.defaultCompareRef);
+  for (const branch of snapshot.localBranches) {
+    refs.add(branch.name);
+    if (branch.upstreamName) refs.add(branch.upstreamName);
+  }
+  for (const remote of snapshot.remotes) {
+    for (const branch of remote.branches) {
+      refs.add(branch.fullRefName);
+    }
+  }
+  return [...refs].toSorted((left, right) => left.localeCompare(right));
+}
+
 function expandedBranchesForSnapshot(
   snapshot: VcsPanelSnapshotResult,
   expanded: ReadonlySet<string>,
 ): VcsRef[] {
   const localBranches = snapshot.localBranches.filter((branch) =>
     expanded.has(treeKey("branch", branch.name)),
+  );
+  const expandedLocalBranches = localOnlyBranches(snapshot).filter((branch) =>
+    expanded.has(treeKey("remote-branch", `local:${branch.name}`)),
   );
   const remoteBranches = snapshot.remotes.flatMap((remote) =>
     remote.branches
@@ -307,7 +342,7 @@ function expandedBranchesForSnapshot(
       )
       .map((branch) => branch.ref),
   );
-  return [...localBranches, ...remoteBranches];
+  return [...localBranches, ...expandedLocalBranches, ...remoteBranches];
 }
 
 function StatLabels({
@@ -372,7 +407,7 @@ function branchSyncActionLabel(state: BranchSyncState): string {
 function BranchSyncActionIcon({ state }: { readonly state: BranchSyncState }) {
   switch (state) {
     case "publish":
-      return <Plus className="size-3.5" />;
+      return <Upload className="size-3.5" />;
     case "pull":
       return <Download className="size-3.5" />;
     case "push":
@@ -724,6 +759,16 @@ function sumFiles(files: readonly VcsPanelFileChange[]) {
   );
 }
 
+function FileChangeSummary({ files }: { readonly files: readonly VcsPanelFileChange[] }) {
+  const stats = sumFiles(files);
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+      <span>{files.length === 1 ? "1 file" : `${files.length} files`}</span>
+      <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+    </span>
+  );
+}
+
 function FileChangeList({
   files,
   emptyLabel,
@@ -786,6 +831,9 @@ export function SourceControlPanel({
   const [branchDetailsByRef, setBranchDetailsByRef] = useState<
     ReadonlyMap<string, VcsPanelBranchDetails>
   >(() => new Map());
+  const [compareBaseOverrides, setCompareBaseOverrides] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const [loadingBranchDetails, setLoadingBranchDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -798,6 +846,12 @@ export function SourceControlPanel({
   const [addRemoteOpen, setAddRemoteOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
   const [divergedSyncBranch, setDivergedSyncBranch] = useState<VcsRef | null>(null);
+  const [publishRemoteTarget, setPublishRemoteTarget] = useState<{
+    readonly branch: VcsRef;
+    readonly force: boolean;
+  } | null>(null);
+  const [compareBaseDialogBranch, setCompareBaseDialogBranch] = useState<VcsRef | null>(null);
+  const [compareBaseQuery, setCompareBaseQuery] = useState("");
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [stashDialogTarget, setStashDialogTarget] = useState<{
     readonly label: string;
@@ -812,6 +866,21 @@ export function SourceControlPanel({
   const changedFiles = useMemo(
     () => mergeChangeGroups(snapshot?.changeGroups ?? []),
     [snapshot?.changeGroups],
+  );
+  const compareBaseRefs = useMemo(() => compareBaseRefNames(snapshot), [snapshot]);
+  const deferredCompareBaseQuery = useDeferredValue(compareBaseQuery);
+  const normalizedCompareBaseQuery = deferredCompareBaseQuery.trim().toLowerCase();
+  const filteredCompareBaseRefs = useMemo(
+    () =>
+      compareBaseRefs.filter((itemValue) =>
+        shouldIncludeBranchPickerItem({
+          itemValue,
+          normalizedQuery: normalizedCompareBaseQuery,
+          createBranchItemValue: null,
+          checkoutPullRequestItemValue: null,
+        }),
+      ),
+    [compareBaseRefs, normalizedCompareBaseQuery],
   );
   const changedPaths = useMemo(() => changedFiles.map((file) => file.path), [changedFiles]);
   const selectedChangedFiles = useMemo(
@@ -873,6 +942,7 @@ export function SourceControlPanel({
               cwd,
               branch,
               defaultCompareRef: nextSnapshot.defaultCompareRef,
+              compareBaseRef: compareBaseOverrides.get(branch.name),
             }),
           ),
         );
@@ -888,7 +958,7 @@ export function SourceControlPanel({
       setLoadingBranchDetails(new Set());
       setLoading(false);
     }
-  }, [api, cwd, syncChangedPathSelection]);
+  }, [api, compareBaseOverrides, cwd, syncChangedPathSelection]);
 
   useEffect(() => {
     void refresh();
@@ -1087,6 +1157,29 @@ export function SourceControlPanel({
     [api, cwd, runAction],
   );
 
+  const publishBranch = useCallback(
+    (branch: VcsRef, remoteName?: string, force = false) =>
+      runAction(`branch-sync:${branch.name}`, async () => {
+        await api?.vcs.pushBranch({ cwd, branchName: branch.name, remoteName, force });
+      }),
+    [api, cwd, runAction],
+  );
+
+  const publishBranchWithRemoteChoice = useCallback(
+    (branch: VcsRef, force = false) => {
+      if (!snapshot || branchHasUpstream(branch, snapshot)) {
+        void publishBranch(branch, undefined, force);
+        return;
+      }
+      if (snapshot.remotes.length > 1) {
+        setPublishRemoteTarget({ branch, force });
+        return;
+      }
+      void publishBranch(branch, snapshot.remotes[0]?.name, force);
+    },
+    [publishBranch, snapshot],
+  );
+
   const syncBranch = useCallback(
     (branch: VcsRef, event: ReactMouseEvent<HTMLButtonElement>) => {
       if (!snapshot) return;
@@ -1098,12 +1191,16 @@ export function SourceControlPanel({
         setDivergedSyncBranch(branch);
         return;
       }
+      if (state === "publish") {
+        publishBranchWithRemoteChoice(branch, force);
+        return;
+      }
       if (!branch.current) {
         const actionKey =
           state === "fetch" ? `branch-fetch:${branch.name}` : `branch-sync:${branch.name}`;
         void runAction(actionKey, async () => {
           if (!api) return;
-          if (state === "push" || state === "publish") {
+          if (state === "push") {
             await api.vcs.pushBranch({ cwd, branchName: branch.name, force });
             return;
           }
@@ -1124,7 +1221,7 @@ export function SourceControlPanel({
         if (fetchFirst) {
           await api.vcs.fetchBranch({ cwd, branchName: branch.name });
         }
-        if (!snapshot.status.hasUpstream || aheadCount > 0) {
+        if (aheadCount > 0) {
           await api.vcs.pushBranch({ cwd, branchName: branch.name });
           return;
         }
@@ -1139,7 +1236,7 @@ export function SourceControlPanel({
         await api.vcs.fetchBranch({ cwd, branchName: branch.name });
       });
     },
-    [api, cwd, runAction, snapshot],
+    [api, cwd, publishBranchWithRemoteChoice, runAction, snapshot],
   );
 
   const runDivergedSync = useCallback(
@@ -1247,8 +1344,9 @@ export function SourceControlPanel({
   }, []);
 
   const loadBranchDetails = useCallback(
-    async (branch: VcsRef) => {
-      if (!api || !snapshot || branchDetailsByRef.has(branch.name)) return;
+    async (branch: VcsRef, compareBaseRef?: string) => {
+      if (!api || !snapshot) return;
+      if (!compareBaseRef && branchDetailsByRef.has(branch.name)) return;
       setLoadingBranchDetails((current) => {
         const next = new Set(current);
         next.add(branch.name);
@@ -1259,6 +1357,7 @@ export function SourceControlPanel({
           cwd,
           branch,
           defaultCompareRef: snapshot.defaultCompareRef,
+          compareBaseRef: compareBaseRef ?? compareBaseOverrides.get(branch.name),
         });
         setBranchDetailsByRef((current) => {
           const next = new Map(current);
@@ -1276,7 +1375,23 @@ export function SourceControlPanel({
         });
       }
     },
-    [api, branchDetailsByRef, cwd, snapshot],
+    [api, branchDetailsByRef, compareBaseOverrides, cwd, snapshot],
+  );
+
+  const chooseCompareBase = useCallback(
+    (baseRef: string) => {
+      const branch = compareBaseDialogBranch;
+      setCompareBaseDialogBranch(null);
+      setCompareBaseQuery("");
+      if (!branch) return;
+      setCompareBaseOverrides((current) => {
+        const next = new Map(current);
+        next.set(branch.name, baseRef);
+        return next;
+      });
+      void loadBranchDetails(branch, baseRef);
+    },
+    [compareBaseDialogBranch, loadBranchDetails],
   );
 
   const toggleBranchTree = useCallback(
@@ -1595,6 +1710,7 @@ export function SourceControlPanel({
     count,
     children,
     icon,
+    action,
     defaultExpanded,
   }: {
     readonly details: VcsPanelBranchDetails;
@@ -1603,6 +1719,7 @@ export function SourceControlPanel({
     readonly count: number | null;
     readonly children: ReactNode;
     readonly icon?: ReactNode;
+    readonly action?: ReactNode;
     readonly defaultExpanded?: boolean;
   }) => {
     const key = treeKey("branch-subsection", `${details.fullRefName}:${id}`);
@@ -1623,6 +1740,7 @@ export function SourceControlPanel({
           )}
           {icon}
           <span className="min-w-0 flex-1 truncate">{title}</span>
+          {action}
           {count !== null ? <span className="shrink-0 text-muted-foreground">{count}</span> : null}
         </div>
         {expanded ? <div className="ml-2 border-l border-border/60 pl-1">{children}</div> : null}
@@ -1630,74 +1748,132 @@ export function SourceControlPanel({
     );
   };
 
-  const renderBranchTree = (branch: VcsRef, details: VcsPanelBranchDetails) => (
-    <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
-      {details.compareFiles.length > 0
-        ? renderBranchSubsection({
-            details,
-            id: "compare",
-            title: (
-              <>
-                Compare
-                {details.baseRef ? (
-                  <span className="ml-1 text-muted-foreground">vs {details.baseRef}</span>
-                ) : null}
-              </>
-            ),
-            count: null,
-            icon: <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />,
-            children: <FileChangeList files={details.compareFiles} emptyLabel="No changes." />,
-          })
-        : null}
-      {details.aheadCommits.length > 0
-        ? renderBranchSubsection({
-            details,
-            id: "ahead",
-            title: `${details.aheadCommits.length} Ahead`,
-            count: null,
-            icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
-            children: details.aheadCommits.map(renderCommit),
-          })
-        : null}
-      {details.behindCommits.length > 0
-        ? renderBranchSubsection({
-            details,
-            id: "behind",
-            title: `${details.behindCommits.length} Behind`,
-            count: null,
-            icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
-            children: details.behindCommits.map(renderCommit),
-          })
-        : null}
-      {renderBranchSubsection({
-        details,
-        id: "commits",
-        title: "History",
-        count: null,
-        defaultExpanded: true,
-        children: (
-          <div className="space-y-0.5">
-            {details.commits.length === 0 ? (
-              <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
-            ) : (
-              details.commits.map(renderCommit)
-            )}
-            {details.commitsRemaining > 0 ? (
-              <button
-                type="button"
-                className="flex h-7 w-full items-center rounded px-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                disabled={loadingBranchDetails.has(branch.name)}
-                onClick={() => void loadMoreBranchCommits(branch, details)}
-              >
-                Load {Math.min(COMMIT_PAGE_SIZE, details.commitsRemaining)} more of{" "}
-                {details.commitsRemaining} previous commits
-              </button>
-            ) : null}
-          </div>
-        ),
-      })}
-    </div>
-  );
+  const renderBranchTree = (branch: VcsRef, details: VcsPanelBranchDetails) => {
+    const hasBranchUpstream = branchHasUpstream(branch, snapshot);
+    return (
+      <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
+        {renderBranchSubsection({
+          details,
+          id: "compare",
+          title: (
+            <>
+              Compare with
+              <span className="ml-1 text-muted-foreground">{details.baseRef ?? "choose base"}</span>
+            </>
+          ),
+          count: null,
+          icon: <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />,
+          action: (
+            <button
+              type="button"
+              className="shrink-0 rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                setCompareBaseDialogBranch(branch);
+                setCompareBaseQuery("");
+              }}
+            >
+              choose
+            </button>
+          ),
+          children: details.baseRef ? (
+            <div className="space-y-0.5">
+              {details.aheadCommits.length > 0
+                ? renderBranchSubsection({
+                    details,
+                    id: "compare-ahead",
+                    title: `${details.aheadCommits.length} Ahead`,
+                    count: null,
+                    icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
+                    children: details.aheadCommits.map(renderCommit),
+                  })
+                : null}
+              {details.behindCommits.length > 0
+                ? renderBranchSubsection({
+                    details,
+                    id: "compare-behind",
+                    title: `${details.behindCommits.length} Behind`,
+                    count: null,
+                    icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
+                    children: details.behindCommits.map(renderCommit),
+                  })
+                : null}
+              {renderBranchSubsection({
+                details,
+                id: "compare-history",
+                title: "History",
+                count: null,
+                defaultExpanded: true,
+                children:
+                  details.compareCommits.length === 0 ? (
+                    <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
+                  ) : (
+                    details.compareCommits.map(renderCommit)
+                  ),
+              })}
+              {renderBranchSubsection({
+                details,
+                id: "compare-changes",
+                title: "Changes",
+                count: null,
+                action: <FileChangeSummary files={details.compareFiles} />,
+                children: <FileChangeList files={details.compareFiles} emptyLabel="No changes." />,
+              })}
+            </div>
+          ) : (
+            <div className="px-3 py-1 text-xs text-muted-foreground">Choose a base ref.</div>
+          ),
+        })}
+        {hasBranchUpstream && details.aheadCommits.length > 0
+          ? renderBranchSubsection({
+              details,
+              id: "ahead",
+              title: `${details.aheadCommits.length} Ahead`,
+              count: null,
+              icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
+              children: details.aheadCommits.map(renderCommit),
+            })
+          : null}
+        {hasBranchUpstream && details.behindCommits.length > 0
+          ? renderBranchSubsection({
+              details,
+              id: "behind",
+              title: `${details.behindCommits.length} Behind`,
+              count: null,
+              icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
+              children: details.behindCommits.map(renderCommit),
+            })
+          : null}
+        {renderBranchSubsection({
+          details,
+          id: "commits",
+          title: "History",
+          count: null,
+          defaultExpanded: true,
+          children: (
+            <div className="space-y-0.5">
+              {details.commits.length === 0 ? (
+                <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
+              ) : (
+                details.commits.map(renderCommit)
+              )}
+              {details.commitsRemaining > 0 ? (
+                <button
+                  type="button"
+                  className="flex h-7 w-full items-center rounded px-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                  disabled={loadingBranchDetails.has(branch.name)}
+                  onClick={() => void loadMoreBranchCommits(branch, details)}
+                >
+                  Load {Math.min(COMMIT_PAGE_SIZE, details.commitsRemaining)} more of{" "}
+                  {details.commitsRemaining} previous commits
+                </button>
+              ) : null}
+            </div>
+          ),
+        })}
+      </div>
+    );
+  };
 
   const branchRow = (branch: VcsRef) => {
     const details = branchDetailsByRef.get(branch.name);
@@ -2010,6 +2186,39 @@ export function SourceControlPanel({
     );
   };
 
+  const localBranchesRow = (branches: readonly VcsRef[]) => {
+    const key = treeKey("remote", "local");
+    const expanded = expandedTree.has(key);
+    return (
+      <div key="local" className="space-y-0.5">
+        <div
+          role="button"
+          tabIndex={0}
+          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          onClick={() => toggleTree(key)}
+          onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
+        >
+          {expanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm">local</span>
+          <span className="min-w-0 flex-[2] truncate text-muted-foreground">
+            {branches.length === 1
+              ? "1 unpublished branch"
+              : `${branches.length} unpublished branches`}
+          </span>
+        </div>
+        {expanded ? (
+          <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
+            {branches.map((branch) => remoteBranchRow(branch, branch.name, true))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   const stashRow = (stash: VcsPanelStash) => {
     const key = treeKey("stash", stash.refName);
     const expanded = expandedTree.has(key);
@@ -2208,6 +2417,7 @@ export function SourceControlPanel({
       };
 
   const currentBranch = snapshot.localBranches.find((branch) => branch.current) ?? null;
+  const localBranchesWithoutUpstream = localOnlyBranches(snapshot);
   const workingTreeAttention: AttentionKind = changedFiles.some((file) => file.hasConflicts)
     ? "conflicts"
     : changedFiles.length > 0
@@ -2334,7 +2544,10 @@ export function SourceControlPanel({
 
   const remotesSection = (
     <div className="space-y-0.5">
-      {snapshot.remotes.length === 0 ? (
+      {localBranchesWithoutUpstream.length > 0
+        ? localBranchesRow(localBranchesWithoutUpstream)
+        : null}
+      {snapshot.remotes.length === 0 && localBranchesWithoutUpstream.length === 0 ? (
         <div className="text-sm text-muted-foreground">No remotes configured.</div>
       ) : (
         snapshot.remotes.map(remoteRow)
@@ -2429,6 +2642,133 @@ export function SourceControlPanel({
               }
             >
               Add
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+      <Dialog
+        open={publishRemoteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setPublishRemoteTarget(null);
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Publish branch</DialogTitle>
+            <DialogDescription>
+              Choose the remote to set as upstream for{" "}
+              {publishRemoteTarget?.branch.name ?? "this branch"}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-1">
+            {snapshot.remotes.map((remote) => (
+              <button
+                key={remote.name}
+                type="button"
+                className="flex w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent"
+                onClick={() => {
+                  const target = publishRemoteTarget;
+                  setPublishRemoteTarget(null);
+                  if (!target) return;
+                  void publishBranch(target.branch, remote.name, target.force);
+                }}
+              >
+                <Upload className="size-3.5 shrink-0 text-success-foreground" />
+                <span className="min-w-0 flex-1 truncate">{remote.name}</span>
+                <span className="min-w-0 flex-[2] truncate text-xs text-muted-foreground">
+                  {remote.fetchUrl ?? "No fetch URL"}
+                </span>
+              </button>
+            ))}
+          </DialogPanel>
+          <DialogFooter>
+            <Button size="sm" variant="ghost" onClick={() => setPublishRemoteTarget(null)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+      <Dialog
+        open={compareBaseDialogBranch !== null}
+        onOpenChange={(open) => {
+          if (open) return;
+          setCompareBaseDialogBranch(null);
+          setCompareBaseQuery("");
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>Choose compare base</DialogTitle>
+            <DialogDescription>
+              Select the ref to compare with {compareBaseDialogBranch?.name ?? "this branch"}.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-3">
+            <Combobox
+              items={compareBaseRefs}
+              filteredItems={filteredCompareBaseRefs}
+              autoHighlight
+              value={
+                compareBaseDialogBranch
+                  ? (branchDetailsByRef.get(compareBaseDialogBranch.name)?.baseRef ??
+                    compareBaseOverrides.get(compareBaseDialogBranch.name) ??
+                    "")
+                  : ""
+              }
+              onOpenChange={(open) => {
+                if (!open) setCompareBaseQuery("");
+              }}
+            >
+              <ComboboxTrigger render={<Button variant="outline" size="sm" />}>
+                <GitBranch className="size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {compareBaseDialogBranch
+                    ? (branchDetailsByRef.get(compareBaseDialogBranch.name)?.baseRef ??
+                      compareBaseOverrides.get(compareBaseDialogBranch.name) ??
+                      "Choose ref")
+                    : "Choose ref"}
+                </span>
+                <ChevronDown className="size-3.5 shrink-0 opacity-70" />
+              </ComboboxTrigger>
+              <ComboboxPopup className="flex w-80 flex-col">
+                <div className="shrink-0 px-3 pt-2.5">
+                  <ComboboxInput
+                    size="sm"
+                    placeholder="Search refs..."
+                    showTrigger={false}
+                    value={compareBaseQuery}
+                    onChange={(event) => setCompareBaseQuery(event.currentTarget.value)}
+                  />
+                </div>
+                <ComboboxEmpty>No refs found.</ComboboxEmpty>
+                <ComboboxList className="max-h-56">
+                  {filteredCompareBaseRefs.map((refName) => (
+                    <ComboboxItem
+                      hideIndicator
+                      key={refName}
+                      value={refName}
+                      onClick={() => chooseCompareBase(refName)}
+                    >
+                      <div className="flex w-full min-w-0 items-center gap-2">
+                        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">{refName}</span>
+                      </div>
+                    </ComboboxItem>
+                  ))}
+                </ComboboxList>
+              </ComboboxPopup>
+            </Combobox>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setCompareBaseDialogBranch(null);
+                setCompareBaseQuery("");
+              }}
+            >
+              Cancel
             </Button>
           </DialogFooter>
         </DialogPopup>

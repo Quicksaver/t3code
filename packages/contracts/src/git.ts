@@ -399,6 +399,7 @@ export const VcsPanelBranchDetails = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   aheadCommits: Schema.Array(VcsPanelCommitSummary),
   behindCommits: Schema.Array(VcsPanelCommitSummary),
+  compareCommits: Schema.Array(VcsPanelCommitSummary),
   commits: Schema.Array(VcsPanelCommitSummary),
   commitsRemaining: NonNegativeInt,
   compareFiles: Schema.Array(VcsPanelFileChange),
@@ -409,6 +410,7 @@ export const VcsPanelBranchDetailsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branch: VcsRef,
   defaultCompareRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  compareBaseRef: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsPanelBranchDetailsInput = typeof VcsPanelBranchDetailsInput.Type;
 
@@ -484,6 +486,7 @@ export type VcsPanelCommitInput = typeof VcsPanelCommitInput.Type;
 export const VcsPanelBranchActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branchName: TrimmedNonEmptyStringSchema,
+  remoteName: Schema.optional(TrimmedNonEmptyStringSchema),
   force: Schema.optional(Schema.Boolean),
   merge: Schema.optional(Schema.Boolean),
 });
