@@ -111,20 +111,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Source control action failed.";
 }
 
-function formatBranchSync(snapshot: VcsPanelSnapshotResult): string {
-  const status = snapshot.status;
-  if (!status.hasUpstream) return "No upstream";
-  return formatSyncCounts(status.aheadCount, status.behindCount) ?? "Synced";
-}
-
-function formatSyncCounts(aheadCount: number, behindCount: number): string | null {
-  const parts = [];
-  if (aheadCount > 0) parts.push(`↑${aheadCount}`);
-  if (behindCount > 0) parts.push(`↓${behindCount}`);
-  if (parts.length === 0) return null;
-  return parts.join(" ");
-}
-
 interface PanelChangedFile extends VcsPanelFileChange {
   readonly hasStagedChanges: boolean;
   readonly hasUnstagedChanges: boolean;
@@ -743,11 +729,7 @@ function BranchBadge({ snapshot }: { readonly snapshot: VcsPanelSnapshotResult }
       </Badge>
     );
   }
-  return (
-    <Badge variant={status.behindCount > 0 ? "warning" : "info"} size="sm">
-      {formatBranchSync(snapshot)}
-    </Badge>
-  );
+  return <BranchSyncLabels aheadCount={status.aheadCount} behindCount={status.behindCount} />;
 }
 
 function sumFiles(files: readonly VcsPanelFileChange[]) {
