@@ -7,6 +7,11 @@ export function getTerminalLabel(terminalId: string): string {
     return `Terminal ${numericSuffix}`;
   }
 
+  const actionId = /^action-(.+)$/i.exec(terminalId)?.[1]?.trim();
+  if (actionId) {
+    return `Action: ${actionId.replace(/-+/g, " ")}`;
+  }
+
   return terminalId;
 }
 

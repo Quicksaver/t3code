@@ -94,7 +94,6 @@ import {
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   type SessionPhase,
@@ -148,6 +147,10 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
+import {
+  resolveProjectActionTerminalId,
+  waitForTerminalInputReady,
+} from "~/projectScriptTerminals";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
@@ -2867,11 +2870,6 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
       const targetCwd = options?.cwd ?? gitCwd ?? activeProject.cwd;
-      const baseTerminalId =
-        terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
-      const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
-      const shouldCreateNewTerminal = wantsNewTerminal;
       const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 
       setTerminalUiLaunchContext({
@@ -2892,28 +2890,28 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const targetTerminalId = shouldCreateNewTerminal
-        ? nextTerminalId(activeKnownTerminalIds)
-        : baseTerminalId;
-      const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
-        ? {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            cols: SCRIPT_TERMINAL_COLS,
-            rows: SCRIPT_TERMINAL_ROWS,
-          }
-        : {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-          };
+      const targetTerminalId =
+        options?.preferNewTerminal === true
+          ? nextTerminalId(activeKnownTerminalIds)
+          : resolveProjectActionTerminalId({
+              scriptId: script.id,
+              terminalIds: activeKnownTerminalIds,
+              runningTerminalIds,
+            });
+      const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
+      const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+      const openTerminalInput: TerminalOpenInput = {
+        threadId: activeThreadId,
+        terminalId: targetTerminalId,
+        cwd: targetCwd,
+        ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+        env: runtimeEnv,
+        ...(!isKnownServerTerminal
+          ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+          : {}),
+      };
 
-      if (shouldCreateNewTerminal) {
+      if (!isVisibleTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
       } else {
         storeSetActiveTerminal(activeThreadRef, targetTerminalId);
@@ -2921,6 +2919,7 @@ export default function ChatView(props: ChatViewProps) {
 
       try {
         await api.terminal.open(openTerminalInput);
+        await waitForTerminalInputReady(api, openTerminalInput);
         await api.terminal.write({
           threadId: activeThreadId,
           terminalId: targetTerminalId,
@@ -2963,8 +2962,9 @@ export default function ChatView(props: ChatViewProps) {
       setLastInvokedScriptByProjectId,
       environmentId,
       activeKnownTerminalIds,
+      activeServerOrderedTerminalIds,
       runningTerminalIds,
-      terminalUiState.activeTerminalId,
+      terminalUiState.terminalIds,
       terminalEnabled,
     ],
   );

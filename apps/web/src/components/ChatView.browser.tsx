@@ -1775,6 +1775,31 @@ describe("ChatView timeline estimator parity (full app)", () => {
         if (request._tag === WS_METHODS.subscribeTerminalMetadata) {
           return fixture.terminalMetadataEvents;
         }
+        if (request._tag === WS_METHODS.terminalAttach) {
+          return [
+            {
+              type: "snapshot",
+              snapshot: {
+                threadId: typeof request.threadId === "string" ? request.threadId : THREAD_ID,
+                terminalId: typeof request.terminalId === "string" ? request.terminalId : "default",
+                cwd: typeof request.cwd === "string" ? request.cwd : "/repo/project",
+                worktreePath:
+                  typeof request.worktreePath === "string"
+                    ? request.worktreePath
+                    : request.worktreePath === null
+                      ? null
+                      : null,
+                status: "running",
+                pid: 123,
+                history: "$ ",
+                exitCode: null,
+                exitSignal: null,
+                label: "Terminal 1",
+                updatedAt: NOW_ISO,
+              },
+            },
+          ];
+        }
         return [];
       },
     });
@@ -2518,6 +2543,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
+            terminalId: "action-lint",
             cwd: "/repo/project",
             env: {
               T3CODE_PROJECT_ROOT: "/repo/project",
@@ -2529,14 +2555,26 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
+          const attachRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalAttach,
+          );
           const writeRequest = wsRequests.find(
             (request) => request._tag === WS_METHODS.terminalWrite,
           );
+          expect(attachRequest).toMatchObject({
+            _tag: WS_METHODS.terminalAttach,
+            threadId: THREAD_ID,
+            terminalId: "action-lint",
+          });
           expect(writeRequest).toMatchObject({
             _tag: WS_METHODS.terminalWrite,
             threadId: THREAD_ID,
+            terminalId: "action-lint",
             data: "bun run lint\r",
           });
+          expect(wsRequests.indexOf(attachRequest!)).toBeLessThan(
+            wsRequests.indexOf(writeRequest!),
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2597,6 +2635,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(openRequest).toMatchObject({
             _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
+            terminalId: "action-test",
             cwd: "/repo/worktrees/feature-draft",
             env: {
               T3CODE_PROJECT_ROOT: "/repo/project",

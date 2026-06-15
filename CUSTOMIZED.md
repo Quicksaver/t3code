@@ -131,6 +131,23 @@ Relevant tests live in:
 
 - `apps/web/src/components/chat/ThreadConversationWidth.test.tsx`
 
+## Terminal-backed Project Actions
+
+This branch should treat terminal-backed project actions as reusable terminal workflows, not as fire-and-forget terminal creation.
+
+Expected behavior:
+
+- Running a project action should reuse a stable terminal for that action when possible instead of opening a new terminal instance on every click.
+- If action-specific reuse is not available, terminal-backed actions should still prefer a shared action terminal group so repeated runs do not leave many stale terminal instances behind.
+- A project action must not write its command until the target terminal session is ready to receive input. This avoids shells with slow startup, such as login `bash`, rendering the command before the prompt and leaving the command unexecuted.
+- If the selected reusable terminal is busy running a subprocess, the action may choose another action terminal rather than injecting input into a live process.
+
+Primary files:
+
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ThreadTerminalDrawer.tsx`
+- `apps/server/src/terminal/Layers/Manager.ts`
+
 ## VS Code Extension Work
 
 This branch also carries the VS Code extension work that is not assumed to exist on `main`. Treat the VS Code extension, its desktop-backed integration model, workspace-scoped webview behavior, host MCP bridge, release packaging, and related tests as part of this branch's customization set during upstream merges.
@@ -187,7 +204,8 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 3. Chat conversation and composer surfaces default to no maximum width across all host types.
 4. VS Code extension work remains preserved as a local customization unless `main` has an equivalent implementation; use `apps/vscode-extension/IMPLEMENTATION.md` as the detailed source of truth.
 5. Source-control panel work remains preserved as a local customization once implementation begins unless `main` has an equivalent agent-aware source-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
-6. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
+6. Terminal-backed project actions reuse action terminals where possible and wait for terminal readiness before writing commands.
+7. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
 
 ## Retirement Criteria
 
