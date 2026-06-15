@@ -34,7 +34,7 @@ import {
   type PtySpawnInput,
   PtySpawnError,
 } from "../Services/PTY.ts";
-import { makeTerminalManagerWithOptions } from "./Manager.ts";
+import { __testing, makeTerminalManagerWithOptions } from "./Manager.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
@@ -783,6 +783,61 @@ it.layer(
       );
     }),
   );
+
+  it("treats an idle POSIX login shell child as no running subprocess", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "bash",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "bash" },
+        ],
+      }),
+    ).toEqual({ hasRunningSubprocess: false, childCommand: null, processIds: [] });
+  });
+
+  it("reports the first non-shell POSIX descendant as the running subprocess", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "bash",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "bash" },
+          { pid: 9002, ppid: 9001, command: "pnpm" },
+          { pid: 9003, ppid: 9002, command: "node" },
+        ],
+      }),
+    ).toEqual({
+      hasRunningSubprocess: true,
+      childCommand: "pnpm",
+      processIds: [9000, 9001, 9002, 9003],
+    });
+  });
+
+  it("keeps a non-shell direct POSIX child marked as running", () => {
+    expect(
+      __testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "vim",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "vim" },
+        ],
+      }),
+    ).toEqual({
+      hasRunningSubprocess: true,
+      childCommand: "vim",
+      processIds: [9000, 9001],
+    });
+  });
 
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {

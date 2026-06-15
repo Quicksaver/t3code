@@ -3,17 +3,24 @@ import type {
   ProjectScript,
   TerminalAttachStreamEvent,
   TerminalOpenInput,
+  TerminalSummary,
 } from "@t3tools/contracts";
 
 const ACTION_TERMINAL_ID_PREFIX = "action-";
 const ACTION_TERMINAL_READY_TIMEOUT_MS = 4_000;
 const MAX_TERMINAL_BUFFER_TAIL = 2_000;
 const PROMPT_LINE_MAX_LENGTH = 180;
+const ESCAPE_CHARACTER = String.fromCharCode(27);
 const ANSI_ESCAPE_PATTERN = new RegExp(
-  `${String.fromCharCode(27)}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+  `${ESCAPE_CHARACTER}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+  "g",
+);
+const OSC_ESCAPE_PATTERN = new RegExp(
+  `${ESCAPE_CHARACTER}\\][\\s\\S]*?(?:${String.fromCharCode(7)}|${ESCAPE_CHARACTER}\\\\)`,
   "g",
 );
 const BELL_CHARACTER = String.fromCharCode(7);
+const SHELL_LABELS = new Set(["bash", "zsh", "sh", "fish", "csh", "tcsh", "pwsh", "powershell"]);
 
 function projectActionTerminalIdBase(scriptId: ProjectScript["id"]): string {
   return `${ACTION_TERMINAL_ID_PREFIX}${scriptId}`;
@@ -63,11 +70,24 @@ export function resolveProjectActionTerminalId(input: {
 }
 
 function stripAnsi(value: string): string {
-  return value.replace(ANSI_ESCAPE_PATTERN, "");
+  return value.replace(OSC_ESCAPE_PATTERN, "").replace(ANSI_ESCAPE_PATTERN, "");
+}
+
+function stripControlCharacters(value: string): string {
+  let next = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (char === "\n" || char === "\r" || code >= 32) {
+      next += char;
+    }
+  }
+  return next;
 }
 
 export function terminalOutputLooksReadyForInput(value: string): boolean {
-  const tail = stripAnsi(value).slice(-MAX_TERMINAL_BUFFER_TAIL).replaceAll(BELL_CHARACTER, "");
+  const tail = stripControlCharacters(stripAnsi(value))
+    .slice(-MAX_TERMINAL_BUFFER_TAIL)
+    .replaceAll(BELL_CHARACTER, "");
   const lines = tail.split(/\r?\n/);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index]?.replace(/\r/g, "") ?? "";
@@ -80,6 +100,39 @@ export function terminalOutputLooksReadyForInput(value: string): boolean {
     return /[$#%>]\s*$/.test(line);
   }
   return false;
+}
+
+function normalizedShellLabel(label: string): string {
+  const trimmed = label.trim().toLowerCase();
+  const basename = trimmed.split(/[\\/]/).at(-1) ?? trimmed;
+  return basename.replace(/^-+/, "");
+}
+
+export function terminalSessionIsReadyForProjectActionInput(input: {
+  readonly summary: Pick<
+    TerminalSummary,
+    "cwd" | "hasRunningSubprocess" | "label" | "status" | "worktreePath"
+  > | null;
+  readonly buffer: string;
+  readonly targetCwd: string;
+  readonly targetWorktreePath: string | null;
+}): boolean {
+  const summary = input.summary;
+  if (
+    !summary ||
+    summary.status !== "running" ||
+    summary.cwd !== input.targetCwd ||
+    summary.worktreePath !== input.targetWorktreePath
+  ) {
+    return false;
+  }
+  if (!summary.hasRunningSubprocess) {
+    return true;
+  }
+  return (
+    SHELL_LABELS.has(normalizedShellLabel(summary.label)) &&
+    terminalOutputLooksReadyForInput(input.buffer)
+  );
 }
 
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {

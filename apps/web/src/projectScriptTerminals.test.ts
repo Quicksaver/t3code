@@ -10,6 +10,7 @@ import {
   openTerminalAndWaitForInputReady,
   projectActionTerminalId,
   resolveProjectActionTerminalId,
+  terminalSessionIsReadyForProjectActionInput,
   terminalOutputLooksReadyForInput,
 } from "./projectScriptTerminals";
 
@@ -92,8 +93,48 @@ describe("terminalOutputLooksReadyForInput", () => {
     expect(terminalOutputLooksReadyForInput("\u001B[32mrepo\u001B[0m % ")).toBe(true);
   });
 
+  it("ignores terminal title control sequences around prompts", () => {
+    expect(terminalOutputLooksReadyForInput("\u001B]0;repo\u0007$ \u001B[?2004h")).toBe(true);
+  });
+
   it("does not treat plain command text as readiness", () => {
     expect(terminalOutputLooksReadyForInput("pnpm run dist:desktop:dmg:arm64\n")).toBe(false);
+  });
+});
+
+describe("terminalSessionIsReadyForProjectActionInput", () => {
+  it("treats shell-labeled sessions with a visible prompt as reusable", () => {
+    expect(
+      terminalSessionIsReadyForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: true,
+          label: "bash",
+          status: "running",
+          worktreePath: null,
+        },
+        buffer: "$ ",
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not treat non-shell subprocess labels as reusable", () => {
+    expect(
+      terminalSessionIsReadyForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: true,
+          label: "vim",
+          status: "running",
+          worktreePath: null,
+        },
+        buffer: "$ ",
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(false);
   });
 });
 

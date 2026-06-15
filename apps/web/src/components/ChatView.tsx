@@ -150,6 +150,7 @@ import {
 import {
   openTerminalAndWaitForInputReady,
   resolveProjectActionTerminalId,
+  terminalSessionIsReadyForProjectActionInput,
 } from "~/projectScriptTerminals";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
@@ -2890,26 +2891,38 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
+      const reusableTerminalById = new Map(
+        activeThreadKnownSessions.map((session) => [session.target.terminalId, session] as const),
+      );
+      const effectiveRunningTerminalIds = runningTerminalIds.filter((terminalId) => {
+        const session = reusableTerminalById.get(terminalId);
+        if (!session) {
+          return true;
+        }
+        return !terminalSessionIsReadyForProjectActionInput({
+          summary: session.state.summary,
+          buffer: session.state.buffer,
+          targetCwd,
+          targetWorktreePath,
+        });
+      });
       const targetTerminalId =
         options?.preferNewTerminal === true
           ? nextTerminalId(activeKnownTerminalIds)
           : resolveProjectActionTerminalId({
               scriptId: script.id,
               terminalIds: activeKnownTerminalIds,
-              runningTerminalIds,
+              runningTerminalIds: effectiveRunningTerminalIds,
             });
       const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
       const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
-      const targetSession =
-        activeThreadKnownSessions.find(
-          (session) => session.target.terminalId === targetTerminalId,
-        ) ?? null;
-      const targetSummary = targetSession?.state.summary ?? null;
-      const canWriteImmediately =
-        targetSummary?.status === "running" &&
-        targetSession?.state.hasRunningSubprocess === false &&
-        targetSummary.cwd === targetCwd &&
-        targetSummary.worktreePath === targetWorktreePath;
+      const targetSession = reusableTerminalById.get(targetTerminalId) ?? null;
+      const canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+        summary: targetSession?.state.summary ?? null,
+        buffer: targetSession?.state.buffer ?? "",
+        targetCwd,
+        targetWorktreePath,
+      });
       const openTerminalInput: TerminalOpenInput = {
         threadId: activeThreadId,
         terminalId: targetTerminalId,
