@@ -77,6 +77,7 @@ export const VcsRef = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   isRemote: Schema.optional(Schema.Boolean),
   remoteName: Schema.optional(TrimmedNonEmptyStringSchema),
+  upstreamName: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   current: Schema.Boolean,
   isDefault: Schema.Boolean,
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
@@ -367,6 +368,7 @@ export type VcsPanelRemote = typeof VcsPanelRemote.Type;
 export const VcsPanelStash = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
   sha: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
   message: TrimmedNonEmptyStringSchema,
 });
 export type VcsPanelStash = typeof VcsPanelStash.Type;

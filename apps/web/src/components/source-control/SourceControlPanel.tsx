@@ -13,6 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   Archive,
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
@@ -24,6 +25,7 @@ import {
   Plus,
   RefreshCw,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import type {
@@ -38,6 +40,7 @@ import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { invalidateSourceControlState, useGitStackedAction } from "~/lib/sourceControlActions";
 import { cn, newCommandId } from "~/lib/utils";
+import { useVcsStatus } from "~/lib/vcsStatusState";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 import { Badge } from "../ui/badge";
@@ -63,22 +66,18 @@ interface SourceControlPanelProps {
   readonly worktreePath: string | null;
 }
 
-type SectionKey = "changes" | "branches" | "remotes" | "stashes";
+type SectionKey = "work" | "remotes";
 
-const SECTION_ORDER: readonly SectionKey[] = ["changes", "branches", "remotes", "stashes"];
+const SECTION_ORDER: readonly SectionKey[] = ["work", "remotes"];
 
 const SECTION_TITLES: Record<SectionKey, string> = {
-  changes: "Changes",
-  branches: "Branches",
+  work: "Work in Progress",
   remotes: "Remotes",
-  stashes: "Stashes",
 };
 
 const DEFAULT_SECTION_WEIGHTS: Record<SectionKey, number> = {
-  changes: 2.4,
-  branches: 2,
-  remotes: 1.5,
-  stashes: 1.4,
+  work: 3,
+  remotes: 1.4,
 };
 
 const COLLAPSED_SECTION_HEIGHT = 32;
@@ -200,6 +199,10 @@ function branchSyncCounts(
   };
 }
 
+function branchHasUpstream(branch: VcsRef, snapshot: VcsPanelSnapshotResult): boolean {
+  return branch.current ? snapshot.status.hasUpstream : Boolean(branch.upstreamName);
+}
+
 function treeKey(kind: string, id: string): string {
   return `${kind}:${id}`;
 }
@@ -262,6 +265,7 @@ function remoteBranchRef(
     isDefault: branch.isDefaultRemoteHead,
     worktreePath: null,
     lastActivityAt: branch.lastActivityAt,
+    upstreamName: null,
   };
 }
 
@@ -312,6 +316,96 @@ function BranchSyncLabels({
   );
 }
 
+type BranchSyncState = "fetch" | "pull" | "push" | "publish" | "diverged";
+
+function branchSyncState(branch: VcsRef, snapshot: VcsPanelSnapshotResult): BranchSyncState {
+  const hasUpstream = branchHasUpstream(branch, snapshot);
+  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
+  if (!hasUpstream) return "publish";
+  if (aheadCount > 0 && behindCount > 0) return "diverged";
+  if (behindCount > 0) return "pull";
+  if (aheadCount > 0) return "push";
+  return "fetch";
+}
+
+function branchSyncActionLabel(state: BranchSyncState): string {
+  switch (state) {
+    case "publish":
+      return "Publish";
+    case "pull":
+      return "Pull. Shift: reset. Option: fetch.";
+    case "push":
+      return "Push";
+    case "diverged":
+      return "Sync diverged";
+    case "fetch":
+      return "Fetch";
+  }
+}
+
+function BranchSyncActionIcon({ state }: { readonly state: BranchSyncState }) {
+  switch (state) {
+    case "publish":
+      return <Plus className="size-3.5" />;
+    case "pull":
+      return <Download className="size-3.5" />;
+    case "push":
+      return <Upload className="size-3.5" />;
+    case "diverged":
+      return <GitCompare className="size-3.5" />;
+    case "fetch":
+      return <RefreshCw className="size-3.5" />;
+  }
+}
+
+type AttentionKind = "conflicts" | "diverged" | "behind" | "unpushed" | "dirty" | "stale";
+
+const ATTENTION_RANK: Record<AttentionKind, number> = {
+  conflicts: 0,
+  diverged: 1,
+  behind: 2,
+  unpushed: 3,
+  dirty: 4,
+  stale: 5,
+};
+
+function branchAttention(branch: VcsRef, snapshot: VcsPanelSnapshotResult): AttentionKind {
+  const hasUpstream = branchHasUpstream(branch, snapshot);
+  const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
+  if (aheadCount > 0 && behindCount > 0) return "diverged";
+  if (behindCount > 0) return "behind";
+  if (aheadCount > 0 || !hasUpstream) return "unpushed";
+  return "stale";
+}
+
+function branchActivityTimestamp(branch: VcsRef): number {
+  if (!branch.lastActivityAt) return 0;
+  const time = Date.parse(branch.lastActivityAt);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function stashActivityTimestamp(stash: VcsPanelStash): number {
+  if (!stash.createdAt) return 0;
+  const time = Date.parse(stash.createdAt);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function AttentionIcon({ kind }: { readonly kind: AttentionKind }) {
+  switch (kind) {
+    case "conflicts":
+    case "diverged":
+      return <AlertTriangle className="size-3.5 shrink-0 text-destructive-foreground" />;
+    case "behind":
+      return <Download className="size-3.5 shrink-0 text-warning-foreground" />;
+    case "unpushed":
+      return <Upload className="size-3.5 shrink-0 text-info-foreground" />;
+    case "dirty":
+      return <GitCommit className="size-3.5 shrink-0 text-warning-foreground" />;
+    case "stale":
+      return <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />;
+  }
+}
+
 function AuthorAvatar({
   commit,
   className,
@@ -333,12 +427,56 @@ function AuthorAvatar({
   );
 }
 
+type DisplayHeadRef =
+  | { readonly kind: "local"; readonly name: string; readonly synced: boolean }
+  | { readonly kind: "remote"; readonly name: string };
+
+function displayHeadRefs(headRefs: readonly string[]): DisplayHeadRef[] {
+  const localRefs = new Set(headRefs.filter((ref) => !ref.includes("/")));
+  const remoteByBranch = new Map<string, string>();
+  for (const ref of headRefs) {
+    const slashIndex = ref.indexOf("/");
+    if (slashIndex <= 0) continue;
+    const branchName = ref.slice(slashIndex + 1);
+    if (branchName.length === 0 || branchName === "HEAD") continue;
+    remoteByBranch.set(branchName, ref);
+  }
+
+  const refs: DisplayHeadRef[] = [...localRefs]
+    .toSorted((left, right) => left.localeCompare(right))
+    .map((name) => ({
+      kind: "local" as const,
+      name,
+      synced: remoteByBranch.has(name),
+    }));
+
+  for (const branchName of [...remoteByBranch.keys()].toSorted((left, right) =>
+    left.localeCompare(right),
+  )) {
+    if (localRefs.has(branchName)) continue;
+    refs.push({ kind: "remote", name: branchName });
+  }
+
+  return refs;
+}
+
+function SyncedIcon() {
+  return <Check className="size-3 shrink-0" aria-label="Synced upstream" />;
+}
+
 function RefLabels({ commit }: { readonly commit: VcsPanelCommitSummary }) {
-  if (commit.headRefs.length === 0 && commit.tags.length === 0) return null;
+  const headRefs = displayHeadRefs(commit.headRefs);
+  if (headRefs.length === 0 && commit.tags.length === 0) return null;
   return (
     <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
-      {commit.headRefs.map((ref) => (
-        <CompactBadge key={`head:${ref}`}>{ref}</CompactBadge>
+      {headRefs.map((ref) => (
+        <CompactBadge key={`head:${ref.kind}:${ref.name}`}>
+          <span className="inline-flex items-center gap-0.5">
+            {ref.kind === "remote" ? <SyncedIcon /> : null}
+            <span>{ref.name}</span>
+            {ref.kind === "local" && ref.synced ? <SyncedIcon /> : null}
+          </span>
+        </CompactBadge>
       ))}
       {commit.tags.map((tag) => (
         <CompactBadge key={`tag:${tag}`}>{tag}</CompactBadge>
@@ -410,9 +548,20 @@ function IconButton({
   );
 }
 
+function RowActions({ children }: { readonly children: ReactNode }) {
+  return (
+    <div
+      className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded bg-background/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      onClick={(event) => event.stopPropagation()}
+    >
+      {children}
+    </div>
+  );
+}
+
 function CompactBadge({ children }: { readonly children: ReactNode }) {
   return (
-    <span className="rounded border border-border/70 px-1 text-[10px] leading-4 text-muted-foreground">
+    <span className="inline-flex h-4 items-center rounded border border-border/70 px-1 text-[10px] leading-4 text-muted-foreground">
       {children}
     </span>
   );
@@ -583,9 +732,11 @@ export function SourceControlPanel({
   const api = useMemo(() => readEnvironmentApi(environmentId), [environmentId]);
   const gitActionScope = useMemo(() => ({ environmentId, cwd }), [cwd, environmentId]);
   const gitAction = useGitStackedAction(gitActionScope);
+  const vcsStatus = useVcsStatus(gitActionScope);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const expandedTreeRef = useRef<ReadonlySet<string>>(new Set());
   const lastFocusRefreshAtRef = useRef(0);
+  const lastVcsStatusFingerprintRef = useRef<string | null>(null);
   const previousChangedPathsRef = useRef<ReadonlySet<string>>(new Set());
   const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -637,6 +788,17 @@ export function SourceControlPanel({
     () => selectedChangedFiles.map((file) => file.path),
     [selectedChangedFiles],
   );
+  const vcsStatusFingerprint = useMemo(() => {
+    const status = vcsStatus.data;
+    if (!status) return null;
+    return JSON.stringify({
+      refName: status.refName,
+      hasUpstream: status.hasUpstream,
+      aheadCount: status.aheadCount,
+      behindCount: status.behindCount,
+      workingTree: status.workingTree,
+    });
+  }, [vcsStatus.data]);
   const isActionRunning = useCallback(
     (actionKey: string) => runningActions.has(actionKey),
     [runningActions],
@@ -645,10 +807,11 @@ export function SourceControlPanel({
   const syncChangedPathSelection = useCallback((groups: readonly VcsPanelChangeGroup[]) => {
     const nextChangedPaths = mergeChangeGroups(groups).map((file) => file.path);
     const currentPaths = new Set(nextChangedPaths);
+    const previousPaths = previousChangedPathsRef.current;
     setSelectedChangePaths((current) => {
       const next = new Set([...current].filter((path) => currentPaths.has(path)));
       for (const path of nextChangedPaths) {
-        if (!previousChangedPathsRef.current.has(path)) {
+        if (!previousPaths.has(path)) {
           next.add(path);
         }
       }
@@ -696,6 +859,13 @@ export function SourceControlPanel({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (vcsStatusFingerprint === null) return;
+    if (lastVcsStatusFingerprintRef.current === vcsStatusFingerprint) return;
+    lastVcsStatusFingerprintRef.current = vcsStatusFingerprint;
+    void refresh();
+  }, [refresh, vcsStatusFingerprint]);
 
   useEffect(() => {
     expandedTreeRef.current = expandedTree;
@@ -805,15 +975,30 @@ export function SourceControlPanel({
       const force = isActionForced(event);
       const fetchFirst = shouldFetchBeforePull(event);
       const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
-      if (!branch.current) {
-        void runAction(
-          `branch-fetch:${branch.name}`,
-          () => api?.vcs.fetchBranch({ cwd, branchName: branch.name }) ?? Promise.resolve(),
-        );
+      const state = branchSyncState(branch, snapshot);
+      if (state === "diverged") {
+        setDivergedSyncBranch(branch);
         return;
       }
-      if (aheadCount > 0 && behindCount > 0) {
-        setDivergedSyncBranch(branch);
+      if (!branch.current) {
+        const actionKey =
+          state === "fetch" ? `branch-fetch:${branch.name}` : `branch-sync:${branch.name}`;
+        void runAction(actionKey, async () => {
+          if (!api) return;
+          if (state === "push" || state === "publish") {
+            await api.vcs.pushBranch({ cwd, branchName: branch.name, force });
+            return;
+          }
+          if (state === "pull") {
+            await api.vcs.pullBranch({
+              cwd,
+              branchName: branch.name,
+              force,
+            });
+            return;
+          }
+          await api.vcs.fetchBranch({ cwd, branchName: branch.name });
+        });
         return;
       }
       void runAction(`branch-sync:${branch.name}`, async () => {
@@ -1318,7 +1503,7 @@ export function SourceControlPanel({
                 ) : null}
               </>
             ),
-            count: details.compareFiles.length,
+            count: null,
             icon: <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />,
             children: <FileChangeList files={details.compareFiles} emptyLabel="No changes." />,
           })
@@ -1378,27 +1563,20 @@ export function SourceControlPanel({
     const loadingDetails = loadingBranchDetails.has(branch.name);
     const current = branch.current;
     const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
+    const hasUpstream = branchHasUpstream(branch, snapshot);
+    const attention = branchAttention(branch, snapshot);
+    const syncState = branchSyncState(branch, snapshot);
     const switchKey = `branch-switch:${branch.name}`;
     const syncKey = `branch-sync:${branch.name}`;
     const deleteKey = `branch-delete:${branch.name}`;
-    const syncLabel = !current
-      ? "Fetch"
-      : aheadCount > 0 && behindCount > 0
-        ? "Sync diverged"
-        : !snapshot.status.hasUpstream
-          ? "Publish"
-          : behindCount > 0
-            ? "Pull. Shift: reset. Option: fetch."
-            : aheadCount > 0
-              ? "Push"
-              : "Fetch";
+    const syncLabel = branchSyncActionLabel(syncState);
     const relativeDate = formatRelativeDate(branch.lastActivityAt);
     return (
       <div key={branch.name} className="space-y-0.5">
         <div
           role="button"
           tabIndex={0}
-          className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 pr-20 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleBranchTree(key, branch)}
           onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
         >
@@ -1407,18 +1585,24 @@ export function SourceControlPanel({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+          <AttentionIcon kind={attention} />
           <span className="min-w-0 flex-1 truncate text-sm">{branch.name}</span>
-          <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
-          {relativeDate ? (
-            <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
-          ) : null}
-          {current ? <CompactBadge>current</CompactBadge> : null}
-          {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
-          <div
-            className="flex shrink-0 items-center gap-0.5"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div className="ml-auto flex min-w-0 shrink-0 items-center gap-1">
+            {hasUpstream && aheadCount === 0 && behindCount === 0 ? (
+              <span className="inline-flex size-4 shrink-0 items-center justify-center text-success-foreground">
+                <SyncedIcon />
+              </span>
+            ) : null}
+            {!hasUpstream ? <CompactBadge>local</CompactBadge> : null}
+            {current ? <CompactBadge>current</CompactBadge> : null}
+            {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
+            {branch.worktreePath && !current ? <CompactBadge>worktree</CompactBadge> : null}
+            <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+            {relativeDate ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
+            ) : null}
+          </div>
+          <RowActions>
             <IconButton
               label="Switch branch"
               disabled={current || isActionRunning(switchKey)}
@@ -1431,7 +1615,7 @@ export function SourceControlPanel({
               disabled={isActionRunning(syncKey) || isActionRunning(`branch-fetch:${branch.name}`)}
               onClick={(event) => syncBranch(branch, event)}
             >
-              <RefreshCw className="size-3.5" />
+              <BranchSyncActionIcon state={syncState} />
             </IconButton>
             <IconButton
               label="Delete branch. Shift: force."
@@ -1441,7 +1625,7 @@ export function SourceControlPanel({
             >
               <Trash2 className="size-3.5" />
             </IconButton>
-          </div>
+          </RowActions>
         </div>
         {expanded && details ? renderBranchTree(branch, details) : null}
         {expanded && !details && loadingDetails ? (
@@ -1467,7 +1651,7 @@ export function SourceControlPanel({
         <div
           role="button"
           tabIndex={0}
-          className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 pr-20 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleBranchTree(key, branch)}
           onKeyDown={(event) => toggleBranchTreeFromKeyboard(key, branch, event)}
         >
@@ -1486,10 +1670,7 @@ export function SourceControlPanel({
             <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
           ) : null}
           {branch.isDefault ? <CompactBadge>default</CompactBadge> : null}
-          <div
-            className="flex shrink-0 items-center gap-0.5"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <RowActions>
             <IconButton
               label="Switch branch"
               disabled={isActionRunning(switchKey)}
@@ -1517,7 +1698,7 @@ export function SourceControlPanel({
             >
               <Trash2 className="size-3.5" />
             </IconButton>
-          </div>
+          </RowActions>
         </div>
         {expanded && details ? renderBranchTree(branch, details) : null}
         {expanded && !details && loadingDetails ? (
@@ -1539,7 +1720,7 @@ export function SourceControlPanel({
         <div
           role="button"
           tabIndex={0}
-          className="flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
+          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 pr-16 text-left text-xs hover:bg-accent/60"
           onClick={() => toggleTree(key)}
           onKeyDown={(event) => toggleTreeFromKeyboard(key, event)}
         >
@@ -1552,10 +1733,7 @@ export function SourceControlPanel({
           <span className="min-w-0 flex-[2] truncate text-muted-foreground">
             {remote.fetchUrl ?? "No fetch URL"}
           </span>
-          <div
-            className="flex shrink-0 items-center gap-0.5"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <RowActions>
             <IconButton
               label="Fetch remote"
               disabled={isActionRunning(fetchKey)}
@@ -1585,7 +1763,7 @@ export function SourceControlPanel({
             >
               <Trash2 className="size-3.5" />
             </IconButton>
-          </div>
+          </RowActions>
         </div>
         {expanded ? (
           <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
@@ -1610,12 +1788,13 @@ export function SourceControlPanel({
     const applyKey = `stash-apply:${stash.refName}`;
     const popKey = `stash-pop:${stash.refName}`;
     const dropKey = `stash-drop:${stash.refName}`;
+    const relativeDate = formatRelativeDate(stash.createdAt);
     return (
       <div key={stash.refName} className="space-y-0.5">
         <div
           role="button"
           tabIndex={0}
-          className="flex h-7 min-w-0 items-center justify-between gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
+          className="group relative flex h-7 min-w-0 items-center justify-between gap-1.5 rounded px-1.5 pr-24 text-xs hover:bg-accent/60"
           onClick={() => toggleStashTree(key, stash.refName)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
@@ -1628,12 +1807,13 @@ export function SourceControlPanel({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
+          <Archive className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate">{stash.message}</span>
+          {relativeDate ? (
+            <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
+          ) : null}
           <span className="shrink-0 font-mono text-muted-foreground">{stash.refName}</span>
-          <div
-            className="flex shrink-0 items-center gap-0.5"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <RowActions>
             <IconButton
               label="Apply stash"
               disabled={isActionRunning(applyKey)}
@@ -1674,7 +1854,7 @@ export function SourceControlPanel({
             >
               <Trash2 className="size-3.5" />
             </IconButton>
-          </div>
+          </RowActions>
         </div>
         {expanded && details ? (
           <div className="ml-2 border-l border-border/60 pl-1">
@@ -1775,13 +1955,131 @@ export function SourceControlPanel({
     </div>
   );
 
-  const branchesSection = (
+  type WorkItem =
+    | {
+        readonly kind: "working-tree";
+        readonly key: string;
+        readonly attention: AttentionKind;
+        readonly activity: number;
+      }
+    | {
+        readonly kind: "branch";
+        readonly key: string;
+        readonly branch: VcsRef;
+        readonly attention: AttentionKind;
+        readonly activity: number;
+      }
+    | {
+        readonly kind: "stash";
+        readonly key: string;
+        readonly stash: VcsPanelStash;
+        readonly attention: AttentionKind;
+        readonly activity: number;
+      };
+
+  const currentBranch = snapshot.localBranches.find((branch) => branch.current) ?? null;
+  const workingTreeAttention: AttentionKind = changedFiles.some((file) => file.hasConflicts)
+    ? "conflicts"
+    : changedFiles.length > 0
+      ? "dirty"
+      : "stale";
+  const workItems: WorkItem[] = [
+    {
+      kind: "working-tree" as const,
+      key: "working-tree",
+      attention: workingTreeAttention,
+      activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
+    },
+    ...snapshot.localBranches
+      .filter((branch) => !branch.current)
+      .map((branch) => ({
+        kind: "branch" as const,
+        key: `branch:${branch.name}`,
+        branch,
+        attention: branchAttention(branch, snapshot),
+        activity: branchActivityTimestamp(branch),
+      })),
+    ...snapshot.stashes.map((stash) => ({
+      kind: "stash" as const,
+      key: `stash:${stash.refName}`,
+      stash,
+      attention: "dirty" as const,
+      activity: stashActivityTimestamp(stash),
+    })),
+  ].toSorted((left, right) => {
+    const attention = ATTENTION_RANK[left.attention] - ATTENTION_RANK[right.attention];
+    if (attention !== 0) return attention;
+    return right.activity - left.activity;
+  });
+
+  const renderWorkingTreeRow = () => {
+    const key = treeKey("work", "working-tree");
+    const expanded = isTreeExpanded(key, true);
+    const syncState = currentBranch ? branchSyncState(currentBranch, snapshot) : "fetch";
+    const { aheadCount, behindCount } = currentBranch
+      ? branchSyncCounts(currentBranch, snapshot)
+      : { aheadCount: 0, behindCount: 0 };
+    return (
+      <div className="space-y-0.5">
+        <div
+          role="button"
+          tabIndex={0}
+          className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 pr-20 text-left text-xs hover:bg-accent/60"
+          onClick={() => toggleTree(key, true)}
+          onKeyDown={(event) => toggleTreeFromKeyboard(key, event, true)}
+        >
+          {expanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <AttentionIcon kind={workingTreeAttention} />
+          <span className="min-w-0 flex-1 truncate text-sm">Current working tree</span>
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {currentBranch ? <CompactBadge>{currentBranch.name}</CompactBadge> : null}
+            {changedFiles.length > 0 ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {changedFiles.length === 1 ? "1 file" : `${changedFiles.length} files`}
+              </span>
+            ) : (
+              <span className="shrink-0 text-[11px] text-muted-foreground">clean</span>
+            )}
+            <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
+          </div>
+          {currentBranch ? (
+            <RowActions>
+              <IconButton
+                label={branchSyncActionLabel(syncState)}
+                disabled={
+                  isActionRunning(`branch-sync:${currentBranch.name}`) ||
+                  isActionRunning(`branch-fetch:${currentBranch.name}`)
+                }
+                onClick={(event) => syncBranch(currentBranch, event)}
+              >
+                <BranchSyncActionIcon state={syncState} />
+              </IconButton>
+            </RowActions>
+          ) : null}
+        </div>
+        {expanded ? (
+          <div className="ml-2 border-l border-border/60 pl-1">{changesSection}</div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const workSection = (
     <div className="space-y-0.5">
-      {snapshot.localBranches.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No local branches.</div>
-      ) : (
-        snapshot.localBranches.map(branchRow)
-      )}
+      {workItems.map((item) => {
+        switch (item.kind) {
+          case "working-tree":
+            return <div key={item.key}>{renderWorkingTreeRow()}</div>;
+          case "branch":
+            return branchRow(item.branch);
+          case "stash":
+            return stashRow(item.stash);
+        }
+      })}
     </div>
   );
 
@@ -1795,16 +2093,6 @@ export function SourceControlPanel({
     </div>
   );
 
-  const stashesSection = (
-    <div className="space-y-0.5">
-      {snapshot.stashes.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No stashes.</div>
-      ) : (
-        snapshot.stashes.map(stashRow)
-      )}
-    </div>
-  );
-
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
@@ -1812,10 +2100,8 @@ export function SourceControlPanel({
         <div ref={containerRef} className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {SECTION_ORDER.map((key) => {
             switch (key) {
-              case "changes":
-                return section(key, changesSection);
-              case "branches":
-                return section(key, branchesSection);
+              case "work":
+                return section(key, workSection);
               case "remotes":
                 return section(
                   key,
@@ -1838,8 +2124,6 @@ export function SourceControlPanel({
                     </IconButton>
                   </div>,
                 );
-              case "stashes":
-                return section(key, stashesSection);
             }
           })}
         </div>

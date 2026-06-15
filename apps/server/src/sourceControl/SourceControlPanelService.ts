@@ -332,12 +332,13 @@ function parseRemoteBranches(output: string, remoteName: string): VcsPanelRemote
 
 function parseStashes(output: string): VcsPanelStash[] {
   return output.split("\n").flatMap((line) => {
-    const [refName, sha, message] = line.split("\t");
+    const [refName, sha, createdAt, message] = line.split("\t");
     if (!refName) return [];
     return [
       {
         refName,
         sha: sha && sha.length > 0 ? sha : null,
+        createdAt: createdAt && createdAt.length > 0 ? createdAt : null,
         message: message && message.trim().length > 0 ? message.trim() : refName,
       },
     ];
@@ -362,14 +363,21 @@ function parseLocalBranches(output: string): VcsRef[] {
     .map((line) => line.trimEnd())
     .filter((line) => line.length > 0)
     .map((line) => {
-      const [name = "", head = "", worktreePath = "", lastActivityAt = "", track = ""] =
-        line.split("\t");
+      const [
+        name = "",
+        head = "",
+        worktreePath = "",
+        lastActivityAt = "",
+        upstreamName = "",
+        track = "",
+      ] = line.split("\t");
       const { aheadCount, behindCount } = parseBranchTrackCounts(track);
       return {
         name,
         current: head.trim() === "*",
         worktreePath: worktreePath.length > 0 ? worktreePath : null,
         lastActivityAt: lastActivityAt.length > 0 ? lastActivityAt : null,
+        upstreamName: upstreamName.length > 0 ? upstreamName : null,
         aheadCount,
         behindCount,
       };
@@ -389,6 +397,7 @@ function parseLocalBranches(output: string): VcsRef[] {
       isDefault: branch.name === defaultName,
       worktreePath: branch.worktreePath,
       lastActivityAt: branch.lastActivityAt,
+      upstreamName: branch.upstreamName,
       aheadCount: branch.aheadCount,
       behindCount: branch.behindCount,
     }))
@@ -590,6 +599,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           const sha = peeledObjectName || objectName;
           if (!sha || !shortRefName || !fullRefName || !commitShas.has(sha)) continue;
           if (shortRefName.endsWith("/HEAD") || shortRefName.includes(" -> ")) continue;
+          if (fullRefName.startsWith("refs/remotes/") && !shortRefName.includes("/")) continue;
 
           const current = refs.get(sha) ?? { headRefs: [], tags: [] };
           if (fullRefName.startsWith("refs/tags/")) {
@@ -859,13 +869,17 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             ),
           run("vcs.panel.localBranches", input.cwd, [
             "branch",
-            "--format=%(refname:short)%09%(HEAD)%09%(worktreepath)%09%(committerdate:iso-strict)%09%(upstream:track)",
+            "--format=%(refname:short)%09%(HEAD)%09%(worktreepath)%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
           ]),
           run("vcs.panel.statusPorcelain", input.cwd, ["status", "--porcelain=2", "--branch"]),
           run("vcs.panel.unstagedNumstat", input.cwd, ["diff", "--numstat"]),
           run("vcs.panel.stagedNumstat", input.cwd, ["diff", "--cached", "--numstat"]),
           run("vcs.panel.remotes", input.cwd, ["remote", "-v"]),
-          run("vcs.panel.stashes", input.cwd, ["stash", "list", "--format=%gd%x09%H%x09%gs"]),
+          run("vcs.panel.stashes", input.cwd, [
+            "stash",
+            "list",
+            "--format=%gd%x09%H%x09%cI%x09%gs",
+          ]),
         ],
         { concurrency: "unbounded" },
       );
@@ -971,15 +985,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     branchName: string,
     force: boolean,
   ) {
-    const upstream = yield* run("vcs.panel.pushBranch.upstream", cwd, [
-      "rev-parse",
-      "--abbrev-ref",
-      "--symbolic-full-name",
-      "@{upstream}",
-    ]).pipe(
-      Effect.map((value) => value.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
+    const upstream = (yield* upstreamForRef(cwd, branchName)) ?? "";
     const [remoteName = "origin", ...remoteBranchParts] =
       upstream.length > 0 ? upstream.split("/") : ["origin", branchName];
     const remoteBranchName = remoteBranchParts.join("/") || branchName;
@@ -987,7 +993,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       "push",
       force ? "--force-with-lease" : "-u",
       remoteName,
-      `HEAD:refs/heads/${remoteBranchName}`,
+      `${branchName}:refs/heads/${remoteBranchName}`,
     ]).pipe(Effect.asVoid);
   });
 
@@ -1027,12 +1033,43 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           Effect.mapError(asGitCommandError("vcs.panel.pullBranch.status", input.cwd, ["status"])),
         );
       if (status.refName !== input.branchName) {
-        return yield* gitError(
-          "vcs.panel.pullBranch",
-          input.cwd,
-          ["pull"],
-          "Only the current branch can be pulled from the source-control panel.",
-        );
+        if (input.merge) {
+          return yield* gitError(
+            "vcs.panel.pullBranch",
+            input.cwd,
+            ["pull", "--no-rebase"],
+            "Merge sync is only available for the current branch.",
+          );
+        }
+        const upstream = yield* upstreamForRef(input.cwd, input.branchName);
+        if (!upstream) {
+          return yield* gitError(
+            "vcs.panel.pullBranch",
+            input.cwd,
+            ["pull"],
+            `Branch ${input.branchName} has no upstream.`,
+          );
+        }
+        const [remoteName = "origin", ...remoteBranchParts] = upstream.split("/");
+        const remoteBranchName = remoteBranchParts.join("/");
+        if (remoteBranchName.length === 0) {
+          return yield* gitError(
+            "vcs.panel.pullBranch",
+            input.cwd,
+            ["pull"],
+            `Branch ${input.branchName} has invalid upstream ${upstream}.`,
+          );
+        }
+        yield* run("vcs.panel.pullBranch.nonCurrent", input.cwd, [
+          "fetch",
+          remoteName,
+          `${input.force ? "+" : ""}refs/heads/${remoteBranchName}:refs/heads/${input.branchName}`,
+        ]).pipe(Effect.asVoid);
+        return {
+          status: "pulled" as const,
+          refName: input.branchName,
+          upstreamRef: upstream,
+        };
       }
       if (input.force) {
         yield* run("vcs.panel.forcePullBranch", input.cwd, ["fetch"]);
