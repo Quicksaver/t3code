@@ -42,33 +42,10 @@ Build a macOS arm64 DMG using the same desktop artifact path used for this branc
 pnpm run dist:desktop:dmg:arm64
 ```
 
-Install the latest generated DMG:
+Build a local macOS arm64 DMG, then hand the install step to Terminal.app so it can finish after the running T3 Code app quits:
 
 ```sh
-dmg="$(ls -t "$PWD"/release/T3-Code-*-arm64.dmg | head -1)"
-installer="$(mktemp /tmp/t3-code-install.XXXXXX.command)"
-
-cat > "$installer" <<'SH'
-#!/bin/zsh
-set -euo pipefail
-
-dmg="$1"
-mount_dir="$(mktemp -d /tmp/t3-code-dmg.XXXXXX)"
-cleanup() { hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true; rmdir "$mount_dir" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
-
-osascript -e 'tell application id "com.t3tools.t3code" to quit' >/dev/null 2>&1 || true
-sleep 2
-
-hdiutil attach "$dmg" -nobrowse -quiet -mountpoint "$mount_dir"
-rm -rf "/Applications/T3 Code (Alpha).app"
-ditto "$mount_dir/T3 Code (Alpha).app" "/Applications/T3 Code (Alpha).app"
-
-open -a "/Applications/T3 Code (Alpha).app"
-SH
-
-chmod +x "$installer"
-osascript -e 'tell application "Terminal" to do script "/bin/zsh '"$installer"' '"$dmg"'"'
+scripts/install-desktop-dmg-from-t3.zsh
 ```
 
 ### Mobile App
