@@ -27,6 +27,7 @@ import type {
   VcsPanelStashDetails,
   VcsPanelStashDetailsInput,
   VcsPanelStashInput,
+  VcsPanelUndoCommitInput,
   VcsPullInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
@@ -1272,7 +1273,7 @@ export interface EnvironmentApi {
     pullBranch: (input: VcsPanelBranchActionInput) => Promise<VcsPullResult>;
     pushBranch: (input: VcsPanelBranchActionInput) => Promise<void>;
     deleteBranch: (input: VcsPanelDeleteBranchInput) => Promise<void>;
-    undoLatestCommit: (input: VcsPanelSnapshotInput) => Promise<void>;
+    undoLatestCommit: (input: VcsPanelUndoCommitInput) => Promise<void>;
     revertCommit: (input: VcsPanelCommitActionInput) => Promise<void>;
     checkoutCommit: (input: VcsPanelCommitActionInput) => Promise<VcsSwitchRefResult>;
     createBranchFromCommit: (input: VcsPanelCommitActionInput) => Promise<VcsCreateRefResult>;

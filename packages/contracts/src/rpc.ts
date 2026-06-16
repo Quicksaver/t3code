@@ -52,6 +52,7 @@ import {
   VcsPanelStashDetails,
   VcsPanelStashDetailsInput,
   VcsPanelStashInput,
+  VcsPanelUndoCommitInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
@@ -518,7 +519,7 @@ export const WsVcsPanelDeleteBranchRpc = Rpc.make(WS_METHODS.vcsPanelDeleteBranc
 });
 
 export const WsVcsPanelUndoLatestCommitRpc = Rpc.make(WS_METHODS.vcsPanelUndoLatestCommit, {
-  payload: VcsPanelSnapshotInput,
+  payload: VcsPanelUndoCommitInput,
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 

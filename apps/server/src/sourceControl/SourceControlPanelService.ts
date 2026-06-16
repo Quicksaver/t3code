@@ -34,6 +34,7 @@ import {
   type VcsPanelStashDetails,
   type VcsPanelStashDetailsInput,
   type VcsPanelStashInput,
+  type VcsPanelUndoCommitInput,
   type VcsPullResult,
   type VcsRef,
   type VcsStatusLocalResult,
@@ -70,7 +71,9 @@ export interface SourceControlPanelServiceShape {
   ) => Effect.Effect<VcsPullResult, GitCommandError>;
   readonly pushBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
   readonly deleteBranch: (input: VcsPanelDeleteBranchInput) => Effect.Effect<void, GitCommandError>;
-  readonly undoLatestCommit: (input: VcsPanelSnapshotInput) => Effect.Effect<void, GitCommandError>;
+  readonly undoLatestCommit: (
+    input: VcsPanelUndoCommitInput,
+  ) => Effect.Effect<void, GitCommandError>;
   readonly revertCommit: (input: VcsPanelCommitActionInput) => Effect.Effect<void, GitCommandError>;
   readonly checkoutCommit: (
     input: VcsPanelCommitActionInput,
@@ -675,6 +678,17 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.orElseSucceed(() => 0),
     );
 
+  const commitShasForRange = (cwd: string, range: string) =>
+    run("vcs.panel.branchCommitShas", cwd, ["rev-list", range]).pipe(
+      Effect.map((output) =>
+        output
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
+
   const commitsForRange = (
     cwd: string,
     range: string,
@@ -849,22 +863,33 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       const upstreamRef = branch.isRemote ? null : yield* upstreamForRef(cwd, refName);
       const baseRef =
         compareBaseRef ?? upstreamRef ?? (!branch.isDefault ? defaultCompareRef : null);
-      const [aheadCommits, behindCommits, compareHistoryCommits, totalCommits, commits, files] =
-        yield* Effect.all(
-          [
-            baseRef
-              ? commitsForRange(cwd, `${baseRef}..${refName}`, COMMIT_PAGE_SIZE)
-              : Effect.succeed([]),
-            baseRef
-              ? commitsForRange(cwd, `${refName}..${baseRef}`, COMMIT_PAGE_SIZE)
-              : Effect.succeed([]),
-            compareCommits(cwd, baseRef, refName),
-            countCommitsForRange(cwd, refName),
-            commitsForRange(cwd, refName, COMMIT_PAGE_SIZE),
-            compareFiles(cwd, baseRef, refName),
-          ],
-          { concurrency: "unbounded" },
-        );
+      const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
+      const [
+        aheadCommits,
+        behindCommits,
+        compareHistoryCommits,
+        totalCommits,
+        commits,
+        files,
+        unsyncedCommitShas,
+      ] = yield* Effect.all(
+        [
+          baseRef
+            ? commitsForRange(cwd, `${baseRef}..${refName}`, COMMIT_PAGE_SIZE)
+            : Effect.succeed([]),
+          baseRef
+            ? commitsForRange(cwd, `${refName}..${baseRef}`, COMMIT_PAGE_SIZE)
+            : Effect.succeed([]),
+          compareCommits(cwd, baseRef, refName),
+          countCommitsForRange(cwd, refName),
+          commitsForRange(cwd, refName, COMMIT_PAGE_SIZE),
+          compareFiles(cwd, baseRef, refName),
+          unsyncedBaseRef
+            ? commitShasForRange(cwd, `${unsyncedBaseRef}..${refName}`)
+            : Effect.succeed([]),
+        ],
+        { concurrency: "unbounded" },
+      );
       return {
         name: branch.name,
         fullRefName: branch.name,
@@ -875,6 +900,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         worktreePath: branch.worktreePath,
         upstreamRef,
         baseRef,
+        unsyncedCommitShas,
         aheadCommits,
         behindCommits,
         compareCommits: compareHistoryCommits,
@@ -1205,8 +1231,30 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     },
   );
 
-  const undoLatestCommit: SourceControlPanelServiceShape["undoLatestCommit"] = (input) =>
-    run("vcs.panel.undoLatestCommit", input.cwd, ["reset", "--soft", "HEAD~1"]).pipe(Effect.asVoid);
+  const undoLatestCommit: SourceControlPanelServiceShape["undoLatestCommit"] = Effect.fn(
+    "undoLatestCommit",
+  )(function* (input) {
+    const currentBranch = yield* run("vcs.panel.currentBranch", input.cwd, [
+      "branch",
+      "--show-current",
+    ]).pipe(Effect.map((branch) => branch.trim()));
+    const targetBranch = input.branchName ?? currentBranch;
+    const resetTarget = input.sha ? `${input.sha}^` : `${targetBranch || "HEAD"}~1`;
+
+    if (!targetBranch || targetBranch === currentBranch) {
+      yield* run("vcs.panel.undoLatestCommit", input.cwd, ["reset", "--soft", resetTarget]).pipe(
+        Effect.asVoid,
+      );
+      return;
+    }
+
+    yield* run("vcs.panel.undoBranchCommit", input.cwd, [
+      "branch",
+      "-f",
+      targetBranch,
+      resetTarget,
+    ]).pipe(Effect.asVoid);
+  });
 
   const revertCommit: SourceControlPanelServiceShape["revertCommit"] = (input) =>
     run("vcs.panel.revertCommit", input.cwd, ["revert", "--no-edit", input.sha]).pipe(

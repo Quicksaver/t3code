@@ -397,6 +397,7 @@ export const VcsPanelBranchDetails = Schema.Struct({
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   upstreamRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   baseRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  unsyncedCommitShas: Schema.Array(TrimmedNonEmptyStringSchema),
   aheadCommits: Schema.Array(VcsPanelCommitSummary),
   behindCommits: Schema.Array(VcsPanelCommitSummary),
   compareCommits: Schema.Array(VcsPanelCommitSummary),
@@ -505,6 +506,13 @@ export const VcsPanelCommitActionInput = Schema.Struct({
   branchName: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type VcsPanelCommitActionInput = typeof VcsPanelCommitActionInput.Type;
+
+export const VcsPanelUndoCommitInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  branchName: Schema.optional(TrimmedNonEmptyStringSchema),
+  sha: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type VcsPanelUndoCommitInput = typeof VcsPanelUndoCommitInput.Type;
 
 export const VcsPanelRefActionInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,

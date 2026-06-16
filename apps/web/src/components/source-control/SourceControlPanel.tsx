@@ -187,6 +187,10 @@ function shouldFetchBeforePull(event: ReactMouseEvent): boolean {
   return event.altKey;
 }
 
+function commitUndoActionKey(branchName: string, sha?: string): string {
+  return sha ? `commit-undo:${branchName}:${sha}` : `branch-undo-latest:${branchName}`;
+}
+
 function branchSyncCounts(
   branch: VcsRef,
   snapshot: VcsPanelSnapshotResult,
@@ -1145,16 +1149,31 @@ export function SourceControlPanel({
     [api, confirm, cwd, runAction],
   );
 
-  const undoLatestCommit = useCallback(
-    (branchName: string) =>
+  const undoCommit = useCallback(
+    (branchName: string, commit?: VcsPanelCommitSummary) =>
       void (async () => {
-        if (!(await confirm(`Undo latest commit on ${branchName}?`))) return;
+        const actionKey = commitUndoActionKey(branchName, commit?.sha);
+        const confirmed = commit
+          ? await confirm(
+              `Undo ${commit.shortSha} and any newer commits on ${branchName}?${
+                snapshot?.localBranches.find((branch) => branch.name === branchName)?.current
+                  ? " Changes stay in the working tree."
+                  : " This moves the branch back to that commit's parent."
+              }`,
+            )
+          : await confirm(`Undo latest commit on ${branchName}?`);
+        if (!confirmed) return;
         await runAction(
-          `branch-undo-latest:${branchName}`,
-          () => api?.vcs.undoLatestCommit({ cwd }) ?? Promise.resolve(),
+          actionKey,
+          () =>
+            api?.vcs.undoLatestCommit({
+              cwd,
+              branchName,
+              ...(commit ? { sha: commit.sha } : {}),
+            }) ?? Promise.resolve(),
         );
       })(),
-    [api, confirm, cwd, runAction],
+    [api, confirm, cwd, runAction, snapshot?.localBranches],
   );
 
   const mergeBranchIntoCurrent = useCallback(
@@ -1763,11 +1782,18 @@ export function SourceControlPanel({
     );
   };
 
-  const renderCommit = (commit: VcsPanelCommitSummary) => {
+  const renderCommit = (
+    commit: VcsPanelCommitSummary,
+    options: { readonly undoBranchName?: string } = {},
+  ) => {
     const key = treeKey("commit", commit.sha);
     const expanded = expandedTree.has(key);
     const stats = sumFiles(commit.files);
     const relativeDate = formatRelativeDate(commit.authoredAt);
+    const undoKey = options.undoBranchName
+      ? commitUndoActionKey(options.undoBranchName, commit.sha)
+      : null;
+    const canUndoCommit = options.undoBranchName !== undefined;
     return (
       <div key={commit.sha} className="space-y-0.5">
         <Tooltip>
@@ -1783,6 +1809,15 @@ export function SourceControlPanel({
                   openContextMenu(
                     event,
                     [
+                      ...(canUndoCommit
+                        ? [
+                            {
+                              id: "undo",
+                              label: "Undo",
+                              disabled: undoKey ? isActionRunning(undoKey) : false,
+                            },
+                          ]
+                        : []),
                       { id: "revert", label: "Revert commit" },
                       { id: "rebase", label: "Rebase current branch onto commit" },
                       { id: "checkout", label: "Checkout as detached HEAD" },
@@ -1792,6 +1827,9 @@ export function SourceControlPanel({
                       { id: "copy-message", label: "Copy message", icon: "copy" },
                     ],
                     {
+                      undo: () => {
+                        if (options.undoBranchName) undoCommit(options.undoBranchName, commit);
+                      },
                       revert: () => revertCommit(commit),
                       rebase: () => rebaseCurrentOnto(commit.sha),
                       checkout: () => checkoutCommitDetached(commit),
@@ -1815,6 +1853,17 @@ export function SourceControlPanel({
                   <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
                 ) : null}
                 <RowActions>
+                  {canUndoCommit && options.undoBranchName ? (
+                    <IconButton
+                      label="Undo"
+                      disabled={undoKey ? isActionRunning(undoKey) : false}
+                      onClick={() => {
+                        if (options.undoBranchName) undoCommit(options.undoBranchName, commit);
+                      }}
+                    >
+                      <Undo2 className="size-3.5" />
+                    </IconButton>
+                  ) : null}
                   <IconButton label="Revert commit" onClick={() => revertCommit(commit)}>
                     <RotateCcw className="size-3.5" />
                   </IconButton>
@@ -1904,6 +1953,12 @@ export function SourceControlPanel({
 
   const renderBranchTree = (branch: VcsRef, details: VcsPanelBranchDetails) => {
     const hasBranchUpstream = branchHasUpstream(branch, snapshot);
+    const unsyncedCommitShas = new Set(details.unsyncedCommitShas);
+    const renderBranchCommit = (commit: VcsPanelCommitSummary) =>
+      renderCommit(
+        commit,
+        unsyncedCommitShas.has(commit.sha) ? { undoBranchName: branch.name } : undefined,
+      );
     return (
       <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
         {renderBranchSubsection({
@@ -1939,7 +1994,7 @@ export function SourceControlPanel({
                     title: `${details.aheadCommits.length} Ahead`,
                     count: null,
                     icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
-                    children: details.aheadCommits.map(renderCommit),
+                    children: details.aheadCommits.map(renderBranchCommit),
                   })
                 : null}
               {details.behindCommits.length > 0
@@ -1949,7 +2004,7 @@ export function SourceControlPanel({
                     title: `${details.behindCommits.length} Behind`,
                     count: null,
                     icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
-                    children: details.behindCommits.map(renderCommit),
+                    children: details.behindCommits.map(renderBranchCommit),
                   })
                 : null}
               {renderBranchSubsection({
@@ -1962,7 +2017,7 @@ export function SourceControlPanel({
                   details.compareCommits.length === 0 ? (
                     <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
                   ) : (
-                    details.compareCommits.map(renderCommit)
+                    details.compareCommits.map(renderBranchCommit)
                   ),
               })}
               {renderBranchSubsection({
@@ -1991,7 +2046,7 @@ export function SourceControlPanel({
               title: `${details.aheadCommits.length} Ahead`,
               count: null,
               icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
-              children: details.aheadCommits.map(renderCommit),
+              children: details.aheadCommits.map(renderBranchCommit),
             })
           : null}
         {hasBranchUpstream && details.behindCommits.length > 0
@@ -2001,7 +2056,7 @@ export function SourceControlPanel({
               title: `${details.behindCommits.length} Behind`,
               count: null,
               icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
-              children: details.behindCommits.map(renderCommit),
+              children: details.behindCommits.map(renderBranchCommit),
             })
           : null}
         {renderBranchSubsection({
@@ -2015,7 +2070,7 @@ export function SourceControlPanel({
               {details.commits.length === 0 ? (
                 <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
               ) : (
-                details.commits.map(renderCommit)
+                details.commits.map(renderBranchCommit)
               )}
               {details.commitsRemaining > 0 ? (
                 <button
@@ -2108,7 +2163,7 @@ export function SourceControlPanel({
                 switch: () => switchRef(branch.name),
                 sync: () => runBranchSync(branch),
                 delete: () => deleteBranch(branch, false),
-                "undo-latest": () => undoLatestCommit(branch.name),
+                "undo-latest": () => undoCommit(branch.name),
                 merge: () => mergeBranchIntoCurrent(branch.name),
                 rebase: () => rebaseCurrentOnto(branch.name),
                 "copy-branch-name": () => copyText(branch.name),
@@ -2165,7 +2220,7 @@ export function SourceControlPanel({
               <IconButton
                 label="Undo latest commit"
                 disabled={isActionRunning(undoKey)}
-                onClick={() => undoLatestCommit(branch.name)}
+                onClick={() => undoCommit(branch.name)}
               >
                 <Undo2 className="size-3.5" />
               </IconButton>
@@ -2280,7 +2335,7 @@ export function SourceControlPanel({
                 switch: () => switchRef(branch.name),
                 sync: () => (hasLocalBranch ? runBranchSync(branch) : fetchRemoteBranch()),
                 delete: () => deleteBranch(branch, false),
-                "undo-latest": () => undoLatestCommit(branch.name),
+                "undo-latest": () => undoCommit(branch.name),
                 merge: () => mergeBranchIntoCurrent(branch.name),
                 rebase: () => rebaseCurrentOnto(branch.name),
                 "copy-branch-name": () => copyText(displayName),
@@ -2342,7 +2397,7 @@ export function SourceControlPanel({
               <IconButton
                 label="Undo latest commit"
                 disabled={isActionRunning(undoKey)}
-                onClick={() => undoLatestCommit(branch.name)}
+                onClick={() => undoCommit(branch.name)}
               >
                 <Undo2 className="size-3.5" />
               </IconButton>
@@ -2644,7 +2699,7 @@ export function SourceControlPanel({
   };
 
   const repositorySummary = (
-    <div className="shrink-0 border-b border-border/70 px-2 py-1.5 text-xs">
+    <div className="relative shrink-0 border-b border-border/70 px-2 py-1.5 text-xs">
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 truncate font-medium">
           {snapshot.status.refName ?? "Detached HEAD"}
@@ -2669,10 +2724,16 @@ export function SourceControlPanel({
       </div>
       {error ? <div className="mt-1 text-destructive-foreground">{error}</div> : null}
       {panelBusyLabel ? (
-        <div className="mt-1 flex items-center gap-1.5 text-muted-foreground">
-          <RefreshCw className="size-3 animate-spin" />
-          <span>{panelBusyLabel}</span>
-        </div>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="absolute right-2 top-1.5 inline-flex size-5 items-center justify-center text-muted-foreground">
+                <RefreshCw className="size-3 animate-spin" />
+              </span>
+            }
+          />
+          <TooltipPopup side="left">{panelBusyLabel}</TooltipPopup>
+        </Tooltip>
       ) : null}
     </div>
   );
@@ -2776,7 +2837,6 @@ export function SourceControlPanel({
       : []),
     ...snapshot.localBranches
       .filter((branch) => {
-        if (branch.current) return false;
         const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
         return !branchHasUpstream(branch, snapshot) || aheadCount > 0 || behindCount > 0;
       })
@@ -2851,8 +2911,8 @@ export function SourceControlPanel({
               {aheadCount > 0 ? (
                 <IconButton
                   label="Undo latest commit"
-                  disabled={isActionRunning(`branch-undo-latest:${currentBranch.name}`)}
-                  onClick={() => undoLatestCommit(currentBranch.name)}
+                  disabled={isActionRunning(commitUndoActionKey(currentBranch.name))}
+                  onClick={() => undoCommit(currentBranch.name)}
                 >
                   <Undo2 className="size-3.5" />
                 </IconButton>
