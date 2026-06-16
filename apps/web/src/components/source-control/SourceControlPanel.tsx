@@ -1,10 +1,12 @@
 import type {
   ContextMenuItem,
   EnvironmentId,
+  VcsPanelBranchCommitsInput,
   ThreadId,
   VcsPanelBranchDetails,
   VcsPanelChangeGroup,
   VcsPanelCommitSummary,
+  VcsPanelFileDiffInput,
   VcsPanelFileChange,
   VcsPanelRemote,
   VcsPanelSnapshotResult,
@@ -12,6 +14,7 @@ import type {
   VcsPanelStashDetails,
   VcsRef,
 } from "@t3tools/contracts";
+import { FileDiff } from "@pierre/diffs/react";
 import {
   Archive,
   AlertTriangle,
@@ -26,6 +29,7 @@ import {
   GitCompare,
   GitMerge,
   GitPullRequestArrow,
+  LoaderCircle,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -45,7 +49,9 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 
 import { openInPreferredEditor } from "~/editorPreferences";
 import { readEnvironmentApi } from "~/environmentApi";
+import { useTheme } from "~/hooks/useTheme";
 import { readLocalApi } from "~/localApi";
+import { getRenderablePatch, resolveDiffThemeName } from "~/lib/diffRendering";
 import { invalidateSourceControlState, useGitStackedAction } from "~/lib/sourceControlActions";
 import { cn, newCommandId } from "~/lib/utils";
 import { useVcsStatus } from "~/lib/vcsStatusState";
@@ -83,6 +89,14 @@ interface SourceControlPanelProps {
   readonly cwd: string;
   readonly worktreePath: string | null;
 }
+
+type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
+type BranchCommitListKind = NonNullable<VcsPanelBranchCommitsInput["kind"]>;
+
+type FileDiffLoadState =
+  | { readonly status: "loading" }
+  | { readonly status: "loaded"; readonly patch: string }
+  | { readonly status: "error"; readonly message: string };
 
 type SectionKey = "work" | "remotes";
 
@@ -576,12 +590,14 @@ function IconButton({
   children,
   disabled,
   destructive,
+  loading,
   onClick,
 }: {
   readonly label: string;
   readonly children: ReactNode;
   readonly disabled?: boolean;
   readonly destructive?: boolean;
+  readonly loading?: boolean;
   readonly onClick?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
 }) {
   return (
@@ -592,14 +608,14 @@ function IconButton({
             size="icon-xs"
             variant="ghost"
             aria-label={label}
-            disabled={disabled}
+            disabled={disabled || loading}
             className={cn(
               "size-6",
               destructive && "text-destructive-foreground hover:text-destructive-foreground",
             )}
             onClick={onClick}
           >
-            {children}
+            {loading ? <LoaderCircle className="size-3.5 animate-spin" /> : children}
           </Button>
         }
       />
@@ -777,6 +793,10 @@ function FileChangeList({
   files,
   emptyLabel,
   onFileContextMenu,
+  getFileKey,
+  isFileExpanded,
+  onFileToggle,
+  renderExpandedFile,
 }: {
   readonly files: readonly VcsPanelFileChange[];
   readonly emptyLabel: string;
@@ -784,29 +804,122 @@ function FileChangeList({
     event: ReactMouseEvent<HTMLDivElement>,
     file: VcsPanelFileChange,
   ) => void;
+  readonly getFileKey?: (file: VcsPanelFileChange) => string;
+  readonly isFileExpanded?: (file: VcsPanelFileChange) => boolean;
+  readonly onFileToggle?: (file: VcsPanelFileChange) => void;
+  readonly renderExpandedFile?: (file: VcsPanelFileChange) => ReactNode;
 }) {
   if (files.length === 0) {
     return <div className="px-3 py-1 text-xs text-muted-foreground">{emptyLabel}</div>;
   }
   return (
     <div className="space-y-0.5">
-      {files.map((file) => (
-        <div
-          key={`${file.path}:${file.status}`}
-          className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-          onContextMenu={onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined}
-        >
-          <span
-            className={cn(
-              "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-              fileStatusColor(file.status),
-            )}
-          >
-            {fileStatusLetter(file.status)}
-          </span>
-          <span className="min-w-0 flex-1 truncate">{file.path}</span>
-          <StatLabels insertions={file.insertions} deletions={file.deletions} />
-        </div>
+      {files.map((file) => {
+        const fileKey = getFileKey?.(file) ?? `${file.path}:${file.status}`;
+        const expanded = isFileExpanded?.(file) ?? false;
+        return (
+          <div key={fileKey} className="space-y-0.5">
+            <div
+              role={onFileToggle ? "button" : undefined}
+              tabIndex={onFileToggle ? 0 : undefined}
+              className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+              onClick={onFileToggle ? () => onFileToggle(file) : undefined}
+              onKeyDown={
+                onFileToggle
+                  ? (event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onFileToggle(file);
+                    }
+                  : undefined
+              }
+              onContextMenu={
+                onFileContextMenu ? (event) => onFileContextMenu(event, file) : undefined
+              }
+            >
+              {onFileToggle ? (
+                expanded ? (
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+                )
+              ) : null}
+              <span
+                className={cn(
+                  "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+                  fileStatusColor(file.status),
+                )}
+              >
+                {fileStatusLetter(file.status)}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{file.path}</span>
+              <StatLabels insertions={file.insertions} deletions={file.deletions} />
+            </div>
+            {expanded && renderExpandedFile ? (
+              <div className="ml-4 border-l border-border/60 pl-1">{renderExpandedFile(file)}</div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LoadMoreCommitsButton({
+  remaining,
+  loading,
+  onClick,
+}: {
+  readonly remaining: number;
+  readonly loading: boolean;
+  readonly onClick: () => void;
+}) {
+  if (remaining <= 0) return null;
+  return (
+    <button
+      type="button"
+      className="flex h-7 w-full items-center rounded px-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+      disabled={loading}
+      onClick={onClick}
+    >
+      Load {Math.min(COMMIT_PAGE_SIZE, remaining)} more of {remaining} remaining
+    </button>
+  );
+}
+
+function InlineFileDiff({
+  patch,
+  resolvedTheme,
+}: {
+  readonly patch: string;
+  readonly resolvedTheme: "light" | "dark";
+}) {
+  const renderablePatch = useMemo(
+    () => getRenderablePatch(patch, `vcs-panel-file:${resolvedTheme}`),
+    [patch, resolvedTheme],
+  );
+  if (!renderablePatch) {
+    return <div className="px-2 py-1 text-xs text-muted-foreground">No diff.</div>;
+  }
+  if (renderablePatch.kind === "raw") {
+    return (
+      <pre className="max-h-80 overflow-auto rounded bg-muted/40 p-2 text-xs">
+        {renderablePatch.text}
+      </pre>
+    );
+  }
+  return (
+    <div className="max-h-96 overflow-auto rounded border border-border/60 bg-background/60">
+      {renderablePatch.files.map((fileDiff) => (
+        <FileDiff
+          key={fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name ?? "none"}`}
+          fileDiff={fileDiff}
+          options={{
+            collapsed: false,
+            diffStyle: "unified",
+            theme: resolveDiffThemeName(resolvedTheme),
+          }}
+        />
       ))}
     </div>
   );
@@ -819,6 +932,7 @@ export function SourceControlPanel({
   worktreePath,
 }: SourceControlPanelProps) {
   const api = useMemo(() => readEnvironmentApi(environmentId), [environmentId]);
+  const { resolvedTheme } = useTheme();
   const gitActionScope = useMemo(() => ({ environmentId, cwd }), [cwd, environmentId]);
   const gitAction = useGitStackedAction(gitActionScope);
   const vcsStatus = useVcsStatus(gitActionScope);
@@ -832,7 +946,6 @@ export function SourceControlPanel({
   const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [runningActions, setRunningActions] = useState<ReadonlySet<string>>(() => new Set());
-  const [panelBusyLabel, setPanelBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(() => new Set(["remotes"]));
   const [sectionWeights, setSectionWeights] = useState(DEFAULT_SECTION_WEIGHTS);
@@ -854,6 +967,10 @@ export function SourceControlPanel({
   >(() => new Map());
   const [loadingStashDetails, setLoadingStashDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
+  );
+  const [expandedFileDiffs, setExpandedFileDiffs] = useState<ReadonlySet<string>>(() => new Set());
+  const [fileDiffsByKey, setFileDiffsByKey] = useState<ReadonlyMap<string, FileDiffLoadState>>(
+    () => new Map(),
   );
   const [addRemoteOpen, setAddRemoteOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
@@ -1118,6 +1235,96 @@ export function SourceControlPanel({
     [copyText, cwd, openContextMenu],
   );
 
+  const fileDiffSourceKey = useCallback((source: FileDiffSource) => {
+    switch (source.kind) {
+      case "working-tree":
+        return `working:${source.staged ? "staged" : "unstaged"}`;
+      case "commit":
+        return `commit:${source.sha}`;
+      case "compare":
+        return `compare:${source.baseRef}:${source.refName}`;
+      case "stash":
+        return `stash:${source.stashRef}`;
+    }
+  }, []);
+
+  const fileDiffKey = useCallback(
+    (file: VcsPanelFileChange, source: FileDiffSource) =>
+      `${fileDiffSourceKey(source)}:${file.path}:${file.originalPath ?? ""}:${file.status}`,
+    [fileDiffSourceKey],
+  );
+
+  const toggleFileDiff = useCallback(
+    (file: VcsPanelFileChange, source: FileDiffSource) => {
+      const key = fileDiffKey(file, source);
+      const expanding = !expandedFileDiffs.has(key);
+      setExpandedFileDiffs((current) => {
+        const next = new Set(current);
+        if (next.has(key)) {
+          next.delete(key);
+          return next;
+        }
+        next.add(key);
+        return next;
+      });
+      if (!api || !expanding) return;
+      const existingState = fileDiffsByKey.get(key);
+      if (existingState?.status === "loaded") return;
+      setFileDiffsByKey((current) => {
+        const next = new Map(current);
+        next.set(key, { status: "loading" });
+        return next;
+      });
+      void api.vcs
+        .readFileDiff({
+          cwd,
+          path: file.path,
+          staged: source.kind === "working-tree" ? source.staged : false,
+          source,
+        })
+        .then((result) => {
+          setFileDiffsByKey((current) => {
+            const next = new Map(current);
+            next.set(key, { status: "loaded", patch: result.patch });
+            return next;
+          });
+        })
+        .catch((nextError: unknown) => {
+          setFileDiffsByKey((current) => {
+            const next = new Map(current);
+            next.set(key, { status: "error", message: errorMessage(nextError) });
+            return next;
+          });
+        });
+    },
+    [api, cwd, expandedFileDiffs, fileDiffKey, fileDiffsByKey],
+  );
+
+  const renderFileDiff = useCallback(
+    (file: VcsPanelFileChange, source: FileDiffSource) => {
+      const state = fileDiffsByKey.get(fileDiffKey(file, source));
+      if (!state || state.status === "loading") {
+        return <div className="px-2 py-1 text-xs text-muted-foreground">Loading diff...</div>;
+      }
+      if (state.status === "error") {
+        return <div className="px-2 py-1 text-xs text-destructive-foreground">{state.message}</div>;
+      }
+      return <InlineFileDiff patch={state.patch} resolvedTheme={resolvedTheme} />;
+    },
+    [fileDiffKey, fileDiffsByKey, resolvedTheme],
+  );
+
+  const fileDiffListProps = useCallback(
+    (sourceForFile: (file: VcsPanelFileChange) => FileDiffSource) => ({
+      getFileKey: (file: VcsPanelFileChange) => fileDiffKey(file, sourceForFile(file)),
+      isFileExpanded: (file: VcsPanelFileChange) =>
+        expandedFileDiffs.has(fileDiffKey(file, sourceForFile(file))),
+      onFileToggle: (file: VcsPanelFileChange) => toggleFileDiff(file, sourceForFile(file)),
+      renderExpandedFile: (file: VcsPanelFileChange) => renderFileDiff(file, sourceForFile(file)),
+    }),
+    [expandedFileDiffs, fileDiffKey, renderFileDiff, toggleFileDiff],
+  );
+
   const switchRef = useCallback(
     (refName: string) =>
       runAction(`branch-switch:${refName}`, async () => {
@@ -1237,7 +1444,7 @@ export function SourceControlPanel({
         const branchName = window.prompt(`Create branch from ${commit.shortSha}`, "");
         const trimmed = branchName?.trim();
         if (!trimmed) return;
-        await runAction(`commit-create-branch:${commit.sha}:${trimmed}`, async () => {
+        await runAction(`commit-create-branch:${commit.sha}`, async () => {
           await api?.vcs.createBranchFromCommit({
             cwd,
             sha: commit.sha,
@@ -1371,9 +1578,6 @@ export function SourceControlPanel({
   const runPanelCommit = useCallback(
     (message: string) => {
       const commitMessage = message.trim();
-      setPanelBusyLabel(
-        commitMessage ? "Committing staged changes..." : "Generating commit message...",
-      );
       return runAction("changes-commit", async () => {
         setCommitDialogOpen(false);
         setDialogCommitMessage("");
@@ -1383,7 +1587,7 @@ export function SourceControlPanel({
           ...(commitMessage ? { commitMessage } : {}),
           filePaths: [...selectedChangePathList],
         });
-      }).finally(() => setPanelBusyLabel(null));
+      });
     },
     [gitAction, runAction, selectedChangePathList],
   );
@@ -1400,7 +1604,6 @@ export function SourceControlPanel({
   const createStash = useCallback(
     (paths: readonly string[], message?: string) => {
       const stashMessage = message?.trim();
-      setPanelBusyLabel(stashMessage ? "Stashing changes..." : "Generating stash message...");
       return runAction("changes-stash", async () => {
         if (!api) return;
         await api.vcs.createStash({
@@ -1410,7 +1613,7 @@ export function SourceControlPanel({
           paths: [...paths],
           ...(stashMessage ? { message: stashMessage } : {}),
         });
-      }).finally(() => setPanelBusyLabel(null));
+      });
     },
     [api, cwd, runAction],
   );
@@ -1536,8 +1739,24 @@ export function SourceControlPanel({
   );
 
   const loadMoreBranchCommits = useCallback(
-    async (branch: VcsRef, details: VcsPanelBranchDetails) => {
-      if (!api || details.commitsRemaining <= 0) return;
+    async (branch: VcsRef, details: VcsPanelBranchDetails, kind: BranchCommitListKind) => {
+      const loadedCount =
+        kind === "ahead"
+          ? details.aheadCommits.length
+          : kind === "behind"
+            ? details.behindCommits.length
+            : kind === "compare-history"
+              ? details.compareCommits.length
+              : details.commits.length;
+      const remaining =
+        kind === "ahead"
+          ? details.aheadCommitsRemaining
+          : kind === "behind"
+            ? details.behindCommitsRemaining
+            : kind === "compare-history"
+              ? details.compareCommitsRemaining
+              : details.commitsRemaining;
+      if (!api || remaining <= 0) return;
       setLoadingBranchDetails((current) => {
         const next = new Set(current);
         next.add(branch.name);
@@ -1548,16 +1767,36 @@ export function SourceControlPanel({
           cwd,
           branch,
           baseRef: details.baseRef,
-          skip: details.commits.length,
+          kind,
+          skip: loadedCount,
           limit: COMMIT_PAGE_SIZE,
         });
         setBranchDetailsByRef((current) => {
           const nextDetails = current.get(details.fullRefName) ?? details;
-          const merged = {
-            ...nextDetails,
-            commits: [...nextDetails.commits, ...result.commits],
-            commitsRemaining: result.remaining,
-          };
+          const merged =
+            kind === "ahead"
+              ? {
+                  ...nextDetails,
+                  aheadCommits: [...nextDetails.aheadCommits, ...result.commits],
+                  aheadCommitsRemaining: result.remaining,
+                }
+              : kind === "behind"
+                ? {
+                    ...nextDetails,
+                    behindCommits: [...nextDetails.behindCommits, ...result.commits],
+                    behindCommitsRemaining: result.remaining,
+                  }
+                : kind === "compare-history"
+                  ? {
+                      ...nextDetails,
+                      compareCommits: [...nextDetails.compareCommits, ...result.commits],
+                      compareCommitsRemaining: result.remaining,
+                    }
+                  : {
+                      ...nextDetails,
+                      commits: [...nextDetails.commits, ...result.commits],
+                      commitsRemaining: result.remaining,
+                    };
           const next = new Map(current);
           next.set(merged.fullRefName, merged);
           next.set(merged.name, merged);
@@ -1707,6 +1946,11 @@ export function SourceControlPanel({
   const renderWorkingFile = (file: PanelChangedFile) => {
     const selected = selectedChangePaths.has(file.path);
     const discardKey = `file-discard:${file.path}`;
+    const diffSource = {
+      kind: "working-tree",
+      staged: file.hasStagedChanges,
+    } satisfies FileDiffSource;
+    const diffExpanded = expandedFileDiffs.has(fileDiffKey(file, diffSource));
     const discardFile = () =>
       void (async () => {
         if (!(await confirm(`Discard changes in ${file.path}?`))) return;
@@ -1721,64 +1965,86 @@ export function SourceControlPanel({
         );
       })();
     return (
-      <div
-        key={file.path}
-        className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-        onContextMenu={(event) =>
-          openContextMenu(
-            event,
-            [
-              { id: "open", label: "Open file" },
-              contextMenuSeparator("copy-separator"),
-              { id: "copy-filename", label: "Copy filename", icon: "copy" },
-              { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
-              contextMenuSeparator("discard-separator"),
+      <div key={file.path} className="space-y-0.5">
+        <div
+          role="button"
+          tabIndex={0}
+          className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
+          onClick={() => toggleFileDiff(file, diffSource)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            toggleFileDiff(file, diffSource);
+          }}
+          onContextMenu={(event) =>
+            openContextMenu(
+              event,
+              [
+                { id: "open", label: "Open file" },
+                contextMenuSeparator("copy-separator"),
+                { id: "copy-filename", label: "Copy filename", icon: "copy" },
+                { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+                contextMenuSeparator("discard-separator"),
+                {
+                  id: "discard",
+                  label: "Discard change",
+                  destructive: true,
+                  disabled: isActionRunning(discardKey),
+                  icon: "trash",
+                },
+              ],
               {
-                id: "discard",
-                label: "Discard change",
-                destructive: true,
-                disabled: isActionRunning(discardKey),
-                icon: "trash",
+                discard: discardFile,
+                open: () => openFile(file.path),
+                "copy-filename": () => copyText(fileBasename(file.path)),
+                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
               },
-            ],
-            {
-              discard: discardFile,
-              open: () => openFile(file.path),
-              "copy-filename": () => copyText(fileBasename(file.path)),
-              "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
-            },
-          )
-        }
-      >
-        <Checkbox
-          checked={selected}
-          disabled={isActionRunning(discardKey)}
-          aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
-          onCheckedChange={(checked) => toggleChangedFileSelection(file.path, checked === true)}
-        />
-        <span
-          className={cn(
-            "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-            fileStatusColor(file.status),
-          )}
+            )
+          }
         >
-          {fileStatusLetter(file.status)}
-        </span>
-        <span className="min-w-0 flex-1 truncate">{file.path}</span>
-        <StatLabels insertions={file.insertions} deletions={file.deletions} />
-        <RowActions>
-          <IconButton
-            label="Discard changes"
-            destructive
-            disabled={isActionRunning(discardKey)}
-            onClick={discardFile}
+          {diffExpanded ? (
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span onClick={(event) => event.stopPropagation()}>
+            <Checkbox
+              checked={selected}
+              disabled={isActionRunning(discardKey)}
+              aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
+              onCheckedChange={(checked) => toggleChangedFileSelection(file.path, checked === true)}
+            />
+          </span>
+          <span
+            className={cn(
+              "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+              fileStatusColor(file.status),
+            )}
           >
-            <Trash2 className="size-3.5" />
-          </IconButton>
-          <IconButton label="Open file" onClick={() => void openFile(file.path)}>
-            <ExternalLink className="size-3.5" />
-          </IconButton>
-        </RowActions>
+            {fileStatusLetter(file.status)}
+          </span>
+          <span className="min-w-0 flex-1 truncate">{file.path}</span>
+          <StatLabels insertions={file.insertions} deletions={file.deletions} />
+          <RowActions>
+            <IconButton
+              label="Discard changes"
+              destructive
+              disabled={isActionRunning(discardKey)}
+              loading={isActionRunning(discardKey)}
+              onClick={discardFile}
+            >
+              <Trash2 className="size-3.5" />
+            </IconButton>
+            <IconButton label="Open file" onClick={() => void openFile(file.path)}>
+              <ExternalLink className="size-3.5" />
+            </IconButton>
+          </RowActions>
+        </div>
+        {diffExpanded ? (
+          <div className="ml-4 border-l border-border/60 pl-1">
+            {renderFileDiff(file, diffSource)}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -1794,6 +2060,10 @@ export function SourceControlPanel({
     const undoKey = options.undoBranchName
       ? commitUndoActionKey(options.undoBranchName, commit.sha)
       : null;
+    const revertKey = `commit-revert:${commit.sha}`;
+    const rebaseKey = `rebase-current:${commit.sha}`;
+    const checkoutKey = `commit-checkout:${commit.sha}`;
+    const createBranchKey = `commit-create-branch:${commit.sha}`;
     const canUndoCommit = options.undoBranchName !== undefined;
     return (
       <div key={commit.sha} className="space-y-0.5">
@@ -1858,6 +2128,7 @@ export function SourceControlPanel({
                     <IconButton
                       label="Undo"
                       disabled={undoKey ? isActionRunning(undoKey) : false}
+                      loading={undoKey ? isActionRunning(undoKey) : false}
                       onClick={() => {
                         if (options.undoBranchName) undoCommit(options.undoBranchName, commit);
                       }}
@@ -1865,23 +2136,34 @@ export function SourceControlPanel({
                       <Undo2 className="size-3.5" />
                     </IconButton>
                   ) : null}
-                  <IconButton label="Revert commit" onClick={() => revertCommit(commit)}>
+                  <IconButton
+                    label="Revert commit"
+                    disabled={isActionRunning(revertKey)}
+                    loading={isActionRunning(revertKey)}
+                    onClick={() => revertCommit(commit)}
+                  >
                     <RotateCcw className="size-3.5" />
                   </IconButton>
                   <IconButton
                     label="Rebase current branch onto commit"
+                    disabled={isActionRunning(rebaseKey)}
+                    loading={isActionRunning(rebaseKey)}
                     onClick={() => rebaseCurrentOnto(commit.sha)}
                   >
                     <GitMerge className="size-3.5" />
                   </IconButton>
                   <IconButton
                     label="Checkout as detached HEAD"
+                    disabled={isActionRunning(checkoutKey)}
+                    loading={isActionRunning(checkoutKey)}
                     onClick={() => checkoutCommitDetached(commit)}
                   >
                     <GitCommit className="size-3.5" />
                   </IconButton>
                   <IconButton
                     label="Create branch from commit"
+                    disabled={isActionRunning(createBranchKey)}
+                    loading={isActionRunning(createBranchKey)}
                     onClick={() => createBranchFromCommit(commit)}
                   >
                     <GitBranchPlus className="size-3.5" />
@@ -1900,6 +2182,7 @@ export function SourceControlPanel({
               files={commit.files}
               emptyLabel="No file changes."
               onFileContextMenu={openFileChangeContextMenu}
+              {...fileDiffListProps(() => ({ kind: "commit", sha: commit.sha }))}
             />
           </div>
         ) : null}
@@ -1953,8 +2236,15 @@ export function SourceControlPanel({
   };
 
   const renderBranchTree = (branch: VcsRef, details: VcsPanelBranchDetails) => {
-    const hasBranchUpstream = branchHasUpstream(branch, snapshot);
     const unsyncedCommitShas = new Set(details.unsyncedCommitShas);
+    const loadingDetails = loadingBranchDetails.has(branch.name);
+    const aheadTotal = details.aheadCommits.length + details.aheadCommitsRemaining;
+    const behindTotal = details.behindCommits.length + details.behindCommitsRemaining;
+    const historyTotal = details.commits.length + details.commitsRemaining;
+    const openCompareBaseDialog = () => {
+      setCompareBaseDialogBranch(branch);
+      setCompareBaseQuery("");
+    };
     const renderBranchCommit = (commit: VcsPanelCommitSummary) =>
       renderCommit(
         commit,
@@ -1962,109 +2252,56 @@ export function SourceControlPanel({
       );
     return (
       <div className="ml-2 space-y-0.5 border-l border-border/60 pl-1">
-        {renderBranchSubsection({
-          details,
-          id: "compare",
-          title: (
-            <>
-              Compare with
-              <span className="ml-1 text-muted-foreground">{details.baseRef ?? "choose base"}</span>
-            </>
-          ),
-          count: null,
-          icon: <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />,
-          action: (
-            <button
-              type="button"
-              className="shrink-0 cursor-pointer rounded px-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                setCompareBaseDialogBranch(branch);
-                setCompareBaseQuery("");
-              }}
-            >
-              choose
-            </button>
-          ),
-          children: details.baseRef ? (
-            <div className="space-y-0.5">
-              {details.aheadCommits.length > 0
-                ? renderBranchSubsection({
-                    details,
-                    id: "compare-ahead",
-                    title: `${details.aheadCommits.length} Ahead`,
-                    count: null,
-                    icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
-                    children: details.aheadCommits.map(renderBranchCommit),
-                  })
-                : null}
-              {details.behindCommits.length > 0
-                ? renderBranchSubsection({
-                    details,
-                    id: "compare-behind",
-                    title: `${details.behindCommits.length} Behind`,
-                    count: null,
-                    icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
-                    children: details.behindCommits.map(renderBranchCommit),
-                  })
-                : null}
-              {renderBranchSubsection({
-                details,
-                id: "compare-history",
-                title: "History",
-                count: null,
-                defaultExpanded: true,
-                children:
-                  details.compareCommits.length === 0 ? (
-                    <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
-                  ) : (
-                    details.compareCommits.map(renderBranchCommit)
-                  ),
-              })}
-              {renderBranchSubsection({
-                details,
-                id: "compare-changes",
-                title: "Changes",
-                count: null,
-                action: <FileChangeSummary files={details.compareFiles} />,
-                children: (
-                  <FileChangeList
-                    files={details.compareFiles}
-                    emptyLabel="No changes."
-                    onFileContextMenu={openFileChangeContextMenu}
-                  />
-                ),
-              })}
-            </div>
-          ) : (
-            <div className="px-3 py-1 text-xs text-muted-foreground">Choose a base ref.</div>
-          ),
-        })}
-        {hasBranchUpstream && details.aheadCommits.length > 0
+        <button
+          type="button"
+          className="flex h-6 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded px-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+          onClick={openCompareBaseDialog}
+        >
+          <span className="min-w-0 flex-1 truncate">vs. {details.baseRef ?? "choose base"}</span>
+        </button>
+        {aheadTotal > 0
           ? renderBranchSubsection({
               details,
               id: "ahead",
-              title: `${details.aheadCommits.length} Ahead`,
+              title: `${aheadTotal} Ahead`,
               count: null,
               icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
-              children: details.aheadCommits.map(renderBranchCommit),
+              children: (
+                <div className="space-y-0.5">
+                  {details.aheadCommits.map(renderBranchCommit)}
+                  <LoadMoreCommitsButton
+                    remaining={details.aheadCommitsRemaining}
+                    loading={loadingDetails}
+                    onClick={() => void loadMoreBranchCommits(branch, details, "ahead")}
+                  />
+                </div>
+              ),
             })
           : null}
-        {hasBranchUpstream && details.behindCommits.length > 0
+        {behindTotal > 0
           ? renderBranchSubsection({
               details,
               id: "behind",
-              title: `${details.behindCommits.length} Behind`,
+              title: `${behindTotal} Behind`,
               count: null,
               icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
-              children: details.behindCommits.map(renderBranchCommit),
+              children: (
+                <div className="space-y-0.5">
+                  {details.behindCommits.map(renderBranchCommit)}
+                  <LoadMoreCommitsButton
+                    remaining={details.behindCommitsRemaining}
+                    loading={loadingDetails}
+                    onClick={() => void loadMoreBranchCommits(branch, details, "behind")}
+                  />
+                </div>
+              ),
             })
           : null}
         {renderBranchSubsection({
           details,
           id: "commits",
           title: "History",
-          count: null,
+          count: historyTotal,
           defaultExpanded: true,
           children: (
             <div className="space-y-0.5">
@@ -2073,20 +2310,35 @@ export function SourceControlPanel({
               ) : (
                 details.commits.map(renderBranchCommit)
               )}
-              {details.commitsRemaining > 0 ? (
-                <button
-                  type="button"
-                  className="flex h-7 w-full items-center rounded px-1.5 text-left text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                  disabled={loadingBranchDetails.has(branch.name)}
-                  onClick={() => void loadMoreBranchCommits(branch, details)}
-                >
-                  Load {Math.min(COMMIT_PAGE_SIZE, details.commitsRemaining)} more of{" "}
-                  {details.commitsRemaining} previous commits
-                </button>
-              ) : null}
+              <LoadMoreCommitsButton
+                remaining={details.commitsRemaining}
+                loading={loadingDetails}
+                onClick={() => void loadMoreBranchCommits(branch, details, "history")}
+              />
             </div>
           ),
         })}
+        {details.baseRef
+          ? renderBranchSubsection({
+              details,
+              id: "compare-changes",
+              title: "Changes",
+              count: null,
+              action: <FileChangeSummary files={details.compareFiles} />,
+              children: (
+                <FileChangeList
+                  files={details.compareFiles}
+                  emptyLabel="No changes."
+                  onFileContextMenu={openFileChangeContextMenu}
+                  {...fileDiffListProps(() => ({
+                    kind: "compare",
+                    baseRef: details.baseRef!,
+                    refName: details.name,
+                  }))}
+                />
+              ),
+            })
+          : null}
       </div>
     );
   };
@@ -2198,6 +2450,7 @@ export function SourceControlPanel({
             <IconButton
               label="Checkout"
               disabled={switchDisabled}
+              loading={isActionRunning(switchKey)}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
@@ -2205,6 +2458,7 @@ export function SourceControlPanel({
             <IconButton
               label={syncLabel}
               disabled={syncDisabled}
+              loading={isActionRunning(syncKey) || isActionRunning(`branch-fetch:${branch.name}`)}
               onClick={(event) => syncBranch(branch, event)}
             >
               <BranchSyncActionIcon state={syncState} />
@@ -2213,6 +2467,7 @@ export function SourceControlPanel({
               label="Delete branch. Shift: force."
               destructive
               disabled={deleteDisabled}
+              loading={isActionRunning(deleteKey)}
               onClick={(event) => deleteBranch(branch, isActionForced(event))}
             >
               <Trash2 className="size-3.5" />
@@ -2221,6 +2476,7 @@ export function SourceControlPanel({
               <IconButton
                 label="Undo latest commit"
                 disabled={isActionRunning(undoKey)}
+                loading={isActionRunning(undoKey)}
                 onClick={() => undoCommit(branch.name)}
               >
                 <Undo2 className="size-3.5" />
@@ -2231,6 +2487,7 @@ export function SourceControlPanel({
                 <IconButton
                   label="Merge branch into current"
                   disabled={isActionRunning(mergeKey)}
+                  loading={isActionRunning(mergeKey)}
                   onClick={() => mergeBranchIntoCurrent(branch.name)}
                 >
                   <GitMerge className="size-3.5" />
@@ -2238,6 +2495,7 @@ export function SourceControlPanel({
                 <IconButton
                   label="Rebase current branch onto branch"
                   disabled={isActionRunning(rebaseKey)}
+                  loading={isActionRunning(rebaseKey)}
                   onClick={() => rebaseCurrentOnto(branch.name)}
                 >
                   <GitPullRequestArrow className="size-3.5" />
@@ -2369,6 +2627,7 @@ export function SourceControlPanel({
             <IconButton
               label="Checkout"
               disabled={switchDisabled}
+              loading={isActionRunning(switchKey)}
               onClick={() => void switchRef(branch.name)}
             >
               <GitBranch className="size-3.5" />
@@ -2377,12 +2636,18 @@ export function SourceControlPanel({
               <IconButton
                 label={branchSyncActionLabel(syncState)}
                 disabled={syncDisabled}
+                loading={isActionRunning(syncKey) || isActionRunning(fetchKey)}
                 onClick={(event) => syncBranch(branch, event)}
               >
                 <BranchSyncActionIcon state={syncState} />
               </IconButton>
             ) : (
-              <IconButton label="Fetch branch" disabled={syncDisabled} onClick={fetchRemoteBranch}>
+              <IconButton
+                label="Fetch branch"
+                disabled={syncDisabled}
+                loading={isActionRunning(fetchKey)}
+                onClick={fetchRemoteBranch}
+              >
                 <RefreshCw className="size-3.5" />
               </IconButton>
             )}
@@ -2390,6 +2655,7 @@ export function SourceControlPanel({
               label={hasLocalBranch ? "Delete branch. Shift: force." : "Delete remote branch"}
               destructive
               disabled={deleteDisabled}
+              loading={isActionRunning(deleteKey)}
               onClick={(event) => deleteBranch(branch, hasLocalBranch && isActionForced(event))}
             >
               <Trash2 className="size-3.5" />
@@ -2398,6 +2664,7 @@ export function SourceControlPanel({
               <IconButton
                 label="Undo latest commit"
                 disabled={isActionRunning(undoKey)}
+                loading={isActionRunning(undoKey)}
                 onClick={() => undoCommit(branch.name)}
               >
                 <Undo2 className="size-3.5" />
@@ -2408,6 +2675,7 @@ export function SourceControlPanel({
                 <IconButton
                   label="Merge branch into current"
                   disabled={isActionRunning(mergeKey)}
+                  loading={isActionRunning(mergeKey)}
                   onClick={() => mergeBranchIntoCurrent(branch.name)}
                 >
                   <GitMerge className="size-3.5" />
@@ -2415,6 +2683,7 @@ export function SourceControlPanel({
                 <IconButton
                   label="Rebase current branch onto branch"
                   disabled={isActionRunning(rebaseKey)}
+                  loading={isActionRunning(rebaseKey)}
                   onClick={() => rebaseCurrentOnto(branch.name)}
                 >
                   <GitPullRequestArrow className="size-3.5" />
@@ -2499,6 +2768,7 @@ export function SourceControlPanel({
             <IconButton
               label="Fetch remote"
               disabled={isActionRunning(fetchKey)}
+              loading={isActionRunning(fetchKey)}
               onClick={fetchRemote}
             >
               <RefreshCw className="size-3.5" />
@@ -2507,6 +2777,7 @@ export function SourceControlPanel({
               label="Remove remote"
               destructive
               disabled={isActionRunning(removeKey)}
+              loading={isActionRunning(removeKey)}
               onClick={removeRemote}
             >
               <Trash2 className="size-3.5" />
@@ -2664,17 +2935,24 @@ export function SourceControlPanel({
             <IconButton
               label="Apply stash"
               disabled={isActionRunning(applyKey)}
+              loading={isActionRunning(applyKey)}
               onClick={applyStash}
             >
               <Download className="size-3.5" />
             </IconButton>
-            <IconButton label="Pop stash" disabled={isActionRunning(popKey)} onClick={popStash}>
+            <IconButton
+              label="Pop stash"
+              disabled={isActionRunning(popKey)}
+              loading={isActionRunning(popKey)}
+              onClick={popStash}
+            >
               <Archive className="size-3.5" />
             </IconButton>
             <IconButton
               label="Drop stash"
               destructive
               disabled={isActionRunning(dropKey)}
+              loading={isActionRunning(dropKey)}
               onClick={dropStash}
             >
               <Trash2 className="size-3.5" />
@@ -2687,6 +2965,7 @@ export function SourceControlPanel({
               files={details.files}
               emptyLabel="No changes."
               onFileContextMenu={openFileChangeContextMenu}
+              {...fileDiffListProps(() => ({ kind: "stash", stashRef: stash.refName }))}
             />
           </div>
         ) : null}
@@ -2724,18 +3003,6 @@ export function SourceControlPanel({
         ) : null}
       </div>
       {error ? <div className="mt-1 text-destructive-foreground">{error}</div> : null}
-      {panelBusyLabel ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="absolute right-2 top-1.5 inline-flex size-5 items-center justify-center text-muted-foreground">
-                <RefreshCw className="size-3 animate-spin" />
-              </span>
-            }
-          />
-          <TooltipPopup side="left">{panelBusyLabel}</TooltipPopup>
-        </Tooltip>
-      ) : null}
     </div>
   );
 
@@ -2771,6 +3038,7 @@ export function SourceControlPanel({
                   gitAction.isPending ||
                   selectedChangedFiles.length === 0
                 }
+                loading={isActionRunning("changes-commit") || gitAction.isPending}
                 onClick={(event) =>
                   event.shiftKey ? openCommitDialog() : void runGeneratedPanelCommit()
                 }
@@ -2780,6 +3048,7 @@ export function SourceControlPanel({
               <IconButton
                 label="Stash selected changes. Shift: message."
                 disabled={isActionRunning("changes-stash") || selectedChangedFiles.length === 0}
+                loading={isActionRunning("changes-stash")}
                 onClick={(event) =>
                   event.shiftKey
                     ? openStashDialog("selected", selectedChangePathList)
@@ -2905,6 +3174,10 @@ export function SourceControlPanel({
                   isActionRunning(`branch-sync:${currentBranch.name}`) ||
                   isActionRunning(`branch-fetch:${currentBranch.name}`)
                 }
+                loading={
+                  isActionRunning(`branch-sync:${currentBranch.name}`) ||
+                  isActionRunning(`branch-fetch:${currentBranch.name}`)
+                }
                 onClick={(event) => syncBranch(currentBranch, event)}
               >
                 <BranchSyncActionIcon state={syncState} />
@@ -2913,6 +3186,7 @@ export function SourceControlPanel({
                 <IconButton
                   label="Undo latest commit"
                   disabled={isActionRunning(commitUndoActionKey(currentBranch.name))}
+                  loading={isActionRunning(commitUndoActionKey(currentBranch.name))}
                   onClick={() => undoCommit(currentBranch.name)}
                 >
                   <Undo2 className="size-3.5" />
@@ -2973,6 +3247,7 @@ export function SourceControlPanel({
                     <IconButton
                       label="Fetch all remotes"
                       disabled={isActionRunning("remotes-fetch-all")}
+                      loading={isActionRunning("remotes-fetch-all")}
                       onClick={() =>
                         void runAction(
                           "remotes-fetch-all",
@@ -3042,6 +3317,9 @@ export function SourceControlPanel({
                 })
               }
             >
+              {isActionRunning("remote-add") ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Add
             </Button>
           </DialogFooter>
@@ -3198,6 +3476,9 @@ export function SourceControlPanel({
               disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
               onClick={() => runDivergedSync("force-pull")}
             >
+              {isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Force pull
             </Button>
             <Button
@@ -3205,6 +3486,9 @@ export function SourceControlPanel({
               disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
               onClick={() => runDivergedSync("merge")}
             >
+              {isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Merge sync
             </Button>
             <Button
@@ -3213,6 +3497,9 @@ export function SourceControlPanel({
               disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
               onClick={() => runDivergedSync("force-push")}
             >
+              {isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Force push
             </Button>
           </DialogFooter>
@@ -3260,6 +3547,9 @@ export function SourceControlPanel({
               }
               onClick={() => void runPanelCommit(dialogCommitMessage)}
             >
+              {isActionRunning("changes-commit") || gitAction.isPending ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Commit
             </Button>
           </DialogFooter>
@@ -3310,6 +3600,9 @@ export function SourceControlPanel({
               disabled={isActionRunning("changes-stash") || !stashDialogTarget}
               onClick={runPanelStash}
             >
+              {isActionRunning("changes-stash") ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
               Stash
             </Button>
           </DialogFooter>

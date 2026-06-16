@@ -452,6 +452,16 @@ function parseRefLines(output: string): string[] {
     .toSorted((left, right) => left.localeCompare(right));
 }
 
+function parseCreatedFromRef(output: string): string | null {
+  for (const line of output.split(/\r?\n/u)) {
+    const match = /^branch: Created from (.+)$/u.exec(line.trim());
+    const refName = match?.[1]?.trim();
+    if (!refName || refName === "HEAD") continue;
+    return refName.replace(/^refs\/heads\//u, "").replace(/^refs\/remotes\//u, "");
+  }
+  return null;
+}
+
 function parseCommits(output: string): VcsPanelSnapshotResult["recentCommits"] {
   return output.split("\n").flatMap((line) => {
     const [sha, shortSha, authorName, authorEmail, authoredAt, message] = line.split("\t");
@@ -710,12 +720,19 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     cwd: string,
     branch: VcsRef,
     baseRef: string | null | undefined,
+    kind: VcsPanelBranchCommitsInput["kind"],
     skip: number,
     limit: number,
   ): Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError> =>
     Effect.gen(function* () {
       const refName = branch.name;
-      const historyRef = yield* historyStartRef(cwd, baseRef ?? null, refName);
+      const historyRef = yield* branchCommitRange(cwd, baseRef ?? null, refName, kind ?? "history");
+      if (!historyRef) {
+        return {
+          commits: [],
+          remaining: 0,
+        };
+      }
       const [total, commits] = yield* Effect.all(
         [countCommitsForRange(cwd, historyRef), commitsForRange(cwd, historyRef, limit, skip)],
         { concurrency: "unbounded" },
@@ -829,14 +846,6 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     );
   };
 
-  const compareCommits = (cwd: string, baseRef: string | null, refName: string) => {
-    if (!baseRef) return Effect.succeed([]);
-    return historyStartRef(cwd, baseRef, refName).pipe(
-      Effect.flatMap((historyRef) => commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE)),
-      Effect.orElseSucceed(() => []),
-    );
-  };
-
   const historyStartRef = (cwd: string, baseRef: string | null, refName: string) => {
     if (!baseRef) return Effect.succeed(refName);
     return run("vcs.panel.branchHistoryMergeBase", cwd, ["merge-base", baseRef, refName]).pipe(
@@ -844,6 +853,23 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.map((mergeBase) => (mergeBase.length > 0 ? mergeBase : refName)),
       Effect.orElseSucceed(() => refName),
     );
+  };
+
+  const branchCommitRange = (
+    cwd: string,
+    baseRef: string | null,
+    refName: string,
+    kind: NonNullable<VcsPanelBranchCommitsInput["kind"]>,
+  ) => {
+    switch (kind) {
+      case "ahead":
+        return Effect.succeed(baseRef ? `${baseRef}..${refName}` : "");
+      case "behind":
+        return Effect.succeed(baseRef ? `${refName}..${baseRef}` : "");
+      case "compare-history":
+      case "history":
+        return historyStartRef(cwd, baseRef, refName);
+    }
   };
 
   const upstreamForRef = (cwd: string, refName: string) =>
@@ -858,6 +884,18 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.map((value) => (value.length > 0 ? value : null)),
     );
 
+  const createdFromRef = (cwd: string, refName: string) =>
+    run("vcs.panel.branchCreatedFrom", cwd, [
+      "reflog",
+      "show",
+      "--format=%gs",
+      "--max-count=20",
+      refName,
+    ]).pipe(
+      Effect.map(parseCreatedFromRef),
+      Effect.orElseSucceed(() => null),
+    );
+
   const branchDetails = (
     cwd: string,
     branch: VcsRef,
@@ -867,14 +905,19 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     Effect.gen(function* () {
       const refName = branch.name;
       const upstreamRef = branch.isRemote ? null : yield* upstreamForRef(cwd, refName);
+      const createdBaseRef = upstreamRef ? null : yield* createdFromRef(cwd, refName);
       const baseRef =
-        compareBaseRef ?? upstreamRef ?? (!branch.isDefault ? defaultCompareRef : null);
+        compareBaseRef ??
+        upstreamRef ??
+        createdBaseRef ??
+        (!branch.isDefault ? defaultCompareRef : null);
       const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
       const historyRef = yield* historyStartRef(cwd, baseRef, refName);
       const [
         aheadCommits,
+        aheadCommitTotal,
         behindCommits,
-        compareHistoryCommits,
+        behindCommitTotal,
         totalCommits,
         commits,
         files,
@@ -884,10 +927,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           baseRef
             ? commitsForRange(cwd, `${baseRef}..${refName}`, COMMIT_PAGE_SIZE)
             : Effect.succeed([]),
+          baseRef ? countCommitsForRange(cwd, `${baseRef}..${refName}`) : Effect.succeed(0),
           baseRef
             ? commitsForRange(cwd, `${refName}..${baseRef}`, COMMIT_PAGE_SIZE)
             : Effect.succeed([]),
-          compareCommits(cwd, baseRef, refName),
+          baseRef ? countCommitsForRange(cwd, `${refName}..${baseRef}`) : Effect.succeed(0),
           countCommitsForRange(cwd, historyRef),
           commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE),
           compareFiles(cwd, baseRef, refName),
@@ -909,8 +953,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         baseRef,
         unsyncedCommitShas,
         aheadCommits,
+        aheadCommitsRemaining: Math.max(0, aheadCommitTotal - aheadCommits.length),
         behindCommits,
-        compareCommits: compareHistoryCommits,
+        behindCommitsRemaining: Math.max(0, behindCommitTotal - behindCommits.length),
+        compareCommits: [],
+        compareCommitsRemaining: 0,
         commits,
         commitsRemaining: Math.max(0, totalCommits - commits.length),
         compareFiles: files,
@@ -1031,11 +1078,53 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const readFileDiff: SourceControlPanelServiceShape["readFileDiff"] = Effect.fn("readFileDiff")(
     function* (input) {
-      const args = input.staged
+      const source = input.source ?? {
+        kind: "working-tree" as const,
+        staged: input.staged ?? false,
+      };
+      if (source.kind === "commit") {
+        const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
+          "show",
+          "--format=",
+          "--no-ext-diff",
+          "--patch",
+          "--minimal",
+          source.sha,
+          "--",
+          input.path,
+        ]);
+        return { path: input.path, staged: false, patch };
+      }
+      if (source.kind === "compare") {
+        const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
+          "diff",
+          "--no-ext-diff",
+          "--patch",
+          "--minimal",
+          `${source.baseRef}...${source.refName}`,
+          "--",
+          input.path,
+        ]);
+        return { path: input.path, staged: false, patch };
+      }
+      if (source.kind === "stash") {
+        const patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
+          "stash",
+          "show",
+          "--patch",
+          "--include-untracked",
+          source.stashRef,
+          "--",
+          input.path,
+        ]);
+        return { path: input.path, staged: false, patch };
+      }
+
+      const args = source.staged
         ? ["diff", "--cached", "--", input.path]
         : ["diff", "--", input.path];
       let patch = yield* run("vcs.panel.readFileDiff", input.cwd, args);
-      if (!input.staged && patch.trim().length === 0) {
+      if (!source.staged && patch.trim().length === 0) {
         patch = yield* run(
           "vcs.panel.readUntrackedFileDiff",
           input.cwd,
@@ -1043,7 +1132,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           { allowNonZeroExit: true },
         );
       }
-      return { path: input.path, staged: input.staged, patch };
+      return { path: input.path, staged: source.staged, patch };
     },
   );
 
@@ -1311,7 +1400,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     branchDetails: (input) =>
       branchDetails(input.cwd, input.branch, input.defaultCompareRef, input.compareBaseRef),
     branchCommits: (input) =>
-      branchCommits(input.cwd, input.branch, input.baseRef, input.skip, input.limit),
+      branchCommits(input.cwd, input.branch, input.baseRef, input.kind, input.skip, input.limit),
     stashDetails: (input) => stashDetails(input.cwd, input.stashRef),
     stageFiles,
     unstageFiles,

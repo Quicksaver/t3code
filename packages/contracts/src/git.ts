@@ -399,8 +399,11 @@ export const VcsPanelBranchDetails = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
   unsyncedCommitShas: Schema.Array(TrimmedNonEmptyStringSchema),
   aheadCommits: Schema.Array(VcsPanelCommitSummary),
+  aheadCommitsRemaining: NonNegativeInt,
   behindCommits: Schema.Array(VcsPanelCommitSummary),
+  behindCommitsRemaining: NonNegativeInt,
   compareCommits: Schema.Array(VcsPanelCommitSummary),
+  compareCommitsRemaining: NonNegativeInt,
   commits: Schema.Array(VcsPanelCommitSummary),
   commitsRemaining: NonNegativeInt,
   compareFiles: Schema.Array(VcsPanelFileChange),
@@ -419,6 +422,7 @@ export const VcsPanelBranchCommitsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   branch: VcsRef,
   baseRef: Schema.optional(TrimmedNonEmptyStringSchema.pipe(Schema.NullOr)),
+  kind: Schema.optional(Schema.Literals(["history", "compare-history", "ahead", "behind"])),
   skip: NonNegativeInt,
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(50)),
 });
@@ -464,10 +468,31 @@ export const VcsPanelFileActionInput = Schema.Struct({
 });
 export type VcsPanelFileActionInput = typeof VcsPanelFileActionInput.Type;
 
+const VcsPanelFileDiffSource = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("working-tree"),
+    staged: Schema.Boolean,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("commit"),
+    sha: TrimmedNonEmptyStringSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("compare"),
+    baseRef: TrimmedNonEmptyStringSchema,
+    refName: TrimmedNonEmptyStringSchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("stash"),
+    stashRef: TrimmedNonEmptyStringSchema,
+  }),
+]);
+
 export const VcsPanelFileDiffInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
-  staged: Schema.Boolean,
+  staged: Schema.optional(Schema.Boolean),
+  source: Schema.optional(VcsPanelFileDiffSource),
 });
 export type VcsPanelFileDiffInput = typeof VcsPanelFileDiffInput.Type;
 
