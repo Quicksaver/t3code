@@ -103,7 +103,7 @@ type SectionKey = "work" | "remotes";
 const SECTION_ORDER: readonly SectionKey[] = ["work", "remotes"];
 
 const SECTION_TITLES: Record<SectionKey, string> = {
-  work: "Work in Progress",
+  work: "Actionable",
   remotes: "Remotes",
 };
 

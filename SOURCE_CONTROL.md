@@ -33,7 +33,7 @@ The VS Code extension exposes the shared T3 Code panel through the `t3code.ui.en
 
 The Version Control panel has a compact repository summary at the top and two resizable, collapsible sections:
 
-- `Work in Progress`
+- `Actionable`
 - `Remotes`
 
 `Remotes` is collapsed by default. The sections share the available panel height, each section owns its own overflow area, and section edges can be dragged to resize them relative to each other.
@@ -46,16 +46,16 @@ The panel refreshes from the VCS status stream, explicit panel operations, windo
 
 This keeps externally-created changes visible without requiring a window blur/refocus cycle, while avoiding repeated no-op refreshes for gitignored files or unchanged status.
 
-## Work In Progress
+## Actionable
 
-`Work in Progress` is the default operational overview. It lists only work that needs attention:
+`Actionable` is the default operational overview. It lists only work that needs attention:
 
 - A dirty `Working tree` row, shown first and omitted when the tree is clean.
 - Local branches that are local-only, ahead, behind, diverged, or otherwise require action.
 - Stashes.
 - Other checked-out worktree branch labels when available.
 
-Fully synced local branches are omitted from `Work in Progress`; they remain visible under `Remotes` when they track a remote branch.
+Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a remote branch.
 
 Items are sorted by operational urgency, then recency. An unclean working tree is always first. Branch urgency is based on conflicts/diverged, behind, unpushed, dirty, and stale states. Branch and commit rows include succinct relative dates such as `5 minutes ago`, `yesterday`, `4 days ago`, and `last week`.
 
@@ -79,7 +79,7 @@ File rows are compact. They show a one-letter status indicator such as `A`, `D`,
 
 ## Branch Rows
 
-Branch rows are compact tree items used both in `Work in Progress` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date.
+Branch rows are compact tree items used both in `Actionable` and under `Remotes`. They show branch identity, sync indicators, head labels, and a relative activity date.
 
 Ahead and behind status is rendered as `↑x` and `↓y`; zero sides are hidden. `↑x` uses the same green as added-line indicators. `↓y` uses the warning/yellow download color. If a branch has both indicators it is diverged; no separate diverged badge is needed.
 
@@ -139,7 +139,7 @@ Commit rows expand to their changed files. Hover/focus-only commit actions inclu
 
 ## Stashes
 
-Stashes are listed as `Work in Progress` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results.
+Stashes are listed as `Actionable` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results.
 
 Stash row actions appear on hover/focus and include:
 
@@ -160,7 +160,7 @@ Each remote row shows the remote name and fetch URL. Remote action buttons appea
 
 When local-only branches exist, `Remotes` also shows a `local` tree row with those unpublished branches. Publishing one local-only branch sets its upstream. If the repository has multiple remotes, the panel prompts for the remote to publish to.
 
-Expanding a remote lists actual remote branches; pseudo-ref rows such as the remote name itself are de-duplicated. Remote branch rows use the same branch item model as `Work in Progress`, including local tracking state, `↑x`/`↓y` sync indicators, synced-local target icons, expandable compare/ahead/behind/history subsections, selectable compare bases, and branch actions.
+Expanding a remote lists actual remote branches; pseudo-ref rows such as the remote name itself are de-duplicated. Remote branch rows use the same branch item model as `Actionable`, including local tracking state, `↑x`/`↓y` sync indicators, synced-local target icons, expandable compare/ahead/behind/history subsections, selectable compare bases, and branch actions.
 
 ## Git Operations
 
@@ -183,7 +183,7 @@ The panel keeps version-control actions server-authoritative across browser, des
 
 ## Validation
 
-The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Work in Progress selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including gitignored-file suppression.
+The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including gitignored-file suppression.
 
 Before considering source-control changes complete, run:
 

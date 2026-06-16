@@ -173,7 +173,7 @@ Primary reference:
 
 ## Version Control Panel Work
 
-This branch includes a first-class Version Control panel that is not assumed to exist on `main`. Treat the Version Control singleton right-panel surface, VS Code host display setting, live VCS status watcher, Work in Progress and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, and Version Control panel RPC/contracts as part of this branch's customization set during upstream merges.
+This branch includes a first-class Version Control panel that is not assumed to exist on `main`. Treat the Version Control singleton right-panel surface, VS Code host display setting, live VCS status watcher, Actionable and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, and Version Control panel RPC/contracts as part of this branch's customization set during upstream merges.
 
 The implementation details are intentionally kept in `SOURCE_CONTROL.md` instead of being duplicated here. Unlike the other sections in this file, `CUSTOMIZED.md` should only preserve the merge-maintenance rule for this area: keep the Version Control panel work unless `main` has gained an equivalent agent-aware version-control panel, then reconcile against the detailed source-control note.
 
