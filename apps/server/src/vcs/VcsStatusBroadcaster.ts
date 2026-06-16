@@ -115,6 +115,19 @@ export function shouldIgnoreWatchEventPath(relativePath: string): boolean {
   return rootSegment ? VCS_STATUS_WATCH_IGNORED_ROOTS.has(rootSegment) : false;
 }
 
+export function localWatchRefreshSignals<E, R, R2>(
+  relativePaths: Stream.Stream<string, E, R>,
+  shouldRefreshForPath: (relativePath: string) => Effect.Effect<boolean, never, R2>,
+  debounceDuration: Duration.Duration = Duration.millis(150),
+): Stream.Stream<void, E, R | R2> {
+  return relativePaths.pipe(
+    Stream.filter((relativePath) => !shouldIgnoreWatchEventPath(relativePath)),
+    Stream.filterEffect(shouldRefreshForPath),
+    Stream.map(() => undefined),
+    Stream.debounce(debounceDuration),
+  );
+}
+
 export const layer = Layer.effect(
   VcsStatusBroadcaster,
   Effect.gen(function* () {
@@ -393,12 +406,12 @@ export const layer = Layer.effect(
     });
 
     const makeLocalWatchLoop = (cwd: string) =>
-      fs.watch(cwd).pipe(
-        Stream.map((event) => watchEventPath(path, cwd, event.path)),
-        Stream.filter((relativePath): relativePath is string => relativePath !== null),
-        Stream.filter((relativePath) => !shouldIgnoreWatchEventPath(relativePath)),
-        Stream.debounce(Duration.millis(150)),
-        Stream.filterEffect((relativePath) =>
+      localWatchRefreshSignals(
+        fs.watch(cwd).pipe(
+          Stream.map((event) => watchEventPath(path, cwd, event.path)),
+          Stream.filter((relativePath): relativePath is string => relativePath !== null),
+        ),
+        (relativePath) =>
           Option.match(vcsProcess, {
             onNone: () => Effect.succeed(true),
             onSome: (process) =>
@@ -417,7 +430,7 @@ export const layer = Layer.effect(
                   Effect.orElseSucceed(() => true),
                 ),
           }),
-        ),
+      ).pipe(
         Stream.runForEach(() => refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }))),
         Effect.ignoreCause({ log: true }),
       );

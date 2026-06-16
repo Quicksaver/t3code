@@ -90,6 +90,28 @@ describe("VcsStatusBroadcaster", () => {
     assert.isFalse(VcsStatusBroadcaster.shouldIgnoreWatchEventPath("src/app.ts"));
   });
 
+  it.effect("debounces watcher refreshes after ignored paths are filtered", () =>
+    Effect.gen(function* () {
+      const checkedPaths: string[] = [];
+      const refreshes = Array.from(
+        yield* Stream.runCollect(
+          VcsStatusBroadcaster.localWatchRefreshSignals(
+            Stream.make("src/app.ts", "dist/app.js"),
+            (relativePath) =>
+              Effect.sync(() => {
+                checkedPaths.push(relativePath);
+                return relativePath !== "dist/app.js";
+              }),
+            Duration.millis(1),
+          ),
+        ).pipe(Effect.timeout("2 seconds")),
+      );
+
+      assert.deepStrictEqual(checkedPaths, ["src/app.ts", "dist/app.js"]);
+      assert.equal(refreshes.length, 1);
+    }),
+  );
+
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
