@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { VcsRef } from "@t3tools/contracts";
+import { GitCommandError, type VcsRef, type VcsStatusLocalResult } from "@t3tools/contracts";
 
 import {
   SourceControlPanelService,
@@ -42,10 +42,42 @@ const failure = (stderr: string): ExecuteGitResult => ({
 
 function makeTestLayer(
   execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, never>,
+  workflow: Partial<GitWorkflowServiceShape> = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(
     Layer.provideMerge(ServerSettingsService.layerTest()),
-    Layer.provide(Layer.succeed(GitWorkflowService, {} as GitWorkflowServiceShape)),
+    Layer.provide(
+      Layer.succeed(GitWorkflowService, {
+        status: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "test.status",
+              command: "git status",
+              cwd: "/repo",
+              detail: "status not stubbed",
+            }),
+          ),
+        localStatus: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "test.localStatus",
+              command: "git status",
+              cwd: "/repo",
+              detail: "local status not stubbed",
+            }),
+          ),
+        pullCurrentBranch: () =>
+          Effect.fail(
+            new GitCommandError({
+              operation: "test.pullCurrentBranch",
+              command: "git pull",
+              cwd: "/repo",
+              detail: "pull not stubbed",
+            }),
+          ),
+        ...workflow,
+      } as GitWorkflowServiceShape),
+    ),
     Layer.provide(
       Layer.succeed(GitVcsDriver, {
         execute,
@@ -53,6 +85,19 @@ function makeTestLayer(
     ),
   );
 }
+
+const localStatus: VcsStatusLocalResult = {
+  isRepo: true,
+  hasPrimaryRemote: true,
+  isDefaultRef: false,
+  refName: "feature/source-control",
+  hasWorkingTreeChanges: true,
+  workingTree: {
+    files: [],
+    insertions: 0,
+    deletions: 0,
+  },
+};
 
 describe("SourceControlPanelService", () => {
   it.effect("uses the selected branch head for history queries", () => {
@@ -127,4 +172,148 @@ describe("SourceControlPanelService", () => {
       ),
     );
   });
+
+  it.effect("preserves multiline commit message formatting in one git argument", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.commitStaged({
+        cwd: "/repo",
+        message: "Subject\nBody without blank separator",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["commit", "-m", "Subject\nBody without blank separator"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("sets upstream when force-pushing an unpublished branch", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.pushBranch({
+        cwd: "/repo",
+        branchName: "feature/source-control",
+        force: true,
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          [
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "feature/source-control@{upstream}",
+          ],
+          [
+            "push",
+            "--force-with-lease",
+            "-u",
+            "origin",
+            "feature/source-control:refs/heads/feature/source-control",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.upstreamForRef"
+              ? failure("no upstream")
+              : success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps staged rename stats keyed by the destination path", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+      const stagedFiles =
+        snapshot.changeGroups.find((group) => group.kind === "staged")?.files ?? [];
+
+      assert.deepStrictEqual(stagedFiles, [
+        {
+          path: "src/new.ts",
+          originalPath: "src/old.ts",
+          status: "renamed",
+          insertions: 3,
+          deletions: 1,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                  return success("");
+                case "vcs.panel.statusPorcelain":
+                  return success(
+                    [
+                      "# branch.oid abc",
+                      "# branch.head feature/source-control",
+                      "2 R. N... 100644 100644 100644 abc abc R100 src/new.ts\tsrc/old.ts",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.stagedNumstat":
+                  return success("3\t1\t\0src/old.ts\0src/new.ts\0");
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () => Effect.succeed(localStatus),
+          },
+        ),
+      ),
+    ),
+  );
+
+  it.effect("rejects option-like branch names before creating a branch", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .createBranchFromCommit({
+          cwd: "/repo",
+          sha: "abc",
+          branchName: "-D",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.detail, 'Branch name cannot start with "-".');
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(() =>
+          Effect.sync(() => {
+            throw new Error("git should not run for invalid branch names");
+          }),
+        ),
+      ),
+    ),
+  );
 });

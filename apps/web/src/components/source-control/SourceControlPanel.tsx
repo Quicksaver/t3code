@@ -103,7 +103,7 @@ type SectionKey = "work" | "remotes";
 const SECTION_ORDER: readonly SectionKey[] = ["work", "remotes"];
 
 const SECTION_TITLES: Record<SectionKey, string> = {
-  work: "Actionable",
+  work: "Work in Progress",
   remotes: "Remotes",
 };
 
@@ -169,8 +169,8 @@ function mergeChangeGroups(groups: readonly VcsPanelChangeGroup[]): PanelChanged
       };
       existing.originalPath ??= file.originalPath;
       existing.statuses.add(file.status);
-      existing.insertions += file.insertions;
-      existing.deletions += file.deletions;
+      existing.insertions = Math.max(existing.insertions, file.insertions);
+      existing.deletions = Math.max(existing.deletions, file.deletions);
       existing.hasStagedChanges ||= group.kind === "staged";
       existing.hasUnstagedChanges ||= group.kind === "unstaged";
       existing.hasConflicts ||= group.kind === "conflicts";

@@ -38,6 +38,7 @@ export class ElectronMenu extends Context.Service<ElectronMenu, ElectronMenuShap
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
   const normalizedItems: ContextMenuItem[] = [];
+  let lastWasSeparator = false;
 
   for (const sourceItem of source) {
     if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
@@ -45,11 +46,15 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
     }
 
     if (sourceItem.separator === true) {
+      if (normalizedItems.length === 0 || lastWasSeparator) {
+        continue;
+      }
       normalizedItems.push({
         id: sourceItem.id,
         label: "",
         separator: true,
       });
+      lastWasSeparator = true;
       continue;
     }
 
@@ -76,6 +81,11 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
     }
 
     normalizedItems.push(normalizedItem);
+    lastWasSeparator = false;
+  }
+
+  if (normalizedItems.at(-1)?.separator === true) {
+    normalizedItems.pop();
   }
 
   return normalizedItems;

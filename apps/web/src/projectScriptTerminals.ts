@@ -126,13 +126,10 @@ export function terminalSessionIsReadyForProjectActionInput(input: {
   ) {
     return false;
   }
-  if (!summary.hasRunningSubprocess) {
-    return true;
+  if (!summary.hasRunningSubprocess || SHELL_LABELS.has(normalizedShellLabel(summary.label))) {
+    return terminalOutputLooksReadyForInput(input.buffer);
   }
-  return (
-    SHELL_LABELS.has(normalizedShellLabel(summary.label)) &&
-    terminalOutputLooksReadyForInput(input.buffer)
-  );
+  return false;
 }
 
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {

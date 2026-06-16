@@ -181,6 +181,7 @@ export function showContextMenuFallback<T extends string>(
 
       let hasRenderedItem = false;
       let lastWasSeparator = false;
+      let lastSeparatorElement: HTMLDivElement | null = null;
       for (const item of entries) {
         if (item.separator === true) {
           if (!hasRenderedItem || lastWasSeparator) {
@@ -191,9 +192,11 @@ export function showContextMenuFallback<T extends string>(
           separator.style.cssText = "height:1px;margin:0.25rem 0;background:var(--border);";
           inner.appendChild(separator);
           lastWasSeparator = true;
+          lastSeparatorElement = separator;
           continue;
         }
 
+        lastSeparatorElement = null;
         if (item.header === true) {
           const header = document.createElement("div");
           header.className = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
@@ -295,6 +298,9 @@ export function showContextMenuFallback<T extends string>(
         inner.appendChild(button);
         hasRenderedItem = true;
         lastWasSeparator = false;
+      }
+      if (lastSeparatorElement) {
+        lastSeparatorElement.remove();
       }
 
       menu.appendChild(inner);

@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -128,16 +126,52 @@ function asGitCommandError(operation: string, cwd: string, args: readonly string
     isGitCommandError(cause) ? cause : gitError(operation, cwd, args, detailFromUnknown(cause));
 }
 
+function parseCount(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? "0", 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readNulField(output: string, startIndex: number) {
+  const endIndex = output.indexOf("\0", startIndex);
+  if (endIndex < 0) return { value: output.slice(startIndex), nextIndex: output.length };
+  return { value: output.slice(startIndex, endIndex), nextIndex: endIndex + 1 };
+}
+
 function parseNumstat(output: string): Map<string, { insertions: number; deletions: number }> {
   const stats = new Map<string, { insertions: number; deletions: number }>();
+  if (output.includes("\0")) {
+    let index = 0;
+    while (index < output.length) {
+      const headerEndIndex = output.indexOf("\t", index);
+      if (headerEndIndex < 0) break;
+      const insertionsRaw = output.slice(index, headerEndIndex);
+      const deletionEndIndex = output.indexOf("\t", headerEndIndex + 1);
+      if (deletionEndIndex < 0) break;
+      const deletionsRaw = output.slice(headerEndIndex + 1, deletionEndIndex);
+      index = deletionEndIndex + 1;
+      let pathField = readNulField(output, index);
+      index = pathField.nextIndex;
+      if (pathField.value === "") {
+        pathField = readNulField(output, index);
+        index = pathField.nextIndex;
+        const renamedPathField = readNulField(output, index);
+        index = renamedPathField.nextIndex;
+        pathField = renamedPathField;
+      }
+      if (!pathField.value) continue;
+      stats.set(pathField.value, {
+        insertions: parseCount(insertionsRaw),
+        deletions: parseCount(deletionsRaw),
+      });
+    }
+    return stats;
+  }
   for (const line of output.split("\n")) {
     const [insertionsRaw, deletionsRaw, path] = line.split("\t");
     if (!path) continue;
-    const insertions = Number.parseInt(insertionsRaw ?? "0", 10);
-    const deletions = Number.parseInt(deletionsRaw ?? "0", 10);
     stats.set(path, {
-      insertions: Number.isFinite(insertions) ? insertions : 0,
-      deletions: Number.isFinite(deletions) ? deletions : 0,
+      insertions: parseCount(insertionsRaw),
+      deletions: parseCount(deletionsRaw),
     });
   }
   return stats;
@@ -440,8 +474,7 @@ function compareBranchActivity(
 function avatarUrlForEmail(email: string | null | undefined): string | null {
   const normalized = email?.trim().toLowerCase();
   if (!normalized || !normalized.includes("@")) return null;
-  const hash = createHash("md5").update(normalized).digest("hex");
-  return `https://www.gravatar.com/avatar/${hash}?d=404&s=32`;
+  return null;
 }
 
 function parseRefLines(output: string): string[] {
@@ -494,6 +527,25 @@ function parseNameStatus(
   output: string,
 ): Map<string, { status: VcsPanelFileStatus; originalPath: string | null }> {
   const statuses = new Map<string, { status: VcsPanelFileStatus; originalPath: string | null }>();
+  if (output.includes("\0")) {
+    const fields = output.split("\0").filter((field) => field.length > 0);
+    for (let index = 0; index < fields.length; index += 1) {
+      const statusRaw = fields[index];
+      const firstPath = fields[index + 1];
+      if (!statusRaw || !firstPath) continue;
+      const status = fileStatusFromNameStatus(statusRaw);
+      const hasSecondPath = statusRaw.startsWith("R") || statusRaw.startsWith("C");
+      const secondPath = hasSecondPath ? fields[index + 2] : undefined;
+      if (hasSecondPath) index += 2;
+      else index += 1;
+      const path = secondPath ?? firstPath;
+      statuses.set(path, {
+        status,
+        originalPath: secondPath ? firstPath : null,
+      });
+    }
+    return statuses;
+  }
   for (const line of output.split("\n")) {
     const [statusRaw, firstPath, secondPath] = line.split("\t");
     if (!statusRaw || !firstPath) continue;
@@ -511,22 +563,75 @@ function parseFileChangesFromNumstat(input: {
   statuses?: Map<string, { status: VcsPanelFileStatus; originalPath: string | null }>;
 }): VcsPanelFileChange[] {
   const files: VcsPanelFileChange[] = [];
+  if (input.numstat.includes("\0")) {
+    let index = 0;
+    while (index < input.numstat.length) {
+      const headerEndIndex = input.numstat.indexOf("\t", index);
+      if (headerEndIndex < 0) break;
+      const insertionsRaw = input.numstat.slice(index, headerEndIndex);
+      const deletionEndIndex = input.numstat.indexOf("\t", headerEndIndex + 1);
+      if (deletionEndIndex < 0) break;
+      const deletionsRaw = input.numstat.slice(headerEndIndex + 1, deletionEndIndex);
+      index = deletionEndIndex + 1;
+      let pathField = readNulField(input.numstat, index);
+      index = pathField.nextIndex;
+      let originalPath: string | null = null;
+      if (pathField.value === "") {
+        const originalPathField = readNulField(input.numstat, index);
+        index = originalPathField.nextIndex;
+        const renamedPathField = readNulField(input.numstat, index);
+        index = renamedPathField.nextIndex;
+        originalPath = originalPathField.value || null;
+        pathField = renamedPathField;
+      }
+      const path = pathField.value;
+      if (!path) continue;
+      const status = input.statuses?.get(path);
+      files.push({
+        path,
+        originalPath: status?.originalPath ?? originalPath,
+        status: status?.status ?? "modified",
+        insertions: parseCount(insertionsRaw),
+        deletions: parseCount(deletionsRaw),
+      });
+    }
+    return files.toSorted((left, right) => left.path.localeCompare(right.path));
+  }
   for (const line of input.numstat.split("\n")) {
     const [insertionsRaw, deletionsRaw, pathRaw, renamedPathRaw] = line.split("\t");
     const path = renamedPathRaw ?? pathRaw;
     if (!path) continue;
-    const insertions = Number.parseInt(insertionsRaw ?? "0", 10);
-    const deletions = Number.parseInt(deletionsRaw ?? "0", 10);
     const status = input.statuses?.get(path);
     files.push({
       path,
       originalPath: status?.originalPath ?? null,
       status: status?.status ?? "modified",
-      insertions: Number.isFinite(insertions) ? insertions : 0,
-      deletions: Number.isFinite(deletions) ? deletions : 0,
+      insertions: parseCount(insertionsRaw),
+      deletions: parseCount(deletionsRaw),
     });
   }
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
+}
+
+function validateGitPositionalName(input: {
+  readonly operation: string;
+  readonly cwd: string;
+  readonly args: readonly string[];
+  readonly kind: string;
+  readonly value: string;
+}): Effect.Effect<string, GitCommandError> {
+  const value = input.value.trim();
+  if (value.length === 0) {
+    return Effect.fail(
+      gitError(input.operation, input.cwd, input.args, `${input.kind} is required.`),
+    );
+  }
+  if (value.startsWith("-")) {
+    return Effect.fail(
+      gitError(input.operation, input.cwd, input.args, `${input.kind} cannot start with "-".`),
+    );
+  }
+  return Effect.succeed(value);
 }
 
 function targetRef(target: VcsPanelCompareInput["left"]): string {
@@ -580,11 +685,19 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const commitFiles = (cwd: string, sha: string) =>
     Effect.all(
       [
-        run("vcs.panel.commitNumstat", cwd, ["show", "--format=", "--numstat", sha]),
+        run("vcs.panel.commitNumstat", cwd, [
+          "show",
+          "--format=",
+          "--numstat",
+          "-z",
+          "--find-renames",
+          sha,
+        ]),
         run("vcs.panel.commitNameStatus", cwd, [
           "show",
           "--format=",
           "--name-status",
+          "-z",
           "--find-renames",
           sha,
         ]),
@@ -753,6 +866,8 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           "stash",
           "show",
           "--numstat",
+          "-z",
+          "--find-renames",
           "--include-untracked",
           stashRef,
         ]),
@@ -760,6 +875,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           "stash",
           "show",
           "--name-status",
+          "-z",
           "--find-renames",
           "--include-untracked",
           stashRef,
@@ -825,11 +941,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         run("vcs.panel.branchCompareNumstat", cwd, [
           "diff",
           "--numstat",
+          "-z",
+          "--find-renames",
           `${baseRef}...${refName}`,
         ]),
         run("vcs.panel.branchCompareNameStatus", cwd, [
           "diff",
           "--name-status",
+          "-z",
           "--find-renames",
           `${baseRef}...${refName}`,
         ]),
@@ -976,8 +1095,19 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             "--format=%(refname:short)%09%(HEAD)%09%(worktreepath)%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
           ]),
           run("vcs.panel.statusPorcelain", input.cwd, ["status", "--porcelain=2", "--branch"]),
-          run("vcs.panel.unstagedNumstat", input.cwd, ["diff", "--numstat"]),
-          run("vcs.panel.stagedNumstat", input.cwd, ["diff", "--cached", "--numstat"]),
+          run("vcs.panel.unstagedNumstat", input.cwd, [
+            "diff",
+            "--numstat",
+            "-z",
+            "--find-renames",
+          ]),
+          run("vcs.panel.stagedNumstat", input.cwd, [
+            "diff",
+            "--cached",
+            "--numstat",
+            "-z",
+            "--find-renames",
+          ]),
           run("vcs.panel.remotes", input.cwd, ["remote", "-v"]),
           run("vcs.panel.stashes", input.cwd, [
             "stash",
@@ -1164,7 +1294,8 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     const remoteBranchName = remoteBranchParts.join("/") || branchName;
     yield* run("vcs.panel.pushBranch", cwd, [
       "push",
-      force ? "--force-with-lease" : "-u",
+      ...(force ? ["--force-with-lease"] : []),
+      "-u",
       remoteName,
       `${branchName}:refs/heads/${remoteBranchName}`,
     ]).pipe(Effect.asVoid);
@@ -1172,10 +1303,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const commitStaged: SourceControlPanelServiceShape["commitStaged"] = Effect.fn("commitStaged")(
     function* (input) {
-      const [subject = input.message, ...bodyLines] = input.message.split(/\r?\n/u);
-      const args = ["commit", "-m", subject.trim()];
-      const body = bodyLines.join("\n").trim();
-      if (body.length > 0) args.push("-m", body);
+      const args = ["commit", "-m", input.message.trim()];
       yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
       if (input.push) {
         const status = yield* workflow
@@ -1384,17 +1512,16 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const createBranchFromCommit: SourceControlPanelServiceShape["createBranchFromCommit"] =
     Effect.fn("createBranchFromCommit")(function* (input) {
-      const branchName = input.branchName?.trim();
-      if (!branchName) {
-        return yield* gitError(
-          "vcs.panel.createBranchFromCommit",
-          input.cwd,
-          ["branch", "<name>", input.sha],
-          "Branch name is required.",
-        );
-      }
+      const branchName = yield* validateGitPositionalName({
+        operation: "vcs.panel.createBranchFromCommit",
+        cwd: input.cwd,
+        args: ["branch", "<name>", input.sha],
+        kind: "Branch name",
+        value: input.branchName ?? "",
+      });
       yield* run("vcs.panel.createBranchFromCommit", input.cwd, [
         "branch",
+        "--",
         branchName,
         input.sha,
       ]).pipe(Effect.asVoid);
@@ -1438,13 +1565,31 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     fetchAllRemotes: (input) =>
       run("vcs.panel.fetchAllRemotes", input.cwd, ["fetch", "--all"]).pipe(Effect.asVoid),
     addRemote: (input) =>
-      run("vcs.panel.addRemote", input.cwd, ["remote", "add", input.name, input.url]).pipe(
-        Effect.asVoid,
-      ),
+      Effect.gen(function* () {
+        const remoteName = yield* validateGitPositionalName({
+          operation: "vcs.panel.addRemote",
+          cwd: input.cwd,
+          args: ["remote", "add", "<name>", input.url],
+          kind: "Remote name",
+          value: input.name,
+        });
+        yield* run("vcs.panel.addRemote", input.cwd, ["remote", "add", remoteName, input.url]).pipe(
+          Effect.asVoid,
+        );
+      }),
     removeRemote: (input) =>
-      run("vcs.panel.removeRemote", input.cwd, ["remote", "remove", input.remoteName]).pipe(
-        Effect.asVoid,
-      ),
+      Effect.gen(function* () {
+        const remoteName = yield* validateGitPositionalName({
+          operation: "vcs.panel.removeRemote",
+          cwd: input.cwd,
+          args: ["remote", "remove", "<name>"],
+          kind: "Remote name",
+          value: input.remoteName,
+        });
+        yield* run("vcs.panel.removeRemote", input.cwd, ["remote", "remove", remoteName]).pipe(
+          Effect.asVoid,
+        );
+      }),
     createStash: (input) => {
       const mode = input.mode ?? "all";
       const modeArgs =

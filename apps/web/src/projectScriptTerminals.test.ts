@@ -120,6 +120,23 @@ describe("terminalSessionIsReadyForProjectActionInput", () => {
     ).toBe(true);
   });
 
+  it("waits for prompt output before reusing an idle shell session", () => {
+    expect(
+      terminalSessionIsReadyForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: false,
+          label: "bash",
+          status: "running",
+          worktreePath: null,
+        },
+        buffer: "loading profile...\n",
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(false);
+  });
+
   it("does not treat non-shell subprocess labels as reusable", () => {
     expect(
       terminalSessionIsReadyForProjectActionInput({
