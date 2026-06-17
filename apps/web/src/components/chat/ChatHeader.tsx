@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { CornerLeftUpIcon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import { CornerLeftUpIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
@@ -14,12 +14,10 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
-import { Toggle } from "../ui/toggle";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../environments/primary/context";
 import { useHostDisplayPreferences } from "../../hostDisplayPreferences";
 import { MainSidebarTrigger } from "../sidebar/MainSidebarTrigger";
-import { shortcutLabelForCommand } from "../../keybindings";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -32,9 +30,6 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  terminalAvailable: boolean;
-  terminalOpen: boolean;
-  rightPanelAvailable: boolean;
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -42,8 +37,6 @@ interface ChatHeaderProps {
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onOpenParentThread?: (() => void) | undefined;
-  onToggleTerminal: () => void;
-  onToggleRightPanel: () => void;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -78,9 +71,6 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
-  terminalAvailable,
-  terminalOpen,
-  rightPanelAvailable,
   rightPanelOpen,
   gitCwd,
   onRunProjectScript,
@@ -88,14 +78,9 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onOpenParentThread,
-  onToggleTerminal,
-  onToggleRightPanel,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const hostDisplayPreferences = useHostDisplayPreferences();
-  const showTerminalToggle = hostDisplayPreferences.enableTerminal;
-  const terminalShortcutLabel = shortcutLabelForCommand(keybindings, "terminal.toggle");
-  const rightPanelShortcutLabel = shortcutLabelForCommand(keybindings, "rightPanel.toggle");
 
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -174,52 +159,6 @@ export const ChatHeader = memo(function ChatHeader({
             {...(draftId ? { draftId } : {})}
           />
         )}
-        {showTerminalToggle && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  className="shrink-0"
-                  pressed={terminalOpen}
-                  onPressedChange={onToggleTerminal}
-                  aria-label="Toggle terminal drawer"
-                  variant="ghost"
-                  size="xs"
-                  disabled={!terminalAvailable}
-                >
-                  <PanelBottomIcon className="size-3.5" />
-                </Toggle>
-              }
-            />
-            <TooltipPopup side="bottom">
-              {terminalAvailable
-                ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-                : "Terminal drawer is unavailable"}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={rightPanelOpen}
-                onPressedChange={onToggleRightPanel}
-                aria-label="Toggle right panel"
-                variant="ghost"
-                size="xs"
-                disabled={!rightPanelAvailable}
-              >
-                <PanelRightIcon className="size-3.5" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-              : "Right panel is unavailable"}
-          </TooltipPopup>
-        </Tooltip>
       </div>
     </div>
   );

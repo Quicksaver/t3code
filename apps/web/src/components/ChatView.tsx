@@ -5078,9 +5078,6 @@ function ChatViewContent(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            terminalAvailable={terminalEnabled && Boolean(activeProject)}
-            terminalOpen={terminalEnabled && Boolean(terminalUiState.terminalOpen)}
-            rightPanelAvailable={Boolean(activeProject)}
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onRunProjectScript={runProjectScript}
@@ -5088,8 +5085,6 @@ function ChatViewContent(props: ChatViewProps) {
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
             {...(activeThreadParentRef ? { onOpenParentThread: openActiveThreadParent } : {})}
-            onToggleTerminal={toggleTerminalVisibility}
-            onToggleRightPanel={toggleRightPanel}
           />
         </header>
 
