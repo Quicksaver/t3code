@@ -2392,7 +2392,8 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const sourceControlAvailable = sourceControlPanelEnabled && isServerThread && gitCwd !== null;
+  const sourceControlAvailable =
+    sourceControlPanelEnabled && activeThreadRef !== null && gitCwd !== null;
   const visibleRightPanelSurfaces = useMemo(
     () =>
       sourceControlAvailable
@@ -2499,6 +2500,26 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !sourceControlAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "source-control");
   }, [activeThreadRef, sourceControlAvailable]);
+  const handleSourceControlThreadRefChange = useCallback(
+    async (input: { readonly branch: string | null; readonly worktreePath: string | null }) => {
+      if (!activeThreadRef) return;
+      if (isServerThread) {
+        await readEnvironmentApi(activeThreadRef.environmentId)?.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: activeThreadRef.threadId,
+          branch: input.branch,
+          worktreePath: input.worktreePath,
+        });
+        return;
+      }
+      setDraftThreadContext(draftId ?? activeThreadRef, {
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+      });
+    },
+    [activeThreadRef, draftId, isServerThread, setDraftThreadContext],
+  );
   const addFilesSurface = () => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -5005,6 +5026,7 @@ function ChatViewContent(props: ChatViewProps) {
           environmentId={environmentId}
           threadId={activeThreadRef.threadId}
           cwd={gitCwd}
+          onThreadRefChange={handleSourceControlThreadRefChange}
           worktreePath={activeThreadWorktreePath}
         />
       </Suspense>

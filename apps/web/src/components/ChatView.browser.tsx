@@ -2860,6 +2860,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("offers version control in draft conversations before a server thread exists", async () => {
+    const draftId = DraftId.make("draft-version-control-panel");
+    const draftThreadId = "thread-version-control-panel" as ThreadId;
+    const draftThreadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, draftThreadId);
+    useComposerDraftStore.getState().setProjectDraftThreadId(
+      {
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        projectId: PROJECT_ID,
+      },
+      draftId,
+      { threadId: draftThreadId },
+    );
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+    });
+
+    try {
+      const rightPanelToggle = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Toggle right panel"]'),
+        "Unable to find right panel toggle.",
+      );
+      rightPanelToggle.click();
+
+      const versionControlButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) =>
+            button.textContent?.includes("Version Control"),
+          ) ?? null,
+        "Unable to find Version Control surface button.",
+      );
+      expect(versionControlButton.disabled).toBe(false);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, draftThreadRef)
+          .isOpen,
+      ).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps multiple terminal panel surfaces separate from the bottom drawer", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,

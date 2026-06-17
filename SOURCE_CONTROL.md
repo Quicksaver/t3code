@@ -2,13 +2,17 @@
 
 ## Current Status
 
-T3 Code includes a Git-backed Version Control surface in the thread right panel. The panel is scoped to the active thread environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
+T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
+
+The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context.
 
 The panel is intentionally an overview and high-level workflow surface. It focuses on current work, branch sync state, remotes, stashes, selected-file commit/stash flows, and compact branch/commit inspection. It is not a full VS Code SCM replacement and does not implement hunk-level staging.
 
 Primary implementation files:
 
 - `apps/web/src/components/source-control/SourceControlPanel.tsx`
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
 - `apps/server/src/ws.ts`
@@ -19,7 +23,7 @@ Primary implementation files:
 
 ## Entry Points And Host Behavior
 
-Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline.
+Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when the host setting allows it, a thread or draft-thread ref exists for right-panel state, and the active project resolves to a repository cwd.
 
 Right-panel integration is owned by:
 

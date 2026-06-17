@@ -66,7 +66,7 @@ const SURFACE_DISABLED_REASONS = {
   terminal: "Terminal is only available when a project is open and terminal support is enabled.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
-  sourceControl: "Version Control is only available for server threads in Git repositories.",
+  sourceControl: "Version Control is only available when a project is open in a Git repository.",
 } as const;
 
 type TabContextMenuAction = "copy-path" | "close" | "close-others" | "close-to-right" | "close-all";

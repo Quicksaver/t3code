@@ -89,6 +89,10 @@ interface SourceControlPanelProps {
   readonly threadId: ThreadId;
   readonly cwd: string;
   readonly worktreePath: string | null;
+  readonly onThreadRefChange?: (input: {
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+  }) => Promise<void> | void;
 }
 
 type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
@@ -997,6 +1001,7 @@ function InlineFileDiff({
 export function SourceControlPanel({
   cwd,
   environmentId,
+  onThreadRefChange,
   threadId,
   worktreePath,
 }: SourceControlPanelProps) {
@@ -1423,15 +1428,9 @@ export function SourceControlPanel({
       runAction(`branch-switch:${refName}`, async () => {
         if (!api) return;
         const result = await api.vcs.switchRef({ cwd, refName });
-        await readEnvironmentApi(environmentId)?.orchestration.dispatchCommand({
-          type: "thread.meta.update",
-          commandId: newCommandId(),
-          threadId,
-          branch: result.refName,
-          worktreePath,
-        });
+        await onThreadRefChange?.({ branch: result.refName, worktreePath });
       }),
-    [api, cwd, environmentId, runAction, threadId, worktreePath],
+    [api, cwd, onThreadRefChange, runAction, worktreePath],
   );
 
   const deleteBranch = useCallback(
@@ -1519,16 +1518,10 @@ export function SourceControlPanel({
         await runAction(`commit-checkout:${commit.sha}`, async () => {
           if (!api) return;
           const result = await api.vcs.checkoutCommit({ cwd, sha: commit.sha });
-          await readEnvironmentApi(environmentId)?.orchestration.dispatchCommand({
-            type: "thread.meta.update",
-            commandId: newCommandId(),
-            threadId,
-            branch: result.refName,
-            worktreePath,
-          });
+          await onThreadRefChange?.({ branch: result.refName, worktreePath });
         });
       })(),
-    [api, confirm, cwd, environmentId, runAction, threadId, worktreePath],
+    [api, confirm, cwd, onThreadRefChange, runAction, worktreePath],
   );
 
   const createBranchFromCommit = useCallback(
