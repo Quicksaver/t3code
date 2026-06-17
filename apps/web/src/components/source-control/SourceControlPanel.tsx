@@ -3387,7 +3387,6 @@ export function SourceControlPanel({
   const renderWorkingTreeRow = () => {
     const key = treeKey("work", "working-tree");
     const expanded = isTreeExpanded(key, true);
-    const syncState = currentBranch ? branchSyncState(currentBranch, snapshot) : "fetch";
     const { aheadCount, behindCount } = currentBranch
       ? branchSyncCounts(currentBranch, snapshot)
       : { aheadCount: 0, behindCount: 0 };
@@ -3453,34 +3452,6 @@ export function SourceControlPanel({
             )}
             <BranchSyncLabels aheadCount={aheadCount} behindCount={behindCount} />
           </div>
-          {currentBranch ? (
-            <RowActions>
-              <IconButton
-                label={branchSyncActionLabel(syncState)}
-                disabled={
-                  isActionRunning(`branch-sync:${currentBranch.name}`) ||
-                  isActionRunning(`branch-fetch:${currentBranch.name}`)
-                }
-                loading={
-                  isActionRunning(`branch-sync:${currentBranch.name}`) ||
-                  isActionRunning(`branch-fetch:${currentBranch.name}`)
-                }
-                onClick={(event) => syncBranch(currentBranch, event)}
-              >
-                <BranchSyncActionIcon state={syncState} />
-              </IconButton>
-              {aheadCount > 0 ? (
-                <IconButton
-                  label="Undo latest commit"
-                  disabled={isActionRunning(commitUndoActionKey(currentBranch.name))}
-                  loading={isActionRunning(commitUndoActionKey(currentBranch.name))}
-                  onClick={() => undoCommit(currentBranch.name)}
-                >
-                  <Undo2 className="size-3.5" />
-                </IconButton>
-              ) : null}
-            </RowActions>
-          ) : null}
         </div>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">{changesSection}</div>
