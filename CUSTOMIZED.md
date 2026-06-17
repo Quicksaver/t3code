@@ -2,18 +2,16 @@
 
 ## Last Upstream Merge
 
-Generated from local `main` at `ca70080e2` and `upstream/main` at `60b546cf0` (`v0.0.28-nightly.20260616.576`). Before the merge, this branch was 185 commits ahead and 20 commits behind upstream; after the merge, this branch is 186 commits ahead and 0 commits behind `upstream/main`. The incoming upstream diff from the merge base was 359 files changed, 16822 insertions, and 13473 deletions; the remaining fork delta against `upstream/main` is 230 files changed, 31933 insertions, and 1459 deletions.
+Generated from local `main` at `31f776629` and `upstream/main` at `b489ea52a` (`v0.0.28-nightly.20260617.578`). Before the merge, this branch was 186 commits ahead and 4 commits behind upstream; after the merge, this branch is 187 commits ahead and 0 commits behind `upstream/main`. The incoming upstream diff from the merge base was 37 files changed, 3673 insertions, and 563 deletions; the remaining fork delta against `upstream/main` is 230 files changed, 31679 insertions, and 1218 deletions.
 
-No local customization is retired by this merge. Upstream added workspace Files/File right-panel surfaces, compact right-panel disabled reasons, VCS refresh parallelism, DELETE-based MCP session termination, native mobile composer/markdown work, `fff` workspace search, first-party relay tracing, and desktop build/runtime hardening; these are additive relative to the custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, and terminal action reuse work.
+No local customization is retired by this merge. Upstream added inline right-panel plan rendering, right-panel bulk close and tab context-menu actions, file preview comments and task toggles, file review-comment composer/timeline support, and additional MCP session handling refinements; these are additive relative to the custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, and terminal action reuse work.
 
 Concrete conflict notes from this merge:
 
-- `apps/web/src/rightPanelStore.ts`, `apps/web/src/components/ChatView.tsx`, and `apps/web/src/components/RightPanelTabs.tsx` now carry both upstream `files`/`file` right-panel surfaces and the local `source-control` singleton surface. Future merges in these files should keep the surface model additive unless upstream gains an equivalent agent-aware Version Control panel.
-- `apps/web/src/components/chat/ChatHeader.tsx` keeps upstream right-panel spacing while preserving local parent-thread navigation plus terminal and right-panel toggle buttons.
-- `apps/desktop/src/electron/ElectronMenu.ts` keeps local native context-menu separator handling while using upstream's `HostProcessPlatform` service for platform checks.
-- `apps/server/src/provider/Layers/CursorProvider.ts` keeps explicit `cwd` propagation for Cursor ACP model discovery while accepting upstream's optional environment argument shape.
-- `apps/server/src/provider/opencodeRuntime.ts` keeps local `configContent` support for `OPENCODE_CONFIG_CONTENT` while preserving upstream's inherited environment behavior.
-- `pnpm-workspace.yaml` keeps the local `tsdown` catalog entry because the VS Code extension package still depends on `tsdown: "catalog:"`.
+- `apps/web/src/rightPanelStore.ts`, `apps/web/src/components/ChatView.tsx`, and `apps/web/src/components/RightPanelTabs.tsx` now carry upstream file reveal metadata, plan inline rendering, bulk-close/context-menu tab actions, and the local `source-control` singleton surface. Future merges in these files should keep the surface model additive unless upstream gains an equivalent agent-aware Version Control panel.
+- `apps/web/src/components/chat/ChatComposer.tsx` keeps the local conversation-width form while accepting upstream review-comment draft contexts.
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx` keeps the local expandable subagent-row coverage and upstream file review-comment rendering coverage.
+- `apps/web/src/components/chat/ChatHeader.tsx` keeps the local `MainSidebarTrigger`, parent-thread navigation, and terminal/right-panel toggle buttons.
 
 ## Debug Browser Launch
 
