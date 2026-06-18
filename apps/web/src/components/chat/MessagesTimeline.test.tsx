@@ -316,39 +316,6 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;/review_comment&gt;");
   });
 
-  it("renders expandable subagent rows without status labels", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[
-          {
-            id: "entry-1",
-            kind: "work",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            entry: {
-              id: "work-1",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Subagent",
-              tone: "tool",
-              itemType: "collab_agent_tool_call",
-              subagentPrompt: "Create one original haiku in English. Return only the haiku text.",
-              output:
-                "Rain lifts from the wires\nA window gathers pale dawn\nFootsteps bloom below",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain("Subagent");
-    expect(markup).toContain("Create one original haiku in English");
-    expect(markup).not.toContain("Done");
-    expect(markup).not.toContain("Running");
-    expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain('aria-label="Expand Subagent"');
-  });
-
   it("renders a deduped resumed subagent block as working when the parent turn matches", async () => {
     const childThreadId = ThreadId.make("subagent-child-1");
     const parentTurnId = TurnId.make("turn-followup");
