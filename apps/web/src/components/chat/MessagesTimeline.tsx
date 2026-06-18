@@ -1782,7 +1782,7 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
     <div className="space-y-1 py-0.5">
       {workEntry.subagentChildren?.map((child) => (
         <SubagentWorkEntryButton
-          key={`${workEntry.id}:subagent:${child.threadId}`}
+          key={`${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`}
           parentCreatedAt={workEntry.createdAt}
           threadId={child.threadId}
           {...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)

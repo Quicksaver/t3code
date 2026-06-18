@@ -85,6 +85,7 @@ export interface WorkLogEntry {
 
 export interface SubagentWorkLogChild {
   threadId: ThreadId;
+  parentItemId?: string;
   titleSeed?: string;
 }
 
@@ -807,7 +808,7 @@ function collapseDerivedWorkLogEntries(
 function dedupeSubagentChildWorkEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
-  const seenChildThreadIds = new Set<string>();
+  const seenChildActivityKeys = new Set<string>();
   const deduped: DerivedWorkLogEntry[] = [];
   for (const entry of entries) {
     if (entry.itemType !== "collab_agent_tool_call" || !entry.subagentChildren?.length) {
@@ -815,10 +816,11 @@ function dedupeSubagentChildWorkEntries(
       continue;
     }
     const unseenChildren = entry.subagentChildren.filter((child) => {
-      if (seenChildThreadIds.has(child.threadId)) {
+      const key = `${child.threadId}:${child.parentItemId ?? ""}`;
+      if (seenChildActivityKeys.has(key)) {
         return false;
       }
-      seenChildThreadIds.add(child.threadId);
+      seenChildActivityKeys.add(key);
       return true;
     });
     if (unseenChildren.length === 0) {
@@ -938,16 +940,18 @@ function mergeSubagentChildren(
   if (merged.length === 0) {
     return undefined;
   }
-  const byThreadId = new Map<ThreadId, SubagentWorkLogChild>();
+  const byChildActivity = new Map<string, SubagentWorkLogChild>();
   for (const child of merged) {
-    const existing = byThreadId.get(child.threadId);
+    const key = `${child.threadId}:${child.parentItemId ?? ""}`;
+    const existing = byChildActivity.get(key);
     const titleSeed = existing?.titleSeed ?? child.titleSeed;
-    byThreadId.set(child.threadId, {
+    byChildActivity.set(key, {
       threadId: child.threadId,
+      ...(child.parentItemId ? { parentItemId: child.parentItemId } : {}),
       ...(titleSeed ? { titleSeed } : {}),
     });
   }
-  return [...byThreadId.values()];
+  return [...byChildActivity.values()];
 }
 
 function mergeTextOutput(
@@ -1429,8 +1433,10 @@ function extractSubagentChildren(
     }
     seen.add(rawThreadId);
     const titleSeed = asTrimmedString(record?.titleSeed);
+    const parentItemId = asTrimmedString(record?.parentItemId);
     result.push({
       threadId: ThreadId.make(rawThreadId),
+      ...(parentItemId ? { parentItemId } : {}),
       ...(titleSeed ? { titleSeed } : {}),
     });
   }

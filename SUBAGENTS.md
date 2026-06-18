@@ -10,6 +10,7 @@ The current behavior is:
 - Active subagent threads appear in the sidebar nested under the direct parent that spawned them.
 - Completed, errored, interrupted, or stopped subagent threads are normally hidden from the sidebar but remain reachable from the parent conversation view. When a terminal subagent conversation is the active route, that subagent and any intermediate subagent ancestors are shown in the sidebar at their normal nested positions until the user navigates away.
 - A parent conversation view shows only parent-owned output and subagent summary blocks for direct children.
+- When Codex resumes an existing subagent with a follow-up prompt, the parent conversation appends a new subagent summary block for that resumed activity while preserving the original block, and the same child thread appears in the sidebar as running again until the resumed turn reaches a terminal state.
 - A child conversation view shows the raw initial prompt that launched that child when Codex exposes it, followed by that child's output, tool calls, diffs, MCP calls, and other actions. Grandchildren appear only as blocks inside their direct parent child view.
 - Users cannot prompt or steer a subagent. The child view exposes stop control only while the child is running and a header button for returning to its direct parent conversation.
 - Stopping a parent does not automatically stop running children. Stopping a child explicitly targets that child.
@@ -55,11 +56,11 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 1. Codex child identity is mapped into deterministic local child thread ids from `parentThreadId + providerThreadId`. This intentionally avoids using `parentItemId`, because Codex may emit multiple collab lifecycle/control items for the same child provider thread.
 
-2. Codex collab lifecycle items now carry `subagentChildren` metadata on the parent activity payload. Each child reference includes the provider thread id, local child thread id, optional parent item id, and optional title seed. The parent UI uses this metadata to render the compact `Subagent - <title>` block.
+2. Codex collab lifecycle items now carry `subagentChildren` metadata on the parent activity payload. Each child reference includes the provider thread id, local child thread id, optional parent item id, and optional title seed. Prompt-bearing `spawnAgent`, `resumeAgent`, and `sendInput` items start a new parent activity reference for the same child thread, while control-only `wait` and `closeAgent` items stay tied to the existing reference so they do not create duplicate blocks. The parent UI uses this metadata to render the compact `Subagent - <title>` block.
 
 3. Codex collab lifecycle tracking preserves both the raw child prompt and the title seed. The raw prompt comes from the collab tool item `prompt` field and is used as displayable child-thread conversation history; the title seed remains the input for generated child titles and parent summary labeling. Whitespace-only raw prompts are ignored.
 
-4. Child-thread creation and updates happen through orchestration ingestion. The server preserves the direct parent, root thread id, depth, parent activity sequence, title seed, provider thread id, and started timestamp. Synthetic child shells are created so hidden child routes can be opened before the full projection catches up.
+4. Child-thread creation and updates happen through orchestration ingestion. The server preserves the direct parent, root thread id, depth, parent activity sequence, title seed, provider thread id, and started timestamp. When a terminal child is resumed from a new prompt-bearing parent activity, ingestion updates the existing child relation back to `running`, clears `completedAt`, records the new parent item id, and appends the follow-up prompt to the child conversation. Synthetic child shells are created so hidden child routes can be opened before the full projection catches up.
 
 5. When Codex exposes a raw child prompt, ingestion appends it to the child thread as a non-streaming user message through an internal `thread.message.user.append` command. The prompt message uses stable ids derived from `childThreadId + parentItemId`, is not bound to the parent turn, and is appended even if the child shell already exists because Codex first emitted a started item without a prompt and later emitted a completed item with the concrete prompt.
 
@@ -85,7 +86,7 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 6. Child conversation views replace the normal composer with a subagent control bar. Users cannot send prompts to a subagent. While a child is running, the available user control is stop. The chat header also includes an up-navigation button that opens the direct parent conversation.
 
-7. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows when all referenced child thread ids were already represented.
+7. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows by child thread id plus parent collab item id, so control repeats collapse while a resumed child with a new parent item id renders as a new appended block.
 
 8. Shared subagent display helpers keep duration and fallback labels consistent across parent blocks and child controls. Terminal child rows with missing completion timestamps show an explicit unknown-duration fallback instead of implying successful completion, and active children use `working` wording instead of `running` wording.
 

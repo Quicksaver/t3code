@@ -188,6 +188,25 @@ function sameId(left: string | null | undefined, right: string | null | undefine
   return left === right;
 }
 
+function subagentParentRelationsEqual(
+  left: SubagentThreadParentRelation,
+  right: SubagentThreadParentRelation,
+): boolean {
+  return (
+    left.rootThreadId === right.rootThreadId &&
+    left.parentThreadId === right.parentThreadId &&
+    left.parentTurnId === right.parentTurnId &&
+    left.parentItemId === right.parentItemId &&
+    left.parentActivitySequence === right.parentActivitySequence &&
+    left.providerThreadId === right.providerThreadId &&
+    left.titleSeed === right.titleSeed &&
+    left.depth === right.depth &&
+    left.startedAt === right.startedAt &&
+    left.completedAt === right.completedAt &&
+    left.status === right.status
+  );
+}
+
 function hasAssistantMessageForTurn(
   messages: ReadonlyArray<OrchestrationMessage>,
   turnId: TurnId,
@@ -1406,20 +1425,33 @@ const make = Effect.gen(function* () {
                 existingChild?.parentRelation?.kind === "subagent"
                   ? existingChild.parentRelation
                   : null;
+              const startsNewParentActivity =
+                existingRelation !== null &&
+                existingRelation.parentItemId !== null &&
+                existingRelation.parentItemId !== child.parentItemId;
+              const restartsRunningChild =
+                event.type === "item.started" &&
+                (startsNewParentActivity || existingRelation?.status !== "running");
               const parentRelation: SubagentThreadParentRelation = {
                 kind: "subagent" as const,
                 rootThreadId,
                 parentThreadId: thread.id,
-                parentTurnId: existingRelation?.parentTurnId ?? eventTurnId ?? null,
-                parentItemId: existingRelation?.parentItemId ?? child.parentItemId,
+                parentTurnId: startsNewParentActivity
+                  ? (eventTurnId ?? null)
+                  : (existingRelation?.parentTurnId ?? eventTurnId ?? null),
+                parentItemId: startsNewParentActivity
+                  ? child.parentItemId
+                  : (existingRelation?.parentItemId ?? child.parentItemId),
                 parentActivitySequence:
                   existingRelation?.parentActivitySequence ?? runtimeEventSequence(event) ?? 0,
                 providerThreadId: child.providerThreadId,
-                titleSeed: existingRelation?.titleSeed ?? child.titleSeed,
+                titleSeed: startsNewParentActivity
+                  ? child.titleSeed
+                  : (existingRelation?.titleSeed ?? child.titleSeed),
                 depth: parentDepth + 1,
-                startedAt: existingRelation?.startedAt ?? now,
-                completedAt: existingRelation?.completedAt ?? null,
-                status: existingRelation?.status ?? "running",
+                startedAt: restartsRunningChild ? now : (existingRelation?.startedAt ?? now),
+                completedAt: restartsRunningChild ? null : (existingRelation?.completedAt ?? null),
+                status: restartsRunningChild ? "running" : (existingRelation?.status ?? "running"),
               };
               if (!existingChild) {
                 const title = "Subagent";
@@ -1469,6 +1501,16 @@ const make = Effect.gen(function* () {
                   cwd: thread.worktreePath ?? process.cwd(),
                   createdAt: now,
                 }).pipe(Effect.forkScoped);
+              } else if (
+                existingRelation &&
+                !subagentParentRelationsEqual(existingRelation, parentRelation)
+              ) {
+                yield* orchestrationEngine.dispatch({
+                  type: "thread.meta.update",
+                  commandId: yield* providerCommandId(event, "subagent-thread-parent-relation"),
+                  threadId: child.childThreadId,
+                  parentRelation,
+                });
               }
               if (child.rawPrompt) {
                 const childThreadIdText = String(child.childThreadId);

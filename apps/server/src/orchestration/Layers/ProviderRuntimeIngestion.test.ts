@@ -2694,6 +2694,139 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
+  it("marks a completed subagent child as running again when it is resumed", async () => {
+    const harness = await createHarness({
+      textGeneration: {
+        generateThreadTitle: () => Effect.succeed({ title: "Reusable child" }),
+      },
+    });
+    const childThreadId = asThreadId("subagent-resume-test");
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-subagent-resume-initial-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-parent-initial"),
+      itemId: asItemId("parent-item-initial"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "in_progress",
+        title: "Subagent",
+        detail: "Run initial check",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-resume-test",
+              childThreadId,
+              parentItemId: "parent-item-initial",
+              rawPrompt: "Run initial check",
+              titleSeed: "Run initial check",
+            },
+          ],
+        },
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.parentRelation?.kind === "subagent",
+      2000,
+      childThreadId,
+    );
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-subagent-resume-child-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId: childThreadId,
+      turnId: asTurnId("turn-child-initial"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-subagent-resume-child-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:02.000Z",
+      threadId: childThreadId,
+      turnId: asTurnId("turn-child-initial"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.parentRelation?.kind === "subagent" && entry.parentRelation.status === "completed",
+      2000,
+      childThreadId,
+    );
+
+    harness.emit({
+      type: "item.started",
+      eventId: asEventId("evt-subagent-resume-followup-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:01:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-parent-followup"),
+      itemId: asItemId("parent-item-followup"),
+      payload: {
+        itemType: "collab_agent_tool_call",
+        status: "in_progress",
+        title: "Subagent",
+        detail: "Run follow-up check",
+        data: {
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child-resume-test",
+              childThreadId,
+              parentItemId: "parent-item-followup",
+              rawPrompt: "Run follow-up check",
+              titleSeed: "Run follow-up check",
+            },
+          ],
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.parentRelation?.kind === "subagent" &&
+        entry.parentRelation.status === "running" &&
+        entry.parentRelation.completedAt === null &&
+        entry.parentRelation.parentItemId === "parent-item-followup" &&
+        entry.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "user" && message.text === "Run follow-up check",
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.parentRelation).toMatchObject({
+      kind: "subagent",
+      parentItemId: "parent-item-followup",
+      status: "running",
+      startedAt: "2026-01-01T00:01:00.000Z",
+      completedAt: null,
+    });
+    expect(childThread.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-resume-test:parent-item-initial",
+          role: "user",
+          text: "Run initial check",
+        }),
+        expect.objectContaining({
+          id: "subagent-prompt:subagent-resume-test:parent-item-followup",
+          role: "user",
+          text: "Run follow-up check",
+        }),
+      ]),
+    );
+  });
+
   it("does not project a whitespace-only subagent prompt", async () => {
     const harness = await createHarness({
       textGeneration: {

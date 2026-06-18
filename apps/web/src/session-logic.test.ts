@@ -1548,6 +1548,102 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("keeps a resumed subagent child block as a new parent work-log row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run initial check",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Run initial check",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Run initial check",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run follow-up check",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Run follow-up check",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Run follow-up check",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.id)).toEqual(["subagent-spawn", "subagent-resume"]);
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-spawn",
+        titleSeed: "Run initial check",
+      },
+    ]);
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Run follow-up check",
+      },
+    ]);
+  });
+
   it("uses completed read-file output previews and still collapses the same tool call", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

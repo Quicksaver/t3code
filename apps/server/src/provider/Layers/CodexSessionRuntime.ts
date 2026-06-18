@@ -631,6 +631,13 @@ function collabToolCallPrompt(item: CollabToolCallNotificationItem): string | un
   return typeof prompt === "string" ? trimNotificationText(prompt) : undefined;
 }
 
+function isPromptBearingCollabToolCall(item: CollabToolCallNotificationItem): boolean {
+  if (!("tool" in item)) {
+    return false;
+  }
+  return item.tool === "spawnAgent" || item.tool === "resumeAgent" || item.tool === "sendInput";
+}
+
 function rememberCollabReceiverTurns(
   collabReceiverTurns: Map<string, CollabReceiverInfo>,
   notification: CodexServerNotification,
@@ -648,11 +655,17 @@ function rememberCollabReceiverTurns(
   const rawPrompt = collabToolCallPrompt(notification.params.item);
   const detail = collabToolCallDetail(notification.params.item);
   const parentItemId = ProviderItemId.make(notification.params.item.id);
+  const startsNewParentActivity =
+    isPromptBearingCollabToolCall(notification.params.item) && Boolean(rawPrompt || detail);
   for (const receiverThreadId of notification.params.item.receiverThreadIds) {
     const existing = collabReceiverTurns.get(receiverThreadId);
     collabReceiverTurns.set(receiverThreadId, {
-      parentTurnId: existing?.parentTurnId ?? parentTurnId,
-      parentItemId: existing?.parentItemId ?? parentItemId,
+      parentTurnId: startsNewParentActivity
+        ? parentTurnId
+        : (existing?.parentTurnId ?? parentTurnId),
+      parentItemId: startsNewParentActivity
+        ? parentItemId
+        : (existing?.parentItemId ?? parentItemId),
       providerThreadId: receiverThreadId,
       childThreadId:
         existing?.childThreadId ??
@@ -660,8 +673,8 @@ function rememberCollabReceiverTurns(
           parentThreadId,
           providerThreadId: receiverThreadId,
         }),
-      rawPrompt: rawPrompt ?? existing?.rawPrompt,
-      detail: existing?.detail ?? detail,
+      rawPrompt: startsNewParentActivity ? rawPrompt : (rawPrompt ?? existing?.rawPrompt),
+      detail: startsNewParentActivity ? detail : (existing?.detail ?? detail),
     });
   }
 }
