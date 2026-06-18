@@ -3,7 +3,7 @@ import "../../index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { render } from "vitest-browser-react";
 
@@ -182,8 +182,193 @@ describe("MessagesTimeline", () => {
       expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull();
 
       await commandTrigger.click();
+      await page.getByRole("button", { name: "Raw command (show)" }).click();
       await expect
         .element(page.getByText("git diff -- apps/web/src/components/ChatMarkdown.tsx --stat"))
+        .toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("expands command activity rows and toggles long stdout from the browser", async () => {
+    const stdout = Array.from({ length: 45 }, (_, index) => `stdout line ${index + 1}`).join("\n");
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "work-command-output",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-command-output",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              detail: "Command finished",
+              itemType: "command_execution",
+              command: "pnpm test",
+              rawCommand: "bash -lc 'pnpm test'",
+              stdout,
+              stderr: "stderr warning",
+              exitCode: 0,
+              durationMs: 1234,
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const commandTrigger = page.getByLabelText("Expand Ran command - pnpm test");
+      await expect.element(commandTrigger).toHaveAttribute("aria-expanded", "false");
+      expect(document.body.textContent ?? "").not.toContain("stdout line 45");
+
+      await commandTrigger.click();
+
+      const commandCollapseTrigger = page.getByLabelText("Collapse Ran command - pnpm test");
+      await expect.element(commandCollapseTrigger).toHaveAttribute("aria-expanded", "true");
+      await expect.element(page.getByText("Command", { exact: true })).toBeVisible();
+      expect(document.body.textContent ?? "").toContain("pnpm test");
+      await expect.element(page.getByText("Exit code 0")).toBeVisible();
+      await expect.element(page.getByText("Duration 1.2s")).toBeVisible();
+      await expect.element(page.getByText("Stderr", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("stderr warning")).toBeVisible();
+
+      const rawCommandToggle = page.getByRole("button", { name: "Raw command (show)" });
+      await expect.element(rawCommandToggle).toHaveAttribute("aria-expanded", "false");
+      await rawCommandToggle.click();
+      await expect.element(page.getByText("bash -lc 'pnpm test'")).toBeVisible();
+
+      await expect.element(page.getByText("Stdout", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("(last 40 of 45 lines)")).toBeVisible();
+      expect(document.body.textContent ?? "").not.toMatch(/stdout line 1(?:\n|$)/u);
+      expect(document.body.textContent ?? "").toContain("stdout line 6");
+      expect(document.body.textContent ?? "").toContain("stdout line 45");
+
+      const stdoutToggle = page.getByRole("button", { name: "Expand Stdout" }).first();
+      await expect.element(stdoutToggle).toHaveAttribute("aria-expanded", "false");
+      await stdoutToggle.click();
+      await expect
+        .element(page.getByRole("button", { name: "Collapse Stdout" }).first())
+        .toHaveAttribute("aria-expanded", "true");
+      await expect.element(page.getByText("(45 lines)")).toBeVisible();
+      expect(document.body.textContent ?? "").toMatch(/stdout line 1(?:\n|$)/u);
+
+      document
+        .querySelector<HTMLElement>('[aria-label="Collapse Ran command - pnpm test"]')
+        ?.focus();
+      await userEvent.keyboard("{Enter}");
+      await expect
+        .element(page.getByLabelText("Expand Ran command - pnpm test"))
+        .toHaveAttribute("aria-expanded", "false");
+      expect(document.body.textContent ?? "").not.toContain("stdout line 45");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("expands file-change activity rows with inline diffs or path lists", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "work-file-patch",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "work-file-patch",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Changed files",
+              itemType: "file_change",
+              changedFiles: ["apps/web/src/session-logic.ts"],
+              patch:
+                "diff --git a/apps/web/src/session-logic.ts b/apps/web/src/session-logic.ts\n--- a/apps/web/src/session-logic.ts\n+++ b/apps/web/src/session-logic.ts\n@@ -1 +1 @@\n-old\n+new\n",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const patchTrigger = page.getByLabelText(
+        "Expand Changed files - apps/web/src/session-logic.ts",
+      );
+      await expect.element(patchTrigger).toHaveAttribute("aria-expanded", "false");
+      expect(document.body.textContent ?? "").not.toContain("+new");
+
+      await patchTrigger.click();
+
+      const patchCollapseTrigger = page.getByLabelText(
+        "Collapse Changed files - apps/web/src/session-logic.ts",
+      );
+      await expect.element(patchCollapseTrigger).toHaveAttribute("aria-expanded", "true");
+      expect(document.body.textContent ?? "").toContain("apps/web/src/session-logic.ts");
+      expect(document.body.textContent ?? "").toContain("+1");
+      expect(document.body.textContent ?? "").toContain("-1");
+
+      document
+        .querySelector<HTMLElement>(
+          '[aria-label="Collapse Changed files - apps/web/src/session-logic.ts"]',
+        )
+        ?.focus();
+      await userEvent.keyboard("{Enter}");
+      await expect
+        .element(page.getByLabelText("Expand Changed files - apps/web/src/session-logic.ts"))
+        .toHaveAttribute("aria-expanded", "false");
+      expect(document.body.textContent ?? "").not.toContain("+1");
+
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[
+            {
+              id: "work-file-list",
+              kind: "work",
+              createdAt: MESSAGE_CREATED_AT,
+              entry: {
+                id: "work-file-list",
+                createdAt: MESSAGE_CREATED_AT,
+                label: "Changed files",
+                itemType: "file_change",
+                changedFiles: [
+                  "apps/web/src/components/chat/MessagesTimeline.tsx",
+                  "apps/web/src/components/chat/MessagesTimeline.test.tsx",
+                ],
+                tone: "tool",
+              },
+            },
+          ]}
+        />,
+      );
+
+      const listTrigger = page.getByLabelText(
+        "Expand Changed files - apps/web/src/components/chat/MessagesTimeline.tsx +1 more",
+      );
+      await listTrigger.click();
+
+      await expect
+        .element(
+          page.getByLabelText(
+            "Collapse Changed files - apps/web/src/components/chat/MessagesTimeline.tsx +1 more",
+          ),
+        )
+        .toHaveAttribute("aria-expanded", "true");
+      await expect
+        .element(
+          page.getByText("apps/web/src/components/chat/MessagesTimeline.tsx", { exact: true }),
+        )
+        .toBeVisible();
+      await expect
+        .element(
+          page.getByText("apps/web/src/components/chat/MessagesTimeline.test.tsx", {
+            exact: true,
+          }),
+        )
         .toBeVisible();
     } finally {
       await screen.unmount();
