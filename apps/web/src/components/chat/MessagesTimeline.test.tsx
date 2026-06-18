@@ -1,7 +1,7 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 
 vi.mock("@legendapp/list/react", async () => {
@@ -45,6 +45,18 @@ function MockFileDiff(props: {
 vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
+
+const storeMock = vi.hoisted(() => ({
+  state: {
+    environmentStateById: {},
+  } as {
+    environmentStateById: Record<string, unknown>;
+  },
+}));
+
+vi.mock("../../store", () => ({
+  useStore: <T,>(selector: (state: typeof storeMock.state) => T) => selector(storeMock.state),
+}));
 
 function matchMedia() {
   return {
@@ -91,6 +103,12 @@ beforeAll(() => {
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
+
+beforeEach(() => {
+  storeMock.state = {
+    environmentStateById: {},
+  };
+});
 
 function buildProps() {
   return {
@@ -611,6 +629,77 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Running");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('aria-label="Expand Subagent"');
+  });
+
+  it("renders a deduped resumed subagent block as working when the parent turn matches", async () => {
+    const childThreadId = ThreadId.make("subagent-child-1");
+    const parentTurnId = TurnId.make("turn-followup");
+    storeMock.state = {
+      environmentStateById: {
+        [ACTIVE_THREAD_ENVIRONMENT_ID]: {
+          threadShellById: {
+            [childThreadId]: {
+              id: childThreadId,
+              title: "Say hi briefly",
+              parentRelation: {
+                kind: "subagent",
+                rootThreadId: ThreadId.make("thread-1"),
+                parentThreadId: ThreadId.make("thread-1"),
+                parentTurnId,
+                parentItemId: "call-send-input",
+                parentActivitySequence: 2,
+                providerThreadId: "provider-child-1",
+                titleSeed: "Say hi in German",
+                depth: 1,
+                startedAt: "2026-03-17T19:12:30.000Z",
+                completedAt: null,
+                status: "running",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress={true}
+        latestTurn={{
+          turnId: parentTurnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:30.000Z",
+          completedAt: null,
+        }}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              turnId: parentTurnId,
+              label: "Subagent",
+              tone: "tool",
+              itemType: "collab_agent_tool_call",
+              subagentChildren: [
+                {
+                  threadId: childThreadId,
+                  parentItemId: "call-resume",
+                  titleSeed: "Say hi in German",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Subagent - Say hi briefly");
+    expect(markup).toContain("Working");
+    expect(markup).not.toContain("Completed in");
   });
 
   it("renders file review comments as source code instead of diffs", async () => {
