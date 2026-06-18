@@ -1603,6 +1603,7 @@ describe("deriveWorkLogEntries", () => {
         createdAt: "2026-02-23T00:00:03.000Z",
         kind: "tool.completed",
         summary: "Subagent",
+        turnId: "turn-followup",
         payload: {
           itemType: "collab_agent_tool_call",
           title: "Subagent",
@@ -1640,6 +1641,74 @@ describe("deriveWorkLogEntries", () => {
         threadId: "subagent-child-1",
         parentItemId: "call-resume",
         titleSeed: "Run follow-up check",
+      },
+    ]);
+  });
+
+  it("drops duplicate resumed subagent child blocks within the same parent turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Say hi in German",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-send-input",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-send-input",
+              prompt: "Say hi in German",
+              tool: "sendInput",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-send-input",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("subagent-resume");
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Say hi in German",
       },
     ]);
   });

@@ -1786,6 +1786,7 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
           key={`${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`}
           parentCreatedAt={workEntry.createdAt}
           threadId={child.threadId}
+          {...(workEntry.turnId ? { parentTurnId: workEntry.turnId } : {})}
           {...(child.parentItemId ? { parentItemId: child.parentItemId } : {})}
           {...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)
             ? { titleSeed: child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail }
@@ -1799,6 +1800,7 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
 const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   parentCreatedAt: string;
   parentItemId?: string;
+  parentTurnId?: TurnId;
   threadId: ThreadId;
   titleSeed?: string;
 }) {
@@ -1822,8 +1824,12 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
     completedAt: string | null;
   } | null>(null);
   const relationParentItemId = relation?.parentItemId ?? null;
+  const relationParentTurnId = relation?.parentTurnId ?? null;
   const relationMatchesThisBlock =
-    !props.parentItemId || !relationParentItemId || relationParentItemId === props.parentItemId;
+    Boolean(props.parentTurnId && props.parentTurnId === relationParentTurnId) ||
+    !props.parentItemId ||
+    !relationParentItemId ||
+    relationParentItemId === props.parentItemId;
   if (relation && relationMatchesThisBlock && relation.status !== "running") {
     terminalSnapshotRef.current = {
       status: relation.status,
