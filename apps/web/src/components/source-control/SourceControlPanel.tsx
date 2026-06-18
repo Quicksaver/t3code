@@ -2,19 +2,29 @@ import type {
   ContextMenuItem,
   EnvironmentId,
   VcsPanelBranchCommitsInput,
+  VcsPanelBranchCommitsResult,
   ThreadId,
   VcsPanelBranchDetails,
   VcsPanelChangeGroup,
   VcsPanelCommitSummary,
   VcsPanelFileDiffInput,
+  VcsPanelFileDiffResult,
   VcsPanelFileChange,
   VcsPanelRemote,
+  VcsPanelCompareResult,
   VcsPanelSnapshotResult,
   VcsPanelStash,
   VcsPanelStashDetails,
   VcsPanelWorkingTreeFileEnrichmentResult,
   VcsRef,
+  VcsSwitchRefResult,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { LegendList } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
@@ -48,15 +58,17 @@ import type {
 } from "react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
-import { openInPreferredEditor } from "~/editorPreferences";
-import { readEnvironmentApi } from "~/environmentApi";
+import { useOpenInPreferredEditor } from "~/editorPreferences";
 import { useTheme } from "~/hooks/useTheme";
 import { readLocalApi } from "~/localApi";
 import { getRenderablePatch, resolveDiffThemeName } from "~/lib/diffRendering";
-import { invalidateSourceControlState, useGitStackedAction } from "~/lib/sourceControlActions";
+import { useGitStackedAction } from "~/state/sourceControlActions";
 import { cn, newCommandId } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useVcsStatus } from "~/lib/vcsStatusState";
+import { useEnvironmentQuery } from "~/state/query";
+import { serverEnvironment } from "~/state/server";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { vcsEnvironment } from "~/state/vcs";
 import { resolvePathLinkTarget } from "~/terminal-links";
 
 import { shouldIncludeBranchPickerItem } from "../BranchToolbar.logic";
@@ -1056,12 +1068,215 @@ export function SourceControlPanel({
   threadId,
   worktreePath,
 }: SourceControlPanelProps) {
-  const api = useMemo(() => readEnvironmentApi(environmentId), [environmentId]);
   const { resolvedTheme } = useTheme();
   const gitActionScope = useMemo(() => ({ environmentId, cwd }), [cwd, environmentId]);
   const threadRef = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
   const gitAction = useGitStackedAction(gitActionScope);
-  const vcsStatus = useVcsStatus(gitActionScope);
+  const panelSnapshot = useAtomCommand(vcsEnvironment.panelSnapshot, { reportFailure: false });
+  const panelBranchDetails = useAtomCommand(vcsEnvironment.panelBranchDetails, {
+    reportFailure: false,
+  });
+  const panelBranchCommits = useAtomCommand(vcsEnvironment.panelBranchCommits, {
+    reportFailure: false,
+  });
+  const panelStashDetails = useAtomCommand(vcsEnvironment.panelStashDetails, {
+    reportFailure: false,
+  });
+  const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, { reportFailure: false });
+  const panelUnstageFiles = useAtomCommand(vcsEnvironment.panelUnstageFiles, {
+    reportFailure: false,
+  });
+  const panelDiscardFiles = useAtomCommand(vcsEnvironment.panelDiscardFiles, {
+    reportFailure: false,
+  });
+  const panelEnrichWorkingTreeFiles = useAtomCommand(vcsEnvironment.panelEnrichWorkingTreeFiles, {
+    reportFailure: false,
+  });
+  const panelReadFileDiff = useAtomCommand(vcsEnvironment.panelReadFileDiff, {
+    reportFailure: false,
+  });
+  const panelCommitStaged = useAtomCommand(vcsEnvironment.panelCommitStaged, {
+    reportFailure: false,
+  });
+  const panelPullBranch = useAtomCommand(vcsEnvironment.panelPullBranch, { reportFailure: false });
+  const panelPushBranch = useAtomCommand(vcsEnvironment.panelPushBranch, { reportFailure: false });
+  const panelDeleteBranch = useAtomCommand(vcsEnvironment.panelDeleteBranch, {
+    reportFailure: false,
+  });
+  const panelUndoLatestCommit = useAtomCommand(vcsEnvironment.panelUndoLatestCommit, {
+    reportFailure: false,
+  });
+  const panelRevertCommit = useAtomCommand(vcsEnvironment.panelRevertCommit, {
+    reportFailure: false,
+  });
+  const panelCheckoutCommit = useAtomCommand(vcsEnvironment.panelCheckoutCommit, {
+    reportFailure: false,
+  });
+  const panelCreateBranchFromCommit = useAtomCommand(vcsEnvironment.panelCreateBranchFromCommit, {
+    reportFailure: false,
+  });
+  const panelMergeBranchIntoCurrent = useAtomCommand(vcsEnvironment.panelMergeBranchIntoCurrent, {
+    reportFailure: false,
+  });
+  const panelRebaseCurrentOnto = useAtomCommand(vcsEnvironment.panelRebaseCurrentOnto, {
+    reportFailure: false,
+  });
+  const panelFetchBranch = useAtomCommand(vcsEnvironment.panelFetchBranch, {
+    reportFailure: false,
+  });
+  const panelFetchRemote = useAtomCommand(vcsEnvironment.panelFetchRemote, {
+    reportFailure: false,
+  });
+  const panelFetchAllRemotes = useAtomCommand(vcsEnvironment.panelFetchAllRemotes, {
+    reportFailure: false,
+  });
+  const panelAddRemote = useAtomCommand(vcsEnvironment.panelAddRemote, { reportFailure: false });
+  const panelRemoveRemote = useAtomCommand(vcsEnvironment.panelRemoveRemote, {
+    reportFailure: false,
+  });
+  const panelCreateStash = useAtomCommand(vcsEnvironment.panelCreateStash, {
+    reportFailure: false,
+  });
+  const panelApplyStash = useAtomCommand(vcsEnvironment.panelApplyStash, {
+    reportFailure: false,
+  });
+  const panelPopStash = useAtomCommand(vcsEnvironment.panelPopStash, { reportFailure: false });
+  const panelDropStash = useAtomCommand(vcsEnvironment.panelDropStash, { reportFailure: false });
+  const panelCompare = useAtomCommand(vcsEnvironment.panelCompare, { reportFailure: false });
+  const switchRefCommand = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const runPanelCommand = useCallback(
+    async <TInput extends { readonly cwd: string }, TResult>(
+      command: (target: {
+        readonly environmentId: EnvironmentId;
+        readonly input: TInput;
+      }) => Promise<AtomCommandResult<TResult, unknown>>,
+      input: TInput,
+    ): Promise<TResult> => {
+      const result = await command({ environmentId, input });
+      if (result._tag === "Success") {
+        return result.value;
+      }
+      throw squashAtomCommandFailure(result);
+    },
+    [environmentId],
+  );
+  const api = useMemo(
+    () => ({
+      vcs: {
+        panelSnapshot: (input: { readonly cwd: string }) =>
+          runPanelCommand<typeof input, VcsPanelSnapshotResult>(panelSnapshot, input),
+        branchDetails: (input: Parameters<typeof panelBranchDetails>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, input),
+        branchCommits: (input: Parameters<typeof panelBranchCommits>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsPanelBranchCommitsResult>(panelBranchCommits, input),
+        stashDetails: (input: Parameters<typeof panelStashDetails>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsPanelStashDetails>(panelStashDetails, input),
+        stageFiles: (input: Parameters<typeof panelStageFiles>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelStageFiles, input),
+        unstageFiles: (input: Parameters<typeof panelUnstageFiles>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelUnstageFiles, input),
+        discardFiles: (input: Parameters<typeof panelDiscardFiles>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelDiscardFiles, input),
+        enrichWorkingTreeFiles: (
+          input: Parameters<typeof panelEnrichWorkingTreeFiles>[0]["input"],
+        ) =>
+          runPanelCommand<typeof input, VcsPanelWorkingTreeFileEnrichmentResult>(
+            panelEnrichWorkingTreeFiles,
+            input,
+          ),
+        readFileDiff: (input: Parameters<typeof panelReadFileDiff>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsPanelFileDiffResult>(panelReadFileDiff, input),
+        commitStaged: (input: Parameters<typeof panelCommitStaged>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelCommitStaged, input),
+        pullBranch: (input: Parameters<typeof panelPullBranch>[0]["input"]) =>
+          runPanelCommand<typeof input, unknown>(panelPullBranch, input),
+        pushBranch: (input: Parameters<typeof panelPushBranch>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelPushBranch, input),
+        deleteBranch: (input: Parameters<typeof panelDeleteBranch>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelDeleteBranch, input),
+        undoLatestCommit: (input: Parameters<typeof panelUndoLatestCommit>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelUndoLatestCommit, input),
+        revertCommit: (input: Parameters<typeof panelRevertCommit>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelRevertCommit, input),
+        checkoutCommit: (input: Parameters<typeof panelCheckoutCommit>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsSwitchRefResult>(panelCheckoutCommit, input),
+        createBranchFromCommit: (
+          input: Parameters<typeof panelCreateBranchFromCommit>[0]["input"],
+        ) => runPanelCommand<typeof input, unknown>(panelCreateBranchFromCommit, input),
+        mergeBranchIntoCurrent: (
+          input: Parameters<typeof panelMergeBranchIntoCurrent>[0]["input"],
+        ) => runPanelCommand<typeof input, void>(panelMergeBranchIntoCurrent, input),
+        rebaseCurrentOnto: (input: Parameters<typeof panelRebaseCurrentOnto>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelRebaseCurrentOnto, input),
+        fetchBranch: (input: Parameters<typeof panelFetchBranch>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelFetchBranch, input),
+        fetchRemote: (input: Parameters<typeof panelFetchRemote>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelFetchRemote, input),
+        fetchAllRemotes: (input: Parameters<typeof panelFetchAllRemotes>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelFetchAllRemotes, input),
+        addRemote: (input: Parameters<typeof panelAddRemote>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelAddRemote, input),
+        removeRemote: (input: Parameters<typeof panelRemoveRemote>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelRemoveRemote, input),
+        createStash: (input: Parameters<typeof panelCreateStash>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelCreateStash, input),
+        applyStash: (input: Parameters<typeof panelApplyStash>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelApplyStash, input),
+        popStash: (input: Parameters<typeof panelPopStash>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelPopStash, input),
+        dropStash: (input: Parameters<typeof panelDropStash>[0]["input"]) =>
+          runPanelCommand<typeof input, void>(panelDropStash, input),
+        compare: (input: Parameters<typeof panelCompare>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsPanelCompareResult>(panelCompare, input),
+        switchRef: (input: Parameters<typeof switchRefCommand>[0]["input"]) =>
+          runPanelCommand<typeof input, VcsSwitchRefResult>(switchRefCommand, input),
+      },
+    }),
+    [
+      panelAddRemote,
+      panelApplyStash,
+      panelBranchCommits,
+      panelBranchDetails,
+      panelCheckoutCommit,
+      panelCommitStaged,
+      panelCompare,
+      panelCreateBranchFromCommit,
+      panelCreateStash,
+      panelDeleteBranch,
+      panelDiscardFiles,
+      panelDropStash,
+      panelEnrichWorkingTreeFiles,
+      panelFetchAllRemotes,
+      panelFetchBranch,
+      panelFetchRemote,
+      panelMergeBranchIntoCurrent,
+      panelPopStash,
+      panelPullBranch,
+      panelPushBranch,
+      panelReadFileDiff,
+      panelRebaseCurrentOnto,
+      panelRemoveRemote,
+      panelRevertCommit,
+      panelSnapshot,
+      panelStageFiles,
+      panelStashDetails,
+      panelUndoLatestCommit,
+      panelUnstageFiles,
+      runPanelCommand,
+      switchRefCommand,
+    ],
+  );
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const openInPreferredEditor = useOpenInPreferredEditor(
+    environmentId,
+    serverConfig?.availableEditors ?? [],
+  );
+  const vcsStatus = useEnvironmentQuery(
+    vcsEnvironment.status({
+      environmentId,
+      input: { cwd },
+    }),
+  );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const expandedTreeRef = useRef<ReadonlySet<string>>(new Set());
   const lastFocusRefreshAtRef = useRef(0);
@@ -1324,7 +1539,11 @@ export function SourceControlPanel({
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!api) return;
+    if (!api) {
+      setError("Version Control panel is unavailable for this connection runtime.");
+      setLoading(false);
+      return;
+    }
     if (refreshInFlightRef.current) {
       refreshQueuedRef.current = true;
       return;
@@ -1415,7 +1634,7 @@ export function SourceControlPanel({
       setError(null);
       try {
         await action();
-        void invalidateSourceControlState({ environmentId, cwd });
+        vcsStatus.refresh();
         await refresh();
       } catch (nextError) {
         setError(errorMessage(nextError));
@@ -1427,7 +1646,7 @@ export function SourceControlPanel({
         });
       }
     },
-    [cwd, environmentId, refresh],
+    [refresh, vcsStatus.refresh],
   );
 
   const openFilePanel = useCallback(
@@ -1439,18 +1658,14 @@ export function SourceControlPanel({
 
   const openInVsCode = useCallback(
     async (path: string) => {
-      const localApi = readLocalApi();
-      if (!localApi) {
-        setError("No local editor bridge is available.");
+      const result = await openInPreferredEditor(resolvePathLinkTarget(path, cwd));
+      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
         return;
       }
-      try {
-        await openInPreferredEditor(localApi, resolvePathLinkTarget(path, cwd));
-      } catch (nextError) {
-        setError(errorMessage(nextError));
-      }
+      const nextError = squashAtomCommandFailure(result);
+      setError(nextError instanceof Error ? nextError.message : "Unable to open file.");
     },
-    [cwd],
+    [cwd, openInPreferredEditor],
   );
 
   const confirm = useCallback(async (message: string) => {

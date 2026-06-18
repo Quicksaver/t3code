@@ -35,6 +35,8 @@ describe("AssetAccess", () => {
       yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="report.css">');
       yield* fileSystem.writeFileString(cssPath, "body { color: red; }");
       yield* fileSystem.writeFileString(path.join(root, ".env"), "SECRET=value");
+      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
+      const canonicalCssPath = yield* fileSystem.realPath(cssPath);
 
       const result = yield* issueAssetUrl({
         resource: {
@@ -47,8 +49,6 @@ describe("AssetAccess", () => {
       const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
       const separatorIndex = suffix.indexOf("/");
       const token = suffix.slice(0, separatorIndex);
-      const canonicalHtmlPath = yield* fileSystem.realPath(htmlPath);
-      const canonicalCssPath = yield* fileSystem.realPath(cssPath);
 
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",

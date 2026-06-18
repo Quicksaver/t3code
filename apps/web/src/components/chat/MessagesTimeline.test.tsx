@@ -54,8 +54,17 @@ const storeMock = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../../store", () => ({
-  useStore: <T,>(selector: (state: typeof storeMock.state) => T) => selector(storeMock.state),
+vi.mock("../../state/entities", () => ({
+  useThreadShell: (ref: { environmentId: string; threadId: string } | null) =>
+    ref === null
+      ? null
+      : ((
+          storeMock.state.environmentStateById[ref.environmentId] as
+            | {
+                threadShellById?: Record<string, unknown>;
+              }
+            | undefined
+        )?.threadShellById?.[ref.threadId] ?? null),
 }));
 
 function matchMedia() {
@@ -148,7 +157,9 @@ function buildUserTimelineEntry(text: string) {
       id: MessageId.make("message-1"),
       role: "user" as const,
       text,
+      turnId: null,
       createdAt: MESSAGE_CREATED_AT,
+      updatedAt: MESSAGE_CREATED_AT,
       streaming: false,
     },
   };
@@ -582,7 +593,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },
@@ -724,7 +737,9 @@ describe("MessagesTimeline", () => {
                 "```",
                 "</review_comment>",
               ].join("\n"),
+              turnId: null,
               createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
               streaming: false,
             },
           },

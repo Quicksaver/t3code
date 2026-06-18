@@ -11,11 +11,12 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime";
-import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
-import { selectThreadByRef, useStore } from "../store";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentThreadDetails } from "../state/threads";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -96,12 +97,10 @@ export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
   fallbackModelSelection: ModelSelection,
-  error: string | null,
 ): Thread {
   return {
     id: threadId,
     environmentId: draftThread.environmentId,
-    codexThreadId: null,
     projectId: draftThread.projectId,
     title: "New thread",
     modelSelection: fallbackModelSelection,
@@ -109,13 +108,14 @@ export function buildLocalDraftThread(
     interactionMode: draftThread.interactionMode,
     session: null,
     messages: [],
-    error,
     createdAt: draftThread.createdAt,
+    updatedAt: draftThread.createdAt,
     archivedAt: null,
+    deletedAt: null,
     latestTurn: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
-    turnDiffSummaries: [],
+    checkpoints: [],
     activities: [],
     proposedPlans: [],
   };
@@ -341,8 +341,8 @@ export function deriveLockedProvider(input: {
   if (!threadHasStarted(input.thread)) {
     return null;
   }
-  const sessionProvider = input.thread?.session?.provider ?? null;
-  if (sessionProvider) {
+  const sessionProvider = input.thread?.session?.providerName ?? null;
+  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
   const narrowedThreadProvider =
@@ -404,7 +404,8 @@ export async function waitForStartedServerThread(
   threadRef: ScopedThreadRef,
   timeoutMs = 1_000,
 ): Promise<boolean> {
-  const getThread = () => selectThreadByRef(useStore.getState(), threadRef);
+  const threadAtom = environmentThreadDetails.detailAtom(threadRef);
+  const getThread = () => appAtomRegistry.get(threadAtom);
   const thread = getThread();
 
   if (threadHasStarted(thread)) {
@@ -426,8 +427,8 @@ export async function waitForStartedServerThread(
       resolve(result);
     };
 
-    const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(selectThreadByRef(state, threadRef))) {
+    const unsubscribe = appAtomRegistry.subscribe(threadAtom, (thread) => {
+      if (!threadHasStarted(thread)) {
         return;
       }
       finish(true);
@@ -451,7 +452,7 @@ export interface LocalDispatchSnapshot {
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
   latestTurnCompletedAt: string | null;
-  sessionOrchestrationStatus: ThreadSession["orchestrationStatus"] | null;
+  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
 }
 
@@ -468,7 +469,7 @@ export function createLocalDispatchSnapshot(
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
-    sessionOrchestrationStatus: session?.orchestrationStatus ?? null,
+    sessionStatus: session?.status ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
   };
 }
@@ -505,8 +506,8 @@ export function hasServerAcknowledgedLocalDispatch(input: {
       return false;
     }
     if (
+      session?.activeTurnId !== null &&
       session?.activeTurnId !== undefined &&
-      session.activeTurnId !== null &&
       latestTurn?.turnId !== session.activeTurnId
     ) {
       return false;
@@ -516,7 +517,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   return (
     latestTurnChanged ||
-    input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
+    input.localDispatch.sessionStatus !== (session?.status ?? null) ||
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }

@@ -2,13 +2,18 @@
 
 ## Last Upstream Merge
 
-Generated from local `main` at `d93fd1200` and `upstream/main` at `3bdaa6e10` (`v0.0.28-nightly.20260617.586`). Before the merge, this branch was 198 commits ahead and 4 commits behind upstream; after the merge, this branch is 199 commits ahead and 0 commits behind `upstream/main`. The incoming upstream diff from the merge base was 10 files changed, 638 insertions, and 453 deletions; the remaining fork delta against `upstream/main` is 230 files changed, 33045 insertions, and 1218 deletions.
+Generated from local `main` at `2492d3d25` and `upstream/main` at `e95b57dc2` (`v0.0.28-nightly.20260618.594`). Before the merge, this branch was 207 commits ahead and 1 commit behind upstream; after the merge, this branch is 208 commits ahead and 0 commits behind `upstream/main`. The incoming upstream diff from the merge base was 606 files changed, 37206 insertions, and 53661 deletions; the remaining fork delta against `upstream/main` is 230 files changed, 32054 insertions, and 748 deletions.
 
-No local customization is retired by this merge. Upstream made background VCS fetches non-interactive, bumped the mobile Shiki engine path, adapted the destructive menu icon for dark mode, and polished the marketing homepage; these are additive relative to the custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, and terminal action reuse work.
+No local customization is retired by this merge. Upstream rewrote the client connection architecture around `@t3tools/client-runtime` connection registries, atom-backed environment state, desktop/mobile connection catalogs, and shared environment RPC state; removed the old web `store`, `environments/runtime`, `rpc/serverState`, `wsRpcClient`, and many `.browser` shims; and added mobile connection storage/onboarding, relay token handling, thread outbox state, and `docs/architecture/connection-runtime.md`. These upstream changes are authoritative; the local custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, workspace skill loading, and terminal action reuse work were ported onto the new runtime model.
 
 Concrete conflict notes from this merge:
 
-- `pnpm-lock.yaml` was regenerated from the merged manifests so upstream's `@pierre/diffs` `1.3.0-beta.5`, Shiki `4.2.0`, and `react-native-shiki-engine` `^0.3.12` updates coexist with the local workspace dependency graph.
+- `pnpm-lock.yaml` was regenerated from the merged manifests and `pnpm install` was run so upstream's new mobile `expo-network` dependency and the VS Code extension's explicit `@t3tools/shared` workspace dependency are linked.
+- The local workspace-scoped provider skill picker now uses `serverEnvironment.listProviderSkills` from `packages/client-runtime/src/state/server.ts` instead of the deleted web runtime connection object.
+- The local Version Control panel now calls the existing `vcs.panel.*` RPCs through `vcsEnvironment` atom commands instead of the removed `EnvironmentApi` object, while keeping its right-panel surface and live VCS status integration.
+- VS Code webview scoping was preserved on the new project shell model by matching project `workspaceRoot` values, keeping the button-based sidebar wordmark, and retaining hosted/settings back-target behavior.
+- Terminal host gating, stable project-action terminal IDs, subagent parent navigation, and disabled-terminal cleanup were carried forward into the upstream `ChatView` atom state.
+- Validation for this merge used `pnpm exec vp check`, `pnpm exec vp run typecheck`, and `pnpm exec vp run lint:mobile`. `vp check` still reports warning-only schema-hoisting notices in upstream-added mobile connection files; `lint:mobile` also warns that optional local `swiftlint`, `ktlint`, and `detekt` binaries are not installed.
 
 ## Debug Browser Launch
 
@@ -180,7 +185,7 @@ Primary files:
 - `apps/web/src/lib/providerWorkspaceSkillsState.ts`
 - `apps/web/src/components/chat/ChatComposer.tsx`
 - `packages/contracts/src/server.ts`
-- `packages/client-runtime/src/wsRpcClient.ts`
+- `packages/client-runtime/src/state/server.ts`
 
 Relevant tests live in:
 

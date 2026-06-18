@@ -3,10 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
-import {
-  clearShortcutModifierState,
-  syncShortcutModifierStateFromKeyboardEvent,
-} from "../shortcutModifierState";
 import { isElectron } from "~/env";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 
@@ -18,7 +14,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const isDesktopHost = isElectron;
   const savedThreadSidebarOpen = useSettings((settings) => settings.threadSidebarOpen ?? true);
   const threadSidebarOpen = isDesktopHost ? true : savedThreadSidebarOpen;
-  const { updateSettings } = useUpdateSettings();
+  const updateSettings = useUpdateSettings();
   const handleThreadSidebarOpenChange = useCallback(
     (open: boolean) => {
       if (isDesktopHost) {
@@ -28,28 +24,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     },
     [isDesktopHost, updateSettings],
   );
-
-  useEffect(() => {
-    const onWindowKeyDown = (event: KeyboardEvent) => {
-      syncShortcutModifierStateFromKeyboardEvent(event);
-    };
-    const onWindowKeyUp = (event: KeyboardEvent) => {
-      syncShortcutModifierStateFromKeyboardEvent(event);
-    };
-    const onWindowBlur = () => {
-      clearShortcutModifierState();
-    };
-
-    window.addEventListener("keydown", onWindowKeyDown, true);
-    window.addEventListener("keyup", onWindowKeyUp, true);
-    window.addEventListener("blur", onWindowBlur);
-
-    return () => {
-      window.removeEventListener("keydown", onWindowKeyDown, true);
-      window.removeEventListener("keyup", onWindowKeyUp, true);
-      window.removeEventListener("blur", onWindowBlur);
-    };
-  }, []);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;

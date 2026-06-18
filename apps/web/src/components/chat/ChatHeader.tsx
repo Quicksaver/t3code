@@ -5,7 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { CornerLeftUpIcon } from "lucide-react";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
@@ -13,11 +13,14 @@ import { type DraftId } from "~/composerDraftStore";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import ProjectScriptsControl, {
+  type NewProjectScriptInput,
+  type ProjectScriptActionResult,
+} from "../ProjectScriptsControl";
+import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
-import { usePrimaryEnvironmentId } from "../../environments/primary/context";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useHostDisplayPreferences } from "../../hostDisplayPreferences";
-import { MainSidebarTrigger } from "../sidebar/MainSidebarTrigger";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -26,16 +29,19 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   openInCwd: string | null;
-  activeProjectScripts: ProjectScript[] | undefined;
+  activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   rightPanelOpen: boolean;
   gitCwd: string | null;
   onRunProjectScript: (script: ProjectScript) => void;
-  onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
-  onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
-  onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onUpdateProjectScript: (
+    scriptId: string,
+    input: NewProjectScriptInput,
+  ) => Promise<ProjectScriptActionResult>;
+  onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
   onOpenParentThread?: (() => void) | undefined;
 }
 
@@ -85,7 +91,7 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-wrap items-center gap-2 overflow-hidden sm:flex-1 sm:flex-nowrap sm:gap-3">
-        <MainSidebarTrigger />
+        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <div className="flex min-w-0 flex-1 basis-40 items-center gap-1.5">
           <Tooltip>
             <TooltipTrigger
@@ -147,6 +153,7 @@ export const ChatHeader = memo(function ChatHeader({
           primaryEnvironmentId,
         }) && (
           <OpenInPicker
+            environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
