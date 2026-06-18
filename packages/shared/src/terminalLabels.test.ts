@@ -13,6 +13,11 @@ describe("getTerminalLabel", () => {
     expect(getTerminalLabel("terminal-3")).toBe("Terminal 3");
   });
 
+  it("uses readable labels for project action terminal ids", () => {
+    expect(getTerminalLabel("action-lint")).toBe("Action: lint");
+    expect(getTerminalLabel("action-dist-desktop-dmg-2")).toBe("Action: dist desktop dmg 2");
+  });
+
   it("falls back to the raw id for unknown shapes", () => {
     expect(getTerminalLabel("custom-session")).toBe("custom-session");
   });
