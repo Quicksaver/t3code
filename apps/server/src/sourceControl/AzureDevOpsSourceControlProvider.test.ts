@@ -46,6 +46,44 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
   }),
 );
 
+it.effect("lists Azure DevOps PRs against the requested remote repository context", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["listPullRequests"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "repo",
+      project: "project",
+      state: "open",
+      limit: 10,
+    });
+  }),
+);
+
 it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
     let createInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["createPullRequest"]>[0] | null =

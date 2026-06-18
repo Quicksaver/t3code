@@ -50,6 +50,20 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
   };
 }
 
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const host = new URL(context.provider.baseUrl).host;
+    return host && host !== "github.com" ? `${host}/${repository}` : repository;
+  } catch {
+    return repository;
+  }
+}
+
 function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
   const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
@@ -111,11 +125,13 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
 
   const listChangeRequests: SourceControlProvider.SourceControlProviderShape["listChangeRequests"] =
     (input) => {
+      const repository = repositoryFromContext(input.context);
       if (input.state === "open") {
         return github
           .listOpenPullRequests({
             cwd: input.cwd,
             headSelector: input.headSelector,
+            ...(repository ? { repository } : {}),
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
           .pipe(
@@ -131,6 +147,7 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
           args: [
             "pr",
             "list",
+            ...(repository ? ["--repo", repository] : []),
             "--head",
             input.headSelector,
             "--state",

@@ -57,12 +57,15 @@ This keeps externally-created changes visible without requiring a window blur/re
 - A dirty `Working tree` row, shown first and omitted when the tree is clean.
 - Local branches that are local-only, ahead, behind, diverged, or otherwise require action.
 - Same-name local branches that are behind likely fork branches on other remotes.
+- Local branches with open GitHub, GitLab, Azure DevOps, or Bitbucket change requests whose base branch exists on the matching remote and is ahead of the local branch.
 - Stashes.
 - Other checked-out worktree branch labels when available.
 
 Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a remote branch.
 
 When a repository has multiple remotes, the server checks local branches against same-name branches on other remotes. A same-name remote branch is treated as a likely fork only when the refs share ancestry. The Actionable row is shown only when the local branch is behind that remote branch; a local branch that is only ahead of the other remote branch is omitted because it is rarely meant to push directly to that upstream. These fork rows use the other remote branch as their default `vs. ...` compare base and still show `↑x`/`↓y` counts against that remote branch.
+
+The server also checks open change requests for every local branch across all configured remotes whose fetch URL maps to a supported provider: GitHub, GitLab, Azure DevOps, and Bitbucket. For each matching open PR/MR where the local branch is the head branch, the panel compares the local branch only against the found change request's base branch on that same remote. A PR/MR-derived Actionable row is shown only when the local branch is behind that remote base branch; if the branch is already current with, ahead of, or unrelated to the base branch, no Actionable entry is shown. Provider lookup is best-effort: authentication, CLI/API, or unsupported-remote failures omit PR/MR-derived rows without blocking the Git snapshot.
 
 The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every few minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh.
 
@@ -123,7 +126,7 @@ Expanding a branch reveals branch details:
 - `History`
 - `Changes`
 
-Every expanded branch shows the `vs. ...` row first. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. Actionable same-name fork rows default this base to the other remote branch they are tracking for updates. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
+Every expanded branch shows the `vs. ...` row first. Its default base is the branch's upstream when available, otherwise the repository default comparison ref. Actionable same-name fork rows default this base to the other remote branch they are tracking for updates. Actionable PR/MR-derived rows default this base to the found change request's remote base branch. Clicking the row opens a searchable ref picker so the user can choose another compare base. Compare rows do not show count prefixes or extra choose labels. Empty ahead and behind subsections are hidden. Ahead and behind labels include the count directly in the title and use the same colored upload/download icons as branch sync indicators. `History` is collapsed by default and loads commits in pages of 10. When more commits are available, a load-more row appends the next page inline until no more history remains.
 
 The branch-level `Changes` row summarizes the selected comparison as file count and line stats before expanding to the changed-file list.
 
@@ -180,7 +183,7 @@ Expanding a remote lists actual remote branches; pseudo-ref rows such as the rem
 
 The panel routes all repository mutations through server-side RPC methods and refreshes status after operations. Implemented operation groups include:
 
-- Snapshot and detail loading: panel snapshot, same-name fork ancestry checks, branch details, branch commit pages, stash details, compare data, and file-change details.
+- Snapshot and detail loading: panel snapshot, same-name fork ancestry checks, open PR/MR base-branch checks across configured GitHub/GitLab/Azure DevOps/Bitbucket remotes, branch details, branch commit pages, stash details, compare data, and file-change details.
 - Working tree operations: selected-file commit, selected-file stash, discard selected files, discard individual changed files, read/open file data, stage/unstage helpers kept at the service boundary for compatibility.
 - Branch operations: fetch branch, pull, push, publish, switch, delete, undo latest commit, merge branch into current branch, and rebase current branch onto another branch or commit.
 - Commit operations: revert commit, checkout detached HEAD, and create branch from commit.

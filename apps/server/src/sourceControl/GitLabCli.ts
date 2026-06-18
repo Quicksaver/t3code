@@ -55,6 +55,7 @@ export interface GitLabCliShape {
     readonly cwd: string;
     readonly headSelector: string;
     readonly source?: SourceControlProvider.SourceControlRefSelector;
+    readonly repository?: string;
     readonly state: "open" | "closed" | "merged" | "all";
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
@@ -281,6 +282,7 @@ export const make = Effect.fn("makeGitLabCli")(function* () {
         args: [
           "mr",
           "list",
+          ...(input.repository ? ["--repo", input.repository] : []),
           "--source-branch",
           sourceRefName(input),
           ...stateArgs(input.state),

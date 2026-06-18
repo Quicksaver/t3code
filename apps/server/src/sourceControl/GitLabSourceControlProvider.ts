@@ -96,6 +96,20 @@ function refineUnknownGitLabRemote(
   } as const;
 }
 
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const host = new URL(context.provider.baseUrl).host;
+    return host && host !== "gitlab.com" ? `${host}/${repository}` : repository;
+  } catch {
+    return repository;
+  }
+}
+
 export const discovery = {
   type: "cli",
   kind: "gitlab",
@@ -116,11 +130,13 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
     kind: "gitlab",
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = repositoryFromContext(input.context);
       return gitlab
         .listMergeRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source ? { source } : {}),
+          ...(repository ? { repository } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })

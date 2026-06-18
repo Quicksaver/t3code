@@ -68,6 +68,41 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
   }),
 );
 
+it.effect("lists GitHub PRs against the requested remote repository context", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<GitHubCli.GitHubCliShape["listOpenPullRequests"]>[0] | null = null;
+    const provider = yield* makeProvider({
+      listOpenPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "github",
+          name: "GitHub Enterprise",
+          baseUrl: "https://github.example.test",
+        },
+        remoteName: "upstream",
+        remoteUrl: "git@github.example.test:acme/repo.git",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+      limit: 10,
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "github.example.test/acme/repo",
+      limit: 10,
+    });
+  }),
+);
+
 it.effect("uses gh json listing for non-open change request state queries", () =>
   Effect.gen(function* () {
     let executeArgs: ReadonlyArray<string> = [];

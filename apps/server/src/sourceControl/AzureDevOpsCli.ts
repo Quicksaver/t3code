@@ -46,6 +46,8 @@ export interface AzureDevOpsCliShape {
     readonly cwd: string;
     readonly headSelector: string;
     readonly source?: SourceControlProvider.SourceControlRefSelector;
+    readonly repository?: string;
+    readonly project?: string;
     readonly state: "open" | "closed" | "merged" | "all";
     readonly limit?: number;
   }) => Effect.Effect<
@@ -270,6 +272,8 @@ export const make = Effect.fn("makeAzureDevOpsCli")(function* () {
           "list",
           "--detect",
           "true",
+          ...(input.repository ? ["--repository", input.repository] : []),
+          ...(input.project ? ["--project", input.project] : []),
           "--source-branch",
           SourceControlProvider.sourceBranch(input),
           "--status",

@@ -80,6 +80,31 @@ function toChangeRequest(summary: {
   };
 }
 
+function azureRepositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): { readonly repository: string; readonly project?: string } | undefined {
+  if (!context) return undefined;
+  const path = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!path) return undefined;
+  const parts = path
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const gitIndex = parts.findIndex((part) => part.toLowerCase() === "_git");
+  const gitProject = parts[gitIndex - 1];
+  const gitRepository = parts[gitIndex + 1];
+  if (gitIndex >= 1 && gitProject && gitRepository) {
+    return { project: gitProject, repository: gitRepository };
+  }
+  const sshProject = parts[2];
+  const sshRepository = parts[3];
+  if (parts[0]?.toLowerCase() === "v3" && sshProject && sshRepository) {
+    return { project: sshProject, repository: sshRepository };
+  }
+  const repository = parts.at(-1);
+  return repository ? { repository } : undefined;
+}
+
 export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
@@ -87,11 +112,13 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
     kind: "azure-devops",
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const repository = azureRepositoryFromContext(input.context);
       return azure
         .listPullRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
           ...(source !== undefined ? { source } : {}),
+          ...(repository !== undefined ? repository : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })

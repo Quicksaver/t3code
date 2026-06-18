@@ -49,6 +49,25 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
+export function repositoryPathFromRemoteUrl(remoteUrl: string): string | null {
+  const withoutSuffix = (value: string) => value.replace(/\.git$/u, "");
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) return null;
+
+  try {
+    const url = new URL(trimmed);
+    const path = withoutSuffix(decodeURIComponent(url.pathname).replace(/^\/+/u, "").trim());
+    return path.length > 0 ? path : null;
+  } catch {
+    const scpLike = /^(?:[^@/\s]+@)?[^:/\s]+:(.+)$/u.exec(trimmed);
+    if (scpLike?.[1]) {
+      const path = withoutSuffix(scpLike[1].replace(/^\/+/u, "").trim());
+      return path.length > 0 ? path : null;
+    }
+    return null;
+  }
+}
+
 export interface SourceControlProviderShape {
   readonly kind: SourceControlProviderKind;
   readonly listChangeRequests: (input: {

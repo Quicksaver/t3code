@@ -3,12 +3,22 @@ import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { GitCommandError, type VcsRef, type VcsStatusLocalResult } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import {
+  GitCommandError,
+  SourceControlProviderError,
+  type ChangeRequest,
+  type SourceControlProviderKind,
+  type VcsRef,
+  type VcsStatusLocalResult,
+} from "@t3tools/contracts";
 
 import {
   SourceControlPanelService,
   layer as SourceControlPanelServiceLayer,
 } from "./SourceControlPanelService.ts";
+import * as SourceControlProvider from "./SourceControlProvider.ts";
+import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { GitWorkflowService, type GitWorkflowServiceShape } from "../git/GitWorkflowService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
@@ -41,9 +51,58 @@ const failure = (stderr: string): ExecuteGitResult => ({
   stderrTruncated: false,
 });
 
+const emptyProvider = SourceControlProvider.SourceControlProvider.of({
+  kind: "unknown",
+  listChangeRequests: () => Effect.succeed([]),
+  getChangeRequest: () =>
+    Effect.fail(
+      new SourceControlProviderError({
+        provider: "unknown",
+        operation: "test.getChangeRequest",
+        detail: "get change request not stubbed",
+      }),
+    ),
+  createChangeRequest: () =>
+    Effect.fail(
+      new SourceControlProviderError({
+        provider: "unknown",
+        operation: "test.createChangeRequest",
+        detail: "create change request not stubbed",
+      }),
+    ),
+  getRepositoryCloneUrls: () =>
+    Effect.fail(
+      new SourceControlProviderError({
+        provider: "unknown",
+        operation: "test.getRepositoryCloneUrls",
+        detail: "repository clone URLs not stubbed",
+      }),
+    ),
+  createRepository: () =>
+    Effect.fail(
+      new SourceControlProviderError({
+        provider: "unknown",
+        operation: "test.createRepository",
+        detail: "create repository not stubbed",
+      }),
+    ),
+  getDefaultBranch: () => Effect.succeed(null),
+  checkoutChangeRequest: () =>
+    Effect.fail(
+      new SourceControlProviderError({
+        provider: "unknown",
+        operation: "test.checkoutChangeRequest",
+        detail: "checkout change request not stubbed",
+      }),
+    ),
+});
+
 function makeTestLayer(
   execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, never>,
   workflow: Partial<GitWorkflowServiceShape> = {},
+  providers: Partial<
+    Record<SourceControlProviderKind, SourceControlProvider.SourceControlProviderShape>
+  > = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -84,6 +143,17 @@ function makeTestLayer(
       Layer.succeed(GitVcsDriver, {
         execute,
       } as unknown as GitVcsDriverShape),
+    ),
+    Layer.provide(
+      Layer.succeed(
+        SourceControlProviderRegistry,
+        SourceControlProviderRegistry.of({
+          get: (kind) => Effect.succeed(providers[kind] ?? emptyProvider),
+          resolveHandle: () => Effect.succeed({ provider: emptyProvider, context: null }),
+          resolve: () => Effect.succeed(emptyProvider),
+          discover: Effect.succeed([]),
+        }),
+      ),
     ),
   );
 }
@@ -640,6 +710,114 @@ describe("SourceControlPanelService", () => {
                 refName: "feature",
                 hasWorkingTreeChanges: false,
               }),
+          },
+        ),
+      ),
+    ),
+  );
+
+  it.effect("surfaces open pull request base branches only when the local branch is behind", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+
+      assert.deepStrictEqual(snapshot.actionableForkBranches, [
+        {
+          localBranchName: "feature",
+          remoteName: "origin",
+          remoteBranchName: "main",
+          remoteRefName: "origin/main",
+          aheadCount: 0,
+          behindCount: 2,
+          lastActivityAt: "2026-06-17T11:00:00.000Z",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    [
+                      "feature\t*\t/repo\t2026-06-17T10:00:00.000Z\t\t",
+                      "fresh\t\t\t2026-06-17T09:00:00.000Z\t\t",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.remotes":
+                  return success(
+                    [
+                      "origin\tgit@github.com:acme/repo.git\t(fetch)",
+                      "origin\tgit@github.com:acme/repo.git\t(push)",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.remoteBranches":
+                  return success(
+                    [
+                      "origin/main\t2026-06-17T11:00:00.000Z",
+                      "origin/develop\t2026-06-17T08:00:00.000Z",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.branchForkMergeBase":
+                  return success("abc123\n");
+                case "vcs.panel.branchForkAheadBehind":
+                  return input.args.includes("feature...origin/main")
+                    ? success("0\t2\n")
+                    : success("1\t0\n");
+                case "vcs.panel.statusPorcelain":
+                  return success(["# branch.oid abc", "# branch.head feature"].join("\n"));
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.unstagedNumstat":
+                case "vcs.panel.stashes":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "feature",
+                hasWorkingTreeChanges: false,
+              }),
+          },
+          {
+            github: SourceControlProvider.SourceControlProvider.of({
+              ...emptyProvider,
+              kind: "github",
+              listChangeRequests: (input) => {
+                const byHead: Record<string, readonly ChangeRequest[]> = {
+                  feature: [
+                    {
+                      provider: "github",
+                      number: 42,
+                      title: "Feature",
+                      url: "https://github.com/acme/repo/pull/42",
+                      baseRefName: "main",
+                      headRefName: "feature",
+                      state: "open",
+                      updatedAt: Option.none(),
+                    },
+                  ],
+                  fresh: [
+                    {
+                      provider: "github",
+                      number: 43,
+                      title: "Fresh",
+                      url: "https://github.com/acme/repo/pull/43",
+                      baseRefName: "develop",
+                      headRefName: "fresh",
+                      state: "open",
+                      updatedAt: Option.none(),
+                    },
+                  ],
+                };
+                return Effect.succeed(byHead[input.headSelector] ?? []);
+              },
+            }),
           },
         ),
       ),
