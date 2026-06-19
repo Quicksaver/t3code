@@ -20,6 +20,12 @@ Concrete conflict notes from this merge:
 - `pnpm-lock.yaml` was regenerated from the merged package manifests after accepting upstream's workspace/package changes.
 - Validation for this merge used `pnpm exec vp check`, `pnpm exec vp run typecheck`, and `pnpm exec vp run lint:mobile`. `vp check` may still report warning-only schema-hoisting notices in upstream-added mobile connection files; `lint:mobile` may also warn when optional local `swiftlint`, `ktlint`, and `detekt` binaries are not installed.
 
+## Latest Worktree Port
+
+Generated from local `main` at `d86cd6e9b` after inspecting active worktrees `fix/codex-skills`, `split/file-command-activity-boxes`, `split/subagent-threading-work`, `split/terminal-backed-project-actions`, `fix/thread-detail-subscription-race`, `split/version-control-panel-work`, and `split/vscode-extension-work`.
+
+The port retained only branch-local fixes that were absent from `main`: bounded workspace Codex skill discovery and cache hardening, inline raw-command rendering for expanded command rows, and prompt-readiness waits before terminal-backed project actions write commands. The subagent-threading, thread-detail subscription, Version Control panel, and VS Code extension worktrees were already represented or superseded on `main`; their newer upstream commits should still arrive through the normal upstream update flow, not by replaying split-worktree branches wholesale.
+
 ## Debug Browser Launch
 
 For web/server debug work in this branch, start the backend with browser auto-open disabled, then if needed navigate the intended active browser window manually or through Playwright MCP:
@@ -104,6 +110,7 @@ Expected behavior:
 - If a file-change event only has paths and no patch, the expanded row still lists the changed paths instead of opening the full turn diff panel.
 - A command row keeps the compact `Ran command - command` style preview while collapsed.
 - Clicking a command row expands it inline and shows the command, raw command when it differs, stdout, stderr, exit code, and duration.
+- Differing raw command text is rendered inline as a normal detail block in the expanded row, not hidden behind a second nested disclosure.
 - Stdout and stderr show only the last 40 lines by default when longer than 40 lines; clicking either output block toggles the full stream.
 
 Primary files:
@@ -121,9 +128,9 @@ Relevant tests live in:
 Useful focused commands:
 
 ```sh
-pnpm --filter @t3tools/web test -- src/session-logic.test.ts
-pnpm --filter @t3tools/web test -- src/components/chat/MessagesTimeline.test.tsx
-pnpm --filter @t3tools/web test -- src/components/chat/ThreadConversationWidth.test.tsx
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/session-logic.test.ts)
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/MessagesTimeline.test.tsx)
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/ThreadConversationWidth.test.tsx)
 ```
 
 Before considering the branch healthy, also run:
@@ -164,12 +171,25 @@ Expected behavior:
 - If action-specific reuse is not available, terminal-backed actions should still prefer a shared action terminal group so repeated runs do not leave many stale terminal instances behind.
 - A project action must not write its command until the target terminal session is ready to receive input. This avoids shells with slow startup, such as login `bash`, rendering the command before the prompt and leaving the command unexecuted.
 - If the selected reusable terminal is busy running a subprocess, the action may choose another action terminal rather than injecting input into a live process.
+- The readiness wait uses the current terminal session summary when available, and otherwise attaches to the terminal stream and waits briefly for prompt-like output before writing. If the prompt is never observed, the wait times out and the action still writes rather than hanging indefinitely.
 
 Primary files:
 
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ThreadTerminalDrawer.tsx`
+- `apps/web/src/projectScriptTerminals.ts`
+- `apps/web/src/state/projectActionTerminal.ts`
 - `apps/server/src/terminal/Layers/Manager.ts`
+
+Relevant tests live in:
+
+- `apps/web/src/projectScriptTerminals.test.ts`
+
+Useful focused command:
+
+```sh
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/projectScriptTerminals.test.ts)
+```
 
 ## Codex Workspace Skill Loading
 
@@ -179,21 +199,37 @@ Expected behavior:
 
 - Repo-local Codex skills for the active workspace appear in the `$` skill picker.
 - The server exposes a workspace-aware `server.listProviderSkills` path and validates enabled Codex skill-listing requests against the requested cwd.
-- The Codex provider requests `skills/list` with the current workspace cwd and supports forced refreshes when the workspace skill cache needs to be invalidated.
+- The server routes skill listing through a bounded request lister that coalesces concurrent requests for the same provider/cwd, limits cross-workspace concurrency, and applies a short TTL so reconnects or repeated composer renders do not repeatedly spawn Codex app-server probes.
+- The Codex provider requests `skills/list` with the current workspace cwd, times out hung app-server probes, and terminates the probe process when a timeout occurs.
 - Non-Codex or disabled providers keep returning provider snapshot skills instead of failing workspace skill search.
-- The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a short stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot.
+- The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a bounded stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot.
+- The composer preserves already loaded repo-local skills while refreshing the same workspace, treats an empty loaded skill list as authoritative data, and clears stale skills during workspace switches or settled failures.
 
 Primary files:
 
 - `apps/server/src/ws.ts`
+- `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
+- `apps/web/src/lib/providerWorkspaceSkillsState.ts`
 - `packages/contracts/src/server.ts`
 - `packages/client-runtime/src/state/server.ts`
 
 Relevant tests live in:
 
 - `apps/server/src/server.test.ts`
+- `apps/server/src/provider/ProviderSkillsLister.test.ts`
+- `apps/server/src/provider/Layers/CodexProvider.test.ts`
+- `apps/server/src/provider/Layers/CursorProvider.test.ts`
+- `apps/server/src/provider/Layers/GrokProvider.test.ts`
+- `apps/web/src/lib/providerWorkspaceSkillsState.test.ts`
 - `packages/client-runtime/src/state/runtime.test.ts`
+
+Useful focused commands:
+
+```sh
+(cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/lib/providerWorkspaceSkillsState.test.ts)
+```
 
 ## Thread Detail Subscription Reliability
 
@@ -276,12 +312,13 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 2. Codex subagent threading work remains preserved as a local customization unless `main` has an equivalent UI-aware subagent architecture; use `SUBAGENTS.md` as the detailed source of truth.
 3. Chat conversation and composer surfaces default to no maximum width across all host types.
 4. VS Code extension work remains preserved as a local customization unless `main` has an equivalent implementation; use `apps/vscode-extension/IMPLEMENTATION.md` as the detailed source of truth.
-5. Workspace-scoped Codex skill loading remains preserved so repo-local Codex skills for the active workspace continue to appear in the `$` skill picker.
+5. Workspace-scoped Codex skill loading remains preserved so repo-local Codex skills for the active workspace continue to appear in the `$` skill picker without repeated unbounded provider probes or stale skill leakage across workspaces.
 6. Version Control panel work remains preserved as a local customization unless `main` has an equivalent agent-aware version-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
 7. Version Control idle-power safeguards continue to ignore internal `.git/` watcher churn and use a conservative automatic remote Git fetch interval unless upstream ships equivalent low-churn behavior.
 8. Thread-detail subscriptions preserve first-message events emitted during initial snapshot loading unless upstream ships equivalent snapshot-plus-live-tail buffering.
 9. Terminal-backed project actions reuse action terminals where possible and wait for terminal readiness before writing commands.
-10. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
+10. Expanded command activity rows show differing raw command text inline with the other command details.
+11. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
 
 ## Retirement Criteria
 

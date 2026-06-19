@@ -153,7 +153,7 @@ export function createServerEnvironmentAtoms<R, E>(
     listProviderSkills: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:list-provider-skills",
       tag: WS_METHODS.serverListProviderSkills,
-      staleTimeMs: 5_000,
+      staleTimeMs: 30_000,
     }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",

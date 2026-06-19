@@ -185,6 +185,7 @@ import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import { projectActionTerminalEnvironment } from "../state/projectActionTerminal";
 import {
   useProject,
   useProjects,
@@ -998,6 +999,10 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
+  const waitForProjectActionTerminalReady = useAtomCommand(
+    projectActionTerminalEnvironment.waitForInputReady,
+    "project action terminal readiness",
+  );
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
@@ -2539,23 +2544,23 @@ function ChatViewContent(props: ChatViewProps) {
             });
       const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
       const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
-      const openTerminalInput: TerminalOpenInput = !isKnownServerTerminal
-        ? {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            cols: SCRIPT_TERMINAL_COLS,
-            rows: SCRIPT_TERMINAL_ROWS,
-          }
-        : {
-            threadId: activeThreadId,
-            terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-          };
+      const targetSession = reusableTerminalById.get(targetTerminalId) ?? null;
+      const canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+        summary: targetSession?.state.summary ?? null,
+        buffer: targetSession?.state.buffer ?? "",
+        targetCwd,
+        targetWorktreePath,
+      });
+      const openTerminalInput: TerminalOpenInput = {
+        threadId: activeThreadId,
+        terminalId: targetTerminalId,
+        cwd: targetCwd,
+        ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+        env: runtimeEnv,
+        ...(!isKnownServerTerminal
+          ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+          : {}),
+      };
 
       if (!isVisibleTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
@@ -2573,6 +2578,13 @@ function ChatViewContent(props: ChatViewProps) {
           );
         }
         return;
+      }
+
+      if (!canWriteImmediately) {
+        await waitForProjectActionTerminalReady({
+          environmentId,
+          input: openTerminalInput,
+        });
       }
 
       const writeResult = await writeTerminal({
@@ -2610,6 +2622,7 @@ function ChatViewContent(props: ChatViewProps) {
       runningTerminalIds,
       terminalEnabled,
       terminalUiState.terminalIds,
+      waitForProjectActionTerminalReady,
       writeTerminal,
     ],
   );

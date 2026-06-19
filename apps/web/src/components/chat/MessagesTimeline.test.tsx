@@ -55,6 +55,7 @@ const storeMock = vi.hoisted(() => ({
 }));
 
 vi.mock("../../state/entities", () => ({
+  useActiveEnvironmentId: () => "environment-local",
   useThreadShell: (ref: { environmentId: string; threadId: string } | null) =>
     ref === null
       ? null

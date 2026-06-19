@@ -1781,7 +1781,11 @@ function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
           {command}
         </ToolDetailBlock>
       )}
-      {rawCommand && <CollapsedRawCommandBlock value={rawCommand} />}
+      {rawCommand && (
+        <ToolDetailBlock title="Raw command" mono>
+          {rawCommand}
+        </ToolDetailBlock>
+      )}
       <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/70">
         <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
           Exit code {workEntry.exitCode ?? "unknown"}
@@ -1799,29 +1803,6 @@ function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
       ) : null}
       {!hasStreamOutput && hasRenderableCommandOutput(workEntry.output) ? (
         <CommandOutputBlock title="Output" value={workEntry.output} />
-      ) : null}
-    </div>
-  );
-}
-
-function CollapsedRawCommandBlock({ value }: { value: string }) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="space-y-1">
-      <button
-        type="button"
-        className="flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors hover:text-foreground/75 focus-visible:outline-2 focus-visible:outline-ring"
-        onClick={() => setExpanded((current) => !current)}
-        aria-expanded={expanded}
-      >
-        <span>Raw command</span>
-        <span className="normal-case tracking-normal">({expanded ? "hide" : "show"})</span>
-      </button>
-      {expanded ? (
-        <div className="max-h-80 overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 font-mono text-[11px] leading-5 whitespace-pre-wrap wrap-break-word text-foreground/78">
-          {value}
-        </div>
       ) : null}
     </div>
   );

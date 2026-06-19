@@ -127,6 +127,7 @@ import { ThreadConversationWidthForm } from "./ThreadConversationWidth";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
+const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -784,10 +785,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
   );
-  const selectedProviderFallbackSkills = useMemo(
-    () => selectedProviderStatus?.skills ?? [],
-    [selectedProviderStatus],
-  );
+  const selectedProviderFallbackSkills = selectedProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
   const selectedProviderModels = useMemo<ReadonlyArray<ServerProvider["models"][number]>>(
     () => selectedProviderEntry?.models ?? [],
     [selectedProviderEntry],
