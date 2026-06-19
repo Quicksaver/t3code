@@ -286,15 +286,25 @@ export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(func
     env: environment,
     extendEnv: true,
   });
-  const child = yield* spawner.spawn(
-    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      cwd: input.cwd,
-      env: environment,
-      extendEnv: true,
-      forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
-      shell: spawnCommand.shell,
-    }),
-  );
+  const child = yield* spawner
+    .spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd: input.cwd,
+        env: environment,
+        extendEnv: true,
+        forceKillAfter: CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER,
+        shell: spawnCommand.shell,
+      }),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new CodexErrors.CodexAppServerSpawnError({
+            command: `${input.binaryPath} app-server`,
+            cause,
+          }),
+      ),
+    );
   const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),

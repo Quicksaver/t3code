@@ -5,8 +5,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -46,10 +44,8 @@ import {
   FilesystemBrowseError,
   AssetAccessError,
   EnvironmentAuthorizationError,
-  CodexSettings,
   ServerProviderSkillsListError,
   type ServerProviderSkillsListResult,
-  type ProviderInstanceId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -61,7 +57,6 @@ import {
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
-import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
@@ -76,13 +71,10 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
-import { deriveProviderInstanceConfigMap } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
-import { listCodexProviderSkills } from "./provider/Layers/CodexProvider.ts";
 import {
-  materializeCodexShadowHome,
-  resolveCodexHomeLayout,
-} from "./provider/Drivers/CodexHomeLayout.ts";
-import { mergeProviderInstanceEnvironment } from "./provider/ProviderInstanceEnvironment.ts";
+  makeProviderSkillsLister,
+  type ProviderSkillsListInput,
+} from "./provider/ProviderSkillsLister.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
@@ -94,10 +86,7 @@ import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
-import {
-  WorkspacePathOutsideRootError,
-  WorkspacePaths,
-} from "./workspace/Services/WorkspacePaths.ts";
+import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
 import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
 import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
 import { GitWorkflowService } from "./git/GitWorkflowService.ts";
@@ -127,25 +116,6 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
-const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
-
-function describeUnknownCause(cause: unknown): string {
-  if (cause instanceof Error) {
-    return cause.message;
-  }
-  if (typeof cause === "string") {
-    return cause;
-  }
-  return "Unknown error";
-}
-
-function describeCodexSkillListFailure(cause: unknown, input: { instanceId: string; cwd: string }) {
-  if (Cause.isTimeoutError(cause)) {
-    return `Timed out listing Codex skills after ${Duration.toSeconds(CODEX_SKILL_LIST_TIMEOUT)}s (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
-  }
-  return `Failed to list Codex skills (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
-}
-
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
@@ -171,7 +141,6 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
-const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 
 const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.dispatchCommand, AuthOrchestrationOperateScope],
@@ -285,7 +254,12 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
+const makeWsRpcLayer = (
+  currentSession: AuthenticatedSession,
+  listProviderSkills: (
+    input: ProviderSkillsListInput,
+  ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>,
+) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
@@ -306,10 +280,6 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const providerRegistry = yield* ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspacePaths = yield* WorkspacePaths;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
       const startup = yield* ServerRuntimeStartup;
@@ -334,98 +304,6 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const relayClient = yield* RelayClient.RelayClient;
-      const listProviderSkills = Effect.fn("ws.listProviderSkills")(function* (input: {
-        readonly instanceId: ProviderInstanceId;
-        readonly cwd: string;
-      }): Effect.fn.Return<ServerProviderSkillsListResult, ServerProviderSkillsListError> {
-        const providers = yield* providerRegistry.getProviders;
-        const snapshot = providers.find((provider) => provider.instanceId === input.instanceId);
-        if (!snapshot) {
-          return yield* new ServerProviderSkillsListError({
-            message: `Provider instance '${input.instanceId}' was not found.`,
-          });
-        }
-        if (snapshot.driver !== "codex") {
-          return { skills: snapshot.skills };
-        }
-
-        const settings = yield* serverSettings.getSettings.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerProviderSkillsListError({
-                message: "Failed to read provider settings.",
-                cause,
-              }),
-          ),
-        );
-        const instanceConfig = deriveProviderInstanceConfigMap(settings)[input.instanceId];
-        if (!instanceConfig || instanceConfig.driver !== "codex") {
-          return yield* new ServerProviderSkillsListError({
-            message: `Codex provider instance '${input.instanceId}' is not configured.`,
-          });
-        }
-
-        const decodedConfig = yield* decodeCodexSettings(instanceConfig.config ?? {}).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerProviderSkillsListError({
-                message: `Failed to decode Codex provider settings for '${input.instanceId}'.`,
-                cause,
-              }),
-          ),
-        );
-        const effectiveConfig = {
-          ...decodedConfig,
-          enabled: instanceConfig.enabled ?? decodedConfig.enabled,
-        };
-        if (!effectiveConfig.enabled) {
-          return { skills: snapshot.skills };
-        }
-        const normalizedCwd = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerProviderSkillsListError({
-                message: `Invalid Codex skills cwd '${input.cwd}': ${cause.message}`,
-                cause,
-              }),
-          ),
-        );
-        const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig).pipe(
-          Effect.provideService(Path.Path, path),
-        );
-        yield* materializeCodexShadowHome(homeLayout).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.mapError(
-            (cause) =>
-              new ServerProviderSkillsListError({
-                message: `Failed to prepare Codex home for '${input.instanceId}': ${describeUnknownCause(cause)}`,
-                cause,
-              }),
-          ),
-        );
-        const skills = yield* listCodexProviderSkills({
-          binaryPath: effectiveConfig.binaryPath,
-          ...(homeLayout.effectiveHomePath ? { homePath: homeLayout.effectiveHomePath } : {}),
-          cwd: normalizedCwd,
-          environment: mergeProviderInstanceEnvironment(instanceConfig.environment ?? []),
-        }).pipe(
-          Effect.scoped,
-          Effect.timeout(CODEX_SKILL_LIST_TIMEOUT),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-          Effect.mapError(
-            (cause) =>
-              new ServerProviderSkillsListError({
-                message: describeCodexSkillListFailure(cause, {
-                  instanceId: input.instanceId,
-                  cwd: normalizedCwd,
-                }),
-                cause,
-              }),
-          ),
-        );
-        return { skills };
-      });
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
@@ -1776,8 +1654,9 @@ const makeWsRpcLayer = (currentSession: AuthenticatedSession) =>
   );
 
 export const websocketRpcRouteLayer = Layer.unwrap(
-  Effect.succeed(
-    HttpRouter.add(
+  Effect.gen(function* () {
+    const listProviderSkills = yield* makeProviderSkillsLister();
+    return HttpRouter.add(
       "GET",
       "/ws",
       Effect.gen(function* () {
@@ -1794,7 +1673,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session).pipe(
+            makeWsRpcLayer(session, listProviderSkills).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(PreviewAutomationBroker.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
@@ -1833,6 +1712,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           EnvironmentInternalError: HttpServerRespondable.toResponse,
         }),
       ),
-    ),
-  ),
+    );
+  }),
 );
