@@ -190,6 +190,22 @@ Relevant tests live in:
 - `apps/server/src/server.test.ts`
 - `packages/client-runtime/src/state/runtime.test.ts`
 
+## Thread Detail Subscription Reliability
+
+This branch carries a server-side fix for a race in thread-detail websocket subscriptions. The bug can make the initial user prompt disappear from newly started conversations in packaged/static hosts such as the desktop app and VS Code extension, because those hosts are more likely to dispatch the first `thread.message-sent` event while the server is still loading the initial thread snapshot for `subscribeThread`.
+
+Expected behavior:
+
+- A new conversation's first user message remains visible after the optimistic row is replaced by server state.
+- `ORCHESTRATION_WS_METHODS.subscribeThread` attaches to the live orchestration event stream before loading the initial thread detail snapshot.
+- Thread-detail events emitted during the snapshot read are buffered and replayed after the snapshot when their sequence is newer than the snapshot sequence.
+- The fix is host-agnostic server reliability work. Preserve it for desktop, VS Code extension, and web clients unless upstream has equivalent snapshot-plus-live-tail subscription behavior.
+
+Primary files:
+
+- `apps/server/src/ws.ts`
+- `apps/server/src/server.test.ts`
+
 ## VS Code Extension Work
 
 This branch also carries the VS Code extension work that is not assumed to exist on `main`. Treat the VS Code extension, its desktop-backed integration model, workspace-scoped webview behavior, host-injected primary-environment bootstrap, host MCP bridge, release packaging, and related tests as part of this branch's customization set during upstream merges.
@@ -258,8 +274,9 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 5. Workspace-scoped Codex skill loading remains preserved so repo-local Codex skills for the active workspace continue to appear in the `$` skill picker.
 6. Version Control panel work remains preserved as a local customization unless `main` has an equivalent agent-aware version-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
 7. Version Control idle-power safeguards continue to ignore internal `.git/` watcher churn and use a conservative automatic remote Git fetch interval unless upstream ships equivalent low-churn behavior.
-8. Terminal-backed project actions reuse action terminals where possible and wait for terminal readiness before writing commands.
-9. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
+8. Thread-detail subscriptions preserve first-message events emitted during initial snapshot loading unless upstream ships equivalent snapshot-plus-live-tail buffering.
+9. Terminal-backed project actions reuse action terminals where possible and wait for terminal readiness before writing commands.
+10. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
 
 ## Retirement Criteria
 
