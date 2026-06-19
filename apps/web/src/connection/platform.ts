@@ -3,6 +3,7 @@ import {
   CloudSession,
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
+  PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
 } from "@t3tools/client-runtime/platform";
@@ -30,13 +31,13 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
+import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
+import { primaryEnvironmentHttpLayer } from "../environments/primary/httpLayer";
 import {
   getHostBearerToken,
   getHostLocalEnvironmentBootstrap,
 } from "../environments/primary/hostBootstrap";
-import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
@@ -197,6 +198,16 @@ const capabilitiesLayer = Layer.effectContext(
     const identity = RelayDeviceIdentity.of({
       deviceId: Effect.succeed(Option.none()),
     });
+    const primaryAuth = PrimaryEnvironmentAuth.of({
+      bearerToken: Effect.tryPromise({
+        try: readDesktopPrimaryBearerToken,
+        catch: (cause) =>
+          new ConnectionTransientError({
+            reason: "remote-unavailable",
+            message: `Could not load the desktop primary credential: ${String(cause)}`,
+          }),
+      }).pipe(Effect.map(Option.fromNullishOr)),
+    });
     const ssh = SshEnvironmentGateway.of({
       provision: Effect.fn("web.connectionPlatform.ssh.provision")(function* (target) {
         const bridge = window.desktopBridge;
@@ -256,6 +267,7 @@ const capabilitiesLayer = Layer.effectContext(
     });
 
     return Context.make(CloudSession, cloudSession).pipe(
+      Context.add(PrimaryEnvironmentAuth, primaryAuth),
       Context.add(RelayDeviceIdentity, identity),
       Context.add(ClientPresentation, presentation),
       Context.add(SshEnvironmentGateway, ssh),
@@ -298,10 +310,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
   }
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
-  }).pipe(
-    Effect.provideService(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
-    Effect.mapError(mapRemoteEnvironmentError),
-  );
+  }).pipe(Effect.provide(primaryEnvironmentHttpLayer), Effect.mapError(mapRemoteEnvironmentError));
   const hostEnvironmentId = getHostLocalEnvironmentBootstrap()?.environmentId;
   const hostBearerToken = getHostBearerToken();
   return new PrimaryConnectionRegistration({
@@ -319,32 +328,24 @@ const primaryRegistrationRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.either(Schedule.spaced("16 seconds")),
 );
 
-const platformConnectionSourceLayer = Layer.effect(
-  PlatformConnectionSource,
-  Effect.gen(function* () {
-    if (isHostedStaticApp()) {
-      return PlatformConnectionSource.of({
-        registrations: Stream.empty,
-      });
-    }
-    const httpClient = yield* HttpClient.HttpClient;
+const platformConnectionSourceLayer = Layer.sync(PlatformConnectionSource, () => {
+  if (isHostedStaticApp()) {
     return PlatformConnectionSource.of({
-      registrations: Stream.fromEffect(
-        loadPrimaryConnectionRegistration().pipe(
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
-      ).pipe(
-        Stream.tapError((error) =>
-          Effect.logWarning("Could not discover the primary environment.", {
-            error,
-          }),
-        ),
-        Stream.retry(primaryRegistrationRetrySchedule),
-        Stream.catchCause(() => Stream.empty),
-      ),
+      registrations: Stream.empty,
     });
-  }),
-);
+  }
+  return PlatformConnectionSource.of({
+    registrations: Stream.fromEffect(loadPrimaryConnectionRegistration()).pipe(
+      Stream.tapError((error) =>
+        Effect.logWarning("Could not discover the primary environment.", {
+          error,
+        }),
+      ),
+      Stream.retry(primaryRegistrationRetrySchedule),
+      Stream.catchCause(() => Stream.empty),
+    ),
+  });
+});
 
 const environmentOwnedDataCleanupLayer = Layer.succeed(
   EnvironmentOwnedDataCleanup,

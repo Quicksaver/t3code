@@ -2,9 +2,9 @@
 
 ## Last Upstream Merge
 
-Generated from local `main` at `fc10ed4c1`, `origin/main` at `434b29b82`, and `upstream/main` at `20f37f367`. No new upstream commits were available since the previously recorded upstream ref `20f37f367`, and no new `origin/main` commits were available since the previously recorded local-main ref `1f5306990`. Current local `main` is 218 commits ahead and 0 commits behind `upstream/main`, and 20 commits ahead and 0 commits behind `origin/main`; the remaining fork delta against current `upstream/main` is 250 files changed, 34324 insertions, and 975 deletions.
+Generated from local `main` at `5d66383ff`, `origin/main` at `434b29b82`, and `upstream/main` at `3e01c4bc5`. One new upstream commit was merged since the previously recorded upstream ref `20f37f367`: `3e01c4bc5` (`Migrate desktop auth to Clerk bridge (#3092)`). No new `origin/main` commits were available since the previously recorded origin ref `434b29b82`. After this merge commit, local `main` is 220 commits ahead and 0 commits behind `upstream/main`, and 23 commits ahead and 0 commits behind `origin/main`; the remaining fork delta against current `upstream/main` is 251 files changed, 34526 insertions, and 1233 deletions.
 
-No local customization is retired by this merge. Upstream added archived-thread and file-viewer surfaces on mobile, shared source-file preview helpers, origin-based worktree bootstrap controls, safer saved-environment deletion, repeated theme-DOM-sync avoidance, bound-host MCP endpoint handling, and SSH remote support for `fnm`. These upstream changes are authoritative; the local custom Version Control panel, VS Code extension, subagent threading, wide conversation defaults, workspace skill loading, terminal action reuse work, and mobile EAS ownership remain preserved around them.
+No local customization is retired by this merge. Upstream moved desktop authentication out of the web renderer and into a desktop-side Clerk bridge plus primary-environment bearer-token capability, deleted the old web `desktopClerk`/`desktopAuth` UI and IPC path, added local-environment bearer retrieval for desktop shells, added primary HTTP auth layering, and expanded desktop artifact packaging/release metadata. These upstream changes are authoritative; the local VS Code host bootstrap, custom Version Control panel, subagent threading, wide conversation defaults, workspace skill loading, terminal action reuse work, and mobile EAS ownership remain preserved around them.
 
 Concrete conflict notes from this merge:
 
@@ -13,6 +13,11 @@ Concrete conflict notes from this merge:
 - `apps/web/src/hooks/useHandleNewThread.ts` keeps the local VS Code-visible-project default selection through `primaryServerConfigAtom` and `primaryServerWelcomeAtom`, while accepting upstream's `resolveNewDraftStartFromOrigin(...)` default for new worktree drafts.
 - `apps/web/src/hooks/useTheme.ts` keeps local VS Code host appearance propagation and combines it with upstream's `lastAppliedTheme` guard so host-theme changes still apply without repeatedly syncing the same DOM theme state.
 - `apps/mobile/app.config.ts` still preserves the local `quicksaver` owner and EAS project id after accepting upstream mobile archive/file-viewer changes.
+- `apps/web/src/connection/platform.ts` keeps direct `t3HostBridge`/host-bootstrap primary registration so VS Code webviews can load workspace threads without first depending on `/.well-known/t3/environment`, while accepting upstream's `primaryEnvironmentHttpLayer` for descriptor fetches and desktop-managed primary auth.
+- `apps/web/src/environments/primary/desktopAuth.ts` and `apps/web/src/environments/primary/hostBootstrap.ts` preserve host-injected bearer tokens by feeding them into upstream's new primary bearer-token path before falling back to `desktopBridge.getLocalEnvironmentBearerToken()`, and tolerate host or desktop bridge test doubles that do not implement every optional bootstrap method.
+- `packages/client-runtime/src/connection/resolver.ts` accepts upstream's `PrimaryEnvironmentAuth` capability for desktop bearer tokens while preserving the local `PrimaryConnectionTarget.bearerToken` fallback used by host-injected VS Code primary environments.
+- `apps/web/src/lib/runtime.ts` and `apps/web/src/main.tsx` accept upstream's primary HTTP layer and Electron Clerk provider, while preserving VS Code hash-history routing and diagnostics installation.
+- `pnpm-lock.yaml` was regenerated from the merged package manifests after accepting upstream's workspace/package changes.
 - Validation for this merge used `pnpm exec vp check`, `pnpm exec vp run typecheck`, and `pnpm exec vp run lint:mobile`. `vp check` may still report warning-only schema-hoisting notices in upstream-added mobile connection files; `lint:mobile` may also warn when optional local `swiftlint`, `ktlint`, and `detekt` binaries are not installed.
 
 ## Debug Browser Launch
@@ -293,5 +298,5 @@ When retiring the local changes, remove the corresponding tests or update them t
 
 > Here are referenced the latest commit SHAs for the `main` branch of both the `origin` and `upstream` remotes. These SHAs are used to determine if any worktrees need to be updated with changes from `upstream/main` and `origin/main`.
 
-**Last origin/main commit SHA:** 690657914
-**Last upstream/main commit SHA:** 690657914
+**Last origin/main commit SHA:** 434b29b82
+**Last upstream/main commit SHA:** 3e01c4bc5

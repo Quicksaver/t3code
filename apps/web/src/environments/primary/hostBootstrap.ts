@@ -9,8 +9,8 @@ export function getHostLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap 
   }
 
   return (
-    window.t3HostBridge?.getLocalEnvironmentBootstrap() ??
-    window.desktopBridge?.getLocalEnvironmentBootstrap() ??
+    window.t3HostBridge?.getLocalEnvironmentBootstrap?.() ??
+    window.desktopBridge?.getLocalEnvironmentBootstrap?.() ??
     null
   );
 }

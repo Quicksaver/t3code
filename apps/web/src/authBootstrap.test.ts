@@ -1,5 +1,4 @@
 import {
-  AuthSessionState as AuthSessionStateSchema,
   EnvironmentAuthInvalidError,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -9,10 +8,11 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { installEnvironmentHttpTest } from "../test/environmentHttpTest";
+import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "./lib/runtime";
 
 type TestWindow = {
   location: URL;
@@ -38,8 +38,6 @@ const DESKTOP_AUTH = {
 } as const;
 
 const SESSION_EXPIRES_AT = DateTime.makeUnsafe("2026-04-05T00:00:00.000Z");
-const encodeAuthSessionState = Schema.encodeSync(AuthSessionStateSchema);
-
 const unauthenticatedSession = (auth: AuthSessionState["auth"]): AuthSessionState => ({
   authenticated: false,
   auth,
@@ -119,6 +117,7 @@ describe("resolveInitialServerAuthGateState", () => {
     disposeHttpTest = undefined;
     const { __resetServerAuthBootstrapForTests } = await import("./environments/primary");
     __resetServerAuthBootstrapForTests();
+    __setPrimaryHttpRunnerForTests();
     vi.unstubAllEnvs();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -207,50 +206,6 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.session).toBe(2);
   });
 
-  it("adds host bearer authorization to primary HTTP request init", async () => {
-    const testWindow = installTestBrowser("http://localhost/");
-    testWindow.t3HostBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "VS Code environment",
-        httpBaseUrl: "http://localhost:3773",
-        wsBaseUrl: "ws://localhost:3773",
-        bearerToken: "host-bearer-token",
-      }),
-    };
-
-    const { withPrimaryHostAuthorization } = await import("./environments/primary/requestInit");
-
-    const init = withPrimaryHostAuthorization({
-      credentials: "include",
-      headers: { accept: "application/json" },
-    });
-    expect(init.credentials).toBe("omit");
-    expect(new Headers(init.headers).get("accept")).toBe("application/json");
-    expect(new Headers(init.headers).get("authorization")).toBe("Bearer host-bearer-token");
-  });
-
-  it("does not add host bearer authorization to the public descriptor request", async () => {
-    const testWindow = installTestBrowser("http://localhost/");
-    testWindow.t3HostBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "VS Code environment",
-        httpBaseUrl: "http://localhost:3773",
-        wsBaseUrl: "ws://localhost:3773",
-        bearerToken: "host-bearer-token",
-      }),
-    };
-
-    const { withPrimaryHostAuthorization } = await import("./environments/primary/requestInit");
-
-    const init = withPrimaryHostAuthorization(
-      { headers: { accept: "application/json" } },
-      "http://localhost:3773/.well-known/t3/environment",
-    );
-    expect(init.credentials).toBeUndefined();
-    expect(new Headers(init.headers).get("accept")).toBe("application/json");
-    expect(new Headers(init.headers).get("authorization")).toBeNull();
-  });
-
   it("uses https urls when the primary environment uses wss", async () => {
     await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
     vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");
@@ -321,18 +276,22 @@ describe("resolveInitialServerAuthGateState", () => {
 
   it("retries transient auth session bootstrap failures after restart", async () => {
     vi.useFakeTimers();
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(new Response("Bad Gateway", { status: 502 }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify(encodeAuthSessionState(unauthenticatedSession(LOOPBACK_AUTH))),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      );
-    vi.stubGlobal("fetch", fetchMock);
+    let attempts = 0;
+    const request = HttpClientRequest.get("http://localhost/api/auth/session");
+    const response = HttpClientResponse.fromWeb(
+      request,
+      new Response("Bad Gateway", { status: 502 }),
+    );
+    const runner: PrimaryHttpEffectRunner = async <A>() => {
+      attempts += 1;
+      if (attempts < 4) {
+        throw new HttpClientError.HttpClientError({
+          reason: new HttpClientError.StatusCodeError({ request, response }),
+        });
+      }
+      return unauthenticatedSession(LOOPBACK_AUTH) as A;
+    };
+    __setPrimaryHttpRunnerForTests(runner);
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
@@ -343,7 +302,7 @@ describe("resolveInitialServerAuthGateState", () => {
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(attempts).toBe(4);
   });
 
   it("takes a pairing token from the location hash and strips it immediately", async () => {

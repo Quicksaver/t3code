@@ -10,6 +10,7 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import { ManagedRelayClient } from "../relay/managedRelay.ts";
 import {
   CloudSession,
+  PrimaryEnvironmentAuth,
   RelayDeviceIdentity,
   SshEnvironmentGateway,
 } from "../platform/capabilities.ts";
@@ -59,17 +60,20 @@ function primarySocketUrl(target: PrimaryConnectionTarget): string {
 }
 
 const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary")(function* () {
+  const auth = yield* PrimaryEnvironmentAuth;
   const remote = yield* RemoteEnvironmentAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.primary")(function* (
     target: PrimaryConnectionTarget,
   ) {
-    if (target.bearerToken) {
+    const platformBearerToken = yield* auth.bearerToken;
+    const bearerToken = target.bearerToken ?? Option.getOrUndefined(platformBearerToken);
+    if (bearerToken) {
       const authorized = yield* remote.authorizeBearer({
         expectedEnvironmentId: target.environmentId,
         httpBaseUrl: target.httpBaseUrl,
         wsBaseUrl: target.wsBaseUrl,
-        bearerToken: target.bearerToken,
+        bearerToken,
       });
       return {
         environmentId: authorized.environmentId,
