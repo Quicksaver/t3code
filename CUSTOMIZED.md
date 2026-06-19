@@ -269,3 +269,10 @@ These local patches can be removed when upstream provides all of the following:
 - Tests or contracts that guarantee child output and actions stay scoped to the child conversation view.
 
 When retiring the local changes, remove the corresponding tests or update them to assert the upstream behavior directly.
+
+## Worktrees Tracking
+
+> Here are referenced the latest commit SHAs for the `main` branch of both the `origin` and `upstream` remotes. These SHAs are used to determine if any worktrees need to be updated with changes from `upstream/main` and `origin/main`.
+
+**Last origin/main commit SHA:** 690657914
+**Last upstream/main commit SHA:** 690657914
