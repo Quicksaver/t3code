@@ -289,6 +289,7 @@ export const DesktopUpdateCheckResultSchema = Schema.Struct({
 });
 
 export interface DesktopEnvironmentBootstrap {
+  environmentId?: EnvironmentId;
   label: string;
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
@@ -300,6 +301,7 @@ export interface DesktopEnvironmentBootstrap {
 export type SensitiveString = string;
 
 export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
+  environmentId: Schema.optionalKey(EnvironmentId),
   label: Schema.String,
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),

@@ -32,6 +32,10 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
+import {
+  getHostBearerToken,
+  getHostLocalEnvironmentBootstrap,
+} from "../environments/primary/hostBootstrap";
 import { primaryEnvironmentRequestInit } from "../environments/primary/requestInit";
 import { readPrimaryEnvironmentTarget } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
@@ -259,9 +263,32 @@ const capabilitiesLayer = Layer.effectContext(
   }),
 );
 
+function readHostPrimaryConnectionRegistration(): PrimaryConnectionRegistration | null {
+  const bootstrap = getHostLocalEnvironmentBootstrap();
+  if (!bootstrap?.environmentId || !bootstrap.httpBaseUrl || !bootstrap.wsBaseUrl) {
+    return null;
+  }
+
+  const bearerToken = getHostBearerToken();
+  return new PrimaryConnectionRegistration({
+    target: new PrimaryConnectionTarget({
+      environmentId: bootstrap.environmentId,
+      label: bootstrap.label,
+      httpBaseUrl: bootstrap.httpBaseUrl,
+      wsBaseUrl: bootstrap.wsBaseUrl,
+      ...(bearerToken ? { bearerToken } : {}),
+    }),
+  });
+}
+
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* () {
+  const hostRegistration = readHostPrimaryConnectionRegistration();
+  if (hostRegistration) {
+    return hostRegistration;
+  }
+
   const resolved = readPrimaryEnvironmentTarget();
   if (resolved === null) {
     return yield* new ConnectionBlockedError({
@@ -275,12 +302,15 @@ const loadPrimaryConnectionRegistration = Effect.fn(
     Effect.provideService(FetchHttpClient.RequestInit, primaryEnvironmentRequestInit),
     Effect.mapError(mapRemoteEnvironmentError),
   );
+  const hostEnvironmentId = getHostLocalEnvironmentBootstrap()?.environmentId;
+  const hostBearerToken = getHostBearerToken();
   return new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
-      environmentId: descriptor.environmentId,
+      environmentId: hostEnvironmentId ?? descriptor.environmentId,
       label: descriptor.label,
       httpBaseUrl: resolved.target.httpBaseUrl,
       wsBaseUrl: resolved.target.wsBaseUrl,
+      ...(hostBearerToken ? { bearerToken: hostBearerToken } : {}),
     }),
   });
 });
@@ -289,10 +319,15 @@ const primaryRegistrationRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.either(Schedule.spaced("16 seconds")),
 );
 
+function hasHostPrimaryEnvironmentBootstrap(): boolean {
+  const bootstrap = getHostLocalEnvironmentBootstrap();
+  return Boolean(bootstrap?.httpBaseUrl && bootstrap.wsBaseUrl);
+}
+
 const platformConnectionSourceLayer = Layer.effect(
   PlatformConnectionSource,
   Effect.gen(function* () {
-    if (isHostedStaticApp()) {
+    if (!hasHostPrimaryEnvironmentBootstrap() && isHostedStaticApp()) {
       return PlatformConnectionSource.of({
         registrations: Stream.empty,
       });

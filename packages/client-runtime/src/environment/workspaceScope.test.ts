@@ -65,6 +65,32 @@ describe("filterProjectsForVscodeScope", () => {
       }),
     ).toEqual([currentProject]);
   });
+
+  it("keeps same-root projects when VS Code bootstrap project ids differ from existing history", () => {
+    const historicalProject = {
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-historical"),
+      workspaceRoot: "/workspace/current/",
+    };
+    const bootstrappedProject = {
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-bootstrapped"),
+      workspaceRoot: "/workspace/current",
+    };
+    const siblingProject = {
+      environmentId: localEnvironmentId,
+      id: ProjectId.make("project-sibling"),
+      workspaceRoot: "/workspace/sibling",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([historicalProject, siblingProject, bootstrappedProject], {
+        environmentId: localEnvironmentId,
+        projectIds: [ProjectId.make("project-bootstrapped")],
+        cwds: ["/workspace/current"],
+      }),
+    ).toEqual([historicalProject, bootstrappedProject]);
+  });
 });
 
 describe("resolveVscodeInitialThreadRef", () => {

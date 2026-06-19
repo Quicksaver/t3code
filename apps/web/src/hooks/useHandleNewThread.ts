@@ -17,6 +17,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
+import { getHostVscodeWorkspaceBootstrap } from "../environments/primary/hostBootstrap";
 import { isVscodeWebview } from "../env";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -207,15 +208,16 @@ export function useHandleNewThread() {
   const projects = useProjects();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
+  const vscodeWorkspaceBootstrap = isVscodeWebview ? getHostVscodeWorkspaceBootstrap() : null;
   const visibleProjects = useMemo(
     () =>
       isVscodeWebview
         ? filterProjectsForVscodeScope(
             projects,
-            resolveVscodeProjectScope({ serverConfig, serverWelcome }),
+            resolveVscodeProjectScope({ serverConfig, serverWelcome, vscodeWorkspaceBootstrap }),
           )
         : projects,
-    [projects, serverConfig, serverWelcome],
+    [projects, serverConfig, serverWelcome, vscodeWorkspaceBootstrap],
   );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({

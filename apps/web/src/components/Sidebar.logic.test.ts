@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  buildSidebarThreadRows,
   createThreadJumpHintVisibilityController,
   filterProjectsForVscodeScope,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
+  isContextualSubagentSidebarThread,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isRootSidebarThread,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
@@ -29,8 +32,10 @@ import {
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
+  ProviderItemId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
@@ -760,6 +765,135 @@ describe("getVisibleSidebarThreadIds", () => {
         },
       ]),
     ).toEqual([ThreadId.make("thread-12"), ThreadId.make("thread-11")]);
+  });
+});
+
+describe("isRootSidebarThread", () => {
+  it("keeps root threads and hides subagent child threads from root sidebar lists", () => {
+    expect(isRootSidebarThread(makeThread())).toBe(true);
+    expect(
+      isRootSidebarThread(
+        makeThread({
+          id: ThreadId.make("thread-subagent"),
+          parentRelation: {
+            kind: "subagent",
+            rootThreadId: ThreadId.make("thread-root"),
+            parentThreadId: ThreadId.make("thread-root"),
+            parentTurnId: TurnId.make("turn-root"),
+            parentItemId: ProviderItemId.make("item-root"),
+            parentActivitySequence: 0,
+            providerThreadId: "provider-thread-subagent",
+            titleSeed: "Inspect auth flow",
+            depth: 1,
+            startedAt: "2026-03-09T10:00:00.000Z",
+            completedAt: null,
+            status: "running",
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isContextualSubagentSidebarThread", () => {
+  it("shows subagents only when they are active or running", () => {
+    const child = makeThread({
+      id: ThreadId.make("thread-subagent"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: ThreadId.make("thread-root"),
+        parentThreadId: ThreadId.make("thread-root"),
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-root"),
+        parentActivitySequence: 0,
+        providerThreadId: "provider-thread-subagent",
+        titleSeed: "Inspect auth flow",
+        depth: 1,
+        startedAt: "2026-03-09T10:00:00.000Z",
+        completedAt: "2026-03-09T10:02:00.000Z",
+        status: "completed",
+      },
+    });
+
+    expect(isContextualSubagentSidebarThread(child, null)).toBe(false);
+    expect(isContextualSubagentSidebarThread(child, child.id)).toBe(true);
+    expect(
+      isContextualSubagentSidebarThread(
+        {
+          ...child,
+          parentRelation: {
+            ...child.parentRelation!,
+            status: "running",
+          },
+        },
+        null,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("buildSidebarThreadRows", () => {
+  it("nests active and running subagents under their parent without showing completed inactive ones", () => {
+    const root = makeThread({ id: ThreadId.make("thread-root") });
+    const activeChild = makeThread({
+      id: ThreadId.make("thread-active-child"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-active"),
+        parentActivitySequence: 0,
+        providerThreadId: "provider-thread-active-child",
+        titleSeed: "Inspect auth flow",
+        depth: 1,
+        startedAt: "2026-03-09T10:00:00.000Z",
+        completedAt: "2026-03-09T10:02:00.000Z",
+        status: "completed",
+      },
+    });
+    const runningChild = makeThread({
+      id: ThreadId.make("thread-running-child"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-running"),
+        parentActivitySequence: 1,
+        providerThreadId: "provider-thread-running-child",
+        titleSeed: "Check tests",
+        depth: 1,
+        startedAt: "2026-03-09T10:01:00.000Z",
+        completedAt: null,
+        status: "running",
+      },
+    });
+    const inactiveChild = makeThread({
+      id: ThreadId.make("thread-inactive-child"),
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        parentTurnId: TurnId.make("turn-root"),
+        parentItemId: ProviderItemId.make("item-inactive"),
+        parentActivitySequence: 2,
+        providerThreadId: "provider-thread-inactive-child",
+        titleSeed: "Summarize docs",
+        depth: 1,
+        startedAt: "2026-03-09T10:02:00.000Z",
+        completedAt: "2026-03-09T10:03:00.000Z",
+        status: "completed",
+      },
+    });
+
+    expect(
+      buildSidebarThreadRows([root, activeChild, runningChild, inactiveChild], activeChild.id),
+    ).toEqual([
+      { thread: root, indentLevel: 0 },
+      { thread: activeChild, indentLevel: 1 },
+      { thread: runningChild, indentLevel: 1 },
+    ]);
   });
 });
 

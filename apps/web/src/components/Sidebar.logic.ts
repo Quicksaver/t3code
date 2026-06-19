@@ -29,6 +29,29 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 
+type SidebarThreadParentRelationInput = {
+  readonly parentRelation?: { readonly kind: string } | null | undefined;
+};
+
+type SidebarThreadVisibilityInput = {
+  readonly id: string;
+  readonly parentRelation?:
+    | {
+        readonly kind: string;
+        readonly parentThreadId?: string | undefined;
+        readonly depth?: number | undefined;
+        readonly status?: string | undefined;
+      }
+    | null
+    | undefined;
+  readonly session?: { readonly status: string } | null | undefined;
+};
+
+export type SidebarThreadRowModel<TThread> = {
+  readonly thread: TThread;
+  readonly indentLevel: number;
+};
+
 export type ThreadTraversalDirection = "previous" | "next";
 
 export interface ThreadStatusPill {
@@ -291,6 +314,76 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   return renderedProjects.flatMap((renderedProject) =>
     renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
   );
+}
+
+export function isRootSidebarThread<T extends SidebarThreadParentRelationInput>(
+  thread: T,
+): boolean {
+  return thread.parentRelation?.kind !== "subagent";
+}
+
+export function isContextualSubagentSidebarThread<T extends SidebarThreadVisibilityInput>(
+  thread: T,
+  activeThreadId: string | null | undefined,
+): boolean {
+  if (thread.parentRelation?.kind !== "subagent") {
+    return false;
+  }
+  if (activeThreadId !== null && activeThreadId !== undefined && thread.id === activeThreadId) {
+    return true;
+  }
+  return thread.parentRelation.status === "running" || thread.session?.status === "running";
+}
+
+export function buildSidebarThreadRows<T extends SidebarThreadVisibilityInput>(
+  threads: readonly T[],
+  activeThreadId: string | null | undefined,
+): SidebarThreadRowModel<T>[] {
+  const rootRows: SidebarThreadRowModel<T>[] = [];
+  const childRowsByParentId = new Map<string, SidebarThreadRowModel<T>[]>();
+  const orphanChildRows: SidebarThreadRowModel<T>[] = [];
+
+  for (const thread of threads) {
+    if (isRootSidebarThread(thread)) {
+      rootRows.push({ thread, indentLevel: 0 });
+      continue;
+    }
+    if (!isContextualSubagentSidebarThread(thread, activeThreadId)) {
+      continue;
+    }
+
+    const indentLevel = Math.max(1, thread.parentRelation?.depth ?? 1);
+    const row = { thread, indentLevel };
+    const parentThreadId = thread.parentRelation?.parentThreadId;
+    if (!parentThreadId) {
+      orphanChildRows.push(row);
+      continue;
+    }
+    const existing = childRowsByParentId.get(parentThreadId);
+    if (existing) {
+      existing.push(row);
+    } else {
+      childRowsByParentId.set(parentThreadId, [row]);
+    }
+  }
+
+  const rows: SidebarThreadRowModel<T>[] = [];
+  const renderedChildThreadIds = new Set<string>();
+  for (const row of rootRows) {
+    rows.push(row);
+    const childRows = childRowsByParentId.get(row.thread.id) ?? [];
+    rows.push(...childRows);
+    for (const childRow of childRows) {
+      renderedChildThreadIds.add(childRow.thread.id);
+    }
+  }
+  for (const row of [...childRowsByParentId.values()].flat()) {
+    if (!renderedChildThreadIds.has(row.thread.id)) {
+      rows.push(row);
+    }
+  }
+  rows.push(...orphanChildRows);
+  return rows;
 }
 
 export function getSidebarThreadIdsToPrewarm<TThreadId>(

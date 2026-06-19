@@ -11,6 +11,7 @@ import {
 describe("hostedPairing", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("reads hosted pairing host and query token parameters", () => {
@@ -90,5 +91,18 @@ describe("hostedPairing", () => {
 
     vi.stubEnv("VITE_HTTP_URL", "https://backend.example.com");
     expect(isHostedStaticApp(new URL("https://nightly.app.t3.codes/"))).toBe(false);
+  });
+
+  it("never treats VS Code webviews as hosted static apps", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://app.t3.codes");
+    vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
+    vi.stubGlobal("window", {
+      __T3_IS_VSCODE_WEBVIEW: true,
+      location: { href: "vscode-webview://example/index.html" },
+    });
+
+    expect(isHostedStaticApp(new URL("vscode-webview://example/index.html"))).toBe(false);
   });
 });

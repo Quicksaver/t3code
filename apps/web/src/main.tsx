@@ -17,6 +17,7 @@ import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { installVscodeDiagnostics } from "./vscodeDiagnostics";
 
 // Electron and VS Code webviews load the app from file-backed shells, so hash history avoids path resolution issues.
 const history = isElectron || isVscodeWebview ? createHashHistory() : createBrowserHistory();
@@ -25,6 +26,9 @@ const router = getRouter(history);
 
 if (isElectron) {
   syncDocumentWindowControlsOverlayClass();
+}
+if (isVscodeWebview) {
+  installVscodeDiagnostics();
 }
 
 document.title = APP_DISPLAY_NAME;

@@ -24,6 +24,25 @@ export type VscodeBootstrapProject = {
   readonly isActive?: boolean;
 };
 
+function normalizeWorkspaceRoot(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.replace(/[/\\]+$/, "") || trimmed;
+}
+
+function workspaceRootsEqual(left: string, right: string): boolean {
+  return normalizeWorkspaceRoot(left) === normalizeWorkspaceRoot(right);
+}
+
+function scopeMatchesProjectRoot(scope: VscodeProjectScope, projectRoot: string | null): boolean {
+  if (!projectRoot) {
+    return false;
+  }
+  if (scope.cwds && scope.cwds.length > 0) {
+    return scope.cwds.some((cwd) => workspaceRootsEqual(projectRoot, cwd));
+  }
+  return typeof scope.cwd === "string" && workspaceRootsEqual(projectRoot, scope.cwd);
+}
+
 export function resolveVscodeProjectScope(input: {
   readonly serverWelcome:
     | {
@@ -93,15 +112,15 @@ export function filterProjectsForVscodeScope<
       return false;
     }
     if (scope.projectIds && scope.projectIds.length > 0) {
-      return scope.projectIds.includes(project.id);
+      return scope.projectIds.includes(project.id) || scopeMatchesProjectRoot(scope, projectCwd);
     }
     if (scope.projectId) {
-      return project.id === scope.projectId;
+      return project.id === scope.projectId || scopeMatchesProjectRoot(scope, projectCwd);
     }
     if (scope.cwds && scope.cwds.length > 0) {
-      return projectCwd !== null && scope.cwds.includes(projectCwd);
+      return scopeMatchesProjectRoot(scope, projectCwd);
     }
-    return Boolean(scope.cwd) && projectCwd === scope.cwd;
+    return scopeMatchesProjectRoot(scope, projectCwd);
   });
 }
 

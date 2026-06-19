@@ -58,17 +58,39 @@ function primarySocketUrl(target: PrimaryConnectionTarget): string {
   return url.toString();
 }
 
-const primaryBroker = Effect.fn("clientRuntime.connection.broker.primary")(
-  (target: PrimaryConnectionTarget) =>
-    Effect.succeed({
+const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary")(function* () {
+  const remote = yield* RemoteEnvironmentAuthorization;
+
+  return Effect.fn("clientRuntime.connection.broker.primary")(function* (
+    target: PrimaryConnectionTarget,
+  ) {
+    if (target.bearerToken) {
+      const authorized = yield* remote.authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        httpBaseUrl: target.httpBaseUrl,
+        wsBaseUrl: target.wsBaseUrl,
+        bearerToken: target.bearerToken,
+      });
+      return {
+        environmentId: authorized.environmentId,
+        label: authorized.label,
+        httpBaseUrl: authorized.httpBaseUrl,
+        socketUrl: authorized.socketUrl,
+        httpAuthorization: authorized.httpAuthorization,
+        target,
+      } satisfies PreparedConnection;
+    }
+
+    return {
       environmentId: target.environmentId,
       label: target.label,
       httpBaseUrl: target.httpBaseUrl,
       socketUrl: primarySocketUrl(target),
       httpAuthorization: null,
       target,
-    } satisfies PreparedConnection),
-);
+    } satisfies PreparedConnection;
+  });
+});
 
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore;
@@ -228,6 +250,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
 export const connectionResolverLayer = Layer.effect(
   ConnectionResolver,
   Effect.gen(function* () {
+    const primary = yield* makePrimaryBroker();
     const bearer = yield* makeBearerBroker();
     const relay = yield* makeRelayBroker();
     const ssh = yield* makeSshBroker();
@@ -242,7 +265,7 @@ export const connectionResolverLayer = Layer.effect(
       });
       switch (target._tag) {
         case "PrimaryConnectionTarget":
-          return yield* primaryBroker(target);
+          return yield* primary(target);
         case "BearerConnectionTarget":
           return yield* bearer({ ...entry, target });
         case "RelayConnectionTarget":

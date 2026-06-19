@@ -380,6 +380,7 @@ class WebviewBackendConnectionBroadcaster {
 
   broadcast(connection: WebviewBackendConnection): void {
     const webviewConnection: WebviewBackendConnection = {
+      environmentId: connection.environmentId,
       httpBaseUrl: connection.httpBaseUrl,
       wsBaseUrl: connection.wsBaseUrl,
       bearerToken: connection.bearerToken,

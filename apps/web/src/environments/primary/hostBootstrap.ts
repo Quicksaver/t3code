@@ -1,4 +1,7 @@
-import type { DesktopEnvironmentBootstrap } from "@t3tools/contracts";
+import type {
+  DesktopEnvironmentBootstrap,
+  T3HostVscodeWorkspaceBootstrap,
+} from "@t3tools/contracts";
 
 export function getHostLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap | null {
   if (typeof window === "undefined") {
@@ -10,6 +13,14 @@ export function getHostLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap 
     window.desktopBridge?.getLocalEnvironmentBootstrap() ??
     null
   );
+}
+
+export function getHostVscodeWorkspaceBootstrap(): T3HostVscodeWorkspaceBootstrap | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.t3HostBridge?.getVscodeWorkspaceBootstrap?.() ?? null;
 }
 
 export function getHostBearerToken(): string | null {

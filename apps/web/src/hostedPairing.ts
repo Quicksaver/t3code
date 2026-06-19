@@ -31,7 +31,15 @@ function originFromUrl(value: string): string | null {
   }
 }
 
+function isVscodeWebviewHost(): boolean {
+  return typeof window !== "undefined" && window.__T3_IS_VSCODE_WEBVIEW === true;
+}
+
 export function isHostedStaticApp(url: URL = new URL(window.location.href)): boolean {
+  if (isVscodeWebviewHost()) {
+    return false;
+  }
+
   if (configuredBackendUrl()) {
     return false;
   }
