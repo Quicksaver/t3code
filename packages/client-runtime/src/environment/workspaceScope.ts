@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { scopedThreadKey, scopeThreadRef } from "./scoped.ts";
+import { getThreadSortTimestamp, toSortableTimestamp } from "../state/threadSort.ts";
 
 export type VscodeProjectScope = {
   readonly environmentId: EnvironmentId | null;
@@ -118,42 +119,17 @@ export type VscodeInitialThreadCandidate = {
   }>;
 };
 
-function toSortableTimestamp(iso: string | null | undefined): number | null {
-  if (!iso) return null;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function getFirstSortableTimestamp(...values: Array<string | null | undefined>): number | null {
-  for (const value of values) {
-    const timestamp = toSortableTimestamp(value);
-    if (timestamp !== null) {
-      return timestamp;
-    }
-  }
-  return null;
-}
-
 function getLatestUserMessageTimestamp(thread: VscodeInitialThreadCandidate): number {
-  if (thread.latestUserMessageAt) {
-    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
-  }
-
-  let latestUserMessageTimestamp: number | null = null;
-  for (const message of thread.messages ?? []) {
-    if (message.role !== "user") continue;
-    const messageTimestamp = toSortableTimestamp(message.createdAt);
-    if (messageTimestamp === null) continue;
-    latestUserMessageTimestamp =
-      latestUserMessageTimestamp === null
-        ? messageTimestamp
-        : Math.max(latestUserMessageTimestamp, messageTimestamp);
-  }
-
-  return (
-    latestUserMessageTimestamp ??
-    getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ??
-    Number.NEGATIVE_INFINITY
+  return getThreadSortTimestamp(
+    {
+      createdAt: thread.createdAt ?? "",
+      updatedAt: thread.updatedAt ?? "",
+      ...(thread.latestUserMessageAt !== undefined
+        ? { latestUserMessageAt: thread.latestUserMessageAt }
+        : {}),
+      ...(thread.messages !== undefined ? { messages: thread.messages } : {}),
+    },
+    "updated_at",
   );
 }
 

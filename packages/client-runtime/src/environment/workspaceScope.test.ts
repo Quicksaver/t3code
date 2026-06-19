@@ -101,4 +101,40 @@ describe("resolveVscodeInitialThreadRef", () => {
       threadId: activeOlder.id,
     });
   });
+
+  it("uses shared latest-user-message recency when last-visited state is tied", () => {
+    const olderUpdatedNewerPrompt = {
+      id: ThreadId.make("thread-older-updated-newer-prompt"),
+      environmentId: localEnvironmentId,
+      projectId: ProjectId.make("project-active"),
+      archivedAt: null,
+      updatedAt: "2026-03-09T12:00:00.000Z",
+      latestUserMessageAt: "2026-03-09T10:00:00.000Z",
+    };
+    const newerUserPrompt = {
+      id: ThreadId.make("thread-newer-prompt"),
+      environmentId: localEnvironmentId,
+      projectId: ProjectId.make("project-active"),
+      archivedAt: null,
+      updatedAt: "2026-03-09T11:00:00.000Z",
+      messages: [
+        { role: "assistant", createdAt: "2026-03-09T12:30:00.000Z" },
+        { role: "user", createdAt: "2026-03-09T11:30:00.000Z" },
+      ],
+    };
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [olderUpdatedNewerPrompt, newerUserPrompt],
+        threadLastVisitedAtById: {},
+        scope: {
+          environmentId: localEnvironmentId,
+          projectId: ProjectId.make("project-active"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: newerUserPrompt.id,
+    });
+  });
 });

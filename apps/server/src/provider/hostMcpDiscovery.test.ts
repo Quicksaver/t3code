@@ -129,6 +129,48 @@ describe("host MCP discovery", () => {
     ).resolves.toEqual([bootstrapServer]);
   });
 
+  it("uses the advertised socket path without deriving an HTTP MCP endpoint", async () => {
+    const t3Home = makeT3Home();
+    const nowMs = Date.now();
+    const socketPath = "/tmp/t3code-vscode-bound-host-audit/mcp.sock";
+    const probedSocketPaths: string[] = [];
+    const discoveredServer = {
+      name: "t3code-vscode-discovered",
+      socketPath,
+    };
+    writeHostMcpAdvertisement({
+      t3Home,
+      advertisement: createHostMcpAdvertisement({
+        hostId: "host-a",
+        nowMs,
+        mcpServer: discoveredServer,
+        workspaceFolders: [
+          {
+            key: "file::/repo",
+            name: "repo",
+            cwd: "/repo",
+            uriScheme: "file",
+            uriAuthority: "",
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      resolveHostMcpServersForWorkspace({
+        t3Home,
+        workspaceRoot: "/repo",
+        bootstrapServers: [],
+        socketPathExists: (candidateSocketPath) => candidateSocketPath === socketPath,
+        probe: async (candidateSocketPath) => {
+          probedSocketPaths.push(candidateSocketPath);
+          return true;
+        },
+      }),
+    ).resolves.toEqual([discoveredServer]);
+    expect(probedSocketPaths).toEqual([socketPath]);
+  });
+
   it("falls back to bootstrap servers when provider-start discovery fails", async () => {
     const t3Home = path.join(makeT3Home(), "not-a-directory");
     fs.writeFileSync(t3Home, "");
