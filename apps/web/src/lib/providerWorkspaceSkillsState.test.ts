@@ -1,11 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
-
-vi.mock("../environments/runtime", () => ({
-  readEnvironmentConnection: vi.fn(() => null),
-  subscribeEnvironmentConnections: vi.fn(() => () => undefined),
-  subscribeProviderInvalidations: vi.fn(() => () => undefined),
-}));
+import { describe, expect, it } from "vite-plus/test";
 
 import { resolvePendingProviderWorkspaceSkills } from "./providerWorkspaceSkillsState";
 
