@@ -1067,6 +1067,10 @@ describe("resolveThreadListClassName", () => {
     const className = resolveThreadListClassName({ hideThreadGroupRail: true });
 
     expect(className).toContain("border-l-0");
+    expect(className).toContain("mx-0");
+    expect(className).toContain("px-0");
+    expect(className).toContain("sm:mx-0");
+    expect(className).toContain("sm:px-0");
   });
 });
 

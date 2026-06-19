@@ -9,6 +9,7 @@ The current behavior is:
 - A Codex subagent is represented as its own conversation thread.
 - Active subagent threads appear in the sidebar nested under the direct parent that spawned them.
 - Completed, errored, interrupted, or stopped subagent threads are normally hidden from the sidebar but remain reachable from the parent conversation view. When a terminal subagent conversation is the active route, that subagent and any intermediate subagent ancestors are shown in the sidebar at their normal nested positions until the user navigates away.
+- In the VS Code extension sidebar, project chrome is hidden and conversation rows are shown directly. The same active/terminal subagent visibility rules apply, but the project-style indentation rail, extra child padding, and child-dot marker are suppressed so rows do not look visually nested under an omitted project row.
 - A parent conversation view shows only parent-owned output and subagent summary blocks for direct children.
 - When Codex resumes an existing subagent with a follow-up prompt, the parent conversation appends a new subagent summary block for that resumed activity while preserving the original block, and the same child thread appears in the sidebar as running again until the resumed turn reaches a terminal state.
 - A child conversation view shows the raw initial prompt that launched that child when Codex exposes it, followed by that child's output, tool calls, diffs, MCP calls, and other actions. Grandchildren appear only as blocks inside their direct parent child view.
@@ -74,7 +75,7 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 ## Web Implementation
 
-1. Sidebar nesting is driven by `parentRelation`. Active subagents render under their direct parent only. Terminal subagents are omitted from the sidebar during normal parent browsing, but the currently open terminal child path remains visible and indented while that child or nested descendant is selected.
+1. Sidebar nesting is driven by `parentRelation`. Active subagents render under their direct parent only. Terminal subagents are omitted from the sidebar during normal parent browsing, but the currently open terminal child path remains visible and indented while that child or nested descendant is selected. VS Code keeps this visibility/routing behavior while flattening row chrome because the extension sidebar omits the project row that normally provides the visual parent context.
 
 2. Conversation detail routing accepts hidden child threads through projected/synthetic shells. A child thread can be opened from its parent block even after it has disappeared from the active sidebar.
 

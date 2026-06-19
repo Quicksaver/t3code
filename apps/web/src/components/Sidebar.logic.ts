@@ -463,7 +463,7 @@ export function resolveThreadRowClassName(input: {
 export function resolveThreadListClassName(input: { hideThreadGroupRail: boolean }): string {
   return cn(
     "mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5",
-    input.hideThreadGroupRail && "border-l-0",
+    input.hideThreadGroupRail && "mx-0 border-l-0 px-0 sm:mx-0 sm:px-0",
   );
 }
 

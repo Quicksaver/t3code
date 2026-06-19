@@ -319,15 +319,10 @@ const primaryRegistrationRetrySchedule = Schedule.exponential("1 second").pipe(
   Schedule.either(Schedule.spaced("16 seconds")),
 );
 
-function hasHostPrimaryEnvironmentBootstrap(): boolean {
-  const bootstrap = getHostLocalEnvironmentBootstrap();
-  return Boolean(bootstrap?.httpBaseUrl && bootstrap.wsBaseUrl);
-}
-
 const platformConnectionSourceLayer = Layer.effect(
   PlatformConnectionSource,
   Effect.gen(function* () {
-    if (!hasHostPrimaryEnvironmentBootstrap() && isHostedStaticApp()) {
+    if (isHostedStaticApp()) {
       return PlatformConnectionSource.of({
         registrations: Stream.empty,
       });

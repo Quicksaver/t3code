@@ -192,9 +192,11 @@ Relevant tests live in:
 
 ## VS Code Extension Work
 
-This branch also carries the VS Code extension work that is not assumed to exist on `main`. Treat the VS Code extension, its desktop-backed integration model, workspace-scoped webview behavior, host MCP bridge, release packaging, and related tests as part of this branch's customization set during upstream merges.
+This branch also carries the VS Code extension work that is not assumed to exist on `main`. Treat the VS Code extension, its desktop-backed integration model, workspace-scoped webview behavior, host-injected primary-environment bootstrap, host MCP bridge, release packaging, and related tests as part of this branch's customization set during upstream merges.
 
 VS Code workspace-folder identity should stay aligned with the shared desktop/host-MCP workspace helpers in `packages/shared/src/workspaceFolders.ts`; do not reintroduce independent active-folder matching in the extension.
+
+The VS Code webview is a host-managed workspace surface, not a normal hosted web app. The web app should register the primary environment directly from `window.t3HostBridge.getLocalEnvironmentBootstrap()` when that bootstrap includes the environment id, label, HTTP URL, WebSocket URL, and bearer token. Do not reintroduce a dependency on `/.well-known/t3/environment` before the VS Code sidebar can load workspace threads.
 
 The implementation details are intentionally kept in `apps/vscode-extension/IMPLEMENTATION.md` instead of being duplicated here. Unlike the other sections in this file, `CUSTOMIZED.md` should only preserve the merge-maintenance rule for this area: keep the extension work unless `main` has gained an equivalent VS Code extension architecture, then reconcile against the detailed implementation note.
 
@@ -204,7 +206,7 @@ Primary reference:
 
 ## Subagent Threading Work
 
-This branch also carries the Codex subagent-threading work that is not assumed to exist on `main`. Treat Codex subagent lineage, child-thread projection, nested active sidebar rows, parent subagent reference blocks, child-thread output isolation, child stop behavior, and related tests as part of this branch's customization set during upstream merges.
+This branch also carries the Codex subagent-threading work that is not assumed to exist on `main`. Treat Codex subagent lineage, child-thread projection, contextual active sidebar rows, parent subagent reference blocks, child-thread output isolation, child stop behavior, and related tests as part of this branch's customization set during upstream merges.
 
 Thread archive/delete lifecycle behavior is enforced server-side in the orchestration decider: archiving or deleting a parent thread cascades through active subagent descendants before the parent event, and force-deleting a project delegates through lifecycle roots so descendant subagents are not double-deleted.
 

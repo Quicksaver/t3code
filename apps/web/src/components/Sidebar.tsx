@@ -188,6 +188,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveSidebarOptionsMenuVisibility,
   resolveVscodeProjectScope,
+  resolveThreadListClassName,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -381,6 +382,7 @@ function buildThreadJumpLabelMap(input: {
 interface SidebarThreadRowProps {
   thread: SidebarThreadSummary;
   indentLevel: number;
+  flattenHierarchyChrome: boolean;
   projectCwd: string | null;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -443,6 +445,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     openPrLink,
     thread,
     indentLevel,
+    flattenHierarchyChrome,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const threadKey = scopedThreadKey(threadRef);
@@ -738,14 +741,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} ${indentLevel > 0 ? "pl-5" : ""} relative isolate`}
+        })} ${indentLevel > 0 && !flattenHierarchyChrome ? "pl-5" : ""} relative isolate`}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {indentLevel > 0 ? (
+          {indentLevel > 0 && !flattenHierarchyChrome ? (
             <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/35" />
           ) : null}
           {prStatus && (
@@ -987,6 +990,7 @@ interface SidebarProjectThreadListProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
+  flattenHierarchyChrome: boolean;
 }
 
 const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
@@ -1027,6 +1031,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     openPrLink,
     expandThreadListForProject,
     collapseThreadListForProject,
+    flattenHierarchyChrome,
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
@@ -1034,7 +1039,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
-      className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
+      className={resolveThreadListClassName({ hideThreadGroupRail: flattenHierarchyChrome })}
     >
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -1054,6 +1059,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               key={threadKey}
               thread={thread}
               indentLevel={indentLevel}
+              flattenHierarchyChrome={flattenHierarchyChrome}
               projectCwd={projectCwd}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
@@ -2449,6 +2455,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
+        flattenHierarchyChrome={hideProjectChrome}
       />
 
       <Dialog
