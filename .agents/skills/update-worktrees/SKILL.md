@@ -15,7 +15,7 @@ If their branch is already up to date with both `upstream/main` and customizatio
 
 Each subagent should know about their own branch's customizations. The file CUSTOMIZED.md does not, and should not, exist in each individual branch, so provide the subagents directly with details taken from CUSTOMIZED.md, including the name of the corresponding md file in their own branch to study if there is one.
 
-Each worktree branch work should be individual and fully working standalone.
+Each worktree branch work should be individual and fully working standalone. If there is a specific md file in their own branch, update any stale or missing information in it.
 
 As final verification, each subagent must spin up its own dev environment and use playwright to verify that branch's features. Since they will be working simultaneously, assign them unique ports for their dev environments to avoid conflicts.
 
