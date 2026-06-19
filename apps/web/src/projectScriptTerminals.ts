@@ -5,6 +5,13 @@ import type {
   TerminalOpenInput,
   TerminalSummary,
 } from "@t3tools/contracts";
+import { WS_METHODS } from "@t3tools/contracts";
+import { subscribe } from "@t3tools/client-runtime/rpc";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 
 const ACTION_TERMINAL_ID_PREFIX = "action-";
 const ACTION_TERMINAL_READY_TIMEOUT_MS = 4_000;
@@ -143,6 +150,44 @@ function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
     ...(input.env !== undefined ? { env: input.env } : {}),
     restartIfNotRunning: true,
   };
+}
+
+function terminalAttachEventCompletesReadyWait(
+  event: TerminalAttachStreamEvent,
+  appendAndCheck: (data: string) => boolean,
+): boolean {
+  if (event.type === "snapshot") {
+    return appendAndCheck(event.snapshot.history);
+  }
+  if (event.type === "output") {
+    return appendAndCheck(event.data);
+  }
+  return event.type === "closed" || event.type === "error" || event.type === "exited";
+}
+
+export function waitForProjectActionTerminalInputReady(
+  input: TerminalOpenInput,
+  timeoutMs = ACTION_TERMINAL_READY_TIMEOUT_MS,
+) {
+  let bufferTail = "";
+  const appendAndCheck = (data: string) => {
+    bufferTail = `${bufferTail}${data}`.slice(-MAX_TERMINAL_BUFFER_TAIL);
+    return terminalOutputLooksReadyForInput(bufferTail);
+  };
+
+  return subscribe(WS_METHODS.terminalAttach, terminalAttachInputFromOpenInput(input)).pipe(
+    Stream.filterMap((event) =>
+      terminalAttachEventCompletesReadyWait(event, appendAndCheck)
+        ? Result.succeed(undefined)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.timeoutOption(Duration.millis(timeoutMs)),
+    Effect.flatMap((result) =>
+      Option.isSome(result) && Option.isSome(result.value) ? Effect.void : Effect.void,
+    ),
+    Effect.catchCause(() => Effect.void),
+  );
 }
 
 export async function openTerminalAndWaitForInputReady(
