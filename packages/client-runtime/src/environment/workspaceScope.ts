@@ -1,12 +1,7 @@
-import type {
-  EnvironmentId,
-  ProjectId,
-  ScopedThreadRef,
-  T3HostVscodeWorkspaceBootstrap,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 
 import { scopedThreadKey, scopeThreadRef } from "./scoped.ts";
+import { getThreadSortTimestamp, toSortableTimestamp } from "../state/threadSort.ts";
 
 export type VscodeProjectScope = {
   readonly environmentId: EnvironmentId | null;
@@ -22,6 +17,30 @@ export type VscodeBootstrapProject = {
   readonly cwd: string;
   readonly isActive?: boolean;
 };
+
+export type VscodeWorkspaceBootstrap = {
+  readonly environmentId?: EnvironmentId | null | undefined;
+  readonly bootstrapProjects?: readonly VscodeBootstrapProject[] | null | undefined;
+};
+
+function normalizeWorkspaceRoot(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.replace(/[/\\]+$/, "") || trimmed;
+}
+
+function workspaceRootsEqual(left: string, right: string): boolean {
+  return normalizeWorkspaceRoot(left) === normalizeWorkspaceRoot(right);
+}
+
+function scopeMatchesProjectRoot(scope: VscodeProjectScope, projectRoot: string | null): boolean {
+  if (!projectRoot) {
+    return false;
+  }
+  if (scope.cwds && scope.cwds.length > 0) {
+    return scope.cwds.some((cwd) => workspaceRootsEqual(projectRoot, cwd));
+  }
+  return typeof scope.cwd === "string" && workspaceRootsEqual(projectRoot, scope.cwd);
+}
 
 export function resolveVscodeProjectScope(input: {
   readonly serverWelcome:
@@ -40,7 +59,7 @@ export function resolveVscodeProjectScope(input: {
       }
     | null
     | undefined;
-  readonly vscodeWorkspaceBootstrap?: T3HostVscodeWorkspaceBootstrap | null | undefined;
+  readonly vscodeWorkspaceBootstrap?: VscodeWorkspaceBootstrap | null | undefined;
   readonly fallbackEnvironmentId?: EnvironmentId | null | undefined;
 }): VscodeProjectScope {
   const bootstrapProjects = input.serverWelcome?.bootstrapProjects ?? null;
@@ -92,15 +111,15 @@ export function filterProjectsForVscodeScope<
       return false;
     }
     if (scope.projectIds && scope.projectIds.length > 0) {
-      return scope.projectIds.includes(project.id);
+      return scope.projectIds.includes(project.id) || scopeMatchesProjectRoot(scope, projectCwd);
     }
     if (scope.projectId) {
-      return project.id === scope.projectId;
+      return project.id === scope.projectId || scopeMatchesProjectRoot(scope, projectCwd);
     }
     if (scope.cwds && scope.cwds.length > 0) {
-      return projectCwd !== null && scope.cwds.includes(projectCwd);
+      return scopeMatchesProjectRoot(scope, projectCwd);
     }
-    return Boolean(scope.cwd) && projectCwd === scope.cwd;
+    return scopeMatchesProjectRoot(scope, projectCwd);
   });
 }
 
@@ -118,42 +137,17 @@ export type VscodeInitialThreadCandidate = {
   }>;
 };
 
-function toSortableTimestamp(iso: string | null | undefined): number | null {
-  if (!iso) return null;
-  const ms = Date.parse(iso);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function getFirstSortableTimestamp(...values: Array<string | null | undefined>): number | null {
-  for (const value of values) {
-    const timestamp = toSortableTimestamp(value);
-    if (timestamp !== null) {
-      return timestamp;
-    }
-  }
-  return null;
-}
-
 function getLatestUserMessageTimestamp(thread: VscodeInitialThreadCandidate): number {
-  if (thread.latestUserMessageAt) {
-    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
-  }
-
-  let latestUserMessageTimestamp: number | null = null;
-  for (const message of thread.messages ?? []) {
-    if (message.role !== "user") continue;
-    const messageTimestamp = toSortableTimestamp(message.createdAt);
-    if (messageTimestamp === null) continue;
-    latestUserMessageTimestamp =
-      latestUserMessageTimestamp === null
-        ? messageTimestamp
-        : Math.max(latestUserMessageTimestamp, messageTimestamp);
-  }
-
-  return (
-    latestUserMessageTimestamp ??
-    getFirstSortableTimestamp(thread.updatedAt, thread.createdAt) ??
-    Number.NEGATIVE_INFINITY
+  return getThreadSortTimestamp(
+    {
+      createdAt: thread.createdAt ?? "",
+      updatedAt: thread.updatedAt ?? "",
+      ...(thread.latestUserMessageAt !== undefined
+        ? { latestUserMessageAt: thread.latestUserMessageAt }
+        : {}),
+      ...(thread.messages !== undefined ? { messages: thread.messages } : {}),
+    },
+    "updated_at",
   );
 }
 

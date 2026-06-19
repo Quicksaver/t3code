@@ -11,6 +11,7 @@ The panel is intentionally an overview and high-level workflow surface. It focus
 Primary implementation files:
 
 - `apps/web/src/components/source-control/SourceControlPanel.tsx`
+- `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
@@ -18,8 +19,8 @@ Primary implementation files:
 - `apps/server/src/ws.ts`
 - `packages/contracts/src/rpc.ts`
 - `packages/contracts/src/ipc.ts`
-- `packages/client-runtime/src/wsRpcClient.ts`
-- `apps/web/src/environmentApi.ts`
+- `packages/client-runtime/src/state/sourceControl.ts`
+- `packages/client-runtime/src/environment/workspaceScope.ts`
 
 ## Entry Points And Host Behavior
 
@@ -30,6 +31,7 @@ Right-panel integration is owned by:
 - `apps/web/src/rightPanelStore.ts`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/state/sourceControlPanel.ts`
 
 The VS Code extension exposes the shared T3 Code panel through the `t3code.ui.enableSourceControlPanel` display setting. Browser and desktop hosts enable the panel by default; VS Code webviews hide it by default so it does not compete with VS Code's native Source Control view. The setting only controls visibility of the shared panel; it does not fork source-control behavior or change backend capabilities.
 
@@ -66,6 +68,8 @@ Fully synced local branches are omitted from `Actionable`; they remain visible u
 When a repository has multiple remotes, the server checks local branches against same-name branches on other remotes. A same-name remote branch is treated as a likely fork only when the refs share ancestry. The Actionable row is shown only when the local branch is behind that remote branch; a local branch that is only ahead of the other remote branch is omitted because it is rarely meant to push directly to that upstream. These fork rows use the other remote branch as their default `vs. ...` compare base and still show `↑x`/`↓y` counts against that remote branch.
 
 The server also checks open change requests for every local branch across all configured remotes whose fetch URL maps to a supported provider: GitHub, GitLab, Azure DevOps, and Bitbucket. For each matching open PR/MR where the local branch is the head branch, the panel compares the local branch only against the found change request's base branch on that same remote. A PR/MR-derived Actionable row is shown only when the local branch is behind that remote base branch; if the branch is already current with, ahead of, or unrelated to the base branch, no Actionable entry is shown. Provider lookup is best-effort: authentication, CLI/API, or unsupported-remote failures omit PR/MR-derived rows without blocking the Git snapshot.
+
+Client-side Actionable/Remotes expansion, row selection, and visible-row enrichment state lives in `apps/web/src/state/sourceControlPanel.ts`. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
 
 The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every few minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh.
 

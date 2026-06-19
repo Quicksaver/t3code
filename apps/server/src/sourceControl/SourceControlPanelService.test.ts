@@ -716,6 +716,87 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("keeps git-derived actionable forks when provider change request listing fails", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+
+      assert.deepStrictEqual(snapshot.actionableForkBranches, [
+        {
+          localBranchName: "feature",
+          remoteName: "upstream",
+          remoteBranchName: "feature",
+          remoteRefName: "upstream/feature",
+          aheadCount: 2,
+          behindCount: 3,
+          lastActivityAt: "2026-06-17T09:00:00.000Z",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    "feature\t*\t/repo\t2026-06-17T10:00:00.000Z\torigin/feature\t[ahead 1]",
+                  );
+                case "vcs.panel.remotes":
+                  return success(
+                    [
+                      "origin\tgit@github.com:fork/repo.git\t(fetch)",
+                      "origin\tgit@github.com:fork/repo.git\t(push)",
+                      "upstream\tgit@github.com:upstream/repo.git\t(fetch)",
+                      "upstream\tgit@github.com:upstream/repo.git\t(push)",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.remoteBranches":
+                  return input.args.includes("origin/*")
+                    ? success("origin/feature\t2026-06-17T08:00:00.000Z\n")
+                    : success("upstream/feature\t2026-06-17T09:00:00.000Z\n");
+                case "vcs.panel.branchForkMergeBase":
+                  return success("abc123\n");
+                case "vcs.panel.branchForkAheadBehind":
+                  return success("2\t3\n");
+                case "vcs.panel.statusPorcelain":
+                  return success(["# branch.oid abc", "# branch.head feature"].join("\n"));
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.unstagedNumstat":
+                case "vcs.panel.stashes":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "feature",
+                hasWorkingTreeChanges: false,
+              }),
+          },
+          {
+            github: SourceControlProvider.SourceControlProvider.of({
+              ...emptyProvider,
+              kind: "github",
+              listChangeRequests: () =>
+                Effect.fail(
+                  new SourceControlProviderError({
+                    provider: "github",
+                    operation: "test.listChangeRequests",
+                    detail: "provider unavailable",
+                  }),
+                ),
+            }),
+          },
+        ),
+      ),
+    ),
+  );
+
   it.effect("surfaces open pull request base branches only when the local branch is behind", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;

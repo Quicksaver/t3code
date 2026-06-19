@@ -7,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
+import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 import {
   markPromotedDraftThreadByRef,
@@ -23,6 +24,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { readThreadShell, useProjects, useThread } from "../state/entities";
+import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/server";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -203,9 +205,21 @@ export function useHandleNewThread() {
       : null,
   );
   const projects = useProjects();
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
+  const visibleProjects = useMemo(
+    () =>
+      isVscodeWebview
+        ? filterProjectsForVscodeScope(
+            projects,
+            resolveVscodeProjectScope({ serverConfig, serverWelcome }),
+          )
+        : projects,
+    [projects, serverConfig, serverWelcome],
+  );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
-      items: projects,
+      items: visibleProjects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
       getPreferenceIds: (project) => [
@@ -213,7 +227,7 @@ export function useHandleNewThread() {
         legacyProjectCwdPreferenceKey(project.workspaceRoot),
       ],
     });
-  }, [projectOrder, projects]);
+  }, [projectOrder, visibleProjects]);
   const handleNewThread = useNewThreadHandler();
 
   return {
