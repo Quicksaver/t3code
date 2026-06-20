@@ -84,6 +84,20 @@ export function mergeChangeGroups(groups: readonly VcsPanelChangeGroup[]): Panel
     .toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
+function appendUniqueCommits(
+  existing: VcsPanelBranchDetails["commits"],
+  incoming: VcsPanelBranchCommitsResult["commits"],
+): VcsPanelBranchDetails["commits"] {
+  const seen = new Set(existing.map((commit) => commit.sha));
+  const merged = [...existing];
+  for (const commit of incoming) {
+    if (seen.has(commit.sha)) continue;
+    seen.add(commit.sha);
+    merged.push(commit);
+  }
+  return merged;
+}
+
 export function mergeBranchCommitPage(
   current: ReadonlyMap<string, VcsPanelBranchDetails>,
   input: {
@@ -94,35 +108,43 @@ export function mergeBranchCommitPage(
   },
 ): ReadonlyMap<string, VcsPanelBranchDetails> {
   const nextDetails = current.get(input.detailsKey) ?? input.details;
-  const merged =
-    input.kind === "ahead"
-      ? {
-          ...nextDetails,
-          aheadCommits: [...nextDetails.aheadCommits, ...input.page.commits],
-          aheadCommitsRemaining: input.page.remaining,
-        }
-      : input.kind === "behind"
-        ? {
-            ...nextDetails,
-            behindCommits: [...nextDetails.behindCommits, ...input.page.commits],
-            behindCommitsRemaining: input.page.remaining,
-          }
-        : input.kind === "compare-history"
-          ? {
-              ...nextDetails,
-              compareCommits: [...nextDetails.compareCommits, ...input.page.commits],
-              compareCommitsRemaining: input.page.remaining,
-            }
-          : {
-              ...nextDetails,
-              commits: [...nextDetails.commits, ...input.page.commits],
-              commitsRemaining: input.page.remaining,
-            };
+  let merged: VcsPanelBranchDetails;
+  switch (input.kind) {
+    case "ahead":
+      merged = {
+        ...nextDetails,
+        aheadCommits: appendUniqueCommits(nextDetails.aheadCommits, input.page.commits),
+        aheadCommitsRemaining: input.page.remaining,
+      };
+      break;
+    case "behind":
+      merged = {
+        ...nextDetails,
+        behindCommits: appendUniqueCommits(nextDetails.behindCommits, input.page.commits),
+        behindCommitsRemaining: input.page.remaining,
+      };
+      break;
+    case "compare-history":
+      merged = {
+        ...nextDetails,
+        compareCommits: appendUniqueCommits(nextDetails.compareCommits, input.page.commits),
+        compareCommitsRemaining: input.page.remaining,
+      };
+      break;
+    case "history":
+      merged = {
+        ...nextDetails,
+        commits: appendUniqueCommits(nextDetails.commits, input.page.commits),
+        commitsRemaining: input.page.remaining,
+      };
+      break;
+  }
   const next = new Map(current);
-  next.set(input.detailsKey, merged);
-  if (input.detailsKey === input.details.name || input.detailsKey === input.details.fullRefName) {
+  if (input.detailsKey === merged.name || input.detailsKey === merged.fullRefName) {
     next.set(merged.fullRefName, merged);
     next.set(merged.name, merged);
+  } else {
+    next.set(input.detailsKey, merged);
   }
   return next;
 }

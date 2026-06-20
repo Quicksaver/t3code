@@ -1992,22 +1992,23 @@ export function SourceControlPanel({
       detailsKey: string,
       kind: BranchCommitListKind,
     ) => {
+      const latestDetails = branchDetailsByRef.get(detailsKey) ?? details;
       const loadedCount =
         kind === "ahead"
-          ? details.aheadCommits.length
+          ? latestDetails.aheadCommits.length
           : kind === "behind"
-            ? details.behindCommits.length
+            ? latestDetails.behindCommits.length
             : kind === "compare-history"
-              ? details.compareCommits.length
-              : details.commits.length;
+              ? latestDetails.compareCommits.length
+              : latestDetails.commits.length;
       const remaining =
         kind === "ahead"
-          ? details.aheadCommitsRemaining
+          ? latestDetails.aheadCommitsRemaining
           : kind === "behind"
-            ? details.behindCommitsRemaining
+            ? latestDetails.behindCommitsRemaining
             : kind === "compare-history"
-              ? details.compareCommitsRemaining
-              : details.commitsRemaining;
+              ? latestDetails.compareCommitsRemaining
+              : latestDetails.commitsRemaining;
       if (!api || remaining <= 0) return;
       setLoadingBranchDetails((current) => {
         const next = new Set(current);
@@ -2018,13 +2019,18 @@ export function SourceControlPanel({
         const result = await api.vcs.branchCommits({
           cwd,
           branch,
-          baseRef: details.baseRef,
+          baseRef: latestDetails.baseRef,
           kind,
           skip: loadedCount,
           limit: COMMIT_PAGE_SIZE,
         });
         setBranchDetailsByRef((current) =>
-          mergeBranchCommitPage(current, { detailsKey, details, kind, page: result }),
+          mergeBranchCommitPage(current, {
+            detailsKey,
+            details: latestDetails,
+            kind,
+            page: result,
+          }),
         );
       } catch (nextError) {
         setError(errorMessage(nextError));
@@ -2036,7 +2042,7 @@ export function SourceControlPanel({
         });
       }
     },
-    [api, cwd],
+    [api, branchDetailsByRef, cwd],
   );
 
   const loadStashDetails = useCallback(

@@ -65,10 +65,11 @@ function branch(input: Partial<VcsRef>): VcsRef {
 }
 
 function commit(sha: string): VcsPanelCommitSummary {
+  const shortSha = sha.slice(0, Math.min(7, sha.length));
   return {
     sha,
-    shortSha: sha.slice(0, 7),
-    message: `Commit ${sha.slice(0, 7)}`,
+    shortSha,
+    message: `Commit ${shortSha}`,
     authorName: null,
     authorEmail: null,
     authorAvatarUrl: null,
@@ -77,6 +78,10 @@ function commit(sha: string): VcsPanelCommitSummary {
     tags: [],
     files: [],
   };
+}
+
+function commitShas(commits: readonly VcsPanelCommitSummary[]): string[] {
+  return commits.map((item) => item.sha);
 }
 
 function branchDetails(
@@ -174,6 +179,109 @@ describe("SourceControlPanel branch detail paging", () => {
       "2222222222222222222222222222222222222222",
     ]);
     expect(next.get(branchName)?.behindCommitsRemaining).toBe(4);
+  });
+
+  it("merges canonical branch pages into both branch detail keys", () => {
+    const branchName = "split/version-control-panel-work";
+    const fullRefName = "refs/heads/split/version-control-panel-work";
+    const details = branchDetails({
+      name: branchName,
+      fullRefName,
+      aheadCommits: [commit("1111111111111111111111111111111111111111")],
+      aheadCommitsRemaining: 3,
+    });
+    const current = new Map<string, VcsPanelBranchDetails>([
+      [branchName, details],
+      [fullRefName, details],
+    ]);
+
+    const next = mergeBranchCommitPage(current, {
+      detailsKey: branchName,
+      details,
+      kind: "ahead",
+      page: {
+        commits: [commit("2222222222222222222222222222222222222222")],
+        remaining: 2,
+      },
+    });
+
+    expect(commitShas(next.get(branchName)?.aheadCommits ?? [])).toEqual([
+      "1111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222",
+    ]);
+    expect(next.get(branchName)?.aheadCommitsRemaining).toBe(2);
+    expect(next.get(fullRefName)).toBe(next.get(branchName));
+  });
+
+  it("uses the latest map entry when deciding canonical branch keys", () => {
+    const branchName = "split/version-control-panel-work";
+    const fullRefName = "refs/heads/split/version-control-panel-work";
+    const currentDetails = branchDetails({
+      name: branchName,
+      fullRefName,
+      compareCommits: [commit("1111111111111111111111111111111111111111")],
+      compareCommitsRemaining: 2,
+    });
+    const staleInputDetails = branchDetails({
+      name: "stale/split/version-control-panel-work",
+      fullRefName: "refs/heads/stale/split/version-control-panel-work",
+    });
+    const current = new Map<string, VcsPanelBranchDetails>([
+      [branchName, currentDetails],
+      [fullRefName, currentDetails],
+    ]);
+
+    const next = mergeBranchCommitPage(current, {
+      detailsKey: fullRefName,
+      details: staleInputDetails,
+      kind: "compare-history",
+      page: {
+        commits: [commit("2222222222222222222222222222222222222222")],
+        remaining: 1,
+      },
+    });
+
+    expect(commitShas(next.get(branchName)?.compareCommits ?? [])).toEqual([
+      "1111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222",
+    ]);
+    expect(next.get(branchName)?.compareCommitsRemaining).toBe(1);
+    expect(next.get(fullRefName)).toBe(next.get(branchName));
+  });
+
+  it("merges history pages without duplicating overlapping commits", () => {
+    const branchName = "split/version-control-panel-work";
+    const details = branchDetails({
+      name: branchName,
+      fullRefName: branchName,
+      commits: [
+        commit("1111111111111111111111111111111111111111"),
+        commit("2222222222222222222222222222222222222222"),
+      ],
+      commitsRemaining: 3,
+    });
+    const current = new Map<string, VcsPanelBranchDetails>([[branchName, details]]);
+
+    const next = mergeBranchCommitPage(current, {
+      detailsKey: branchName,
+      details,
+      kind: "history",
+      page: {
+        commits: [
+          commit("2222222222222222222222222222222222222222"),
+          commit("3333333333333333333333333333333333333333"),
+          commit("3333333333333333333333333333333333333333"),
+        ],
+        remaining: 0,
+      },
+    });
+
+    expect(commitShas(next.get(branchName)?.commits ?? [])).toEqual([
+      "1111111111111111111111111111111111111111",
+      "2222222222222222222222222222222222222222",
+      "3333333333333333333333333333333333333333",
+    ]);
+    expect(next.get(branchName)?.commitsRemaining).toBe(0);
   });
 });
 
