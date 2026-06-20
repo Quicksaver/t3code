@@ -1,7 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { VcsPanelSnapshotResult, VcsRef } from "@t3tools/contracts";
 
-import { branchAttention, branchHasUpstream, branchSyncState } from "./SourceControlPanel.logic";
+import {
+  branchAttention,
+  branchHasUpstream,
+  branchSyncState,
+  formatRelativeDate,
+  mergeChangeGroups,
+} from "./SourceControlPanel.logic";
 
 const baseSnapshot: VcsPanelSnapshotResult = {
   status: {
@@ -77,5 +83,56 @@ describe("SourceControlPanel branch sync logic", () => {
     expect(branchHasUpstream(localBranch, baseSnapshot)).toBe(true);
     expect(branchSyncState(localBranch, baseSnapshot)).toBe("pull");
     expect(branchAttention(localBranch, baseSnapshot)).toBe("behind");
+  });
+});
+
+describe("SourceControlPanel working-tree presentation logic", () => {
+  it("sums staged and unstaged stats for the same path", () => {
+    expect(
+      mergeChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 2,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          kind: "unstaged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 3,
+              deletions: 4,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/file.ts",
+        originalPath: null,
+        status: "modified",
+        insertions: 5,
+        deletions: 5,
+        hasStagedChanges: true,
+        hasUnstagedChanges: true,
+        hasConflicts: false,
+      },
+    ]);
+  });
+
+  it("formats late-month dates before the one-year threshold as months", () => {
+    const now = Date.parse("2026-06-20T12:00:00.000Z");
+    const then = new Date(now - 360 * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(formatRelativeDate(then, now)).toBe("12 months ago");
   });
 });

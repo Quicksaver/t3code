@@ -82,7 +82,7 @@ Items are sorted by operational urgency, then recency. An unclean working tree i
 
 The `Working tree` row expands to a compact changed-file list. There is no staged-versus-unstaged grouping in the panel UI. Each changed file has a selector, and newly appearing changed files are selected by default.
 
-The working-tree subsection header shows a tri-state checkbox before the selection summary. Checked means all files are selected, unchecked means none are selected, and partial means some files are selected; clicking a partial or unchecked checkbox selects all files, while clicking a checked checkbox unselects all files. The summary reads `x of y files selected` and shows selected-file `+x`/`-y` line stats immediately after the label when non-zero.
+The working-tree subsection header shows a tri-state checkbox before the selection summary. Checked means all files are selected, unchecked means none are selected, and partial means some files are selected; clicking a partial or unchecked checkbox selects all files, while clicking a checked checkbox unselects all files. The summary reads `x of y files selected` and shows selected-file `+x`/`-y` line stats immediately after the label when non-zero. When staged and unstaged entries for the same file are merged into one displayed row, the displayed stats sum both sides instead of taking only the larger staged or unstaged count.
 
 The working-tree header actions are:
 
@@ -121,7 +121,7 @@ Branch action buttons appear only on row hover/focus and are absolutely position
 - Merge branch into the current branch.
 - Rebase current branch onto branch, using the `git-pull-request-arrow` icon.
 
-Smart sync handles diverged branches by prompting for one of three choices: force pull, normal merge sync, or force push. Modifier-key tooltips stay terse; for example pull can note `Shift: reset` and `Option: fetch`.
+Smart sync handles diverged branches by prompting for force pull, normal merge sync, or force push. Normal merge sync is available only when the diverged row is the currently checked-out branch, matching Git's working-tree merge semantics; non-current diverged branch rows keep force pull and force push available without implicitly changing the user's checkout. Modifier-key tooltips stay terse; for example pull can note `Shift: reset` and `Option: fetch`.
 
 ## Branch Details
 
@@ -211,7 +211,7 @@ The panel keeps version-control actions server-authoritative across browser, des
 
 The current implementation has been exercised against the throwaway repository at `~/Sites/throwaway` with Playwright for the main panel flows: section resizing/collapse behavior, Actionable selection, selected-file commit and stash dialogs, branch sync indicators, remotes tree expansion, stash expansion, hover-only actions, failure reporting, and live filesystem updates including internal `.git/` event filtering and gitignored-file suppression. Rename coverage includes committing an unstaged `R` row and undoing that commit, verifying that the panel returns to a single `R` row rather than separate `A` and `D` rows.
 
-Focused unit coverage now also covers the sync-vs-compare split: a local branch configured against `upstream/main` is treated as unpublished/publishable instead of diverged, a same-name remote tracking branch remains a normal sync upstream, and server-side publishing targets the local branch name even when Git reports a different configured upstream/base ref.
+Focused unit coverage now also covers the sync-vs-compare split: a local branch configured against `upstream/main` is treated as unpublished/publishable instead of diverged, a same-name remote tracking branch remains a normal sync upstream, server-side publishing targets the local branch name even when Git reports a different configured upstream/base ref, the current default branch remains the default compare ref, tracked discard restore failures are surfaced, fallback line-based rename parsing preserves source paths, merged working-tree row stats are summed, and late-month relative dates do not fall through to `0 years ago`.
 
 Before considering source-control changes complete, run:
 

@@ -102,6 +102,9 @@ import {
   branchHasUpstream,
   branchSyncCounts,
   branchSyncState,
+  formatRelativeDate,
+  mergeChangeGroups,
+  type PanelChangedFile,
 } from "./SourceControlPanel.logic";
 
 interface SourceControlPanelProps {
@@ -151,74 +154,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Source control action failed.";
 }
 
-interface PanelChangedFile extends VcsPanelFileChange {
-  readonly hasStagedChanges: boolean;
-  readonly hasUnstagedChanges: boolean;
-  readonly hasConflicts: boolean;
-}
-
-function mergedFileStatus(
-  statuses: ReadonlySet<VcsPanelFileChange["status"]>,
-): VcsPanelFileChange["status"] {
-  if (statuses.has("conflicted")) return "conflicted";
-  if (statuses.has("deleted")) return "deleted";
-  if (statuses.has("renamed")) return "renamed";
-  if (statuses.has("copied")) return "copied";
-  if (statuses.has("added")) return "added";
-  if (statuses.has("untracked")) return "untracked";
-  return "modified";
-}
-
-function mergeChangeGroups(groups: readonly VcsPanelChangeGroup[]): PanelChangedFile[] {
-  const files = new Map<
-    string,
-    {
-      originalPath: string | null;
-      statuses: Set<VcsPanelFileChange["status"]>;
-      insertions: number;
-      deletions: number;
-      hasStagedChanges: boolean;
-      hasUnstagedChanges: boolean;
-      hasConflicts: boolean;
-    }
-  >();
-
-  for (const group of groups) {
-    for (const file of group.files) {
-      const existing = files.get(file.path) ?? {
-        originalPath: file.originalPath,
-        statuses: new Set<VcsPanelFileChange["status"]>(),
-        insertions: 0,
-        deletions: 0,
-        hasStagedChanges: false,
-        hasUnstagedChanges: false,
-        hasConflicts: false,
-      };
-      existing.originalPath ??= file.originalPath;
-      existing.statuses.add(file.status);
-      existing.insertions = Math.max(existing.insertions, file.insertions);
-      existing.deletions = Math.max(existing.deletions, file.deletions);
-      existing.hasStagedChanges ||= group.kind === "staged";
-      existing.hasUnstagedChanges ||= group.kind === "unstaged";
-      existing.hasConflicts ||= group.kind === "conflicts";
-      files.set(file.path, existing);
-    }
-  }
-
-  return [...files.entries()]
-    .map(([path, file]) => ({
-      path,
-      originalPath: file.originalPath,
-      status: mergedFileStatus(file.statuses),
-      insertions: file.insertions,
-      deletions: file.deletions,
-      hasStagedChanges: file.hasStagedChanges,
-      hasUnstagedChanges: file.hasUnstagedChanges,
-      hasConflicts: file.hasConflicts,
-    }))
-    .toSorted((left, right) => left.path.localeCompare(right.path));
-}
-
 function applyWorkingTreeFileEnrichment(
   groups: readonly VcsPanelChangeGroup[],
   enrichedFilesByPath: ReadonlyMap<string, VcsPanelFileChange>,
@@ -265,28 +200,6 @@ function commitUndoActionKey(branchName: string, sha?: string): string {
 
 function treeKey(kind: string, id: string): string {
   return `${kind}:${id}`;
-}
-
-function formatRelativeDate(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const time = Date.parse(value);
-  if (!Number.isFinite(time)) return null;
-  const elapsedMs = Date.now() - time;
-  if (elapsedMs < 60_000) return "just now";
-  const minutes = Math.floor(elapsedMs / 60_000);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days} days ago`;
-  const weeks = Math.floor(days / 7);
-  if (weeks === 1) return "last week";
-  if (days < 30) return `${weeks} weeks ago`;
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
-  const years = Math.floor(days / 365);
-  return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 
 function formatReadableDate(value: string | null | undefined): string | null {
@@ -1835,6 +1748,7 @@ export function SourceControlPanel({
           await api.vcs.pullBranch({ cwd, branchName: branch.name, force: true });
           return;
         }
+        if (!branch.current) return;
         await api.vcs.pullBranch({ cwd, branchName: branch.name, merge: true });
         await api.vcs.pushBranch({ cwd, branchName: branch.name });
       });
@@ -4011,7 +3925,10 @@ export function SourceControlPanel({
             </Button>
             <Button
               size="sm"
-              disabled={isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`)}
+              disabled={
+                isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ||
+                divergedSyncBranch?.current === false
+              }
               onClick={() => runDivergedSync("merge")}
             >
               {isActionRunning(`branch-sync:${divergedSyncBranch?.name ?? ""}`) ? (

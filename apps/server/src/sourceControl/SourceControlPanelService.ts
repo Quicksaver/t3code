@@ -707,7 +707,7 @@ function parseFileChangesFromNumstat(input: {
     const status = input.statuses?.get(path);
     files.push({
       path,
-      originalPath: status?.originalPath ?? null,
+      originalPath: status?.originalPath ?? (renamedPathRaw ? pathRaw : null),
       status: status?.status ?? "modified",
       insertions: parseCount(insertionsRaw),
       deletions: parseCount(deletionsRaw),
@@ -1596,7 +1596,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         { concurrency: "unbounded" },
       );
       const defaultCompareRef =
-        localBranches.find((ref) => ref.isDefault && !ref.current)?.name ??
+        localBranches.find((ref) => ref.isDefault)?.name ??
         localBranches.find((ref) => !ref.current)?.name ??
         null;
       const forkBranches = yield* actionableForkBranches(
@@ -1683,10 +1683,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           "--worktree",
           "--",
           ...trackedPaths,
-        ]).pipe(
-          Effect.asVoid,
-          Effect.catch(() => Effect.void),
-        );
+        ]).pipe(Effect.asVoid);
       }
       yield* run("vcs.panel.cleanUntrackedFiles", input.cwd, ["clean", "-fd", "--", ...paths]).pipe(
         Effect.asVoid,
