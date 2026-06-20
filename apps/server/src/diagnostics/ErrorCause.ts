@@ -56,6 +56,13 @@ export function sanitizeErrorCause(cause: unknown): SanitizedErrorCause {
     return output;
   }
 
+  if (cause instanceof Error) {
+    const output: MutableSanitizedErrorCause = {};
+    addTextField(output, "name", cause.name);
+    addTextField(output, "message", cause.message);
+    return output;
+  }
+
   if (typeof cause === "object" && cause !== null) {
     const record = cause as Record<PropertyKey, unknown>;
     const output: MutableSanitizedErrorCause = {};
@@ -72,13 +79,6 @@ export function sanitizeErrorCause(cause: unknown): SanitizedErrorCause {
     if (timeoutMs !== undefined) output.timeoutMs = timeoutMs;
 
     return Object.keys(output).length > 0 ? output : { tag: "Object" };
-  }
-
-  if (cause instanceof Error) {
-    const output: MutableSanitizedErrorCause = {};
-    addTextField(output, "name", cause.name);
-    addTextField(output, "message", cause.message);
-    return output;
   }
 
   return { message: "Unknown error" };
