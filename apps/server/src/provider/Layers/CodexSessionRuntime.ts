@@ -232,6 +232,7 @@ interface PendingUserInput {
 }
 
 interface CollabReceiverInfo {
+  readonly parentThreadId: ThreadId;
   readonly parentTurnId: TurnId | undefined;
   readonly parentItemId: ProviderItemId | undefined;
   readonly providerThreadId: string;
@@ -660,6 +661,7 @@ function rememberCollabReceiverTurns(
   for (const receiverThreadId of notification.params.item.receiverThreadIds) {
     const existing = collabReceiverTurns.get(receiverThreadId);
     collabReceiverTurns.set(receiverThreadId, {
+      parentThreadId,
       parentTurnId: startsNewParentActivity
         ? parentTurnId
         : (existing?.parentTurnId ?? parentTurnId),
@@ -673,7 +675,7 @@ function rememberCollabReceiverTurns(
           parentThreadId,
           providerThreadId: receiverThreadId,
         }),
-      rawPrompt: startsNewParentActivity ? rawPrompt : (rawPrompt ?? existing?.rawPrompt),
+      rawPrompt: startsNewParentActivity ? rawPrompt : (existing?.rawPrompt ?? rawPrompt),
       detail: startsNewParentActivity ? detail : (existing?.detail ?? detail),
     });
   }
@@ -995,11 +997,25 @@ export const makeCodexSessionRuntime = (
           collabReceiverTurns,
           notification,
         );
+        const parentCollab =
+          childParentInfo && childParentInfo.parentItemId
+            ? {
+                parentThreadId: String(childParentInfo.parentThreadId),
+                providerThreadId: childParentInfo.providerThreadId,
+                childThreadId: String(childParentInfo.childThreadId),
+                itemId: String(childParentInfo.parentItemId),
+                ...(childParentInfo.parentTurnId
+                  ? { parentTurnId: String(childParentInfo.parentTurnId) }
+                  : {}),
+                ...(childParentInfo.detail ? { detail: childParentInfo.detail } : {}),
+              }
+            : undefined;
         const emittedPayload =
-          subagentChildren.length > 0
+          subagentChildren.length > 0 || parentCollab
             ? {
                 ...payload,
-                subagentChildren,
+                ...(parentCollab ? { parentCollab } : {}),
+                ...(subagentChildren.length > 0 ? { subagentChildren } : {}),
               }
             : payload;
         yield* emitEvent({

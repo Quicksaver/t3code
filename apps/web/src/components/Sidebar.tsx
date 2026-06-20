@@ -262,6 +262,50 @@ function compareSubagentSidebarChildren(
   return sidebarThreadKey(left).localeCompare(sidebarThreadKey(right));
 }
 
+function subagentSidebarStatus(thread: SidebarThreadSummary) {
+  const relation = thread.parentRelation;
+  return relation?.kind === "subagent" ? relation.status : null;
+}
+
+function subagentIsTerminalInSidebar(thread: SidebarThreadSummary): boolean {
+  const status = subagentSidebarStatus(thread);
+  return status !== null && status !== "running";
+}
+
+function activeSidebarThreadPathKeys(
+  threads: readonly SidebarThreadSummary[],
+  activeThreadKey: string | null | undefined,
+): Set<string> {
+  const path = new Set<string>();
+  if (!activeThreadKey) {
+    return path;
+  }
+  const threadByKey = new Map(threads.map((thread) => [sidebarThreadKey(thread), thread] as const));
+  let current = threadByKey.get(activeThreadKey) ?? null;
+  while (current) {
+    const key = sidebarThreadKey(current);
+    if (path.has(key)) {
+      break;
+    }
+    path.add(key);
+    const parentKey = sidebarThreadParentKey(current);
+    current = parentKey ? (threadByKey.get(parentKey) ?? null) : null;
+  }
+  return path;
+}
+
+function visibleSidebarThreads(
+  threads: readonly SidebarThreadSummary[],
+  activeThreadKey: string | null | undefined,
+): SidebarThreadSummary[] {
+  const activePathKeys = activeSidebarThreadPathKeys(threads, activeThreadKey);
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      (!subagentIsTerminalInSidebar(thread) || activePathKeys.has(sidebarThreadKey(thread))),
+  );
+}
+
 function flattenSidebarThreadTree(input: {
   allThreads: readonly SidebarThreadSummary[];
   roots: readonly SidebarThreadSummary[];
@@ -1375,7 +1419,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      visibleSidebarThreads(projectThreads, activeRouteThreadKey),
       threadSortOrder,
     );
     const visibleRootProjectThreads = rootSidebarThreads(visibleProjectThreads);
@@ -1392,7 +1436,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       visibleProjectThreads,
       visibleRootProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [activeRouteThreadKey, projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -3411,8 +3455,8 @@ export default function Sidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
-    [sidebarThreads],
+    () => visibleSidebarThreads(sidebarThreads, routeThreadKey),
+    [routeThreadKey, sidebarThreads],
   );
   const visibleRootThreads = useMemo(() => rootSidebarThreads(visibleThreads), [visibleThreads]);
   const sortedProjects = useMemo(() => {
@@ -3451,9 +3495,7 @@ export default function Sidebar() {
     () =>
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
+          visibleSidebarThreads(threadsByProjectKey.get(project.projectKey) ?? [], routeThreadKey),
           sidebarThreadSortOrder,
         );
         const rootProjectThreads = rootSidebarThreads(projectThreads);

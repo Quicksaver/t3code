@@ -671,7 +671,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         provider: ProviderDriverKind.make("codex"),
         createdAt: "2026-01-01T00:00:00.000Z",
         method: "item/agentMessage/delta",
-        threadId: asThreadId("thread-1"),
+        threadId: asThreadId("subagent-local-child-1"),
         turnId: asTurnId("turn-1"),
         itemId: asItemId("child-msg-1"),
         textDelta: "Subagent ",
@@ -681,6 +681,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           itemId: "child-msg-1",
           delta: "Subagent ",
           parentCollab: {
+            parentThreadId: "thread-1",
             itemId: "collab-1",
             detail: "Inspect routing",
           },
@@ -692,7 +693,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         provider: ProviderDriverKind.make("codex"),
         createdAt: "2026-01-01T00:00:00.000Z",
         method: "item/agentMessage/delta",
-        threadId: asThreadId("thread-1"),
+        threadId: asThreadId("subagent-local-child-1"),
         turnId: asTurnId("turn-1"),
         itemId: asItemId("child-msg-1"),
         textDelta: "result",
@@ -702,6 +703,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           itemId: "child-msg-1",
           delta: "result",
           parentCollab: {
+            parentThreadId: "thread-1",
             itemId: "collab-1",
             detail: "Inspect routing",
           },
@@ -758,6 +760,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       assert.equal(completedEvent.payload.detail, "Inspect routing");
       const completedData = completedEvent.payload.data as Record<string, unknown>;
       assert.deepEqual(completedData.parentCollab, {
+        parentThreadId: "thread-1",
         itemId: "collab-1",
         detail: "Inspect routing",
       });

@@ -1718,6 +1718,87 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("does not interrupt the root session when a subagent has no active child turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = ThreadId.make("subagent-thread-without-turn");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-root-session-set-no-child-turn"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("root-active-turn"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-subagent-thread-create-no-child-turn"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Subagent Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        parentRelation: {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-1"),
+          parentTurnId: asTurnId("root-active-turn"),
+          parentItemId: asProviderItemId("parent-item-no-child-turn"),
+          parentActivitySequence: 0,
+          providerThreadId: "provider-child-thread-no-turn",
+          titleSeed: "Investigate child task",
+          depth: 1,
+          startedAt: now,
+          completedAt: null,
+          status: "running",
+        },
+        createdAt: now,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-subagent-turn-interrupt-no-child-turn"),
+        threadId: childThreadId,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const child = readModel.threads.find((entry) => entry.id === childThreadId);
+      return (
+        child?.activities.some((activity) => activity.kind === "provider.turn.interrupt.failed") ??
+        false
+      );
+    });
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const child = readModel.threads.find((entry) => entry.id === childThreadId);
+    expect(child?.parentRelation).toMatchObject({
+      kind: "subagent",
+      status: "running",
+    });
+  });
+
   it("starts a fresh session when only projected session state exists", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

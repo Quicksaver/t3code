@@ -4072,6 +4072,7 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
+    const activeSubagentIsRunning = activeThreadSubagentRelation?.status === "running";
     if (activeThreadSubagentRelation?.status === "running") {
       setPendingSubagentStopThreadId(activeThread.id);
     }
@@ -4079,6 +4080,9 @@ function ChatViewContent(props: ChatViewProps) {
       environmentId,
       input: {
         threadId: activeThread.id,
+        ...(activeSubagentIsRunning && activeThread.latestTurn?.turnId
+          ? { turnId: activeThread.latestTurn.turnId }
+          : {}),
       },
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

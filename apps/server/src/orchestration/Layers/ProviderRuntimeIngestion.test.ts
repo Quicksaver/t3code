@@ -2599,6 +2599,60 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("creates a child shell before ingesting child events with parent collab metadata", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = asThreadId("subagent-early-shell-test");
+
+    harness.emit({
+      type: "item.updated",
+      eventId: asEventId("evt-subagent-early-child-output"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: childThreadId,
+      turnId: asTurnId("child-turn-early"),
+      itemId: asItemId("child-command-early"),
+      payload: {
+        itemType: "command_execution",
+        status: "in_progress",
+        title: "Ran command",
+        detail: "echo child",
+        data: {
+          parentCollab: {
+            parentThreadId: "thread-1",
+            providerThreadId: "provider-child-early",
+            childThreadId,
+            parentTurnId: "turn-parent-early",
+            itemId: "parent-item-early",
+            detail: "Inspect early output",
+          },
+        },
+      },
+    });
+
+    const childThread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.parentRelation?.kind === "subagent" &&
+        entry.activities.some(
+          (activity: ProviderRuntimeTestActivity) => activity.kind === "tool.updated",
+        ),
+      2000,
+      childThreadId,
+    );
+
+    expect(childThread.parentRelation).toMatchObject({
+      kind: "subagent",
+      parentThreadId: "thread-1",
+      providerThreadId: "provider-child-early",
+      parentItemId: "parent-item-early",
+      status: "running",
+    });
+    expect(childThread.activities.some((activity) => activity.summary === "Ran command")).toBe(
+      true,
+    );
+  });
+
   it("projects the subagent launch prompt as the child thread's initial user message", async () => {
     const rawPrompt =
       "CHILD_INITIAL_PROMPT_MARKER_TEST: Do not edit files. Return CHILD_OUTPUT_MARKER_TEST.";

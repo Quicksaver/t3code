@@ -815,7 +815,7 @@ function dedupeSubagentChildWorkEntries(
       continue;
     }
     const unseenChildren = entry.subagentChildren.filter((child) => {
-      const activityScope = entry.turnId ?? child.parentItemId ?? "";
+      const activityScope = child.parentItemId ?? entry.turnId ?? "";
       const key = `${child.threadId}:${activityScope}`;
       if (seenChildActivityKeys.has(key)) {
         return false;

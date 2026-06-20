@@ -1645,7 +1645,7 @@ describe("deriveWorkLogEntries", () => {
     ]);
   });
 
-  it("drops duplicate resumed subagent child blocks within the same parent turn", () => {
+  it("keeps separate resumed subagent child blocks within the same parent turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "subagent-resume",
@@ -1702,12 +1702,20 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const entries = deriveWorkLogEntries(activities);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]?.id).toBe("subagent-resume");
     expect(entries[0]?.subagentChildren).toEqual([
       {
         threadId: "subagent-child-1",
         parentItemId: "call-resume",
+        titleSeed: "Say hi in German",
+      },
+    ]);
+    expect(entries[1]?.id).toBe("subagent-send-input");
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-send-input",
         titleSeed: "Say hi in German",
       },
     ]);

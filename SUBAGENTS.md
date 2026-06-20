@@ -60,13 +60,13 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 3. Codex collab lifecycle tracking preserves both the raw child prompt and the title seed. The raw prompt comes from the collab tool item `prompt` field and is used as displayable child-thread conversation history; the title seed remains the input for generated child titles and parent summary labeling. Whitespace-only raw prompts are ignored.
 
-4. Child-thread creation and updates happen through orchestration ingestion. The server preserves the direct parent, root thread id, depth, parent activity sequence, title seed, provider thread id, and started timestamp. When a terminal child is resumed from a new prompt-bearing parent activity, ingestion updates the existing child relation back to `running`, clears `completedAt`, records the new parent item id, and appends the follow-up prompt to the child conversation. Synthetic child shells are created so hidden child routes can be opened before the full projection catches up.
+4. Child-thread creation and updates happen through orchestration ingestion. The server preserves the direct parent, root thread id, depth, parent activity sequence, title seed, provider thread id, and started timestamp. When a terminal child is resumed from a new prompt-bearing parent activity, ingestion updates the existing child relation back to `running`, clears `completedAt`, records the new parent item id, and appends the follow-up prompt to the child conversation. Synthetic child shells are created so hidden child routes can be opened before the full projection catches up, and child runtime events that arrive with parent-collab metadata can synthesize the missing child shell before their output or tool activity is ingested.
 
 5. When Codex exposes a raw child prompt, ingestion appends it to the child thread as a non-streaming user message through an internal `thread.message.user.append` command. The prompt message uses stable ids derived from `childThreadId + parentItemId`, is not bound to the parent turn, and is appended even if the child shell already exists because Codex first emitted a started item without a prompt and later emitted a completed item with the concrete prompt.
 
 6. Child terminal status is derived from child lifecycle events, not from the parent collab item alone. Terminal updates apply only while the relation is still `running`, which prevents later `session.exited` events from overwriting a more specific `completed`, `errored`, `interrupted`, or `stopped` result.
 
-7. Child stop/interrupt handling routes through the provider-bound root session while targeting the selected child thread/turn. Parent stop remains scoped to the requested parent thread and does not cascade to active children.
+7. Child stop/interrupt handling routes through the provider-bound root session while targeting the selected child thread/turn. Parent stop remains scoped to the requested parent thread and does not cascade to active children. If a child stop request cannot identify an active child turn, the server records an interrupt failure on the child instead of falling back to the root session active turn or marking the child stopped.
 
 8. Completed child detail remains tied to the root parent lifecycle. The orchestration decider cascades root parent archive/delete actions through active descendant subagent threads before applying the parent event, with deepest children first. Force-deleting a project delegates through lifecycle root threads so descendant subagents are deleted once through their parent root instead of being planned twice. The web action layer still performs stop, terminal-close, navigation, draft cleanup, and currently materialized descendant cleanup around those server lifecycle commands.
 
@@ -86,7 +86,7 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 6. Child conversation views replace the normal composer with a subagent control bar. Users cannot send prompts to a subagent. While a child is running, the available user control is stop. The chat header also includes an up-navigation button that opens the direct parent conversation.
 
-7. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows by child thread id plus parent collab item id, so control repeats collapse while a resumed child with a new parent item id renders as a new appended block.
+7. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows by child thread id plus parent collab item id, so control repeats collapse while each prompt-bearing resumed child activity with a new parent item id renders as a new appended block, even when multiple activities happen in the same parent turn.
 
 8. Shared subagent display helpers keep duration and fallback labels consistent across parent blocks and child controls. Terminal child rows with missing completion timestamps show an explicit unknown-duration fallback instead of implying successful completion, and active children use `working` wording instead of `running` wording.
 
@@ -109,9 +109,9 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 The implementation and review fixes have been covered by focused automated tests and Playwright regression checks:
 
-- Server tests cover Codex subagent ingestion, child terminal status, parent-relation persistence, projection upsert preservation, child stop/interrupt routing through the provider-bound root session, and archive/delete lifecycle cascades through subagent descendants.
+- Server tests cover Codex subagent ingestion, parent-collab child shell synthesis, child terminal status, parent-relation persistence, projection upsert preservation, child stop/interrupt routing through the provider-bound root session without root-turn fallback, and archive/delete lifecycle cascades through subagent descendants.
 - Server tests cover raw subagent prompt projection into child threads, including start-then-complete late prompt updates and whitespace-only prompt suppression.
-- Web tests cover sidebar/thread state behavior, duplicate parent subagent control-row removal, child composer suppression, subagent stop control behavior, and duration fallback labels.
+- Web tests cover sidebar/thread state behavior, duplicate parent subagent control-row removal, same-turn resumed child activity rows, child composer suppression, subagent stop control behavior, and duration fallback labels.
 - Client-runtime tests cover shared idle retention for stream-backed thread state across short subscriber gaps.
 - Playwright checked Codex subagent behavior with marker prompts: before the prompt projection fix, the child view showed the output marker but not the initial prompt marker; after the fix, the child view showed the initial prompt marker followed by the output marker. Earlier Playwright coverage also checked that the parent showed exactly one compact subagent block, child output/actions did not leak into the parent, the child view was reachable from the parent block, the child view showed the child command/output, and the child view did not expose a prompt composer.
 
