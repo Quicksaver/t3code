@@ -129,6 +129,88 @@ describe("host MCP discovery", () => {
     ).resolves.toEqual([bootstrapServer]);
   });
 
+  it("treats injected socket existence failures as unavailable advertisements", async () => {
+    const t3Home = makeT3Home();
+    const nowMs = Date.now();
+    const bootstrapServer = {
+      name: "bootstrap",
+      socketPath: "/tmp/bootstrap.sock",
+    };
+    writeHostMcpAdvertisement({
+      t3Home,
+      advertisement: createHostMcpAdvertisement({
+        hostId: "host-a",
+        nowMs,
+        mcpServer: {
+          name: "throws",
+          socketPath: "/tmp/throws.sock",
+        },
+        workspaceFolders: [
+          {
+            key: "file::/repo",
+            name: "repo",
+            cwd: "/repo",
+            uriScheme: "file",
+            uriAuthority: "",
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      resolveHostMcpServersForWorkspace({
+        t3Home,
+        workspaceRoot: "/repo",
+        bootstrapServers: [bootstrapServer],
+        socketPathExists: () => {
+          throw new Error("socket check failed");
+        },
+        probe: async () => true,
+      }),
+    ).resolves.toEqual([bootstrapServer]);
+  });
+
+  it("treats injected probe rejections as failed probes", async () => {
+    const t3Home = makeT3Home();
+    const nowMs = Date.now();
+    const bootstrapServer = {
+      name: "bootstrap",
+      socketPath: "/tmp/bootstrap.sock",
+    };
+    writeHostMcpAdvertisement({
+      t3Home,
+      advertisement: createHostMcpAdvertisement({
+        hostId: "host-a",
+        nowMs,
+        mcpServer: {
+          name: "rejects",
+          socketPath: "/tmp/rejects.sock",
+        },
+        workspaceFolders: [
+          {
+            key: "file::/repo",
+            name: "repo",
+            cwd: "/repo",
+            uriScheme: "file",
+            uriAuthority: "",
+          },
+        ],
+      }),
+    });
+
+    await expect(
+      resolveHostMcpServersForWorkspace({
+        t3Home,
+        workspaceRoot: "/repo",
+        bootstrapServers: [bootstrapServer],
+        socketPathExists: () => true,
+        probe: async () => {
+          throw new Error("probe failed");
+        },
+      }),
+    ).resolves.toEqual([bootstrapServer]);
+  });
+
   it("uses the advertised socket path without deriving an HTTP MCP endpoint", async () => {
     const t3Home = makeT3Home();
     const nowMs = Date.now();

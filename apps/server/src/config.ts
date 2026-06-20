@@ -98,6 +98,8 @@ export class ServerConfig extends Context.Service<
   ) => layerTest(cwd, baseDirOrPrefix);
 }
 
+export type ServerConfigShape = ServerConfig["Service"];
+
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));

@@ -8,9 +8,7 @@ import {
   readHostMcpAdvertisements,
 } from "@t3tools/shared/hostMcp";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import type { ServerConfig } from "../config.ts";
 
 const DEFAULT_MCP_PROBE_TIMEOUT_MS = 750;
@@ -23,19 +21,6 @@ export interface ResolveHostMcpServersInput {
   readonly probe?: (socketPath: string) => Promise<boolean>;
   readonly socketPathExists?: (socketPath: string) => boolean;
 }
-
-export class HostMcpDiscovery extends Context.Service<
-  HostMcpDiscovery,
-  {
-    readonly resolveForWorkspace: (
-      input: ResolveHostMcpServersInput,
-    ) => Effect.Effect<readonly DesktopBootstrapMcpServer[]>;
-    readonly resolveForProviderStart: (input: {
-      readonly serverConfig: Pick<ServerConfig["Service"], "baseDir" | "hostMcpServers">;
-      readonly sessionInput: Pick<ProviderSessionStartInput, "cwd" | "projectWorkspaceRoot">;
-    }) => Effect.Effect<readonly DesktopBootstrapMcpServer[]>;
-  }
->()("t3/provider/hostMcpDiscovery") {}
 
 export const resolveHostMcpServersForWorkspaceEffect = Effect.fn(
   "HostMcpDiscovery.resolveHostMcpServersForWorkspace",
@@ -60,15 +45,17 @@ export const resolveHostMcpServersForWorkspaceEffect = Effect.fn(
   }
   const socketPathExists = input.socketPathExists
     ? (socketPath: string) =>
-        Effect.sync(() => input.socketPathExists?.(socketPath) === true).pipe(
-          Effect.orElseSucceed(() => false),
-        )
+        Effect.try({
+          try: () => input.socketPathExists!(socketPath) === true,
+          catch: () => false,
+        }).pipe(Effect.orElseSucceed(() => false))
     : defaultSocketPathExistsEffect;
   const probe = input.probe
     ? (socketPath: string) =>
-        Effect.promise(() => input.probe?.(socketPath) ?? Promise.resolve(false)).pipe(
-          Effect.orElseSucceed(() => false),
-        )
+        Effect.tryPromise({
+          try: () => input.probe!(socketPath),
+          catch: () => false,
+        }).pipe(Effect.orElseSucceed(() => false))
     : probeMcpSocketEffect;
   const bootstrapNames = new Set(input.bootstrapServers.map((server) => server.name));
 
@@ -117,13 +104,6 @@ export function resolveHostMcpServersForProviderStart(input: {
 }): Promise<readonly DesktopBootstrapMcpServer[]> {
   return Effect.runPromise(resolveHostMcpServersForProviderStartEffect(input));
 }
-
-export const make = HostMcpDiscovery.of({
-  resolveForWorkspace: resolveHostMcpServersForWorkspaceEffect,
-  resolveForProviderStart: resolveHostMcpServersForProviderStartEffect,
-});
-
-export const layer = Layer.succeed(HostMcpDiscovery, make);
 
 export const defaultSocketPathExistsEffect = Effect.fn("HostMcpDiscovery.defaultSocketPathExists")(
   function* (socketPath: string) {
