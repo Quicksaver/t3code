@@ -15,7 +15,6 @@ import { isElectron, isVscodeWebview } from "./env";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
-import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 import { installVscodeDiagnostics } from "./vscodeDiagnostics";
@@ -31,8 +30,6 @@ if (isElectron) {
 if (isVscodeWebview) {
   installVscodeDiagnostics();
 }
-
-document.title = APP_DISPLAY_NAME;
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 

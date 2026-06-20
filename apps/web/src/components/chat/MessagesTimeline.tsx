@@ -756,7 +756,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
     ? nonEmptyEntries.length === 1
       ? "1 tool call"
       : `${nonEmptyEntries.length} tool calls`
-    : "work log";
+    : "Work Log";
 
   useLayoutEffect(() => {
     const anchorBottomBeforeToggle = anchorBottomBeforeToggleRef.current;

@@ -101,7 +101,7 @@ function makeTestLayer(
   execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, never>,
   workflow: Partial<GitWorkflowServiceShape> = {},
   providers: Partial<
-    Record<SourceControlProviderKind, SourceControlProvider.SourceControlProviderShape>
+    Record<SourceControlProviderKind, SourceControlProvider.SourceControlProvider["Service"]>
   > = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(

@@ -25,7 +25,7 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import type { Thread } from "../types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export class ThreadArchiveBlockedError extends Data.TaggedError("ThreadArchiveBlockedError")<{
@@ -66,8 +66,8 @@ export function useThreadActions() {
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
-  const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
-  const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
+  const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
+  const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,

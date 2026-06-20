@@ -1,6 +1,8 @@
+import * as NodeAssert from "node:assert/strict";
+
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { assert, describe, it } from "@effect/vitest";
+import { describe, it } from "vite-plus/test";
 import { ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
@@ -53,7 +55,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "never",
       sandboxPolicy: {
@@ -95,7 +97,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "on-request",
       sandboxPolicy: {
@@ -132,7 +134,7 @@ describe("buildTurnStartParams", () => {
       }),
     );
 
-    assert.deepStrictEqual(params, {
+    NodeAssert.deepStrictEqual(params, {
       threadId: "provider-thread-1",
       approvalPolicy: "untrusted",
       sandboxPolicy: {
@@ -154,19 +156,19 @@ describe("T3 browser developer instructions", () => {
       CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
       CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
     ]) {
-      assert.match(instructions, /t3-code/);
-      assert.match(instructions, /preview_status/);
-      assert.match(instructions, /preview_open/);
-      assert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /t3-code/);
+      NodeAssert.match(instructions, /preview_status/);
+      NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });
 });
 
 describe("hasConfiguredMcpServer", () => {
   it("detects inline Codex MCP configuration arguments", () => {
-    assert.equal(hasConfiguredMcpServer(undefined), false);
-    assert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
-    assert.equal(
+    NodeAssert.equal(hasConfiguredMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
+    NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
       true,
     );
@@ -175,7 +177,7 @@ describe("hasConfiguredMcpServer", () => {
 
 describe("isRecoverableThreadResumeError", () => {
   it("matches missing thread errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -187,7 +189,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores non-recoverable resume errors", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -199,7 +201,7 @@ describe("isRecoverableThreadResumeError", () => {
   });
 
   it("ignores unrelated missing-resource errors that do not mention threads", () => {
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -208,7 +210,7 @@ describe("isRecoverableThreadResumeError", () => {
       ),
       false,
     );
-    assert.equal(
+    NodeAssert.equal(
       isRecoverableThreadResumeError(
         new CodexErrors.CodexAppServerRequestError({
           code: -32603,
@@ -253,7 +255,7 @@ describe("openCodexThread", () => {
         ],
       });
 
-      assert.deepStrictEqual(calls, [
+      NodeAssert.deepStrictEqual(calls, [
         {
           method: "thread/start",
           payload: {
@@ -308,11 +310,11 @@ describe("openCodexThread", () => {
         resumeThreadId: "stale-thread",
       });
 
-      assert.equal(opened.thread.id, "fresh-thread");
-      assert.deepStrictEqual(
-        calls.map((call) => call.method),
-        ["thread/resume", "thread/start"],
-      );
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.deepStrictEqual(calls.map((call) => call.method), [
+        "thread/resume",
+        "thread/start",
+      ]);
     });
   });
 
@@ -347,9 +349,9 @@ describe("openCodexThread", () => {
         resumeThreadId: "stale-thread",
       }).pipe(Effect.flip);
 
-      assert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.ok(isCodexAppServerRequestError(error));
       if (isCodexAppServerRequestError(error)) {
-        assert.equal(error.errorMessage, "timed out waiting for server");
+        NodeAssert.equal(error.errorMessage, "timed out waiting for server");
       }
     });
   });
