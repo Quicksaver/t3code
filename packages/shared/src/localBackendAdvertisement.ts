@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalRandom:off
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import {
   LocalBackendAdvertisement,
@@ -60,11 +60,11 @@ export interface CleanupLocalBackendAdvertisementsResult {
 const decodeLocalBackendAdvertisement = Schema.decodeUnknownSync(LocalBackendAdvertisement);
 
 export function resolveLocalBackendAdvertisementDir(t3Home: string): string {
-  return path.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
+  return NodePath.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
 }
 
 export function resolveLocalBackendAdvertisementPath(t3Home: string, backendId: string): string {
-  return path.join(
+  return NodePath.join(
     resolveLocalBackendAdvertisementDir(t3Home),
     `${sanitizeBackendId(backendId)}.json`,
   );
@@ -118,7 +118,9 @@ export function removeLocalBackendAdvertisement(input: {
   readonly t3Home: string;
   readonly backendId: string;
 }): void {
-  fs.rmSync(resolveLocalBackendAdvertisementPath(input.t3Home, input.backendId), { force: true });
+  NodeFS.rmSync(resolveLocalBackendAdvertisementPath(input.t3Home, input.backendId), {
+    force: true,
+  });
 }
 
 export function readLocalBackendAdvertisements(
@@ -131,7 +133,7 @@ export function readLocalBackendAdvertisements(
   let malformed = 0;
 
   for (const entry of entries) {
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeLocalBackendAdvertisement);
     if (readResult._tag !== "ok") {
       if (readResult._tag === "invalid") {
@@ -174,7 +176,7 @@ export function cleanupLocalBackendAdvertisements(
     if (deleted >= maxDeletes) {
       break;
     }
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeLocalBackendAdvertisement);
     if (readResult._tag !== "ok") {
       continue;
@@ -185,7 +187,7 @@ export function cleanupLocalBackendAdvertisements(
       continue;
     }
     try {
-      fs.rmSync(filePath, { force: true });
+      NodeFS.rmSync(filePath, { force: true });
       deleted += 1;
     } catch {
       errors += 1;

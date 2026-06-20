@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
 // @effect-diagnostics globalRandom:off
-import * as fs from "node:fs";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 import {
   HostMcpAdvertisement,
@@ -60,11 +60,11 @@ export interface CleanupHostMcpAdvertisementsResult {
 const decodeHostMcpAdvertisement = Schema.decodeUnknownSync(HostMcpAdvertisement);
 
 export function resolveHostMcpAdvertisementDir(t3Home: string): string {
-  return path.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
+  return NodePath.join(t3Home, ...ADVERTISEMENT_DIR_PARTS);
 }
 
 export function resolveHostMcpAdvertisementPath(t3Home: string, hostId: string): string {
-  return path.join(resolveHostMcpAdvertisementDir(t3Home), `${sanitizeHostId(hostId)}.json`);
+  return NodePath.join(resolveHostMcpAdvertisementDir(t3Home), `${sanitizeHostId(hostId)}.json`);
 }
 
 export function createHostMcpAdvertisement(
@@ -104,7 +104,9 @@ export function removeHostMcpAdvertisement(input: {
   readonly t3Home: string;
   readonly hostId: string;
 }): void {
-  fs.rmSync(resolveHostMcpAdvertisementPath(input.t3Home, input.hostId), { force: true });
+  NodeFS.rmSync(resolveHostMcpAdvertisementPath(input.t3Home, input.hostId), {
+    force: true,
+  });
 }
 
 export function readHostMcpAdvertisements(
@@ -117,7 +119,7 @@ export function readHostMcpAdvertisements(
   let malformed = 0;
 
   for (const entry of entries) {
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
     if (readResult._tag !== "ok") {
       if (readResult._tag === "invalid") {
@@ -160,7 +162,7 @@ export function cleanupHostMcpAdvertisements(
     if (deleted >= maxDeletes) {
       break;
     }
-    const filePath = path.join(dir, entry);
+    const filePath = NodePath.join(dir, entry);
     const readResult = readAdvertisementJson(filePath, decodeHostMcpAdvertisement);
     if (readResult._tag !== "ok") {
       continue;
@@ -171,7 +173,7 @@ export function cleanupHostMcpAdvertisements(
       continue;
     }
     try {
-      fs.rmSync(filePath, { force: true });
+      NodeFS.rmSync(filePath, { force: true });
       deleted += 1;
     } catch {
       errors += 1;

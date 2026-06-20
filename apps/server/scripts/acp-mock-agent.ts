@@ -32,7 +32,7 @@ const permissionOptionIds = {
 const sessionId = "mock-session-1";
 
 if (cwdLogPath) {
-  appendFileSync(cwdLogPath, `${process.cwd()}\n`, "utf8");
+  NodeFS.appendFileSync(cwdLogPath, `${process.cwd()}\n`, "utf8");
 }
 
 let currentModeId = "ask";

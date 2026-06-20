@@ -240,7 +240,7 @@ describe("ConnectionResolver", () => {
             }),
           ),
       });
-      const broker = yield* ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
       const target = new PrimaryConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Primary",

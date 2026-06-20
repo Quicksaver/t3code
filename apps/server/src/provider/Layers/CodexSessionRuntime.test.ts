@@ -2,7 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { describe, it } from "vite-plus/test";
+import { describe, it } from "@effect/vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
@@ -311,10 +311,10 @@ describe("openCodexThread", () => {
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
-      NodeAssert.deepStrictEqual(calls.map((call) => call.method), [
-        "thread/resume",
-        "thread/start",
-      ]);
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/resume", "thread/start"],
+      );
     });
   });
 

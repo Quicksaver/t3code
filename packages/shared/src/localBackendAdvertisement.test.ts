@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
@@ -27,13 +27,13 @@ describe("local backend advertisements", () => {
 
   afterEach(() => {
     for (const dir of tempDirs) {
-      fs.rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     }
     tempDirs = [];
   });
 
   function makeT3Home(): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-local-backend-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-local-backend-"));
     tempDirs.push(dir);
     return dir;
   }
@@ -63,7 +63,7 @@ describe("local backend advertisements", () => {
       }),
     });
 
-    expect(fs.readdirSync(resolveLocalBackendAdvertisementDir(t3Home)).toSorted()).toEqual([
+    expect(NodeFS.readdirSync(resolveLocalBackendAdvertisementDir(t3Home)).toSorted()).toEqual([
       "backend-a.json",
       "backend-b.json",
     ]);
@@ -103,8 +103,8 @@ describe("local backend advertisements", () => {
         workspaceFolders: [{ ...workspace, cwd: "/other" }],
       }),
     });
-    fs.writeFileSync(
-      path.join(resolveLocalBackendAdvertisementDir(t3Home), "bad.json"),
+    NodeFS.writeFileSync(
+      NodePath.join(resolveLocalBackendAdvertisementDir(t3Home), "bad.json"),
       "{",
       "utf8",
     );
@@ -180,7 +180,7 @@ describe("local backend advertisements", () => {
     expect(
       cleanupLocalBackendAdvertisements({ t3Home, nowMs: nowMs + 70_000, graceMs: 60_000 }),
     ).toEqual({ deleted: 1, errors: 0 });
-    expect(fs.readdirSync(resolveLocalBackendAdvertisementDir(t3Home)).toSorted()).toEqual([
+    expect(NodeFS.readdirSync(resolveLocalBackendAdvertisementDir(t3Home)).toSorted()).toEqual([
       "live.json",
     ]);
   });

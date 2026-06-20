@@ -1,8 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalDate:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { createHostMcpAdvertisement, writeHostMcpAdvertisement } from "@t3tools/shared/hostMcp";
@@ -17,14 +17,14 @@ describe("host MCP discovery", () => {
 
   afterEach(() => {
     for (const dir of tempDirs) {
-      fs.rmSync(dir, { recursive: true, force: true });
+      NodeFS.rmSync(dir, { recursive: true, force: true });
     }
     tempDirs = [];
     vi.restoreAllMocks();
   });
 
   function makeT3Home(): string {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-host-mcp-discovery-"));
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-host-mcp-discovery-"));
     tempDirs.push(dir);
     return dir;
   }
@@ -172,8 +172,8 @@ describe("host MCP discovery", () => {
   });
 
   it("falls back to bootstrap servers when provider-start discovery fails", async () => {
-    const t3Home = path.join(makeT3Home(), "not-a-directory");
-    fs.writeFileSync(t3Home, "");
+    const t3Home = NodePath.join(makeT3Home(), "not-a-directory");
+    NodeFS.writeFileSync(t3Home, "");
     const bootstrapServer = {
       name: "bootstrap",
       socketPath: "/tmp/bootstrap.sock",
@@ -193,8 +193,8 @@ describe("host MCP discovery", () => {
   });
 
   it("falls back to bootstrap servers when direct workspace discovery fails", async () => {
-    const t3Home = path.join(makeT3Home(), "not-a-directory");
-    fs.writeFileSync(t3Home, "");
+    const t3Home = NodePath.join(makeT3Home(), "not-a-directory");
+    NodeFS.writeFileSync(t3Home, "");
     const bootstrapServer = {
       name: "bootstrap",
       socketPath: "/tmp/bootstrap.sock",

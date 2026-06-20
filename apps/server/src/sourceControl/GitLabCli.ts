@@ -103,6 +103,7 @@ export class GitLabCli extends Context.Service<
     }) => Effect.Effect<void, GitLabCliError>;
   }
 >()("t3/sourceControl/GitLabCli") {}
+export type GitLabCliShape = GitLabCli["Service"];
 
 function isVcsProcessSpawnError(error: unknown): boolean {
   return (

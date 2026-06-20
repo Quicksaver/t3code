@@ -20,7 +20,7 @@ import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegist
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
+import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 
 const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 const PROVIDER_SKILLS_CACHE_CAPACITY = 64;

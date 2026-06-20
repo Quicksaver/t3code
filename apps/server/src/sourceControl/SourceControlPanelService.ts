@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   GitCommandError,
@@ -568,7 +568,7 @@ function compareBranchActivity(
 function avatarUrlForEmail(email: string | null | undefined): string | null {
   const normalized = email?.trim().toLowerCase();
   if (!normalized || !normalized.includes("@")) return null;
-  const hash = createHash("md5").update(normalized).digest("hex");
+  const hash = NodeCrypto.createHash("md5").update(normalized).digest("hex");
   return `https://www.gravatar.com/avatar/${hash}?d=identicon&s=64`;
 }
 

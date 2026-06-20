@@ -1,5 +1,5 @@
 import * as NodeOS from "node:os";
-import { setTimeout as delay } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -51,7 +51,7 @@ const waitForFileContent = Effect.fn("waitForFileContent")(function* (filePath: 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const content = yield* fileSystem.readFileString(filePath).pipe(Effect.orElseSucceed(() => ""));
     if (content.trim()) return content;
-    yield* Effect.promise(() => delay(50));
+    yield* Effect.promise(() => NodeTimersPromises.setTimeout(50));
   }
   return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
 });

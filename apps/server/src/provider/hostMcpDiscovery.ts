@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as net from "node:net";
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import type { DesktopBootstrapMcpServer, ProviderSessionStartInput } from "@t3tools/contracts";
 import {
   cleanupHostMcpAdvertisements,
@@ -76,11 +76,11 @@ export function resolveHostMcpServersForProviderStart(input: {
 
 export function defaultSocketPathExists(socketPath: string): boolean {
   if (Effect.runSync(HostProcessPlatform) === "win32" && socketPath.startsWith("\\\\.\\pipe\\")) {
-    // Windows named pipes are not reliably visible through fs.existsSync. Let the
+    // Windows named pipes are not reliably visible through NodeFS.existsSync. Let the
     // subsequent protocol probe perform the authoritative availability check.
     return true;
   }
-  return fs.existsSync(socketPath);
+  return NodeFS.existsSync(socketPath);
 }
 
 export function probeMcpSocket(
@@ -88,7 +88,7 @@ export function probeMcpSocket(
   timeoutMs = DEFAULT_MCP_PROBE_TIMEOUT_MS,
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = net.createConnection(socketPath);
+    const socket = NodeNet.createConnection(socketPath);
     let buffer = "";
     let settled = false;
     // @effect-diagnostics-next-line globalTimers:off

@@ -18,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -644,7 +644,7 @@ function deterministicSubagentThreadId(input: {
   readonly parentThreadId: ThreadId;
   readonly providerThreadId: string;
 }): ThreadId {
-  const hash = createHash("sha256")
+  const hash = NodeCrypto.createHash("sha256")
     .update(`${input.parentThreadId}\0${input.providerThreadId}`)
     .digest("base64url")
     .slice(0, 32);
@@ -875,7 +875,7 @@ export const makeCodexSessionRuntime = (
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
-    // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
+    // `CODEX_HOME=~/.codex_work` reach codex as an absolute NodePath.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
     const env = {
       ...options.environment,

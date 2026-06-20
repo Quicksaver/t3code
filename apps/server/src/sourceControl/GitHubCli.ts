@@ -99,6 +99,7 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
+export type GitHubCliShape = GitHubCli["Service"];
 
 function errorText(error: VcsError | unknown): string {
   if (typeof error === "object" && error !== null) {

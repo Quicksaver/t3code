@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as path from "node:path";
+import * as NodePath from "node:path";
 import {
   AuthOrchestrationOperateScope,
   CommandId,
@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
+import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
@@ -64,7 +64,7 @@ const authenticateOwnerSession = Effect.gen(function* () {
       (cause) =>
         new VscodeWorkspaceBootstrapError({
           message: "Authentication required to bootstrap VS Code workspaces.",
-          status: cause._tag === "ServerAuthInternalError" ? 500 : 401,
+          status: 401,
           cause,
         }),
     ),
@@ -288,7 +288,7 @@ function workspaceRootsEqual(left: string, right: string): boolean {
 }
 
 function normalizeWorkspaceRootForMatch(value: string): string {
-  const normalized = path.normalize(value.trim()).replace(/[\\/]+$/u, "");
+  const normalized = NodePath.normalize(value.trim()).replace(/[\\/]+$/u, "");
   return Effect.runSync(HostProcessPlatform) === "win32" ? normalized.toLowerCase() : normalized;
 }
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
-import { appendFileSync } from "node:fs";
+import * as NodeFS from "node:fs";
 
 const cwdLogPath = process.env.T3_CODEX_CWD_LOG_PATH;
 const exitLogPath = process.env.T3_CODEX_EXIT_LOG_PATH;
 const hangSkillsList = process.env.T3_CODEX_HANG_SKILLS_LIST === "1";
 
 function appendLog(path: string | undefined, line: string): void {
-  if (path) appendFileSync(path, `${line}\n`, "utf8");
+  if (path) NodeFS.appendFileSync(path, `${line}\n`, "utf8");
 }
 
 function respond(id: number | string, result: unknown): void {

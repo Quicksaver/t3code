@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import * as NodeAssert from "node:assert/strict";
 
 import * as Path from "effect/Path";
 import * as Cause from "effect/Cause";
@@ -109,7 +109,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
             version: "0.0.0",
           },
         });
-        assert.equal(init.protocolVersion, 1);
+        NodeAssert.equal(init.protocolVersion, 1);
 
         yield* acp.agent.authenticate({ methodId: "cursor_login" });
 
@@ -117,29 +117,31 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           cwd: process.cwd(),
           mcpServers: [],
         });
-        assert.equal(session.sessionId, "mock-session-1");
+        NodeAssert.equal(session.sessionId, "mock-session-1");
 
         const prompt = yield* acp.agent.prompt({
           sessionId: session.sessionId,
           prompt: [{ type: "text", text: "hello" }],
         });
-        assert.equal(prompt.stopReason, "end_turn");
+        NodeAssert.equal(prompt.stopReason, "end_turn");
 
         const streamed = yield* Stream.runCollect(Stream.take(acp.raw.notifications, 2));
-        assert.equal(streamed.length, 2);
-        assert.equal(streamed[0]?._tag, "SessionUpdate");
-        assert.equal(streamed[1]?._tag, "ElicitationComplete");
-        assert.equal((yield* Ref.get(updates)).length, 1);
-        assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
-        assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
-        assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
+        NodeAssert.equal(streamed.length, 2);
+        NodeAssert.equal(streamed[0]?._tag, "SessionUpdate");
+        NodeAssert.equal(streamed[1]?._tag, "ElicitationComplete");
+        NodeAssert.equal((yield* Ref.get(updates)).length, 1);
+        NodeAssert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
+        NodeAssert.deepEqual(yield* Ref.get(typedRequests), [
+          { message: "hello from typed request" },
+        ]);
+        NodeAssert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
 
         return yield* acp.raw.request("x/echo", {
           hello: "world",
         });
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
 
-      assert.deepEqual(ext, {
+      NodeAssert.deepEqual(ext, {
         echoedMethod: "x/echo",
         echoedParams: {
           hello: "world",
@@ -212,11 +214,11 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
 
         if (Exit.isSuccess(result)) {
-          assert.fail("Expected prompt to fail for invalid typed extension payload");
+          NodeAssert.fail("Expected prompt to fail for invalid typed extension payload");
         }
         const rendered = Cause.pretty(result.cause);
-        assert.ok(rendered.includes("Invalid x/typed_request payload:"));
-        assert.ok(rendered.includes("Expected string, got 123"));
+        NodeAssert.ok(rendered.includes("Invalid x/typed_request payload:"));
+        NodeAssert.ok(rendered.includes("Expected string, got 123"));
       }),
   );
 
@@ -298,10 +300,12 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           Ref.update(elicitationCompletions, (current) => [...current, notification]),
         );
 
-        assert.equal((yield* Ref.get(updates)).length, 1);
-        assert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
-        assert.deepEqual(yield* Ref.get(typedRequests), [{ message: "hello from typed request" }]);
-        assert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
+        NodeAssert.equal((yield* Ref.get(updates)).length, 1);
+        NodeAssert.equal((yield* Ref.get(elicitationCompletions)).length, 1);
+        NodeAssert.deepEqual(yield* Ref.get(typedRequests), [
+          { message: "hello from typed request" },
+        ]);
+        NodeAssert.deepEqual(yield* Ref.get(typedNotifications), [{ count: 2 }]);
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
     }),
   );
@@ -372,7 +376,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
           prompt: [{ type: "text", text: "hello" }],
         });
 
-        assert.equal(yield* Ref.get(successfulHandlers), 1);
+        NodeAssert.equal(yield* Ref.get(successfulHandlers), 1);
       }).pipe(Effect.provide(context), Effect.ensuring(Scope.close(scope, Exit.void)));
     }),
   );
@@ -417,7 +421,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
         ? yield* decodedExt(secondOutbound)
         : yield* decodedExt(firstOutbound);
 
-      assert.notEqual(initializeRequest.id, extRequest.id);
+      NodeAssert.notEqual(initializeRequest.id, extRequest.id);
 
       yield* Queue.offer(
         input,
@@ -444,7 +448,7 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       );
 
       yield* Fiber.join(initializeFiber);
-      assert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
+      NodeAssert.deepEqual(yield* Fiber.join(extFiber), { ok: true });
       yield* Scope.close(scope, Exit.void);
     }),
   );

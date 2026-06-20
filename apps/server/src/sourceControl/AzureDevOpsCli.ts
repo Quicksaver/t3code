@@ -96,6 +96,7 @@ export class AzureDevOpsCli extends Context.Service<
     }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("t3/sourceControl/AzureDevOpsCli") {}
+export type AzureDevOpsCliShape = AzureDevOpsCli["Service"];
 
 function errorText(error: VcsError | unknown): string {
   if (typeof error === "object" && error !== null) {
