@@ -1493,7 +1493,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.stdout).toBe("a\nba");
   });
 
-  it("keeps multi-character incremental command chunks that match the accumulated prefix", () => {
+  it("appends multi-character incremental command chunks that match the accumulated prefix", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "command-tool-output-update-1",
@@ -1533,6 +1533,48 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities);
     expect(entry?.stdout).toBe("PASS one\nPASS");
+  });
+
+  it("appends multi-character incremental command chunks after unterminated repeated-prefix lines", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "PASS one\nPASS two",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "PASS",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("PASS one\nPASS twoPASS");
   });
 
   it("preserves whitespace-only incremental command output chunks", () => {

@@ -926,10 +926,10 @@ function shouldKeepLongerOutputSnapshot(
 }
 
 function isLikelyShorterOutputSnapshot(previous: string, next: string): boolean {
-  if (next.length <= 1 || previous.endsWith("\n")) {
+  if (next.length <= 1 || previous.endsWith("\n") || previous.indexOf("\n", next.length) !== -1) {
     return false;
   }
-  const following = previous.slice(next.length, next.length + 1);
+  const following = previous[next.length];
   return following === " " || following === "\t" || following === "\n" || following === "\r";
 }
 
