@@ -29,14 +29,20 @@ async function unwrapPanelCommand<TResult>(
 }
 
 export function useSourceControlPanelApi(environmentId: EnvironmentId) {
-  const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, { reportFailure: false });
+  const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, {
+    forceRefresh: true,
+    reportFailure: false,
+  });
   const panelBranchDetails = useAtomQueryRunner(vcsEnvironment.panelBranchDetails, {
+    forceRefresh: true,
     reportFailure: false,
   });
   const panelBranchCommits = useAtomQueryRunner(vcsEnvironment.panelBranchCommits, {
+    forceRefresh: true,
     reportFailure: false,
   });
   const panelStashDetails = useAtomQueryRunner(vcsEnvironment.panelStashDetails, {
+    forceRefresh: true,
     reportFailure: false,
   });
   const panelStageFiles = useAtomCommand(vcsEnvironment.panelStageFiles, { reportFailure: false });
@@ -49,10 +55,12 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
   const panelEnrichWorkingTreeFiles = useAtomQueryRunner(
     vcsEnvironment.panelEnrichWorkingTreeFiles,
     {
+      forceRefresh: true,
       reportFailure: false,
     },
   );
   const panelReadFileDiff = useAtomQueryRunner(vcsEnvironment.panelReadFileDiff, {
+    forceRefresh: true,
     reportFailure: false,
   });
   const panelCommitStaged = useAtomCommand(vcsEnvironment.panelCommitStaged, {
@@ -102,7 +110,10 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
   });
   const panelPopStash = useAtomCommand(vcsEnvironment.panelPopStash, { reportFailure: false });
   const panelDropStash = useAtomCommand(vcsEnvironment.panelDropStash, { reportFailure: false });
-  const panelCompare = useAtomQueryRunner(vcsEnvironment.panelCompare, { reportFailure: false });
+  const panelCompare = useAtomQueryRunner(vcsEnvironment.panelCompare, {
+    forceRefresh: true,
+    reportFailure: false,
+  });
   const switchRefCommand = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const runPanelCommand = useCallback(
     async <TInput extends { readonly cwd: string }, TResult>(
