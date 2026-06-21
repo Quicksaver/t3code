@@ -11,6 +11,7 @@ The current behavior is:
 - Completed, errored, interrupted, or stopped subagent threads are normally hidden from the sidebar but remain reachable from the parent conversation view. When a terminal subagent conversation is the active route, that subagent and any intermediate subagent ancestors are shown in the sidebar at their normal nested positions until the user navigates away.
 - In the VS Code extension sidebar, project chrome is hidden and conversation rows are shown directly. The same active/terminal subagent visibility rules apply, but the project-style indentation rail, extra child padding, and child-dot marker are suppressed so rows do not look visually nested under an omitted project row.
 - A parent conversation view shows only parent-owned output and subagent summary blocks for direct children.
+- Subagent summary blocks are normal tool activity entries. They remain visible while their referenced child is running, can be folded with surrounding tool activity such as `Worked for ...`, and update to the child thread's current running, completed, errored, interrupted, or stopped status.
 - When Codex resumes an existing subagent with a follow-up prompt, the parent conversation appends a new subagent summary block for that resumed activity while preserving the original block, and the same child thread appears in the sidebar as running again until the resumed turn reaches a terminal state.
 - A child conversation view shows the raw initial prompt that launched that child when Codex exposes it, followed by that child's output, tool calls, diffs, MCP calls, and other actions. Grandchildren appear only as blocks inside their direct parent child view.
 - Users cannot prompt or steer a subagent. The child view exposes stop control only while the child is running and a header button for returning to its direct parent conversation.
@@ -75,25 +76,27 @@ Review fixes added preservation guards so a normal root/default projection upser
 
 ## Web Implementation
 
-1. Sidebar nesting is driven by `parentRelation`. Active subagents render under their direct parent only. Terminal subagents are omitted from the sidebar during normal parent browsing, but the currently open terminal child path remains visible and indented while that child or nested descendant is selected. VS Code keeps this visibility/routing behavior while flattening row chrome because the extension sidebar omits the project row that normally provides the visual parent context.
+1. Sidebar nesting is driven by `parentRelation`. Active subagents render under their direct parent only, and each visible generation uses its relation depth to add another indentation step. Terminal subagents are omitted from the sidebar during normal parent browsing, but the currently open terminal child path remains visible and indented while that child or nested descendant is selected. VS Code keeps this visibility/routing behavior while flattening row chrome because the extension sidebar omits the project row that normally provides the visual parent context.
 
 2. Conversation detail routing accepts hidden child threads through projected/synthetic shells. A child thread can be opened from its parent block even after it has disappeared from the active sidebar.
 
 3. Parent timelines render direct child summary blocks from `subagentChildren`. The block text is `Subagent` while the generated child title is pending or still the placeholder, then `Subagent - <title>` once a generated child title is available. The child title is generated from the child title seed derived from the initial subagent prompt when available, and raw child prompts are not used as the visible title fallback. Duration and status display use shared helpers, with running children described as `Working for <duration>` and completed children described as `Completed in <duration>`.
 
-4. Parent timelines do not render child prompt messages, child output, child shell commands, child file diffs, child MCP calls, or child action boxes. Those entries appear only inside the child thread view.
+4. Child-bearing subagent rows are normal foldable tool activity entries, not special timeline overlays. They can be the visible latest row in a collapsed tool group or can fold behind the same `Worked for ...` summaries as any other tool entry, but they are not filtered out as neutral or empty while a child is still running.
 
-5. Child timelines render their raw launch prompt when available, then their own output/actions, and can render their own direct child summary blocks. This gives arbitrary-depth nesting without showing grandchildren in the original root parent view.
+5. Parent timelines do not render child prompt messages, child output, child shell commands, child file diffs, child MCP calls, or child action boxes. Those entries appear only inside the child thread view.
 
-6. Child conversation views replace the normal composer with a subagent control bar. Users cannot send prompts to a subagent. While a child is running, the available user control is stop; the client includes the child's latest turn id when available so the server does not have to infer from the root session's active turn. The chat header also includes an up-navigation button that opens the direct parent conversation.
+6. Child timelines render their raw launch prompt when available, then their own output/actions, and can render their own direct child summary blocks. This gives arbitrary-depth nesting without showing grandchildren in the original root parent view.
 
-7. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows by child thread id plus parent collab item id, so control repeats collapse while each prompt-bearing resumed child activity with a new parent item id renders as a new appended block, even when multiple activities happen in the same parent turn.
+7. Child conversation views replace the normal composer with a subagent control bar. Users cannot send prompts to a subagent. While a child is running, the available user control is stop; the client includes the child's latest turn id when available so the server does not have to infer from the root session's active turn. The chat header also includes an up-navigation button that opens the direct parent conversation.
 
-8. Shared subagent display helpers keep duration and fallback labels consistent across parent blocks and child controls. Terminal child rows with missing completion timestamps show an explicit unknown-duration fallback instead of implying successful completion, and active children use `working` wording instead of `running` wording.
+8. Review fixes removed duplicate compact subagent rows from Codex control sequences such as `wait` and `closeAgent`. Parent timelines now de-dupe child reference rows by child thread id plus parent collab item id, so control repeats collapse while each prompt-bearing resumed child activity with a new parent item id renders as a new appended block, even when multiple activities happen in the same parent turn. When Codex emits multiple rows for the same child activity, the latest representative row owns the visible child reference while preserving the earlier title seed, so a later running `wait` row is not dropped behind an earlier spawn row.
 
-9. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` centralize visible project/thread selection for client surfaces that need to reason about active root threads, descendants, hidden subagent routes, and workspace-bound source-control context after the upstream connection-runtime rewrite.
+9. Shared subagent display helpers keep duration and fallback labels consistent across parent blocks and child controls. Terminal child rows with missing completion timestamps show an explicit unknown-duration fallback instead of implying successful completion, and active children use `working` wording instead of `running` wording.
 
-10. Thread list and detail state share the client-runtime idle retention TTL, so short route/sidebar unmount gaps should not immediately drop hidden child-thread detail or active subagent sidebar state.
+10. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` centralize visible project/thread selection for client surfaces that need to reason about active root threads, descendants, hidden subagent routes, and workspace-bound source-control context after the upstream connection-runtime rewrite.
+
+11. Thread list and detail state share the client-runtime idle retention TTL, so short route/sidebar unmount gaps should not immediately drop hidden child-thread detail or active subagent sidebar state.
 
 ## Decisions Captured
 
@@ -114,9 +117,9 @@ The implementation and review fixes have been covered by focused automated tests
 
 - Server tests cover Codex subagent ingestion, parent-collab child shell synthesis, child terminal status, parent-relation persistence, projection upsert preservation, child stop/interrupt routing through the provider-bound root session without root-turn fallback, root thread archive/delete lifecycle cascade through subagent descendants, and project force-delete behavior that deletes descendants only once.
 - Server tests cover raw subagent prompt projection into child threads, including start-then-complete late prompt updates and whitespace-only prompt suppression.
-- Web tests cover sidebar/thread state behavior, active terminal subagent ancestor visibility, duplicate parent subagent control-row removal, same-turn resumed child activity rows, child composer suppression, subagent stop control behavior, and duration fallback labels.
+- Web tests cover sidebar/thread state behavior, active terminal subagent ancestor visibility, per-generation sidebar indentation, duplicate parent subagent control-row removal, same-turn resumed child activity rows, visible running subagent rows inside collapsed tool groups, child composer suppression, subagent stop control behavior, and duration fallback labels.
 - Client-runtime tests cover shared idle retention for stream-backed thread state across short subscriber gaps.
-- Playwright checked Codex subagent behavior with marker prompts: before the prompt projection fix, the child view showed the output marker but not the initial prompt marker; after the fix, the child view showed the initial prompt marker followed by the output marker. Earlier Playwright coverage also checked that the parent showed exactly one compact subagent block, child output/actions did not leak into the parent, the child view was reachable from the parent block, the child view showed the child command/output, and the child view did not expose a prompt composer.
+- Playwright checked Codex subagent behavior with marker prompts: before the prompt projection fix, the child view showed the output marker but not the initial prompt marker; after the fix, the child view showed the initial prompt marker followed by the output marker. Earlier Playwright coverage also checked that the parent showed exactly one compact subagent block, child output/actions did not leak into the parent, the child view was reachable from the parent block, the child view showed the child command/output, and the child view did not expose a prompt composer. Later nested Playwright coverage checked a parent-child-grandchild chain while still running: the parent conversation kept the child subagent activity row visible, the child conversation kept the grandchild subagent activity row visible, and the sidebar projected the three levels at depths 0, 1, and 2.
 
 Current completion gates for this repo remain:
 
@@ -139,6 +142,6 @@ pnpm exec vp run lint:mobile
 
 3. Multi-client behavior needs broader coverage across web, desktop, VS Code, and mobile shells. The data model is shared, but route guards, sidebar shell subscriptions, and hidden-thread availability should be checked in each client surface.
 
-4. Deep nesting should be load-tested. The model supports arbitrary depth, but the UI should still be checked for indentation, active-row sorting stability, and large active-child sets.
+4. Deep nesting should be load-tested with large active-child sets. The model supports arbitrary depth and the current UI indents each visible generation, but active-row sorting stability and large sibling groups still deserve stress coverage.
 
 5. Unsupported provider fallback should remain explicit. If another provider later exposes durable child-thread lineage, it should be added provider-by-provider rather than by guessing from output text.

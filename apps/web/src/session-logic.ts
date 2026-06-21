@@ -272,6 +272,9 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   if (!workLogEntryIsToolLike(entry)) {
     return false;
   }
+  if (entry.itemType === "collab_agent_tool_call" && (entry.subagentChildren?.length ?? 0) > 0) {
+    return false;
+  }
   if (workEntryIndicatesToolFailure(entry)) {
     return false;
   }
@@ -849,35 +852,53 @@ function collapseDerivedWorkLogEntries(
 function dedupeSubagentChildWorkEntries(
   entries: ReadonlyArray<DerivedWorkLogEntry>,
 ): DerivedWorkLogEntry[] {
-  const seenChildActivityKeys = new Set<string>();
-  const deduped: DerivedWorkLogEntry[] = [];
-  for (const entry of entries) {
+  const lastIndexByChildActivityKey = new Map<string, number>();
+  const childByActivityKey = new Map<string, SubagentWorkLogChild>();
+
+  for (const [index, entry] of entries.entries()) {
     if (entry.itemType !== "collab_agent_tool_call" || !entry.subagentChildren?.length) {
-      deduped.push(entry);
       continue;
     }
-    const unseenChildren = entry.subagentChildren.filter((child) => {
+    for (const child of entry.subagentChildren) {
       const activityScope = child.parentItemId ?? entry.turnId ?? "";
       const key = `${child.threadId}:${activityScope}`;
-      if (seenChildActivityKeys.has(key)) {
-        return false;
-      }
-      seenChildActivityKeys.add(key);
-      return true;
-    });
-    if (unseenChildren.length === 0) {
-      continue;
+      const existing = childByActivityKey.get(key);
+      childByActivityKey.set(key, {
+        threadId: child.threadId,
+        ...(child.parentItemId ? { parentItemId: child.parentItemId } : {}),
+        ...((existing?.titleSeed ?? child.titleSeed)
+          ? { titleSeed: existing?.titleSeed ?? child.titleSeed }
+          : {}),
+      });
+      lastIndexByChildActivityKey.set(key, index);
     }
-    deduped.push(
-      unseenChildren.length === entry.subagentChildren.length
-        ? entry
-        : {
-            ...entry,
-            subagentChildren: unseenChildren,
-          },
-    );
   }
-  return deduped;
+
+  return entries.flatMap((entry, index) => {
+    if (entry.itemType !== "collab_agent_tool_call" || !entry.subagentChildren?.length) {
+      return [entry];
+    }
+    const retainedChildren: SubagentWorkLogChild[] = [];
+    const retainedKeys = new Set<string>();
+    for (const child of entry.subagentChildren) {
+      const activityScope = child.parentItemId ?? entry.turnId ?? "";
+      const key = `${child.threadId}:${activityScope}`;
+      if (retainedKeys.has(key) || lastIndexByChildActivityKey.get(key) !== index) {
+        continue;
+      }
+      retainedKeys.add(key);
+      retainedChildren.push(childByActivityKey.get(key) ?? child);
+    }
+    if (retainedChildren.length === 0) {
+      return [];
+    }
+    return [
+      {
+        ...entry,
+        subagentChildren: retainedChildren,
+      },
+    ];
+  });
 }
 
 function isEmptySubagentWorkLogEntry(entry: DerivedWorkLogEntry): boolean {
@@ -1758,12 +1779,16 @@ function extractSubagentChildren(
   for (const value of children) {
     const record = asRecord(value);
     const rawThreadId = asTrimmedString(record?.childThreadId) ?? asTrimmedString(record?.threadId);
-    if (!rawThreadId || seen.has(rawThreadId)) {
+    if (!rawThreadId) {
       continue;
     }
-    seen.add(rawThreadId);
     const titleSeed = asTrimmedString(record?.titleSeed);
     const parentItemId = asTrimmedString(record?.parentItemId);
+    const key = `${rawThreadId}:${parentItemId ?? ""}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
     result.push({
       threadId: ThreadId.make(rawThreadId),
       ...(parentItemId ? { parentItemId } : {}),

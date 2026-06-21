@@ -672,6 +672,20 @@ describe("workEntryIndicatesToolFailure", () => {
       workEntryIndicatesToolNeutralStatus({
         ...base,
         tone: "tool",
+        itemType: "collab_agent_tool_call",
+        toolLifecycleStatus: "inProgress",
+        subagentChildren: [
+          {
+            threadId: ThreadId.make("subagent-child-1"),
+            parentItemId: "call-child",
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
         toolLifecycleStatus: "completed",
         detail: "ok",
       }),
@@ -2395,7 +2409,7 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
-  it("drops duplicate subagent control rows for an already rendered child block", () => {
+  it("collapses duplicate subagent control rows onto the latest child activity", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "subagent-spawn",
@@ -2470,7 +2484,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
-      id: "subagent-spawn",
+      id: "subagent-close",
       itemType: "collab_agent_tool_call",
       subagentChildren: [
         {
@@ -2561,7 +2575,7 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(entries).toHaveLength(2);
-    expect(entries.map((entry) => entry.id)).toEqual(["subagent-spawn", "subagent-resume"]);
+    expect(entries.map((entry) => entry.id)).toEqual(["subagent-wait", "subagent-resume"]);
     expect(entries[0]?.subagentChildren).toEqual([
       {
         threadId: "subagent-child-1",
@@ -2650,6 +2664,116 @@ describe("deriveWorkLogEntries", () => {
         threadId: "subagent-child-1",
         parentItemId: "call-send-input",
         titleSeed: "Say hi in German",
+      },
+    ]);
+  });
+
+  it("keeps a running duplicate subagent control row visible as the latest tool activity", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Start nested work",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Start nested work",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Start nested work",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait-running",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe("subagent-wait-running");
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-spawn",
+        titleSeed: "Start nested work",
+      },
+    ]);
+  });
+
+  it("keeps repeated child references with distinct parent activity ids in one row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-batched-activities",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-grandchild-start",
+                titleSeed: "Start nested work",
+              },
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-grandchild-resume",
+                titleSeed: "Resume nested work",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-grandchild-start",
+        titleSeed: "Start nested work",
+      },
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-grandchild-resume",
+        titleSeed: "Resume nested work",
       },
     ]);
   });

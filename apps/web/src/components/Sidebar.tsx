@@ -195,6 +195,7 @@ import {
   resolveVscodeProjectScope,
   resolveThreadListClassName,
   resolveThreadRowClassName,
+  resolveThreadRowIndentStyle,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
   shouldClearThreadSelectionOnMouseDown,
@@ -764,7 +765,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         className={`${resolveThreadRowClassName({
           isActive,
           isSelected,
-        })} ${indentLevel > 0 && !flattenHierarchyChrome ? "pl-5" : ""} relative isolate`}
+        })} relative isolate`}
+        style={resolveThreadRowIndentStyle({ indentLevel, flattenHierarchyChrome })}
         onClick={handleRowClick}
         onDoubleClick={handleRowDoubleClick}
         onKeyDown={handleRowKeyDown}

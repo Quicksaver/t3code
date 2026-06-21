@@ -24,6 +24,7 @@ import {
   resolveVscodeProjectScope,
   resolveVscodeInitialThreadRef,
   resolveThreadRowClassName,
+  resolveThreadRowIndentStyle,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
@@ -1026,6 +1027,26 @@ describe("buildSidebarThreadRows", () => {
       { thread: runningGrandchild, indentLevel: 2 },
       { thread: unrelatedRoot, indentLevel: 0 },
     ]);
+  });
+});
+
+describe("resolveThreadRowIndentStyle", () => {
+  it("increases row indentation for each visible subagent generation", () => {
+    expect(resolveThreadRowIndentStyle({ indentLevel: 0, flattenHierarchyChrome: false })).toBe(
+      undefined,
+    );
+    expect(resolveThreadRowIndentStyle({ indentLevel: 1, flattenHierarchyChrome: false })).toEqual({
+      paddingLeft: "1.25rem",
+    });
+    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: false })).toEqual({
+      paddingLeft: "2.125rem",
+    });
+  });
+
+  it("suppresses hierarchy indentation when chrome is flattened", () => {
+    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: true })).toBe(
+      undefined,
+    );
   });
 });
 

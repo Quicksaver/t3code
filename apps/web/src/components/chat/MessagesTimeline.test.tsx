@@ -758,6 +758,92 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("duration unknown");
   });
 
+  it("keeps running subagent child rows visible in collapsed tool groups", async () => {
+    const childThreadId = ThreadId.make("subagent-child-1");
+    const parentTurnId = TurnId.make("turn-running-child");
+    storeMock.state = {
+      environmentStateById: {
+        [ACTIVE_THREAD_ENVIRONMENT_ID]: {
+          threadShellById: {
+            [childThreadId]: {
+              id: childThreadId,
+              title: "Check nested work",
+              parentRelation: {
+                kind: "subagent",
+                rootThreadId: ThreadId.make("thread-1"),
+                parentThreadId: ThreadId.make("thread-1"),
+                parentTurnId,
+                parentItemId: "call-child",
+                parentActivitySequence: 1,
+                providerThreadId: "provider-child-1",
+                titleSeed: "Check nested work",
+                depth: 1,
+                startedAt: "2026-03-17T19:12:30.000Z",
+                completedAt: null,
+                status: "running",
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress={true}
+        latestTurn={{
+          turnId: parentTurnId,
+          state: "running",
+          startedAt: "2026-03-17T19:12:30.000Z",
+          completedAt: null,
+        }}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-command",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              turnId: parentTurnId,
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              toolLifecycleStatus: "completed",
+              command: "pwd",
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-subagent",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              turnId: parentTurnId,
+              label: "Subagent",
+              tone: "tool",
+              itemType: "collab_agent_tool_call",
+              toolLifecycleStatus: "inProgress",
+              subagentChildren: [
+                {
+                  threadId: childThreadId,
+                  parentItemId: "call-child",
+                  titleSeed: "Check nested work",
+                },
+              ],
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Subagent - Check nested work");
+    expect(markup).toContain("+1 previous tool call");
+  });
+
   it("renders file review comments as source code instead of diffs", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

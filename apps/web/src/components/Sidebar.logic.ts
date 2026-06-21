@@ -530,6 +530,19 @@ export function resolveThreadRowClassName(input: {
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
 }
 
+export function resolveThreadRowIndentStyle(input: {
+  indentLevel: number;
+  flattenHierarchyChrome: boolean;
+}): React.CSSProperties | undefined {
+  if (input.flattenHierarchyChrome || input.indentLevel <= 0) {
+    return undefined;
+  }
+
+  return {
+    paddingLeft: `${1.25 + (input.indentLevel - 1) * 0.875}rem`,
+  };
+}
+
 export function resolveThreadListClassName(input: { hideThreadGroupRail: boolean }): string {
   return cn(
     "mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5",
