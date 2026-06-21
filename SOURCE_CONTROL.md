@@ -75,7 +75,7 @@ The server also checks open change requests for every local branch across all co
 
 Client-side Actionable/Remotes expansion, row selection, and visible-row enrichment state lives in `apps/web/src/state/sourceControlPanel.ts`. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
 
-The `Actionable` header has a manual `Fetch` action for remote refreshes. The panel does not run its own mounted polling timer; freshness comes from the VCS status stream, filesystem watcher signals, focus/visibility rechecks, and explicit operations.
+The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every five minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh while keeping idle network and Git churn conservative.
 
 Items are sorted by operational urgency, then recency. An unclean working tree is always first. Branch urgency is based on conflicts/diverged, behind, unpushed, dirty, and stale states. Branch and commit rows include succinct relative dates such as `5 minutes ago`, `yesterday`, `4 days ago`, and `last week`.
 
@@ -198,7 +198,7 @@ The panel routes all repository mutations through server-side RPC methods and re
 - Branch operations: fetch branch, pull, push, publish, switch, delete, undo latest commit, merge branch into current branch, and rebase current branch onto another branch or commit.
 - Commit operations: revert commit, checkout detached HEAD, and create branch from commit.
 - Stash operations: apply, pop, and drop.
-- Remote operations: list, add, remove, fetch one remote, fetch one branch ref, manual Actionable fetch, and fetch all remotes.
+- Remote operations: list, add, remove, fetch one remote, fetch one branch ref, periodic Actionable fetch, and fetch all remotes.
 
 Non-current branch fetches are scoped to the selected branch. Operation busy state is keyed per action target so fetching one branch does not disable equivalent actions on other branches or remote entries. Publish/push handling on the server only reuses a configured upstream when that upstream resolves to the same branch name; otherwise it pushes `<local-branch>:refs/heads/<local-branch>` on the selected/default remote so a base ref such as `upstream/main` cannot become the push target.
 

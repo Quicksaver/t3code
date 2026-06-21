@@ -1766,6 +1766,18 @@ export function SourceControlPanel({
     [api, cwd, runAction],
   );
 
+  useEffect(() => {
+    if (!api) return;
+    const interval = window.setInterval(
+      () => {
+        if (runningActions.has("work-fetch")) return;
+        void fetchActionableBranches();
+      },
+      5 * 60 * 1_000,
+    );
+    return () => window.clearInterval(interval);
+  }, [api, fetchActionableBranches, runningActions]);
+
   const runPanelCommit = useCallback(
     (message: string) => {
       const commitMessage = message.trim();
