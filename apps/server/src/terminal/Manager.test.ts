@@ -23,13 +23,11 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
-import { __testing } from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
@@ -281,7 +279,7 @@ function processOutput(stdout: string, code = 0): ProcessRunner.ProcessRunOutput
   return {
     stdout,
     stderr: "",
-    code: ChildProcessSpawner.ExitCode(code),
+    code: code as ProcessRunner.ProcessRunOutput["code"],
     timedOut: false,
     stdoutTruncated: false,
     stderrTruncated: false,
@@ -942,7 +940,7 @@ it.layer(
 
   it("treats an idle POSIX login shell child as no running subprocess", () => {
     expect(
-      __testing.inspectPosixProcessTree({
+      TerminalManager.__testing.inspectPosixProcessTree({
         terminalPid: 9000,
         childPid: 9001,
         childCommand: "bash",
@@ -957,7 +955,7 @@ it.layer(
 
   it("reports the first non-shell POSIX descendant as the running subprocess", () => {
     expect(
-      __testing.inspectPosixProcessTree({
+      TerminalManager.__testing.inspectPosixProcessTree({
         terminalPid: 9000,
         childPid: 9001,
         childCommand: "bash",
@@ -978,7 +976,7 @@ it.layer(
 
   it("keeps a non-shell direct POSIX child marked as running", () => {
     expect(
-      __testing.inspectPosixProcessTree({
+      TerminalManager.__testing.inspectPosixProcessTree({
         terminalPid: 9000,
         childPid: 9001,
         childCommand: "vim",
@@ -1016,7 +1014,7 @@ it.layer(
           }),
       });
 
-      const result = yield* __testing
+      const result = yield* TerminalManager.__testing
         .posixInspectSubprocess(9000, "darwin")
         .pipe(Effect.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)));
 

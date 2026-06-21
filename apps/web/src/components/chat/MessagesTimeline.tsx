@@ -2177,7 +2177,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         </div>
       )}
       {canExpand && expanded ? (
-        <div onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+        <div className="cursor-default" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
           <ToolEntryDetails workEntry={workEntry} workspaceRoot={workspaceRoot} />
         </div>
       ) : null}
