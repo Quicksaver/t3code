@@ -4,9 +4,9 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
@@ -25,12 +25,20 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import type { Thread } from "../types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useSettings } from "./useSettings";
+import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 
-export class ThreadArchiveBlockedError extends Data.TaggedError("ThreadArchiveBlockedError")<{
-  readonly message: string;
-}> {}
+export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
+  "ThreadArchiveBlockedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "Cannot archive a running thread.";
+  }
+}
 
 function collectLifecycleThreadIds(
   threads: readonly Pick<Thread, "id" | "parentRelation">[],
@@ -79,8 +87,8 @@ export function useThreadActions() {
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
-  const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
-  const confirmThreadDelete = useSettings((settings) => settings.confirmThreadDelete);
+  const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
+  const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -131,7 +139,8 @@ export function useThreadActions() {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({
-              message: "Cannot archive a running thread.",
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
             }),
           ),
         );

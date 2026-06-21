@@ -296,7 +296,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Context compacted");
-    expect(markup).toContain("work log");
+    expect(markup).toContain("Work Log");
   });
 
   it("formats changed file paths from the workspace root", async () => {
