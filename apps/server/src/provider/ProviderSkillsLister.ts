@@ -61,12 +61,6 @@ export const makeBoundedRequestCache = Effect.fn("makeBoundedRequestCache")(func
   };
 });
 
-function describeUnknownCause(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  return "Unknown error";
-}
-
 function optionalTrimmedNonEmptyString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? value : undefined;
@@ -228,7 +222,7 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
           operation: "ProviderSkillsLister.normalizeCwd",
           instanceId: input.instanceId,
           cwd: input.cwd,
-          message: `Invalid Codex skills cwd '${input.cwd}': ${cause.message}`,
+          message: `Invalid Codex skills cwd '${input.cwd}'.`,
           cause,
         }),
       ),
@@ -245,7 +239,7 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
           operation: "ProviderSkillsLister.prepareCodexHome",
           instanceId: input.instanceId,
           cwd: input.cwd,
-          message: `Failed to prepare Codex home for '${input.instanceId}': ${describeUnknownCause(cause)}`,
+          message: `Failed to prepare Codex home for '${input.instanceId}'.`,
           cause,
         }),
       ),
