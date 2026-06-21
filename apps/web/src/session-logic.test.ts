@@ -1381,6 +1381,132 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.stdout).toBe("Hello World");
   });
 
+  it("uses a newer prefix snapshot when the previous output is not a likely shorter-line match", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "helloworld",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "hello",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("hello");
+  });
+
+  it("appends multi-character updated output chunks that match the previous multiline prefix", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "ab\nc",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "ab",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("ab\ncab");
+  });
+
+  it("appends one-character updated output chunks that match the previous prefix", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-tool-output-update-1",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "abc",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-tool-output-update-2",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          title: "Ran command",
+          data: {
+            toolCallId: "command-1",
+            command: "vp test",
+            rawOutput: {
+              stdout: "a",
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.stdout).toBe("abca");
+  });
+
   it("concatenates non-matching incremental command output chunks", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -1990,6 +2116,63 @@ describe("deriveWorkLogEntries", () => {
     );
     expect(entry?.patch).toContain("--- /dev/null");
     expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("trims string Codex file-change kinds before normalizing patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-trimmed-kind-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_CHANGE.md",
+                  kind: " add ",
+                  diff: "Smoke test file-change row.\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.patch).toContain("diff --git a/SMOKE_TEST_CHANGE.md b/SMOKE_TEST_CHANGE.md");
+    expect(entry?.patch).toContain("--- /dev/null");
+    expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("ignores whitespace-only string Codex file-change kinds", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-empty-kind-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_CHANGE.md",
+                  kind: "   ",
+                  diff: "Smoke test file-change row.\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["SMOKE_TEST_CHANGE.md"]);
+    expect(entry?.patch).toBeUndefined();
   });
 
   it("keeps nested result file-change patches within the traversal budget", () => {

@@ -177,6 +177,25 @@ describe("DesktopBackendManager", () => {
     assert.equal(error.message, "Desktop backend restart failed after a scheduled 500ms delay.");
   });
 
+  it("preserves desktop backend advertisement failure context without deriving the message from the cause", () => {
+    const cause = new Error("private advertisement failure detail");
+    const error = new DesktopBackendManager.DesktopBackendAdvertisementError({
+      operation: "write",
+      t3Home: "/tmp/t3-home",
+      cause,
+    });
+
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.operation, "write");
+    assert.equal(error.t3Home, "/tmp/t3-home");
+    assert.equal(
+      error.message,
+      "Failed to write the desktop backend advertisement in /tmp/t3-home.",
+    );
+    assert.notInclude(error.message, cause.message);
+    assert.notInclude(JSON.stringify(error), cause.message);
+  });
+
   it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
     Effect.gen(function* () {
       let spawnedCommand: ChildProcess.Command | undefined;

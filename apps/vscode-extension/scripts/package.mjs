@@ -81,6 +81,16 @@ function run(command, args) {
     stdio: "inherit",
   });
 
+  if (result.error) {
+    throw new Error(`${command} ${args.join(" ")} failed to start: ${result.error.message}`, {
+      cause: result.error,
+    });
+  }
+  if (result.status === null) {
+    throw new Error(
+      `${command} ${args.join(" ")} terminated by ${result.signal ?? "unknown signal"}`,
+    );
+  }
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with exit code ${result.status}`);
   }

@@ -65,7 +65,7 @@ function readPnpmWorkspaceCatalog() {
     if (!rawName || !rawVersion) {
       continue;
     }
-    catalog[rawName] = rawVersion.replace(/^["']|["']$/gu, "");
+    catalog[rawName] = rawVersion.replace(/\s+#.*$/u, "").replace(/^["']|["']$/gu, "");
   }
   return catalog;
 }

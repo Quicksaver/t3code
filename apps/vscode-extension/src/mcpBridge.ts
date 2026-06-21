@@ -125,19 +125,25 @@ export class VsCodeMcpBridge implements vscode.Disposable {
     const endpoint = await createMcpEndpoint();
     const server = NodeNet.createServer((socket) => this.#handleConnection(socket));
 
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        server.off("listening", onListening);
-        reject(error);
-      };
-      const onListening = () => {
-        server.off("error", onError);
-        resolve();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(endpoint.socketPath);
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off("listening", onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off("error", onError);
+          resolve();
+        };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(endpoint.socketPath);
+      });
+    } catch (error) {
+      await closeServerBestEffort(server, this.#outputChannel);
+      await this.#removeSocketDir(endpoint.socketDir);
+      throw error;
+    }
 
     this.#server = server;
     this.#socketPath = endpoint.socketPath;
@@ -206,6 +212,29 @@ export class VsCodeMcpBridge implements vscode.Disposable {
     }
     enqueueResponse(response, framing);
   }
+}
+
+function closeServerBestEffort(
+  server: NodeNet.Server,
+  outputChannel: Pick<vscode.OutputChannel, "appendLine">,
+): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      server.close((error) => {
+        if (error) {
+          outputChannel.appendLine(
+            `[mcp] Failed to close MCP server after listen error: ${error.message}`,
+          );
+        }
+        resolve();
+      });
+    } catch (error) {
+      outputChannel.appendLine(
+        `[mcp] Failed to close MCP server after listen error: ${errorMessage(error)}`,
+      );
+      resolve();
+    }
+  });
 }
 
 export async function handleMcpRequest(

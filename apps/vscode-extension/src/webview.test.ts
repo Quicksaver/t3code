@@ -201,6 +201,31 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"themeSource":"vscode"');
     expect(html).toContain('"colorScheme":"dark"');
   });
+
+  it("escapes script-closing sequences in the injected host bridge", async () => {
+    const html = await renderT3Webview({
+      extensionUri: { fsPath: extensionRoot } as never,
+      webview: {
+        cspSource: "vscode-webview:",
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `vscode-resource:${uri.fsPath}`,
+        }),
+      } as never,
+      connection: {
+        httpBaseUrl: "http://127.0.0.1:49111",
+        wsBaseUrl: "ws://127.0.0.1:49111",
+        bearerToken: '</script><script>alert("x")</SCRIPT>',
+        cwd: "/workspace",
+        t3Home: "/home/user/.t3",
+        environmentId: "environment-desktop",
+        workspaceFolders: [],
+        bootstrapProjects: [],
+      },
+    });
+
+    expect(html).toContain('"bearerToken":"<\\/script><script>alert(\\"x\\")<\\/SCRIPT>"');
+    expect(html).not.toContain('"bearerToken":"</script>');
+  });
 });
 
 describe("renderDesktopBackendRequiredWebview", () => {

@@ -15,15 +15,24 @@ const VscodeWorkspaceBootstrapRequest = Schema.Struct({
   activeWorkspaceFolderKey: Schema.optional(TrimmedNonEmptyString),
 });
 
+const bootstrapErrorStatus = (
+  status: VscodeWorkspaceBootstrapError["status"],
+): 400 | 401 | 403 | 500 =>
+  status === 400 || status === 401 || status === 403 || status === 500 ? status : 500;
+
 const respondToBootstrapError = (error: VscodeWorkspaceBootstrapError) =>
   Effect.gen(function* () {
-    if (error.status === 500) {
+    const status = bootstrapErrorStatus(error.status);
+    if (status === 500) {
       yield* Effect.logError("VS Code workspace bootstrap route failed", {
         message: error.message,
         cause: error.cause,
       });
     }
-    return HttpServerResponse.jsonUnsafe({ error: error.message }, { status: error.status ?? 500 });
+    return HttpServerResponse.jsonUnsafe(
+      { error: status === 500 ? "Internal server error" : error.message },
+      { status },
+    );
   });
 
 const authenticateOwnerSession = Effect.gen(function* () {

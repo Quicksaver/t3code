@@ -1044,8 +1044,17 @@ function mergeTextOutput(
   if (next.startsWith(previous)) {
     return next;
   }
-  if (previous.startsWith(next) && shouldKeepLongerOutputSnapshot(previous, next, nextEntry)) {
-    return previous;
+  if (previous.startsWith(next)) {
+    if (shouldKeepLongerOutputSnapshot(previous, next, nextEntry)) {
+      return previous;
+    }
+    if (
+      nextEntry.activityKind === "tool.updated" &&
+      (next.length === 1 || previous.includes("\n"))
+    ) {
+      return `${previous}${next}`;
+    }
+    return next;
   }
   return `${previous}${next}`;
 }
@@ -1624,7 +1633,7 @@ function looksLikeUnifiedDiff(value: string): boolean {
 function codexChangeKindType(record: Record<string, unknown>): string | null {
   const kind = record.kind;
   if (typeof kind === "string") {
-    return kind;
+    return asTrimmedString(kind);
   }
   const kindRecord = asRecord(kind);
   return asTrimmedString(kindRecord?.type);

@@ -1994,9 +1994,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workspaceRoot } = props;
   const activity = use(TimelineRowActivityCtx);
   const [expanded, setExpanded] = useState(false);
-  if (workEntry.itemType === "collab_agent_tool_call" && workEntry.subagentChildren?.length) {
-    return <SubagentWorkEntryRows workEntry={workEntry} />;
-  }
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
@@ -2018,6 +2015,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     }
     setExpanded((value) => !value);
   }, [canExpand]);
+  if (workEntry.itemType === "collab_agent_tool_call" && workEntry.subagentChildren?.length) {
+    return <SubagentWorkEntryRows workEntry={workEntry} />;
+  }
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&

@@ -403,4 +403,30 @@ describe("openTerminalAndWaitForInputReady", () => {
         );
       }),
   );
+
+  effectIt.effect("fails strict readiness when the attach stream ends without readiness", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* makeSupervisor;
+      subscribeMock.mockReturnValueOnce(Stream.empty);
+
+      const error = yield* waitForProjectActionTerminalInputReadyStrict(OPEN_INPUT, 1_000).pipe(
+        Effect.provideService(EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+
+      assert.strictEqual(error._tag, "ProjectActionTerminalAttachError");
+      if (error._tag !== "ProjectActionTerminalAttachError") {
+        return yield* Effect.die(new Error("Expected a terminal attach error."));
+      }
+      assert.strictEqual(
+        error.detail,
+        "Terminal attach stream ended before it was ready for input.",
+      );
+
+      subscribeMock.mockReturnValueOnce(Stream.empty);
+      yield* waitForProjectActionTerminalInputReady(OPEN_INPUT, 1_000).pipe(
+        Effect.provideService(EnvironmentSupervisor, supervisor),
+      );
+    }),
+  );
 });

@@ -1,6 +1,5 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -179,13 +178,16 @@ export const BackendProcessError = Schema.Union([
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
 
-class DesktopBackendAdvertisementError extends Data.TaggedError(
+export class DesktopBackendAdvertisementError extends Schema.TaggedErrorClass<DesktopBackendAdvertisementError>()(
   "DesktopBackendAdvertisementError",
-)<{
-  readonly cause: unknown;
-}> {
-  override get message() {
-    return this.cause instanceof Error ? this.cause.message : String(this.cause);
+  {
+    operation: Schema.Union([Schema.Literal("write"), Schema.Literal("remove")]),
+    t3Home: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to ${this.operation} the desktop backend advertisement in ${this.t3Home}.`;
   }
 }
 
@@ -321,7 +323,7 @@ function refreshDesktopBackendAdvertisementStrict(
       });
       cleanupDesktopBackendAdvertisements({ t3Home: handle.t3Home });
     },
-    catch: toDesktopBackendAdvertisementError,
+    catch: toDesktopBackendAdvertisementError("write", handle.t3Home),
   });
 }
 
@@ -335,7 +337,7 @@ function removeDesktopBackendAdvertisementForRun(
         try: () => {
           removeDesktopBackendAdvertisement(advertisement);
         },
-        catch: toDesktopBackendAdvertisementError,
+        catch: toDesktopBackendAdvertisementError("remove", advertisement.t3Home),
       }).pipe(
         Effect.catch((error) =>
           logBackendManagerWarning("failed to remove desktop backend advertisement", {
@@ -346,8 +348,11 @@ function removeDesktopBackendAdvertisementForRun(
   });
 }
 
-function toDesktopBackendAdvertisementError(cause: unknown): DesktopBackendAdvertisementError {
-  return new DesktopBackendAdvertisementError({ cause });
+function toDesktopBackendAdvertisementError(
+  operation: DesktopBackendAdvertisementError["operation"],
+  t3Home: string,
+): (cause: unknown) => DesktopBackendAdvertisementError {
+  return (cause) => new DesktopBackendAdvertisementError({ operation, t3Home, cause });
 }
 
 export const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(function* (

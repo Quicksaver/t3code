@@ -675,20 +675,33 @@ async function waitForBackendReady(
   while (Date.now() < deadline) {
     throwIfAborted(signal);
     const timeout = createAbortTimeout(1_000, signal);
+    let response: Response | null = null;
+    let body: unknown;
+    let parsedBody = false;
     try {
-      const response = await fetchFn(readinessUrl, { signal: timeout.signal });
+      response = await fetchFn(readinessUrl, { signal: timeout.signal });
       if (response.ok) {
-        const body = (await response.json()) as { readonly environmentId?: unknown };
-        if (typeof body.environmentId !== "string" || body.environmentId.length === 0) {
-          throw new Error("Desktop backend readiness response did not include an environment id.");
-        }
-        return { environmentId: body.environmentId };
+        body = await response.json();
+        parsedBody = true;
       }
-    } catch {
+    } catch (error) {
       throwIfAborted(signal);
+      if (response?.ok && !timeout.signal.aborted && error instanceof SyntaxError) {
+        throw error;
+      }
       // Retry until the desktop backend is ready or its advertisement expires.
     } finally {
       timeout.clear();
+    }
+    if (parsedBody) {
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new Error("Desktop backend readiness response did not include an environment id.");
+      }
+      const environmentId = (body as { readonly environmentId?: unknown }).environmentId;
+      if (typeof environmentId !== "string" || environmentId.length === 0) {
+        throw new Error("Desktop backend readiness response did not include an environment id.");
+      }
+      return { environmentId };
     }
     await NodeTimersPromises.setTimeout(100, undefined, { signal }).catch(() => {
       throwIfAborted(signal);

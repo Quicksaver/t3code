@@ -105,12 +105,16 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
     `<head$1>
     <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">
     <base href="${escapeHtml(webRootUri)}">
-    <script nonce="${escapeHtml(nonce)}">${bridgeScript}</script>`,
+    <script nonce="${escapeHtml(nonce)}">${escapeInlineScriptContent(bridgeScript)}</script>`,
   );
   if (html === indexHtml) {
     throw new Error("Unable to inject T3 webview host bridge: index.html is missing <head>.");
   }
   return html;
+}
+
+function escapeInlineScriptContent(value: string): string {
+  return value.replace(/<\//giu, "<\\/");
 }
 
 export function renderDesktopBackendRequiredWebview(): string {

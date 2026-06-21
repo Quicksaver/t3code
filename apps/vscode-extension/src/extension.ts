@@ -192,20 +192,26 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
     const displayPreferencesDisposable = this.#displayPreferences.track(webview);
     const hostAppearanceDisposable = this.#hostAppearance.track(webview);
     const backendConnectionDisposable = this.#backendConnections.track(webview);
-    webview.html = await renderT3Webview({
-      webview,
-      extensionUri: this.#context.extensionUri,
-      connection,
-      displayPreferences: readWebviewDisplayPreferences(),
-      hostAppearance: readWebviewHostAppearance(),
-      initialRoute: connection.initialThreadRoute ?? "/_chat/",
-    });
-    return vscode.Disposable.from(
+    const connectedDisposable = vscode.Disposable.from(
       bridgeDisposable,
       displayPreferencesDisposable,
       hostAppearanceDisposable,
       backendConnectionDisposable,
     );
+    try {
+      webview.html = await renderT3Webview({
+        webview,
+        extensionUri: this.#context.extensionUri,
+        connection,
+        displayPreferences: readWebviewDisplayPreferences(),
+        hostAppearance: readWebviewHostAppearance(),
+        initialRoute: connection.initialThreadRoute ?? "/_chat/",
+      });
+      return connectedDisposable;
+    } catch (error) {
+      disposeAfterFailedRender(connectedDisposable, this.#outputChannel);
+      throw error;
+    }
   }
 }
 
@@ -304,20 +310,26 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
     const displayPreferencesDisposable = this.#displayPreferences.track(webview);
     const hostAppearanceDisposable = this.#hostAppearance.track(webview);
     const backendConnectionDisposable = this.#backendConnections.track(webview);
-    webview.html = await renderT3Webview({
-      webview,
-      extensionUri: this.#context.extensionUri,
-      connection,
-      displayPreferences: readWebviewDisplayPreferences(),
-      hostAppearance: readWebviewHostAppearance(),
-      initialRoute,
-    });
-    return vscode.Disposable.from(
+    const connectedDisposable = vscode.Disposable.from(
       bridgeDisposable,
       displayPreferencesDisposable,
       hostAppearanceDisposable,
       backendConnectionDisposable,
     );
+    try {
+      webview.html = await renderT3Webview({
+        webview,
+        extensionUri: this.#context.extensionUri,
+        connection,
+        displayPreferences: readWebviewDisplayPreferences(),
+        hostAppearance: readWebviewHostAppearance(),
+        initialRoute,
+      });
+      return connectedDisposable;
+    } catch (error) {
+      disposeAfterFailedRender(connectedDisposable, this.#outputChannel);
+      throw error;
+    }
   }
 }
 
@@ -562,6 +574,19 @@ function errorMessage(error: unknown): string {
 function disposeAll(disposables: readonly vscode.Disposable[]): void {
   for (const disposable of disposables) {
     disposable.dispose();
+  }
+}
+
+function disposeAfterFailedRender(
+  disposable: vscode.Disposable,
+  outputChannel: vscode.OutputChannel,
+): void {
+  try {
+    disposable.dispose();
+  } catch (error) {
+    outputChannel.appendLine(
+      `[webview] Failed to dispose connection after render failure: ${errorMessage(error)}`,
+    );
   }
 }
 

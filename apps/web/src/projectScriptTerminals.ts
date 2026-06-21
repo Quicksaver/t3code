@@ -285,7 +285,14 @@ export function waitForProjectActionTerminalInputReadyStrict(
         return Effect.fail(projectActionTerminalReadinessTimeoutError(input, timeoutMs));
       }
       if (Option.isNone(result.value)) {
-        return Effect.void;
+        return Effect.fail(
+          new ProjectActionTerminalAttachError({
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+            cwd: input.cwd,
+            detail: "Terminal attach stream ended before it was ready for input.",
+          }),
+        );
       }
       const outcome = result.value.value;
       return outcome._tag === "failed" ? Effect.fail(outcome.error) : Effect.void;
@@ -293,6 +300,8 @@ export function waitForProjectActionTerminalInputReadyStrict(
   );
 }
 
+// The strict path exposes typed readiness failures for callers that need diagnostics;
+// the best-effort path preserves the UI fallback and still writes after failures.
 export function waitForProjectActionTerminalInputReady(
   input: TerminalOpenInput,
   timeoutMs = ACTION_TERMINAL_READY_TIMEOUT_MS,
