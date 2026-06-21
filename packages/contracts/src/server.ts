@@ -119,6 +119,7 @@ export class ServerProviderSkillsListError extends Schema.TaggedErrorClass<Serve
   "ServerProviderSkillsListError",
   {
     message: TrimmedNonEmptyString,
+    detail: Schema.optional(TrimmedNonEmptyString),
     // Optional for backward-compatible decoding of older failure payloads.
     reason: Schema.optional(ServerProviderSkillsListFailureReason),
     // Optional for backward-compatible decoding of older failure payloads.
