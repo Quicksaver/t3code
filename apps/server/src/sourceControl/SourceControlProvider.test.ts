@@ -21,10 +21,13 @@ it("normalizes control characters and bounds error transport values", () => {
   );
 });
 
-it("wraps provider command errors with safe transport context and the original cause", () => {
+it("wraps provider command errors with safe transport context and a bounded cause", () => {
   const cause = {
+    _tag: "GitLabMergeRequestNotFoundError",
     command: "gh",
-    detail: "Pull request not found.",
+    detail:
+      "Pull request not found at https://user:secret@example.test/org/repo/pull/42?token=secret#discussion.",
+    reference: "42",
   };
   const error = sourceControlProviderError({
     provider: "github",
@@ -41,6 +44,41 @@ it("wraps provider command errors with safe transport context and the original c
   assert.strictEqual(error.cwd, "/repo");
   assert.strictEqual(error.reference, "https://example.test/org/repo/pull/42");
   assert.strictEqual(error.repository, "owner/repo branch");
-  assert.strictEqual(error.detail, "Pull request not found.");
-  assert.strictEqual(error.cause, cause);
+  assert.strictEqual(
+    error.detail,
+    "Pull request not found at https://example.test/org/repo/pull/42",
+  );
+  assert.deepStrictEqual(error.cause, {
+    _tag: "GitLabMergeRequestNotFoundError",
+    command: "gh",
+    detail: "Pull request not found at https://example.test/org/repo/pull/42",
+    reference: "42",
+  });
+});
+
+it("wraps plain Error instances without structured command fields", () => {
+  const error = sourceControlProviderError({
+    provider: "gitlab",
+    operation: "listChangeRequests",
+    cwd: "/repo",
+    error: new Error("CLI failed."),
+  });
+
+  assert.strictEqual(error.command, undefined);
+  assert.strictEqual(error.detail, "CLI failed.");
+  assert.deepStrictEqual(error.cause, { name: "Error", message: "CLI failed." });
+});
+
+it("falls back when provider error context is missing", () => {
+  const error = sourceControlProviderError({
+    provider: "azure-devops",
+    operation: "getDefaultBranch",
+    cwd: "/repo",
+    error: null,
+  });
+
+  assert.strictEqual(error.reference, undefined);
+  assert.strictEqual(error.repository, undefined);
+  assert.strictEqual(error.detail, "Source control provider operation failed.");
+  assert.deepStrictEqual(error.cause, { message: "null" });
 });

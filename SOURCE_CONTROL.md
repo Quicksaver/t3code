@@ -221,7 +221,7 @@ Focused unit coverage now also covers the sync-vs-compare split: a local branch 
 Before considering source-control changes complete, run:
 
 ```sh
-pnpm exec vp test run apps/server/src/sourceControl/SourceControlProvider.test.ts apps/server/src/sourceControl/GitHubSourceControlProvider.test.ts apps/server/src/sourceControl/GitLabSourceControlProvider.test.ts apps/server/src/sourceControl/AzureDevOpsSourceControlProvider.test.ts apps/server/src/sourceControl/BitbucketSourceControlProvider.test.ts apps/server/src/sourceControl/SourceControlPanelService.test.ts
+pnpm run test:source-control
 pnpm exec vp check
 pnpm exec vp run typecheck
 ```

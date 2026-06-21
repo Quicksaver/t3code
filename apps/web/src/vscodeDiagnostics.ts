@@ -108,6 +108,7 @@ export function installVscodeDiagnostics(): void {
       bridge: {
         workspaceEnvironmentId: workspace?.environmentId ?? null,
         desktopManagedEnvironmentId: desktopManaged?.environmentId ?? null,
+        // Deprecated compatibility alias for older VS Code diagnostic snippets.
         localEnvironmentId: desktopManaged?.environmentId ?? null,
         httpBaseUrl: desktopManaged?.httpBaseUrl ?? null,
         wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
@@ -124,6 +125,7 @@ export function installVscodeDiagnostics(): void {
         hasDesktopManagedPrimaryEnvironmentBootstrap: Boolean(
           desktopManaged?.httpBaseUrl && desktopManaged.wsBaseUrl,
         ),
+        // Deprecated compatibility alias for older VS Code diagnostic snippets.
         hasHostPrimaryEnvironmentBootstrap: Boolean(
           desktopManaged?.httpBaseUrl && desktopManaged.wsBaseUrl,
         ),
@@ -172,6 +174,7 @@ export function installVscodeDiagnostics(): void {
         hasBearerToken:
           typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
       },
+      // Deprecated compatibility alias for older VS Code diagnostic snippets.
       local: {
         environmentId: desktopManaged?.environmentId ?? null,
         httpBaseUrl: desktopManaged?.httpBaseUrl ?? null,

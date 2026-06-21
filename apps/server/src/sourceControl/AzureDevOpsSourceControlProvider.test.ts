@@ -84,7 +84,7 @@ it.effect("lists Azure DevOps PRs against the requested remote repository contex
   }),
 );
 
-it.effect("adds change-request context while retaining Azure CLI causes", () =>
+it.effect("adds change-request context while bounding Azure CLI causes", () =>
   Effect.gen(function* () {
     const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
       operation: "execute",
@@ -119,7 +119,14 @@ it.effect("adds change-request context while retaining Azure CLI causes", () =>
         detail: "Azure DevOps CLI command failed.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "AzureDevOpsCommandFailedError",
+      name: "AzureDevOpsCommandFailedError",
+      operation: "execute",
+      command: "az",
+      detail: "Azure DevOps CLI command failed.",
+      message: "Azure DevOps CLI failed in execute: Azure DevOps CLI command failed.",
+    });
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );

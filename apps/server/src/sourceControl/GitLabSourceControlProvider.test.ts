@@ -52,7 +52,7 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
   }),
 );
 
-it.effect("adds repository context while retaining GitLab CLI causes", () =>
+it.effect("adds repository context while bounding GitLab CLI causes", () =>
   Effect.gen(function* () {
     const cause = new GitLabCli.GitLabCliCommandError({
       operation: "execute",
@@ -90,7 +90,14 @@ it.effect("adds repository context while retaining GitLab CLI causes", () =>
         detail: "GitLab CLI command failed.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "GitLabCliCommandError",
+      name: "GitLabCliCommandError",
+      operation: "execute",
+      command: "glab",
+      detail: "GitLab CLI command failed.",
+      message: "GitLab CLI failed in execute: GitLab CLI command failed.",
+    });
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );

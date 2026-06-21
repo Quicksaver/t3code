@@ -205,22 +205,38 @@ function terminalAttachEventCompletesReadyWait(
   if (event.type === "output") {
     return appendAndCheck(event.data);
   }
-  return event.type === "closed" || event.type === "error" || event.type === "exited";
+  return event.type === "error";
 }
 
 export function projectActionTerminalReadinessFailureFromEvent(
   input: TerminalOpenInput,
   event: TerminalAttachStreamEvent,
 ): ProjectActionTerminalAttachError | null {
-  if (event.type !== "error") {
-    return null;
+  if (event.type === "error") {
+    return new ProjectActionTerminalAttachError({
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      cwd: input.cwd,
+      detail: event.message,
+    });
   }
-  return new ProjectActionTerminalAttachError({
-    threadId: input.threadId,
-    terminalId: input.terminalId,
-    cwd: input.cwd,
-    detail: event.message,
-  });
+  if (event.type === "closed") {
+    return new ProjectActionTerminalAttachError({
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      cwd: input.cwd,
+      detail: "Terminal closed before it was ready for input.",
+    });
+  }
+  if (event.type === "exited") {
+    return new ProjectActionTerminalAttachError({
+      threadId: input.threadId,
+      terminalId: input.terminalId,
+      cwd: input.cwd,
+      detail: "Terminal process exited before it was ready for input.",
+    });
+  }
+  return null;
 }
 
 function projectActionTerminalReadinessTimeoutError(
@@ -282,7 +298,6 @@ export function waitForProjectActionTerminalInputReady(
   timeoutMs = ACTION_TERMINAL_READY_TIMEOUT_MS,
 ) {
   return waitForProjectActionTerminalInputReadyStrict(input, timeoutMs).pipe(
-    Effect.catch(() => Effect.void),
     Effect.catchCause(() => Effect.void),
   );
 }

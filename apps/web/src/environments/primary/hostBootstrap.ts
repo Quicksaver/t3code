@@ -15,6 +15,8 @@ export function getDesktopManagedEnvironmentBootstrap(): DesktopEnvironmentBoots
   );
 }
 
+// Legacy host-named aliases are retained for VS Code webview compatibility.
+// New shared desktop/local environment callers should use the desktop-managed names.
 export const getHostLocalEnvironmentBootstrap = getDesktopManagedEnvironmentBootstrap;
 
 export function getHostVscodeWorkspaceBootstrap(): T3HostVscodeWorkspaceBootstrap | null {

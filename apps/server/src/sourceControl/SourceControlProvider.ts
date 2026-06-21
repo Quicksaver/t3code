@@ -23,6 +23,7 @@ export interface SourceControlRefSelector {
 }
 
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
+const EMBEDDED_HTTP_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu;
 
 /**
  * Sanitizes user-provided source-control identifiers before attaching them to
@@ -35,21 +36,29 @@ export function transportSafeSourceControlErrorValue(value: string): string {
     const codePoint = character.codePointAt(0);
     printable += codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
   }
-  const normalized = printable.trim().replace(/\s+/gu, " ");
+  const normalized = printable
+    .replace(EMBEDDED_HTTP_URL_PATTERN, (match) => transportSafeUrl(match) ?? match)
+    .trim()
+    .replace(/\s+/gu, " ");
 
   let safe = normalized;
+  const parsedUrl = transportSafeUrl(normalized);
+  safe = parsedUrl ?? normalized;
+
+  return safe.slice(0, MAX_ERROR_TRANSPORT_VALUE_LENGTH);
+}
+
+function transportSafeUrl(value: string): string | null {
   try {
-    const url = new URL(normalized);
+    const url = new URL(value);
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
-    safe = url.toString();
+    return url.toString();
   } catch {
-    // Plain repository and change-request identifiers are not URLs.
+    return null;
   }
-
-  return safe.slice(0, MAX_ERROR_TRANSPORT_VALUE_LENGTH);
 }
 
 export function parseSourceControlOwnerRef(
@@ -85,19 +94,58 @@ export interface SourceControlProviderCommandError {
   readonly message?: string;
 }
 
+function readStringField(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
+}
+
+function normalizedSourceControlProviderCause(error: unknown) {
+  if (typeof error !== "object" || error === null) {
+    return {
+      message: transportSafeSourceControlErrorValue(String(error)),
+    };
+  }
+
+  return {
+    ...safeErrorField(error, "_tag"),
+    ...safeErrorField(error, "name"),
+    ...safeErrorField(error, "command"),
+    ...safeErrorField(error, "operation"),
+    ...safeErrorField(error, "reference"),
+    ...safeErrorField(error, "repository"),
+    ...safeErrorField(error, "detail"),
+    ...safeErrorField(error, "message"),
+  };
+}
+
+function safeErrorField(error: unknown, key: string): Record<string, string> {
+  const value = readStringField(error, key);
+  return value === undefined ? {} : { [key]: transportSafeSourceControlErrorValue(value) };
+}
+
 export function sourceControlProviderError(input: {
   readonly provider: SourceControlProviderKind;
   readonly operation: string;
   readonly cwd: string;
-  readonly error: SourceControlProviderCommandError;
+  readonly error: unknown;
   readonly detail?: string;
   readonly reference?: string;
   readonly repository?: string;
 }): SourceControlProviderError {
+  const command = readStringField(input.error, "command");
+  const detail =
+    readStringField(input.error, "detail") ??
+    input.detail ??
+    readStringField(input.error, "message") ??
+    "Source control provider operation failed.";
+
   return new SourceControlProviderError({
     provider: input.provider,
     operation: input.operation,
-    ...(input.error.command !== undefined ? { command: input.error.command } : {}),
+    ...(command !== undefined ? { command: transportSafeSourceControlErrorValue(command) } : {}),
     cwd: input.cwd,
     ...(input.reference !== undefined
       ? { reference: transportSafeSourceControlErrorValue(input.reference) }
@@ -105,12 +153,8 @@ export function sourceControlProviderError(input: {
     ...(input.repository !== undefined
       ? { repository: transportSafeSourceControlErrorValue(input.repository) }
       : {}),
-    detail:
-      input.error.detail ??
-      input.detail ??
-      input.error.message ??
-      "Source control provider operation failed.",
-    cause: input.error,
+    detail: transportSafeSourceControlErrorValue(detail),
+    cause: normalizedSourceControlProviderCause(input.error),
   });
 }
 
