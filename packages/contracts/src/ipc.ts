@@ -77,6 +77,7 @@ import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
   PreviewAutomationOwner,
+  PreviewAutomationOwnerIdentity,
   PreviewAutomationPressInput,
   PreviewAutomationRequest,
   PreviewAutomationResponse,
@@ -1170,7 +1171,7 @@ export interface EnvironmentApi {
       ) => () => void;
       respond: (response: PreviewAutomationResponse) => Promise<void>;
       reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
-      clearOwner: (input: { clientId: string }) => Promise<void>;
+      clearOwner: (input: PreviewAutomationOwnerIdentity) => Promise<void>;
     };
     onEvent: (
       callback: (event: PreviewEvent) => void,
