@@ -279,7 +279,7 @@ function processOutput(stdout: string, code = 0): ProcessRunner.ProcessRunOutput
   return {
     stdout,
     stderr: "",
-    code,
+    code: code as ProcessRunner.ProcessRunOutput["code"],
     timedOut: false,
     stdoutTruncated: false,
     stderrTruncated: false,
