@@ -2,6 +2,7 @@ import {
   CodexSettings,
   ServerProviderSkillsListError,
   type ProviderInstanceId,
+  type ServerProviderSkillsListFailureReason,
   type ServerProviderSkillsListResult,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -19,8 +20,9 @@ import { listCodexProviderSkills } from "./Layers/CodexProvider.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { WorkspacePaths } from "../workspace/Services/WorkspacePaths.ts";
+import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 
 const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 const PROVIDER_SKILLS_CACHE_CAPACITY = 64;
@@ -59,20 +61,53 @@ export const makeBoundedRequestCache = Effect.fn("makeBoundedRequestCache")(func
   };
 });
 
-function describeUnknownCause(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  if (typeof cause === "string") return cause;
-  return "Unknown error";
+function optionalTrimmedNonEmptyString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? value : undefined;
 }
 
-function describeCodexSkillListFailure(
-  cause: unknown,
-  input: { readonly instanceId: string; readonly cwd: string },
-): string {
-  if (Cause.isTimeoutError(cause)) {
-    return `Timed out listing Codex skills after ${Duration.toSeconds(CODEX_SKILL_LIST_TIMEOUT)}s (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
+function providerSkillsListError(input: {
+  readonly reason: ServerProviderSkillsListFailureReason;
+  readonly operation: string;
+  readonly message: string;
+  readonly instanceId?: ProviderInstanceId | undefined;
+  readonly cwd?: string | undefined;
+  readonly cause?: unknown;
+}) {
+  const cwd = optionalTrimmedNonEmptyString(input.cwd);
+  return new ServerProviderSkillsListError({
+    reason: input.reason,
+    operation: input.operation,
+    message: input.message,
+    ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),
+    ...(cwd === undefined ? {} : { cwd }),
+    ...(input.cause === undefined ? {} : { cause: sanitizeErrorCause(input.cause) }),
+  });
+}
+
+function codexSkillListFailure(input: {
+  readonly cause: unknown;
+  readonly instanceId: ProviderInstanceId;
+  readonly cwd: string;
+}) {
+  if (Cause.isTimeoutError(input.cause)) {
+    return providerSkillsListError({
+      reason: "probe-timeout",
+      operation: "ProviderSkillsLister.listCodexProviderSkills",
+      instanceId: input.instanceId,
+      cwd: input.cwd,
+      message: `Timed out listing Codex skills after ${Duration.toSeconds(CODEX_SKILL_LIST_TIMEOUT)}s (provider: '${input.instanceId}', cwd: '${input.cwd}').`,
+      cause: input.cause,
+    });
   }
-  return `Failed to list Codex skills (provider: '${input.instanceId}', cwd: '${input.cwd}').`;
+  return providerSkillsListError({
+    reason: "probe-failed",
+    operation: "ProviderSkillsLister.listCodexProviderSkills",
+    instanceId: input.instanceId,
+    cwd: input.cwd,
+    message: `Failed to list Codex skills (provider: '${input.instanceId}', cwd: '${input.cwd}').`,
+    cause: input.cause,
+  });
 }
 
 export const listCodexProviderSkillsWithTimeout = Effect.fn("listCodexProviderSkillsWithTimeout")(
@@ -91,12 +126,12 @@ export const listCodexProviderSkillsWithTimeout = Effect.fn("listCodexProviderSk
     }).pipe(
       Effect.scoped,
       Effect.timeout(CODEX_SKILL_LIST_TIMEOUT),
-      Effect.mapError(
-        (cause) =>
-          new ServerProviderSkillsListError({
-            message: describeCodexSkillListFailure(cause, input),
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        codexSkillListFailure({
+          cause,
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+        }),
       ),
     );
   },
@@ -125,7 +160,11 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
     const providers = yield* providerRegistry.getProviders;
     const snapshot = providers.find((provider) => provider.instanceId === input.instanceId);
     if (!snapshot) {
-      return yield* new ServerProviderSkillsListError({
+      return yield* providerSkillsListError({
+        reason: "provider-not-found",
+        operation: "ProviderSkillsLister.list",
+        instanceId: input.instanceId,
+        cwd: input.cwd,
         message: `Provider instance '${input.instanceId}' was not found.`,
       });
     }
@@ -134,28 +173,38 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
     }
 
     const settings = yield* serverSettings.getSettings.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerProviderSkillsListError({
-            message: "Failed to read provider settings.",
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        providerSkillsListError({
+          reason: "settings-read-failed",
+          operation: "ProviderSkillsLister.readSettings",
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          message: "Failed to read provider settings.",
+          cause,
+        }),
       ),
     );
     const instanceConfig = deriveProviderInstanceConfigMap(settings)[input.instanceId];
     if (!instanceConfig || instanceConfig.driver !== "codex") {
-      return yield* new ServerProviderSkillsListError({
+      return yield* providerSkillsListError({
+        reason: "provider-not-configured",
+        operation: "ProviderSkillsLister.resolveCodexInstance",
+        instanceId: input.instanceId,
+        cwd: input.cwd,
         message: `Codex provider instance '${input.instanceId}' is not configured.`,
       });
     }
 
     const decodedConfig = yield* decodeCodexSettings(instanceConfig.config ?? {}).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerProviderSkillsListError({
-            message: `Failed to decode Codex provider settings for '${input.instanceId}'.`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        providerSkillsListError({
+          reason: "settings-decode-failed",
+          operation: "ProviderSkillsLister.decodeCodexSettings",
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          message: `Failed to decode Codex provider settings for '${input.instanceId}'.`,
+          cause,
+        }),
       ),
     );
     const effectiveConfig = {
@@ -167,12 +216,15 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
     }
 
     const normalizedCwd = yield* workspacePaths.normalizeWorkspaceRoot(input.cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ServerProviderSkillsListError({
-            message: `Invalid Codex skills cwd '${input.cwd}': ${cause.message}`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        providerSkillsListError({
+          reason: "invalid-cwd",
+          operation: "ProviderSkillsLister.normalizeCwd",
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          message: `Invalid Codex skills cwd '${input.cwd}'.`,
+          cause,
+        }),
       ),
     );
     const homeLayout = yield* resolveCodexHomeLayout(effectiveConfig).pipe(
@@ -181,12 +233,15 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
-      Effect.mapError(
-        (cause) =>
-          new ServerProviderSkillsListError({
-            message: `Failed to prepare Codex home for '${input.instanceId}': ${describeUnknownCause(cause)}`,
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        providerSkillsListError({
+          reason: "home-prepare-failed",
+          operation: "ProviderSkillsLister.prepareCodexHome",
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          message: `Failed to prepare Codex home for '${input.instanceId}'.`,
+          cause,
+        }),
       ),
     );
     const skills = yield* listCodexProviderSkillsWithTimeout({

@@ -4435,14 +4435,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ServerProviderSkillsListError");
-      assertInclude(
+      assert.equal(
         result.failure.message,
-        "Invalid Codex skills cwd '/definitely/not/a/real/workspace/path'",
+        "Invalid Codex skills cwd '/definitely/not/a/real/workspace/path'.",
       );
-      assertInclude(
-        result.failure.message,
-        "Workspace root does not exist: /definitely/not/a/real/workspace/path",
-      );
+      assert.notInclude(result.failure.message, "Workspace root does not exist");
+      assert.property(result.failure, "cause");
+      const failureCause = result.failure.cause;
+      assert.instanceOf(failureCause, Error);
+      assert.include(failureCause.message, "Workspace root does not exist");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
