@@ -7,7 +7,9 @@ Study @CUSTOMIZED.md.
 
 Your task is to spawn a subagent on this branch. **You do not load any mentioned skills yourself, you only instruct the subagent towards the mentioned skills.**
 
-The subagent is to work in several steps, you are to provide instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions. **You do not validate any work yourself, your only task is to orchestrate the subagent's work and ensure it reports back with the requested information.**
+You are to instruct the subagent in several steps, provide it instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions. **You do not validate any work yourself, your only task is to orchestrate the subagent's work and ensure it reports back with the requested information.**
+
+The subagent only requires information for the current step at any given time, without contextual overall process status or that there may be future steps. The subagent is working alone in the branch.
 
 **Step 1**: Instruct the subagent to study @CUSTOMIZED.md, to treat it as the current inventory of fork-specific behavior, conflict-prone files, and customizations that may become redundant when upstream adds equivalent features. The subagent is then to fetch and merge `main` branch from `upstream` remote onto current branch, preserving this fork's intentional customizations without blocking new upstream behavior.
 
