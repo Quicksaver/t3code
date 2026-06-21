@@ -1088,11 +1088,11 @@ function isLikelyShorterOutputSnapshot(previous: string, next: string): boolean 
   if (next.length <= 1) {
     return false;
   }
-  // Multiline prefix matches are ambiguous; favor preserving incremental chunks over dropping output.
-  if (previous.includes("\n")) {
-    return false;
-  }
+  // Shorter snapshots usually stop at a token or line boundary in the prior output.
   const following = previous[next.length];
+  if (previous.includes("\n")) {
+    return following === "\n" || following === "\r";
+  }
   return following === " " || following === "\t" || following === "\n" || following === "\r";
 }
 
@@ -1633,10 +1633,10 @@ function looksLikeUnifiedDiff(value: string): boolean {
 function codexChangeKindType(record: Record<string, unknown>): string | null {
   const kind = record.kind;
   if (typeof kind === "string") {
-    return asTrimmedString(kind);
+    return asTrimmedString(kind)?.toLowerCase() ?? null;
   }
   const kindRecord = asRecord(kind);
-  return asTrimmedString(kindRecord?.type);
+  return asTrimmedString(kindRecord?.type)?.toLowerCase() ?? null;
 }
 
 function patchPathFromRecord(record: Record<string, unknown>): string | null {

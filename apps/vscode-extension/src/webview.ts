@@ -117,6 +117,26 @@ function escapeInlineScriptContent(value: string): string {
   return value.replace(/<\//giu, "<\\/");
 }
 
+const SCRIPT_JSON_ESCAPE_PATTERN = /[<>&\u2028\u2029]/gu;
+const SCRIPT_JSON_ESCAPE_REPLACEMENTS: Readonly<Record<string, string>> = {
+  "<": "\\u003c",
+  ">": "\\u003e",
+  "&": "\\u0026",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+function serializeScriptJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    return "undefined";
+  }
+  return serialized.replace(
+    SCRIPT_JSON_ESCAPE_PATTERN,
+    (character) => SCRIPT_JSON_ESCAPE_REPLACEMENTS[character] ?? character,
+  );
+}
+
 export function renderDesktopBackendRequiredWebview(): string {
   const nonce = NodeCrypto.randomBytes(16).toString("base64");
   return `<!doctype html>
@@ -293,11 +313,11 @@ function makeBridgeScript(input: {
   return `
     (() => {
       const vscode = acquireVsCodeApi();
-      let bootstrap = ${JSON.stringify(input.bootstrap)};
-      let displayPreferences = ${JSON.stringify(input.displayPreferences)};
-      let hostAppearance = ${JSON.stringify(input.hostAppearance)};
-      const initialRoute = ${JSON.stringify(input.initialRoute)};
-      const vscodeWorkspaceBootstrap = ${JSON.stringify(input.vscodeWorkspaceBootstrap)};
+      let bootstrap = ${serializeScriptJson(input.bootstrap)};
+      let displayPreferences = ${serializeScriptJson(input.displayPreferences)};
+      let hostAppearance = ${serializeScriptJson(input.hostAppearance)};
+      const initialRoute = ${serializeScriptJson(input.initialRoute)};
+      const vscodeWorkspaceBootstrap = ${serializeScriptJson(input.vscodeWorkspaceBootstrap)};
       const threadConversationMinWidthPx = ${THREAD_CONVERSATION_MIN_WIDTH_PX};
       const threadConversationMaxWidthPx = ${THREAD_CONVERSATION_MAX_WIDTH_PX};
       const THREAD_CONVERSATION_MIN_WIDTH_PX = threadConversationMinWidthPx;

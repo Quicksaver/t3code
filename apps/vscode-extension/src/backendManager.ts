@@ -681,7 +681,7 @@ async function waitForBackendReady(
     try {
       response = await fetchFn(readinessUrl, { signal: timeout.signal });
       if (response.ok) {
-        body = await response.json();
+        body = await readJsonWithAbort(response, timeout.signal);
         parsedBody = true;
       }
     } catch (error) {
@@ -709,6 +709,29 @@ async function waitForBackendReady(
   }
 
   throw new Error(`Timed out waiting for T3 desktop backend readiness at ${readinessUrl}.`);
+}
+
+function readJsonWithAbort(response: Response, signal: AbortSignal): Promise<unknown> {
+  if (signal.aborted) {
+    return Promise.reject(abortError());
+  }
+  let removeAbortListener: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    const abort = () => {
+      reject(abortError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    removeAbortListener = () => signal.removeEventListener("abort", abort);
+  });
+  return Promise.race([response.json(), aborted]).finally(() => {
+    removeAbortListener?.();
+  });
+}
+
+function abortError(): Error {
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
 }
 
 async function ensureWorkspaceBootstrap(input: {

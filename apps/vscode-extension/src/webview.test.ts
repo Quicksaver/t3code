@@ -202,7 +202,7 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"colorScheme":"dark"');
   });
 
-  it("escapes script-closing sequences in the injected host bridge", async () => {
+  it("escapes script parser sentinels in serialized host bridge data", async () => {
     const html = await renderT3Webview({
       extensionUri: { fsPath: extensionRoot } as never,
       webview: {
@@ -214,7 +214,7 @@ describe("renderT3Webview", () => {
       connection: {
         httpBaseUrl: "http://127.0.0.1:49111",
         wsBaseUrl: "ws://127.0.0.1:49111",
-        bearerToken: '</script><script>alert("x")</SCRIPT>',
+        bearerToken: 'token</script><script>alert("x")</script><!--',
         cwd: "/workspace",
         t3Home: "/home/user/.t3",
         environmentId: "environment-desktop",
@@ -223,8 +223,12 @@ describe("renderT3Webview", () => {
       },
     });
 
-    expect(html).toContain('"bearerToken":"<\\/script><script>alert(\\"x\\")<\\/SCRIPT>"');
-    expect(html).not.toContain('"bearerToken":"</script>');
+    expect(html).toContain(
+      '"bearerToken":"token\\u003c/script\\u003e\\u003cscript\\u003ealert(\\"x\\")\\u003c/script\\u003e\\u003c!--"',
+    );
+    expect(html).toContain("</script>");
+    expect(html).not.toContain('token</script><script>alert("x")</script><!--');
+    expect(html).not.toContain("<!--");
   });
 });
 

@@ -738,32 +738,18 @@ describe("BackendManager", () => {
     const readStarted = new Promise<void>((resolve) => {
       resolveReadStarted = resolve;
     });
-    let resolveReadAborted!: () => void;
-    const readAborted = new Promise<void>((resolve) => {
-      resolveReadAborted = resolve;
-    });
     let readinessAttempts = 0;
-    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
       const url = new URL(input.toString());
       if (url.pathname === "/.well-known/t3/environment") {
         readinessAttempts += 1;
         if (readinessAttempts === 1) {
-          const signal = init?.signal;
           return {
             ok: true,
-            json: () =>
-              new Promise((_resolve, reject) => {
-                const abort = () => {
-                  resolveReadAborted();
-                  reject(new Error("read aborted"));
-                };
-                resolveReadStarted();
-                if (signal?.aborted) {
-                  abort();
-                  return;
-                }
-                signal?.addEventListener("abort", abort, { once: true });
-              }),
+            json: () => {
+              resolveReadStarted();
+              return new Promise(() => {});
+            },
           } as Response;
         }
         return new Response(JSON.stringify({ environmentId: "environment-desktop" }), {
@@ -808,7 +794,6 @@ describe("BackendManager", () => {
 
     await readStarted;
     await vi.advanceTimersByTimeAsync(1_000);
-    await readAborted;
     await vi.advanceTimersByTimeAsync(100);
 
     await expect(started).resolves.toMatchObject({

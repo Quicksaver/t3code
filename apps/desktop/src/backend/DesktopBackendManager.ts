@@ -42,6 +42,10 @@ const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
+const DESKTOP_BACKEND_ADVERTISEMENT_CAUSE_MAX_LENGTH = 2048;
+const EMBEDDED_HTTP_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu;
+const EMBEDDED_HTTP_AUTHORITY_CREDENTIALS_PATTERN = /^(https?:\/\/)[^/?#@]*@/iu;
+const EMBEDDED_HTTP_QUERY_OR_HASH_PATTERN = /[?#].*$/u;
 
 type BackendProcessLayerServices = ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient;
 
@@ -191,6 +195,116 @@ export class DesktopBackendAdvertisementError extends Schema.TaggedErrorClass<De
   }
 }
 
+export function describeDesktopBackendAdvertisementCause(cause: unknown): string {
+  return sanitizeDesktopBackendAdvertisementDiagnostic(
+    describeDesktopBackendAdvertisementCauseInternal(cause, new WeakSet<object>()),
+  );
+}
+
+function describeDesktopBackendAdvertisementCauseInternal(
+  cause: unknown,
+  seen: WeakSet<object>,
+): string {
+  if (cause === null) return "null";
+  if (cause === undefined) return "undefined";
+
+  if (cause instanceof Error) {
+    if (seen.has(cause)) return "[Circular]";
+    seen.add(cause);
+    const message = readNonEmptyStringField(cause, "message") ?? cause.name;
+    const stack = readNonEmptyStringField(cause, "stack");
+    const nestedCause = readUnknownField(cause, "cause");
+    let description = message;
+    if (nestedCause !== undefined) {
+      description += `\nCaused by: ${describeDesktopBackendAdvertisementCauseInternal(
+        nestedCause,
+        seen,
+      )}`;
+    }
+    if (stack !== undefined && stack !== message) {
+      description += `\nStack: ${stack}`;
+    }
+    return description;
+  }
+
+  if (typeof cause === "string") {
+    return cause;
+  }
+
+  if (typeof cause === "object") {
+    if (seen.has(cause)) return "[Circular]";
+    seen.add(cause);
+    const serialized = stringifyDesktopBackendAdvertisementCause(cause);
+    if (serialized !== undefined) return serialized;
+  }
+
+  return String(cause);
+}
+
+function describeDesktopBackendAdvertisementFailure(error: unknown): string {
+  return describeDesktopBackendAdvertisementCause(readUnknownField(error, "cause") ?? error);
+}
+
+function stringifyDesktopBackendAdvertisementCause(cause: object): string | undefined {
+  const seen = new WeakSet<object>();
+  try {
+    return JSON.stringify(cause, (_key, value: unknown) => {
+      if (value instanceof Error) {
+        return {
+          name: value.name,
+          message: value.message,
+          stack: value.stack,
+          cause: readUnknownField(value, "cause"),
+        };
+      }
+      if (typeof value === "bigint") return `${value.toString()}n`;
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    });
+  } catch {
+    return Object.prototype.toString.call(cause);
+  }
+}
+
+function sanitizeDesktopBackendAdvertisementDiagnostic(value: string): string {
+  let printable = "";
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    printable += codePoint !== undefined && codePoint < 32 && character !== "\n" ? " " : character;
+  }
+  return printable
+    .replace(EMBEDDED_HTTP_URL_PATTERN, sanitizeEmbeddedUrl)
+    .slice(0, DESKTOP_BACKEND_ADVERTISEMENT_CAUSE_MAX_LENGTH);
+}
+
+function sanitizeEmbeddedUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value
+      .replace(EMBEDDED_HTTP_AUTHORITY_CREDENTIALS_PATTERN, "$1")
+      .replace(EMBEDDED_HTTP_QUERY_OR_HASH_PATTERN, "");
+  }
+}
+
+function readUnknownField(value: unknown, key: string): unknown {
+  if (typeof value !== "object" || value === null || !(key in value)) return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function readNonEmptyStringField(value: unknown, key: string): string | undefined {
+  const field = readUnknownField(value, key);
+  return typeof field === "string" && field.trim().length > 0 ? field : undefined;
+}
+
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly readinessTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
@@ -303,6 +417,7 @@ function refreshDesktopBackendAdvertisement(
     Effect.catch((error) =>
       logBackendManagerWarning("failed to refresh desktop backend advertisement", {
         message: error instanceof Error ? error.message : String(error),
+        cause: describeDesktopBackendAdvertisementFailure(error),
       }),
     ),
   );
@@ -342,6 +457,7 @@ function removeDesktopBackendAdvertisementForRun(
         Effect.catch((error) =>
           logBackendManagerWarning("failed to remove desktop backend advertisement", {
             message: error instanceof Error ? error.message : String(error),
+            cause: describeDesktopBackendAdvertisementFailure(error),
           }),
         ),
       ),
@@ -729,6 +845,7 @@ export const make = Effect.gen(function* () {
                 onFailure: (error) =>
                   logBackendManagerWarning("failed to refresh desktop backend advertisement", {
                     message: error instanceof Error ? error.message : String(error),
+                    cause: describeDesktopBackendAdvertisementFailure(error),
                   }).pipe(Effect.as(false)),
                 onSuccess: () => Effect.succeed(true),
               }),

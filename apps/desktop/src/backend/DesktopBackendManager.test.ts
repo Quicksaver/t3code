@@ -196,6 +196,59 @@ describe("DesktopBackendManager", () => {
     assert.notInclude(JSON.stringify(error), cause.message);
   });
 
+  it("describes advertisement causes without throwing", () => {
+    const plain = new Error("plain failure");
+    assert.include(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(plain),
+      "plain failure",
+    );
+
+    const nested = new Error("nested https://user:secret@example.com/path?token=hidden#fragment");
+    const withCause = new Error("outer failure");
+    Object.defineProperty(withCause, "cause", { value: nested });
+    const withCauseDescription =
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(withCause);
+    assert.include(withCauseDescription, "outer failure");
+    assert.include(withCauseDescription, "nested");
+    assert.include(withCauseDescription, "https://example.com/path");
+    assert.notInclude(withCauseDescription, "secret");
+    assert.notInclude(withCauseDescription, "token=hidden");
+
+    const malformedUrl = new Error(
+      "bad https://user:secret@example.com:bad/path?token=hidden#fragment",
+    );
+    const malformedUrlDescription =
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(malformedUrl);
+    assert.include(malformedUrlDescription, "https://example.com:bad/path");
+    assert.notInclude(malformedUrlDescription, "secret");
+    assert.notInclude(malformedUrlDescription, "token=hidden");
+    assert.notInclude(malformedUrlDescription, "#fragment");
+
+    const pojo = { code: "EWRITE", path: "/tmp/t3/backend.json" };
+    assert.equal(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(pojo),
+      '{"code":"EWRITE","path":"/tmp/t3/backend.json"}',
+    );
+
+    const nullPrototype = Object.create(null) as Record<string, unknown>;
+    nullPrototype.code = "ENOENT";
+    assert.equal(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(nullPrototype),
+      '{"code":"ENOENT"}',
+    );
+
+    const advertisementError = new DesktopBackendManager.DesktopBackendAdvertisementError({
+      operation: "write",
+      t3Home: "/tmp/t3-home",
+      cause: pojo,
+    });
+    assert.strictEqual(advertisementError.cause, pojo);
+    assert.include(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(advertisementError),
+      '"code":"EWRITE"',
+    );
+  });
+
   it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
     Effect.gen(function* () {
       let spawnedCommand: ChildProcess.Command | undefined;

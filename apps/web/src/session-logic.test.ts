@@ -1423,7 +1423,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.stdout).toBe("hello");
   });
 
-  it("appends multi-character updated output chunks that match the previous multiline prefix", () => {
+  it("uses shorter multiline prefix snapshots when they end at a boundary", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "command-tool-output-update-1",
@@ -1462,7 +1462,7 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const [entry] = deriveWorkLogEntries(activities);
-    expect(entry?.stdout).toBe("ab\ncab");
+    expect(entry?.stdout).toBe("ab\nc");
   });
 
   it("appends one-character updated output chunks that match the previous prefix", () => {
@@ -2118,7 +2118,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.patch).toContain("+Smoke test file-change row.");
   });
 
-  it("trims string Codex file-change kinds before normalizing patches", () => {
+  it("normalizes string Codex file-change kinds before normalizing patches", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "codex-file-tool-trimmed-kind-patch",
@@ -2131,7 +2131,7 @@ describe("deriveWorkLogEntries", () => {
               changes: [
                 {
                   path: "SMOKE_TEST_CHANGE.md",
-                  kind: " add ",
+                  kind: " ADD ",
                   diff: "Smoke test file-change row.\n",
                 },
               ],

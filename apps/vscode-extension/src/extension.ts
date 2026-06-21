@@ -18,6 +18,48 @@ import {
 } from "./webview.ts";
 import { VsCodeMcpBridge } from "./mcpBridge.ts";
 
+export interface ConnectedWebviewDisposableReplacementState {
+  current: vscode.Disposable | null;
+  renderGeneration: number;
+}
+
+export function createConnectedWebviewDisposableReplacementState(): ConnectedWebviewDisposableReplacementState {
+  return {
+    current: null,
+    renderGeneration: 0,
+  };
+}
+
+export async function replaceConnectedWebviewDisposable(input: {
+  readonly isDisposed: () => boolean;
+  readonly state: ConnectedWebviewDisposableReplacementState;
+  readonly render: (isCurrentRender: () => boolean) => Promise<vscode.Disposable>;
+}): Promise<void> {
+  const renderGeneration = input.state.renderGeneration + 1;
+  input.state.renderGeneration = renderGeneration;
+  input.state.current?.dispose();
+  input.state.current = null;
+  if (input.isDisposed()) {
+    return;
+  }
+  const isCurrentRender = () =>
+    !input.isDisposed() && input.state.renderGeneration === renderGeneration;
+  const nextDisposable = await input.render(isCurrentRender);
+  if (!isCurrentRender()) {
+    nextDisposable.dispose();
+    return;
+  }
+  input.state.current = nextDisposable;
+}
+
+function disposeConnectedWebviewDisposableState(
+  state: ConnectedWebviewDisposableReplacementState,
+): void {
+  state.renderGeneration += 1;
+  state.current?.dispose();
+  state.current = null;
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const outputChannel = vscode.window.createOutputChannel("T3 Code");
   const mcpBridge = new VsCodeMcpBridge(outputChannel);
@@ -143,20 +185,22 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
   async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
     configureWebview(webviewView.webview, this.#context.extensionUri);
     const disposables: vscode.Disposable[] = [];
-    let currentConnectedDisposable: vscode.Disposable | null = null;
+    const connectedDisposableState = createConnectedWebviewDisposableReplacementState();
+    let webviewDisposed = false;
     webviewView.onDidDispose(() => {
-      currentConnectedDisposable?.dispose();
-      currentConnectedDisposable = null;
+      webviewDisposed = true;
+      disposeConnectedWebviewDisposableState(connectedDisposableState);
       disposeAll(disposables);
     });
     const renderConnected = async (
       connection: Awaited<ReturnType<BackendManager["ensureStarted"]>>,
     ) => {
-      currentConnectedDisposable?.dispose();
-      currentConnectedDisposable = await this.#renderConnectedWebview(
-        webviewView.webview,
-        connection,
-      );
+      await replaceConnectedWebviewDisposable({
+        isDisposed: () => webviewDisposed,
+        state: connectedDisposableState,
+        render: (isCurrentRender) =>
+          this.#renderConnectedWebview(webviewView.webview, connection, isCurrentRender),
+      });
     };
     const connection = await resolveBackendConnectionForWebview(
       this.#backendManager,
@@ -179,6 +223,7 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
   async #renderConnectedWebview(
     webview: vscode.Webview,
     connection: Awaited<ReturnType<BackendManager["ensureStarted"]>>,
+    isCurrentRender: () => boolean,
   ): Promise<vscode.Disposable> {
     const bridgeDisposable = registerClientSettingsHostBridge({
       webview,
@@ -199,7 +244,7 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
       backendConnectionDisposable,
     );
     try {
-      webview.html = await renderT3Webview({
+      const html = await renderT3Webview({
         webview,
         extensionUri: this.#context.extensionUri,
         connection,
@@ -207,6 +252,9 @@ class T3SidebarProvider implements vscode.WebviewViewProvider {
         hostAppearance: readWebviewHostAppearance(),
         initialRoute: connection.initialThreadRoute ?? "/_chat/",
       });
+      if (isCurrentRender()) {
+        webview.html = html;
+      }
       return connectedDisposable;
     } catch (error) {
       disposeAfterFailedRender(connectedDisposable, this.#outputChannel);
@@ -259,21 +307,27 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
   ): Promise<void> {
     configureWebview(webviewPanel.webview, this.#context.extensionUri);
     const disposables: vscode.Disposable[] = [];
-    let currentConnectedDisposable: vscode.Disposable | null = null;
+    const connectedDisposableState = createConnectedWebviewDisposableReplacementState();
+    let panelDisposed = false;
     webviewPanel.onDidDispose(() => {
-      currentConnectedDisposable?.dispose();
-      currentConnectedDisposable = null;
+      panelDisposed = true;
+      disposeConnectedWebviewDisposableState(connectedDisposableState);
       disposeAll(disposables);
     });
     const renderConnected = async (
       connection: Awaited<ReturnType<BackendManager["ensureStarted"]>>,
     ) => {
-      currentConnectedDisposable?.dispose();
-      currentConnectedDisposable = await this.#renderConnectedWebview(
-        webviewPanel.webview,
-        connection,
-        routeFromUri(document.uri),
-      );
+      await replaceConnectedWebviewDisposable({
+        isDisposed: () => panelDisposed,
+        state: connectedDisposableState,
+        render: (isCurrentRender) =>
+          this.#renderConnectedWebview(
+            webviewPanel.webview,
+            connection,
+            routeFromUri(document.uri),
+            isCurrentRender,
+          ),
+      });
     };
     const connection = await resolveBackendConnectionForWebview(
       this.#backendManager,
@@ -297,6 +351,7 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
     webview: vscode.Webview,
     connection: Awaited<ReturnType<BackendManager["ensureStarted"]>>,
     initialRoute: string,
+    isCurrentRender: () => boolean,
   ): Promise<vscode.Disposable> {
     const bridgeDisposable = registerClientSettingsHostBridge({
       webview,
@@ -317,7 +372,7 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
       backendConnectionDisposable,
     );
     try {
-      webview.html = await renderT3Webview({
+      const html = await renderT3Webview({
         webview,
         extensionUri: this.#context.extensionUri,
         connection,
@@ -325,6 +380,9 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
         hostAppearance: readWebviewHostAppearance(),
         initialRoute,
       });
+      if (isCurrentRender()) {
+        webview.html = html;
+      }
       return connectedDisposable;
     } catch (error) {
       disposeAfterFailedRender(connectedDisposable, this.#outputChannel);
