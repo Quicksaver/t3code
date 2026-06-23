@@ -45,6 +45,13 @@ export function isTerminalKeybindingCommand(command: KeybindingCommand): boolean
   return TERMINAL_KEYBINDING_COMMANDS.has(command);
 }
 
+export function isTerminalUiAvailable(input: {
+  readonly enableTerminal: boolean;
+  readonly hasActiveProject: boolean;
+}): boolean {
+  return input.enableTerminal && input.hasActiveProject;
+}
+
 export function terminalThreadRefsToCloseWhenDisabled(input: {
   readonly enableTerminal: boolean;
   readonly openTerminalThreadKeys: readonly string[];

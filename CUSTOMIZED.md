@@ -174,6 +174,7 @@ Expected behavior:
 - Action terminal ids encode script ids and reserve numeric `:<suffix>` ids for fallback terminals, so script ids such as `build-2` or legacy colon ids such as `build:dev` cannot be mistaken for fallback terminals of another action.
 - Fallback action terminal tabs include their instance suffix in parentheses, such as `Action: build (2)`, while script ids that naturally end in digits, such as `build-2`, keep readable labels such as `Action: build 2`.
 - POSIX subprocess detection is conservative when full process-tree inspection fails: a shell child is treated as busy rather than idle so commands are not injected into a terminal that may still have a hidden descendant process.
+- Terminal UI controls should be unavailable whenever host terminal support is disabled or no active project exists, so hosts such as VS Code do not expose terminal actions that cannot run.
 
 Primary files:
 
@@ -297,7 +298,9 @@ Provider-backed change-request lookups remain best-effort in the panel service. 
 
 Version Control and source-control provider failures should preserve structured causes when normalized for panel RPC errors. GitLab, GitHub, Azure DevOps, and Bitbucket provider paths should keep provider-specific not-found/auth/missing-CLI details without collapsing structured process failures into generic strings.
 
-Preserve the panel's review-hardened edge cases: the current default branch remains a valid default compare ref, diverged normal merge sync is available only for the current branch, tracked discard restore failures surface instead of being swallowed, fallback rename parsing preserves original paths, merged staged-plus-unstaged row stats are summed, and late-month relative dates do not fall through to `0 years ago`.
+Thread source-control metadata update failures should surface on the thread without overwriting unrelated thread errors, and successful source-control updates should clear only the source-control metadata error for that thread.
+
+Preserve the panel's review-hardened edge cases: the current default branch remains a valid default compare ref, diverged normal merge sync is available only for the current branch, checked-out branch worktree paths fall back from porcelain worktree output to branch-format placeholders without failing on older Git versions, tracked discard restore failures surface instead of being swallowed, fallback rename parsing preserves original paths, merged staged-plus-unstaged row stats are summed, and late-month relative dates do not fall through to `0 years ago`.
 
 The implementation details are intentionally kept in `SOURCE_CONTROL.md` instead of being duplicated here. Unlike the other sections in this file, `CUSTOMIZED.md` should only preserve the merge-maintenance rule for this area: keep the Version Control panel work unless `main` has gained an equivalent agent-aware version-control panel, then reconcile against the detailed source-control note.
 
@@ -338,7 +341,10 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 10. Expanded command activity rows show differing raw command text inline with the other command details.
 11. Command output merging preserves meaningful streamed output across blank fallbacks, whitespace chunks, split chunks, and shorter snapshots.
 12. Terminal-backed project action terminal ids remain collision-resistant and busy detection stays conservative when subprocess inspection is incomplete.
-13. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
+13. Terminal UI controls stay gated on both host terminal support and an active project.
+14. Version Control checked-out branch labels preserve worktree paths through porcelain-first parsing and old-Git fallbacks.
+15. Thread source-control metadata update failures remain visible without clearing unrelated thread errors.
+16. Mobile EAS project ownership remains pointed at the local Expo project used for installable preview builds unless deliberately changed.
 
 ## Retirement Criteria
 

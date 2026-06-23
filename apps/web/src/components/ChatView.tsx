@@ -218,6 +218,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
   isTerminalKeybindingCommand,
+  isTerminalUiAvailable,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -1117,6 +1118,8 @@ function ChatViewContent(props: ChatViewProps) {
   const [localServerErrorsByThreadKey, setLocalServerErrorsByThreadKey] = useState<
     Record<string, string | null>
   >({});
+  const [sourceControlMetadataErrorsByThreadKey, setSourceControlMetadataErrorsByThreadKey] =
+    useState<Record<string, string | null>>({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
@@ -1220,6 +1223,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey] ?? null;
+  const sourceControlMetadataError = sourceControlMetadataErrorsByThreadKey[routeThreadKey] ?? null;
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -1245,7 +1249,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, [activeThreadParentRef, navigate]);
   const threadError = isServerThread
-    ? (localServerError ?? serverThread?.session?.lastError ?? null)
+    ? (localServerError ?? sourceControlMetadataError ?? serverThread?.session?.lastError ?? null)
     : localDraftError;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -1385,6 +1389,10 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const terminalAvailable = isTerminalUiAvailable({
+    enableTerminal: terminalEnabled,
+    hasActiveProject: activeProject !== null,
+  });
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -2842,14 +2850,39 @@ function ChatViewContent(props: ChatViewProps) {
     async (input: { readonly branch: string | null; readonly worktreePath: string | null }) => {
       if (!activeThreadRef) return;
       if (isServerThread) {
-        await updateThreadMetadata({
-          environmentId: activeThreadRef.environmentId,
+        const { environmentId, threadId } = activeThreadRef;
+        const result = await updateThreadMetadata({
+          environmentId,
           input: {
-            threadId: activeThreadRef.threadId,
+            threadId,
             branch: input.branch,
             worktreePath: input.worktreePath,
           },
         });
+        if (result._tag === "Success") {
+          setSourceControlMetadataErrorsByThreadKey((existing) => {
+            const threadKey = scopedThreadKey(activeThreadRef);
+            if ((existing[threadKey] ?? null) === null) {
+              return existing;
+            }
+            return {
+              ...existing,
+              [threadKey]: null,
+            };
+          });
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        setSourceControlMetadataErrorsByThreadKey((existing) => ({
+          ...existing,
+          [scopedThreadKey(activeThreadRef)]:
+            typeof error === "string"
+              ? error
+              : error instanceof Error
+                ? error.message
+                : "Failed to update thread source control.",
+        }));
         return;
       }
       setDraftThreadContext(draftId ?? activeThreadRef, {
@@ -4709,8 +4742,8 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={activeProject !== null}
-      terminalOpen={terminalUiState.terminalOpen}
+      terminalAvailable={terminalAvailable}
+      terminalOpen={terminalAvailable && terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={activeProject !== null}
       rightPanelOpen={rightPanelOpen}
@@ -5099,7 +5132,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddSourceControl={addSourceControlSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
-          terminalAvailable={terminalEnabled && activeProject !== null}
+          terminalAvailable={terminalAvailable}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           sourceControlAvailable={sourceControlAvailable}
@@ -5129,7 +5162,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddSourceControl={addSourceControlSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
-            terminalAvailable={terminalEnabled && activeProject !== null}
+            terminalAvailable={terminalAvailable}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             sourceControlAvailable={sourceControlAvailable}

@@ -20,6 +20,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   isTerminalKeybindingCommand,
+  isTerminalUiAvailable,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
@@ -277,6 +278,12 @@ describe("terminal host preference behavior", () => {
     expect(isTerminalKeybindingCommand("terminal.new")).toBe(true);
     expect(isTerminalKeybindingCommand("terminal.close")).toBe(true);
     expect(isTerminalKeybindingCommand("diff.toggle")).toBe(false);
+  });
+
+  it("requires both host terminal support and an active project for terminal UI", () => {
+    expect(isTerminalUiAvailable({ enableTerminal: true, hasActiveProject: true })).toBe(true);
+    expect(isTerminalUiAvailable({ enableTerminal: false, hasActiveProject: true })).toBe(false);
+    expect(isTerminalUiAvailable({ enableTerminal: true, hasActiveProject: false })).toBe(false);
   });
 
   it("resolves open terminal thread refs that must close when the host disables terminals", () => {

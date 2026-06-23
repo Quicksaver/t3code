@@ -54,6 +54,14 @@ import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 const isGitCommandError = Schema.is(GitCommandError);
+const LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS = [
+  "branch",
+  "--format=%(refname:short)%09%(HEAD)%09%(worktreepath)%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
+] as const;
+const LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS = [
+  "branch",
+  "--format=%(refname:short)%09%(HEAD)%09%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
+] as const;
 
 export interface SourceControlPanelServiceShape {
   readonly snapshot: (
@@ -152,6 +160,11 @@ function asGitCommandError(operation: string, cwd: string, args: readonly string
     isGitCommandError(cause)
       ? cause
       : gitError(operation, cwd, args, detailFromUnknown(cause), cause);
+}
+
+function isUnsupportedWorktreePathFormat(detail: string) {
+  detail = detail.toLowerCase();
+  return detail.includes("worktreepath") && detail.includes("unknown field");
 }
 
 function parseCount(value: string | undefined): number {
@@ -517,25 +530,50 @@ function parseAheadBehindCounts(output: string): {
   };
 }
 
-function parseLocalBranches(output: string): VcsRef[] {
+function parseWorktreeBranchPaths(output: string): Map<string, string> {
+  const paths = new Map<string, string>();
+  let currentPath: string | null = null;
+
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.trimEnd();
+    if (line.length === 0) {
+      currentPath = null;
+      continue;
+    }
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length);
+      continue;
+    }
+    if (currentPath && line.startsWith("branch refs/heads/")) {
+      paths.set(line.slice("branch refs/heads/".length), currentPath);
+    }
+  }
+
+  return paths;
+}
+
+function parseLocalBranches(
+  output: string,
+  worktreeBranchPaths: ReadonlyMap<string, string> = new Map(),
+): VcsRef[] {
   const rows = output
     .split(/\r?\n/u)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
+    .filter((line) => line.trimEnd().length > 0)
     .map((line) => {
-      const [
-        name = "",
-        head = "",
-        worktreePath = "",
-        lastActivityAt = "",
-        upstreamName = "",
-        track = "",
-      ] = line.split("\t");
+      // Preserve trailing tabs so empty upstream track columns stay aligned.
+      const columns = line.split("\t");
+      const [name = "", head = ""] = columns;
+      const hasInlineWorktreePath = columns.length >= 6;
+      const worktreePath = hasInlineWorktreePath ? (columns[2] ?? "") : "";
+      const lastActivityAt = hasInlineWorktreePath ? (columns[3] ?? "") : (columns[2] ?? "");
+      const upstreamName = hasInlineWorktreePath ? (columns[4] ?? "") : (columns[3] ?? "");
+      const track = hasInlineWorktreePath ? (columns[5] ?? "") : (columns[4] ?? "");
       const { aheadCount, behindCount } = parseBranchTrackCounts(track);
+      const resolvedWorktreePath = worktreeBranchPaths.get(name) ?? worktreePath;
       return {
         name,
         current: head.trim() === "*",
-        worktreePath: worktreePath.length > 0 ? worktreePath : null,
+        worktreePath: resolvedWorktreePath.length > 0 ? resolvedWorktreePath : null,
         lastActivityAt: lastActivityAt.length > 0 ? lastActivityAt : null,
         upstreamName: upstreamName.length > 0 ? upstreamName : null,
         aheadCount,
@@ -777,7 +815,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   );
   const textGeneration = Option.getOrUndefined(Context.getOption(context, TextGeneration));
 
-  const run = (
+  const runResult = (
     operation: string,
     cwd: string,
     args: readonly string[],
@@ -794,17 +832,24 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         maxOutputBytes: 8 * 1024 * 1024,
         appendTruncationMarker: true,
       })
-      .pipe(
-        Effect.flatMap((result) => {
-          if (options?.allowNonZeroExit === true || result.exitCode === 0) {
-            return Effect.succeed(result.stdout);
-          }
-          return Effect.fail(
-            gitError(operation, cwd, args, result.stderr.trim() || result.stdout.trim()),
-          );
-        }),
-        Effect.mapError(asGitCommandError(operation, cwd, args)),
-      );
+      .pipe(Effect.mapError(asGitCommandError(operation, cwd, args)));
+
+  const run = (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    options?: { readonly allowNonZeroExit?: boolean; readonly env?: NodeJS.ProcessEnv },
+  ) =>
+    runResult(operation, cwd, args, options).pipe(
+      Effect.flatMap((result) => {
+        if (options?.allowNonZeroExit === true || result.exitCode === 0) {
+          return Effect.succeed(result.stdout);
+        }
+        return Effect.fail(
+          gitError(operation, cwd, args, result.stderr.trim() || result.stdout.trim()),
+        );
+      }),
+    );
 
   const COMMIT_PAGE_SIZE = 10;
 
@@ -1535,6 +1580,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       const [
         localStatus,
         localBranchesOutput,
+        worktreeListOutput,
         porcelain,
         unstagedNumstat,
         stagedNumstat,
@@ -1548,10 +1594,31 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             .pipe(
               Effect.mapError(asGitCommandError("vcs.panel.localStatus", input.cwd, ["status"])),
             ),
-          run("vcs.panel.localBranches", input.cwd, [
-            "branch",
-            "--format=%(refname:short)%09%(HEAD)%09%(worktreepath)%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
-          ]),
+          runResult("vcs.panel.localBranches", input.cwd, LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS, {
+            allowNonZeroExit: true,
+          }).pipe(
+            Effect.flatMap((result) => {
+              if (result.exitCode === 0) return Effect.succeed(result.stdout);
+              const detail = result.stderr.trim() || result.stdout.trim();
+              return isUnsupportedWorktreePathFormat(detail)
+                ? run(
+                    "vcs.panel.localBranches",
+                    input.cwd,
+                    LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS,
+                  )
+                : Effect.fail(
+                    gitError(
+                      "vcs.panel.localBranches",
+                      input.cwd,
+                      LOCAL_BRANCHES_WITH_WORKTREE_PATH_ARGS,
+                      detail,
+                    ),
+                  );
+            }),
+          ),
+          run("vcs.panel.worktrees", input.cwd, ["worktree", "list", "--porcelain"], {
+            allowNonZeroExit: true,
+          }),
           run("vcs.panel.statusPorcelain", input.cwd, [
             "status",
             "--porcelain=2",
@@ -1588,7 +1655,10 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         { concurrency: "unbounded" },
       );
 
-      const localBranches = parseLocalBranches(localBranchesOutput);
+      const localBranches = parseLocalBranches(
+        localBranchesOutput,
+        parseWorktreeBranchPaths(worktreeListOutput),
+      );
       const stagedFiles = parseFileChangesFromNumstat({
         numstat: stagedNumstat,
         statuses: parseNameStatus(stagedNameStatus),
