@@ -73,7 +73,7 @@ When a repository has multiple remotes, the server checks local branches against
 
 The server also checks open change requests for every local branch across all configured remotes whose fetch URL maps to a supported provider: GitHub, GitLab, Azure DevOps, and Bitbucket. For each matching open PR/MR where the local branch is the head branch, the panel compares the local branch only against the found change request's base branch on that same remote. A PR/MR-derived Actionable row is shown only when the local branch is behind that remote base branch; if the branch is already current with, ahead of, or unrelated to the base branch, no Actionable entry is shown. Provider lookup is best-effort: authentication, CLI/API, or unsupported-remote failures omit PR/MR-derived rows without blocking the Git snapshot, but provider-specific errors still preserve structured causes for diagnostics.
 
-Client-side Actionable/Remotes expansion, row selection, and visible-row enrichment state lives in `apps/web/src/state/sourceControlPanel.ts`. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
+Client-side Actionable/Remotes expansion, row selection, and working-tree enrichment state is owned by `apps/web/src/components/source-control/SourceControlPanel.tsx`, while `apps/web/src/state/sourceControlPanel.ts` owns the environment-scoped panel RPC wrapper and presentation-state helper. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
 
 The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every five minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh while keeping idle network and Git churn conservative.
 
@@ -102,6 +102,8 @@ File rows are compact. They show a one-letter status indicator such as `A`, `D`,
 - Discard changes, with confirmation.
 
 Untracked directories are expanded to file-level rows instead of being shown as a single folder row. Untracked files get `A` rows with line stats computed from a `/dev/null` comparison. The server also runs rename detection for unstaged untracked destinations through a temporary Git index, so staged and unstaged renames both collapse matching old/new paths into a single `R` row when Git can match them. If Git cannot match the similarity threshold, entries remain file-level `A` and `D` rows rather than a folder row.
+
+The working-tree file list is not a nested vertical scroller. Rows render in normal flow inside the `Actionable` section's existing overflow area, so mouse-wheel and mobile swipe gestures over changed-file rows scroll the panel section itself. Working-tree enrichment remains lazy: each rendered row registers with an `IntersectionObserver` and queues enrichment when it enters the viewport or the 600px prefetch margin, with a fallback that queues immediately when the observer API is unavailable.
 
 The `Working tree` context menu includes selected-file commit and stash actions plus a separated destructive `Discard selected changes` action.
 
