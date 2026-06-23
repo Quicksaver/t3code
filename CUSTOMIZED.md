@@ -3,6 +3,23 @@
 > Keep this file readable for humans: do not hard-wrap prose lines; let editors wrap long lines visually. Keep headings, lists, tables, and code blocks structurally formatted.
 > Keep these notes a reflection of the current implementation status. History records, such as merge, ports, and update notes, are not meant for this file.
 
+## Upstream Baseline
+
+Generated from local `origin/main` ref `2ce13e346` and `upstream/main` ref `4abf8b46c`. Before this upstream merge, the fork was 267 commits ahead and 14 commits behind `upstream/main`; the resolved merge diff touches 59 files with 1860 insertions and 734 deletions before this inventory refresh.
+
+## Latest Merge Impact
+
+The upstream sidebar toggle and titlebar inset work is now merged into the fork's app chrome. The conflict-prone files are `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's persisted `threadSidebarOpen` setting, Electron forced-desktop layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
+
+Upstream also added persistent word wrapping for chat code blocks and tables, stabilized composer provider state while typing, restored T3 Connect account controls, persisted mobile composer selectors across drafts, ignored stale shell reducer events, rejected unsupported remote pairing protocols, guarded DPoP fallback URL construction, preserved localhost preview hosts, clarified Cursor CLI setup errors, guarded trace-id clipboard copy, restored pending-input keyboard activation, bumped Clerk packages, and renamed `AnnotatableFileDiff` to `AnnotatableCodeView`.
+
+Customization-sensitive follow-up areas:
+
+- The fork's conversation-width default and command/file activity rendering should be checked against upstream's chat word-wrap and `AnnotatableCodeView` changes before removing local chat presentation code.
+- The fork's host-aware Open In picker and VS Code sidebar behavior now sit on top of upstream's simplified chat header/sidebar chrome; future sidebar changes should preserve the VS Code webview trigger exception and parent-thread action intentionally.
+- The fork's workspace-aware Cursor ACP/model discovery still passes cwd through provider status and model probes. Upstream's Cursor CLI setup wording can coexist with that, but tests should keep exercising cwd-aware calls in `apps/server/src/provider/Layers/CursorProvider.test.ts`.
+- Mobile composer/outbox persistence changed upstream, but local EAS project ownership remains fork-specific and should still be preserved in `apps/mobile/app.config.ts`.
+
 ## Debug Browser Launch
 
 For web/server debug work in this branch, start the backend with browser auto-open disabled, then if needed navigate the intended active browser window manually or through Playwright MCP:
@@ -331,5 +348,7 @@ When retiring the local changes, remove the corresponding tests or update them t
 
 > Here are referenced the latest commit SHAs for the `main` branch of both the `origin` and `upstream` remotes. These SHAs are used to determine if any worktrees need to be updated with changes from `upstream/main` and `origin/main`.
 
-**Last origin/main commit SHA:** 7b378ec6d
-**Last upstream/main commit SHA:** cc69aef4d
+**Last origin/main commit SHA:** 2ce13e346
+**Last upstream/main commit SHA:** 4abf8b46c
+**Last pre-merge origin/main...upstream/main count:** 267 ahead / 14 behind
+**Last resolved merge diff size before this inventory refresh:** 59 files changed, 1860 insertions, 734 deletions
