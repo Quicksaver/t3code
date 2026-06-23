@@ -27,6 +27,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadRowIndentStyle,
   resolveThreadStatusPill,
+  SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -95,7 +96,9 @@ describe("resolveSidebarTriggerVisibilityClassName", () => {
   });
 
   it("keeps the upstream desktop breakpoint behavior outside VS Code", () => {
-    expect(resolveSidebarTriggerVisibilityClassName({ isVscodeWebview: false })).toBe("md:hidden");
+    expect(resolveSidebarTriggerVisibilityClassName({ isVscodeWebview: false })).toBe(
+      SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS,
+    );
   });
 });
 

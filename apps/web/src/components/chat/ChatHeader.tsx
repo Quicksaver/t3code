@@ -66,11 +66,7 @@ export function shouldRenderOpenInPicker(input: {
     return false;
   }
 
-  return shouldShowOpenInPicker({
-    activeProjectName: input.activeProjectName,
-    activeThreadEnvironmentId: input.activeThreadEnvironmentId,
-    primaryEnvironmentId: input.primaryEnvironmentId,
-  });
+  return shouldShowOpenInPicker(input);
 }
 
 export const ChatHeader = memo(function ChatHeader({

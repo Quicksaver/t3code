@@ -682,9 +682,9 @@ Reasoning:
 Implemented:
 
 - `apps/web/src/components/Sidebar.logic.ts` owns the VS Code trigger visibility class: VS Code returns no breakpoint-hiding class, while browser/desktop preserve upstream's `md:hidden` behavior for the sidebar-chrome trigger.
-- `apps/web/src/components/AppSidebarLayout.logic.ts` owns thread-sidebar open/persist decisions: non-desktop hosts default to open and honor persisted `threadSidebarOpen`; Electron remains fixed open and skips closed-state writes.
+- `apps/web/src/components/AppSidebarLayout.logic.ts` owns thread-sidebar open/persist decisions: non-desktop hosts default to open and persist only actual `threadSidebarOpen` changes; Electron remains fixed open and skips all sidebar-open persistence.
 - The stale `apps/web/src/components/sidebar/MainSidebarTrigger.tsx` wrapper was removed. The shared `SidebarTrigger` remains responsible for open/close labels and icons.
-- Automated coverage verifies the VS Code trigger visibility exception, desktop fixed-open sidebar behavior, persisted non-desktop sidebar preference, and the shared sidebar trigger open/close labels.
+- Automated coverage lives in `apps/web/src/components/Sidebar.logic.test.ts`, `apps/web/src/components/AppSidebarLayout.logic.test.ts`, and `apps/web/src/components/ui/sidebar.test.tsx`, covering the VS Code trigger visibility exception, desktop fixed-open/sidebar-persistence behavior, persisted non-desktop sidebar preference, and the shared sidebar trigger open/close labels. Run with `cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/Sidebar.logic.test.ts src/components/AppSidebarLayout.logic.test.ts src/components/ui/sidebar.test.tsx`.
 
 ### 2026-05-14: Reset VS Code Webview Startup Routing
 

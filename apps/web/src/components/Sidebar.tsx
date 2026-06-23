@@ -2808,13 +2808,13 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const triggerVisibilityClassName = resolveSidebarTriggerVisibilityClassName({ isVscodeWebview });
 
-  return isElectron ? (
-    <SidebarHeader className="@container/sidebar-header drag-region h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0">
-      <SidebarTrigger className={cn("shrink-0", triggerVisibilityClassName)} />
-      <SidebarBrand />
-    </SidebarHeader>
-  ) : (
-    <SidebarHeader className="@container/sidebar-header h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0">
+  return (
+    <SidebarHeader
+      className={cn(
+        "@container/sidebar-header h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        isElectron && "drag-region",
+      )}
+    >
       <SidebarTrigger className={cn("shrink-0", triggerVisibilityClassName)} />
       <SidebarBrand />
     </SidebarHeader>

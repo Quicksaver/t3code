@@ -42,6 +42,16 @@ describe("shouldPersistThreadSidebarOpenChange", () => {
     ).toBe(true);
   });
 
+  it("persists when the sidebar reopens", () => {
+    expect(
+      shouldPersistThreadSidebarOpenChange({
+        currentOpen: false,
+        isDesktopHost: false,
+        nextOpen: true,
+      }),
+    ).toBe(true);
+  });
+
   it("skips redundant writes when the sidebar state is unchanged", () => {
     expect(
       shouldPersistThreadSidebarOpenChange({
@@ -52,12 +62,19 @@ describe("shouldPersistThreadSidebarOpenChange", () => {
     ).toBe(false);
   });
 
-  it("does not persist desktop host toggle attempts", () => {
+  it("does not persist any desktop host toggle attempts", () => {
     expect(
       shouldPersistThreadSidebarOpenChange({
         currentOpen: true,
         isDesktopHost: true,
         nextOpen: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldPersistThreadSidebarOpenChange({
+        currentOpen: false,
+        isDesktopHost: true,
+        nextOpen: true,
       }),
     ).toBe(false);
   });

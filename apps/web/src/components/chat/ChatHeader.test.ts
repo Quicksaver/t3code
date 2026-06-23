@@ -82,4 +82,15 @@ describe("host display preferences", () => {
       }),
     ).toBe(false);
   });
+
+  it("still hides the open picker when hosted static mode has no primary environment", () => {
+    expect(
+      shouldRenderOpenInPicker({
+        hostShowOpenInPicker: true,
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId: null,
+      }),
+    ).toBe(false);
+  });
 });

@@ -61,13 +61,12 @@ function SidebarControl() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const isDesktopHost = isElectron;
-  const savedThreadSidebarOpen = useClientSettings(
-    (settings) => settings.threadSidebarOpen ?? true,
-  );
+  const savedThreadSidebarOpen = useClientSettings((settings) => settings.threadSidebarOpen);
   const threadSidebarOpen = resolveThreadSidebarOpen({ isDesktopHost, savedThreadSidebarOpen });
   const updateSettings = useUpdateClientSettings();
   const handleThreadSidebarOpenChange = useCallback(
     (open: boolean) => {
+      // SidebarProvider already receives the controlled open state; this only persists settings.
       if (
         !shouldPersistThreadSidebarOpenChange({
           currentOpen: threadSidebarOpen,
