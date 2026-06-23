@@ -71,4 +71,15 @@ describe("host display preferences", () => {
       }),
     ).toBe(true);
   });
+
+  it("still hides the open picker for remote environments when the host enables it", () => {
+    expect(
+      shouldRenderOpenInPicker({
+        hostShowOpenInPicker: true,
+        activeProjectName: "codething-mvp",
+        activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
+        primaryEnvironmentId,
+      }),
+    ).toBe(false);
+  });
 });

@@ -115,6 +115,12 @@ export function resolveSidebarStageBadgeLabel(input: {
   return resolveServerBackedAppStageLabel(input);
 }
 
+export function resolveSidebarTriggerVisibilityClassName(input: {
+  isVscodeWebview: boolean;
+}): string {
+  return input.isVscodeWebview ? "" : "md:hidden";
+}
+
 export function createThreadJumpHintVisibilityController(input: {
   delayMs: number;
   onVisibilityChange: (visible: boolean) => void;

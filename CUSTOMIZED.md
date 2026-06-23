@@ -5,18 +5,20 @@
 
 ## Upstream Baseline
 
-Generated from local `origin/main` ref `2ce13e346` and `upstream/main` ref `4abf8b46c`. Before this upstream merge, the fork was 267 commits ahead and 14 commits behind `upstream/main`; the resolved merge diff touches 59 files with 1860 insertions and 734 deletions before this inventory refresh.
+Generated from local `HEAD` ref `9ce0d66ef`, local `origin/main` ref `2ce13e346`, and `upstream/main` ref `4abf8b46c`. After the upstream merge commit, the fork is 268 commits ahead and 0 commits behind `upstream/main`; the current uncommitted follow-up and doc refresh touches 12 files with 155 insertions and 74 deletions before this inventory refresh.
 
 ## Latest Merge Impact
 
-The upstream sidebar toggle and titlebar inset work is now merged into the fork's app chrome. The conflict-prone files are `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's persisted `threadSidebarOpen` setting, Electron forced-desktop layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
+The upstream sidebar toggle and titlebar inset work is now merged into the fork's app chrome. The conflict-prone files are `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's Electron forced-desktop sidebar layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
+
+The follow-up refactor centralized the remaining fork sidebar/header compatibility rules without changing those behaviors: `apps/web/src/components/AppSidebarLayout.logic.ts` owns the thread-sidebar open/persist decisions, `apps/web/src/components/Sidebar.logic.ts` owns the VS Code trigger visibility exception, and `apps/web/src/components/chat/ChatHeader.tsx` now treats host `showOpenInPicker` as a post-filter over the upstream-style project/environment eligibility predicate. The stale `apps/web/src/components/sidebar/MainSidebarTrigger.tsx` wrapper was removed because upstream's `SidebarTrigger` now provides the shared trigger state and chrome behavior directly.
 
 Upstream also added persistent word wrapping for chat code blocks and tables, stabilized composer provider state while typing, restored T3 Connect account controls, persisted mobile composer selectors across drafts, ignored stale shell reducer events, rejected unsupported remote pairing protocols, guarded DPoP fallback URL construction, preserved localhost preview hosts, clarified Cursor CLI setup errors, guarded trace-id clipboard copy, restored pending-input keyboard activation, bumped Clerk packages, and renamed `AnnotatableFileDiff` to `AnnotatableCodeView`.
 
 Customization-sensitive follow-up areas:
 
 - The fork's conversation-width default and command/file activity rendering should be checked against upstream's chat word-wrap and `AnnotatableCodeView` changes before removing local chat presentation code.
-- The fork's host-aware Open In picker and VS Code sidebar behavior now sit on top of upstream's simplified chat header/sidebar chrome; future sidebar changes should preserve the VS Code webview trigger exception and parent-thread action intentionally.
+- The fork's host-aware Open In picker and VS Code sidebar behavior now sit on top of upstream's simplified chat header/sidebar chrome through centralized helpers; future sidebar changes should preserve the VS Code webview trigger exception and parent-thread action intentionally.
 - The fork's workspace-aware Cursor ACP/model discovery still passes cwd through provider status and model probes. Upstream's Cursor CLI setup wording can coexist with that, but tests should keep exercising cwd-aware calls in `apps/server/src/provider/Layers/CursorProvider.test.ts`.
 - Mobile composer/outbox persistence changed upstream, but local EAS project ownership remains fork-specific and should still be preserved in `apps/mobile/app.config.ts`.
 

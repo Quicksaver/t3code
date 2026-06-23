@@ -20,6 +20,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveSidebarOptionsMenuVisibility,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarTriggerVisibilityClassName,
   resolveThreadListClassName,
   resolveVscodeProjectScope,
   resolveVscodeInitialThreadRef,
@@ -85,6 +86,16 @@ describe("resolveSidebarStageBadgeLabel", () => {
         fallbackStageLabel: "Alpha",
       }),
     ).toBe("Alpha");
+  });
+});
+
+describe("resolveSidebarTriggerVisibilityClassName", () => {
+  it("keeps the sidebar trigger visible at every width in VS Code webviews", () => {
+    expect(resolveSidebarTriggerVisibilityClassName({ isVscodeWebview: true })).toBe("");
+  });
+
+  it("keeps the upstream desktop breakpoint behavior outside VS Code", () => {
+    expect(resolveSidebarTriggerVisibilityClassName({ isVscodeWebview: false })).toBe("md:hidden");
   });
 });
 

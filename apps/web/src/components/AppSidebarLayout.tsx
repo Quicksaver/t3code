@@ -6,6 +6,10 @@ import { isElectron } from "../env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  resolveThreadSidebarOpen,
+  shouldPersistThreadSidebarOpenChange,
+} from "./AppSidebarLayout.logic";
 import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
@@ -60,16 +64,22 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const savedThreadSidebarOpen = useClientSettings(
     (settings) => settings.threadSidebarOpen ?? true,
   );
-  const threadSidebarOpen = isDesktopHost ? true : savedThreadSidebarOpen;
+  const threadSidebarOpen = resolveThreadSidebarOpen({ isDesktopHost, savedThreadSidebarOpen });
   const updateSettings = useUpdateClientSettings();
   const handleThreadSidebarOpenChange = useCallback(
     (open: boolean) => {
-      if (isDesktopHost) {
+      if (
+        !shouldPersistThreadSidebarOpenChange({
+          currentOpen: threadSidebarOpen,
+          isDesktopHost,
+          nextOpen: open,
+        })
+      ) {
         return;
       }
       updateSettings({ threadSidebarOpen: open });
     },
-    [isDesktopHost, updateSettings],
+    [isDesktopHost, threadSidebarOpen, updateSettings],
   );
   const macosWindowControlsStyle =
     isElectron && isMacPlatform(navigator.platform)

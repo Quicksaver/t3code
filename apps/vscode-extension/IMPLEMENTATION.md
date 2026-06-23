@@ -670,21 +670,21 @@ Implemented:
 
 ### 2026-05-15: Persist and De-duplicate the VS Code Sidebar Toggle
 
-Decision: keep one visible thread-sidebar toggle at a time and persist the thread-history sidebar open state in client settings.
+Decision: keep the VS Code sidebar trigger visible at every width while using the upstream sidebar trigger primitive and keeping the thread-history sidebar preference centralized in the shared app sidebar layout.
 
 Reasoning:
 
-- VS Code makes the sidebar toggle visible at all viewport widths, so showing one before the T3 Code wordmark and another before the thread title creates duplicate controls for the same action.
-- The sidebar-local toggle is the right visible control while the sidebar is open because it is spatially attached to the panel being closed.
-- The main header toggle is the right visible control while the sidebar is closed because it remains available in the main view.
-- VS Code webview reloads should preserve whether the user prefers the thread history open or hidden, and shared `ClientSettings` already persists VS Code client preferences through the host bridge.
+- VS Code needs a sidebar trigger at all viewport widths because the webview can be narrow even when it is not a browser/mobile layout.
+- Upstream now owns the common sidebar trigger primitive and the global/floating main-view control, so the fork should not carry a separate `MainSidebarTrigger` wrapper.
+- VS Code trigger visibility is a host-specific class decision, while sidebar open-state persistence is an app-layout decision; keeping those rules in small helpers makes future upstream sidebar merges easier to reason about.
+- Electron remains intentionally fixed to the desktop sidebar layout and keeps the thread-history sidebar open rather than persisting a closed desktop sidebar state.
 
 Implemented:
 
-- The shared sidebar trigger now uses the close-sidebar icon when the desktop sidebar is open, not only when the mobile sheet is open.
-- Main-view header triggers render only when the inline thread-history sidebar is closed. In the narrow floating-sidebar layout, the main header trigger remains visible while open and switches to the close-sidebar icon.
-- `threadSidebarOpen` is part of `ClientSettings`, defaults to `true`, and is persisted through the existing browser, desktop, and VS Code host persistence paths.
-- Automated coverage verifies main-header trigger visibility and the sidebar trigger open/close labels.
+- `apps/web/src/components/Sidebar.logic.ts` owns the VS Code trigger visibility class: VS Code returns no breakpoint-hiding class, while browser/desktop preserve upstream's `md:hidden` behavior for the sidebar-chrome trigger.
+- `apps/web/src/components/AppSidebarLayout.logic.ts` owns thread-sidebar open/persist decisions: non-desktop hosts default to open and honor persisted `threadSidebarOpen`; Electron remains fixed open and skips closed-state writes.
+- The stale `apps/web/src/components/sidebar/MainSidebarTrigger.tsx` wrapper was removed. The shared `SidebarTrigger` remains responsible for open/close labels and icons.
+- Automated coverage verifies the VS Code trigger visibility exception, desktop fixed-open sidebar behavior, persisted non-desktop sidebar preference, and the shared sidebar trigger open/close labels.
 
 ### 2026-05-14: Reset VS Code Webview Startup Routing
 

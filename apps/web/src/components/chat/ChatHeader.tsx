@@ -62,7 +62,15 @@ export function shouldRenderOpenInPicker(input: {
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }): boolean {
-  return input.hostShowOpenInPicker && shouldShowOpenInPicker(input);
+  if (!input.hostShowOpenInPicker) {
+    return false;
+  }
+
+  return shouldShowOpenInPicker({
+    activeProjectName: input.activeProjectName,
+    activeThreadEnvironmentId: input.activeThreadEnvironmentId,
+    primaryEnvironmentId: input.primaryEnvironmentId,
+  });
 }
 
 export const ChatHeader = memo(function ChatHeader({
