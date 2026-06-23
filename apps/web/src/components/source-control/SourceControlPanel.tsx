@@ -19,7 +19,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { LegendList } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   Archive,
@@ -143,8 +142,7 @@ const DEFAULT_SECTION_WEIGHTS: Record<SectionKey, number> = {
 const COLLAPSED_SECTION_HEIGHT = 32;
 const MIN_SECTION_WEIGHT = 0.35;
 const COMMIT_PAGE_SIZE = 10;
-const WORKING_FILE_ROW_ESTIMATED_HEIGHT = 28;
-const WORKING_FILE_DRAW_DISTANCE = 600;
+const WORKING_FILE_PREFETCH_MARGIN = 600;
 const commitDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -884,7 +882,7 @@ function LoadMoreCommitsButton({
   );
 }
 
-function WorkingFileVirtualRow({
+function WorkingFileRow({
   file,
   onRendered,
   renderFile,
@@ -893,10 +891,30 @@ function WorkingFileVirtualRow({
   readonly onRendered: (file: PanelChangedFile) => void;
   readonly renderFile: (file: PanelChangedFile) => ReactNode;
 }) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
-    onRendered(file);
+    const element = rowRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      onRendered(file);
+      return;
+    }
+
+    let didRender = false;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (didRender || !entries.some((entry) => entry.isIntersecting)) return;
+        didRender = true;
+        onRendered(file);
+        observer.disconnect();
+      },
+      { rootMargin: `${WORKING_FILE_PREFETCH_MARGIN}px 0px` },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [file, onRendered]);
-  return <>{renderFile(file)}</>;
+
+  return <div ref={rowRef}>{renderFile(file)}</div>;
 }
 
 function InlineFileDiff({
@@ -1069,15 +1087,6 @@ export function SourceControlPanel({
     [selectedChangedFiles],
   );
   const selectedChangeStats = useMemo(() => sumFiles(selectedChangedFiles), [selectedChangedFiles]);
-  const workingFileListExtraData = useMemo(
-    () => ({
-      expandedFileDiffs,
-      fileDiffsByKey,
-      runningActions,
-      selectedChangePaths,
-    }),
-    [expandedFileDiffs, fileDiffsByKey, runningActions, selectedChangePaths],
-  );
   const allChangedFilesSelected =
     changedFiles.length > 0 && selectedChangedFiles.length === changedFiles.length;
   const noChangedFilesSelected = selectedChangedFiles.length === 0;
@@ -2300,14 +2309,6 @@ export function SourceControlPanel({
     );
   };
 
-  const renderWorkingFileItem = ({ item }: { item: PanelChangedFile }) => (
-    <WorkingFileVirtualRow
-      file={item}
-      onRendered={queueWorkingTreeFileEnrichment}
-      renderFile={renderWorkingFile}
-    />
-  );
-
   const renderCommit = (
     commit: VcsPanelCommitSummary,
     options: { readonly undoBranchName?: string } = {},
@@ -3332,7 +3333,7 @@ export function SourceControlPanel({
   );
 
   const changesSection = (
-    <div className="flex h-full min-h-0 flex-col gap-2">
+    <div className="space-y-2">
       {changedFiles.length === 0 ? (
         <div className="px-1 py-1 text-sm text-muted-foreground">Working tree clean</div>
       ) : (
@@ -3406,16 +3407,15 @@ export function SourceControlPanel({
               </IconButton>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <LegendList<PanelChangedFile>
-              data={changedFiles}
-              keyExtractor={(file) => file.path}
-              renderItem={renderWorkingFileItem}
-              estimatedItemSize={WORKING_FILE_ROW_ESTIMATED_HEIGHT}
-              drawDistance={WORKING_FILE_DRAW_DISTANCE}
-              extraData={workingFileListExtraData}
-              className="scrollbar-gutter-both h-full overflow-x-hidden overscroll-y-contain"
-            />
+          <div className="space-y-0.5">
+            {changedFiles.map((file) => (
+              <WorkingFileRow
+                key={file.path}
+                file={file}
+                onRendered={queueWorkingTreeFileEnrichment}
+                renderFile={renderWorkingFile}
+              />
+            ))}
           </div>
         </>
       )}
