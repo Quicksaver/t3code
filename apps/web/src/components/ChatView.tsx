@@ -146,6 +146,7 @@ import { useHostDisplayPreferences } from "../hostDisplayPreferences";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { useProviderWorkspaceSkills } from "../lib/providerWorkspaceSkillsState";
 import { resolveSubagentParentThreadRef } from "../subagentControls";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -2161,6 +2162,14 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeProviderFallbackSkills = activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
+  const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
+    environmentId,
+    instanceId: activeProviderStatus?.instanceId ?? null,
+    cwd: gitCwd,
+    enabled: true,
+    fallbackSkills: activeProviderFallbackSkills,
+  });
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4890,7 +4899,7 @@ function ChatViewContent(props: ChatViewProps) {
                 resolvedTheme={resolvedTheme}
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
-                skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+                skills={activeProviderWorkspaceSkills.skills}
                 onIsAtEndChange={onIsAtEndChange}
               />
 

@@ -209,12 +209,16 @@ Expected behavior:
 - Non-Codex or disabled providers keep returning provider snapshot skills instead of failing workspace skill search.
 - The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a bounded stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot.
 - The composer preserves already loaded repo-local skills while refreshing the same workspace, treats an empty loaded skill list as authoritative data, and clears stale skills during workspace switches or settled failures.
+- The conversation timeline renders sent user prompts against the same workspace-aware skill list as the composer, so repo-local `$skill-name` references display with the same skill chip treatment as user-level skills.
 
 Primary files:
 
 - `apps/server/src/ws.ts`
 - `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/chat/ChatComposer.tsx`
+- `apps/web/src/components/chat/MessagesTimeline.tsx`
 - `apps/web/src/lib/providerWorkspaceSkillsState.ts`
 - `packages/contracts/src/server.ts`
 - `packages/client-runtime/src/state/server.ts`
@@ -226,6 +230,7 @@ Relevant tests live in:
 - `apps/server/src/provider/Layers/CodexProvider.test.ts`
 - `apps/server/src/provider/Layers/CursorProvider.test.ts`
 - `apps/server/src/provider/Layers/GrokProvider.test.ts`
+- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
 - `apps/web/src/lib/providerWorkspaceSkillsState.test.ts`
 - `packages/client-runtime/src/state/runtime.test.ts`
 
@@ -325,7 +330,7 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 2. Codex subagent threading work remains preserved as a local customization unless `main` has an equivalent UI-aware subagent architecture; use `SUBAGENTS.md` as the detailed source of truth.
 3. Chat conversation and composer surfaces default to no maximum width across all host types.
 4. VS Code extension work remains preserved as a local customization unless `main` has an equivalent implementation; use `apps/vscode-extension/IMPLEMENTATION.md` as the detailed source of truth.
-5. Workspace-scoped Codex skill loading remains preserved so repo-local Codex skills for the active workspace continue to appear in the `$` skill picker without repeated unbounded provider probes or stale skill leakage across workspaces.
+5. Workspace-scoped Codex skill loading remains preserved so repo-local Codex skills for the active workspace continue to appear in the `$` skill picker and sent user-message skill chips without repeated unbounded provider probes or stale skill leakage across workspaces.
 6. Version Control panel work remains preserved as a local customization unless `main` has an equivalent agent-aware version-control panel; use `SOURCE_CONTROL.md` as the detailed source of truth.
 7. Version Control idle-power safeguards continue to ignore internal `.git/` watcher churn and use a conservative automatic remote Git fetch interval unless upstream ships equivalent low-churn behavior.
 8. Thread-detail subscriptions preserve first-message events emitted during initial snapshot loading unless upstream ships equivalent snapshot-plus-live-tail buffering.
