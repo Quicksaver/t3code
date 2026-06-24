@@ -522,6 +522,43 @@ describe("MessagesTimeline", () => {
     expectNoContextTagLeak(markup);
   });
 
+  it("preserves review comments after generated context blocks", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Review these changes.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | npm test",
+              "</terminal_context>",
+              "",
+              '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
+              "Keep this comment visible.",
+              "```diff",
+              "@@ -0,0 +47,2 @@",
+              '+  it("keeps valid zero-usage snapshots", () => {',
+              "+    expect(snapshot).not.toBeNull();",
+              "```",
+              "</review_comment>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Review these changes.");
+    expect(markup).toContain("Terminal 1 line 1");
+    expect(markup).toContain("contextWindow.test.ts");
+    expect(markup).toContain("Keep this comment visible.");
+    expect(markup).toContain('data-testid="file-diff"');
+    expectNoContextTagLeak(markup);
+  });
+
   it("escapes extracted context chip content", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

@@ -117,6 +117,7 @@ import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
   buildReviewCommentRenderablePatch,
+  formatReviewCommentContext,
   formatReviewCommentFence,
   parseReviewCommentMessageSegments,
   type ReviewCommentContext,
@@ -135,6 +136,11 @@ type ParsedUserMessageContextEntry =
   | { kind: "terminal"; id: string; context: ParsedTerminalContextEntry }
   | { kind: "element"; id: string; context: ParsedElementContextEntry }
   | { kind: "preview"; id: string; annotation: ParsedPreviewAnnotation };
+
+type AllocateUserMessageContextEntryId = (
+  kind: ParsedUserMessageContextEntry["kind"],
+  value: string,
+) => string;
 
 const TRAILING_CONTEXT_BLOCK_OPENERS = [
   "<preview_annotation>",
@@ -164,18 +170,44 @@ function stripTrailingMalformedContextBlock(prompt: string): string | null {
   return prefix.replace(/\n+$/, "");
 }
 
-function extractUserMessageContextState(prompt: string): ParsedUserMessageContextState {
+function createEmptyUserMessageContextState(): ParsedUserMessageContextState {
+  return {
+    visibleText: "",
+    terminalContexts: [],
+    elementContexts: [],
+    previewAnnotations: [],
+    contextEntries: [],
+  };
+}
+
+function appendUserMessageContextState(
+  target: ParsedUserMessageContextState,
+  source: ParsedUserMessageContextState,
+): void {
+  target.visibleText += source.visibleText;
+  target.terminalContexts.push(...source.terminalContexts);
+  target.elementContexts.push(...source.elementContexts);
+  target.previewAnnotations.push(...source.previewAnnotations);
+  target.contextEntries.push(...source.contextEntries);
+}
+
+function createUserMessageContextEntryIdAllocator(): AllocateUserMessageContextEntryId {
+  let nextContextEntryId = 0;
+  return (kind, value) => {
+    nextContextEntryId += 1;
+    return `${kind}:${nextContextEntryId}:${value}`;
+  };
+}
+
+function extractUserMessageTextContextState(
+  prompt: string,
+  allocateContextEntryId: AllocateUserMessageContextEntryId,
+): ParsedUserMessageContextState {
   let visibleText = prompt;
   const terminalContexts: ParsedTerminalContextEntry[] = [];
   const elementContexts: ParsedElementContextEntry[] = [];
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
   const contextEntries: ParsedUserMessageContextEntry[] = [];
-  let nextContextEntryId = 0;
-
-  const allocateContextEntryId = (kind: ParsedUserMessageContextEntry["kind"], value: string) => {
-    nextContextEntryId += 1;
-    return `${kind}:${nextContextEntryId}:${value}`;
-  };
 
   while (true) {
     const previewState = extractTrailingPreviewAnnotation(visibleText);
@@ -238,6 +270,31 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
     previewAnnotations,
     contextEntries,
   };
+}
+
+function extractUserMessageContextState(prompt: string): ParsedUserMessageContextState {
+  const allocateContextEntryId = createUserMessageContextEntryIdAllocator();
+  const reviewCommentSegments = parseReviewCommentMessageSegments(prompt);
+  if (!reviewCommentSegments.some((segment) => segment.kind === "review-comment")) {
+    return extractUserMessageTextContextState(prompt, allocateContextEntryId);
+  }
+
+  const mergedState = createEmptyUserMessageContextState();
+  for (const segment of reviewCommentSegments) {
+    if (segment.kind === "text") {
+      appendUserMessageContextState(
+        mergedState,
+        extractUserMessageTextContextState(segment.text, allocateContextEntryId),
+      );
+      continue;
+    }
+
+    const previousText = mergedState.visibleText;
+    const separator = previousText.length > 0 && !/(\n\s*){2}$/.test(previousText) ? "\n\n" : "";
+    mergedState.visibleText += `${separator}${formatReviewCommentContext(segment.comment)}`;
+  }
+
+  return mergedState;
 }
 
 // ---------------------------------------------------------------------------
