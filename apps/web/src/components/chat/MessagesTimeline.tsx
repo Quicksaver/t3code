@@ -91,6 +91,7 @@ import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   deriveDisplayedUserMessageState,
+  extractTrailingTerminalContexts,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import {
@@ -458,7 +459,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-  const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
   let visibleText = displayedUserMessage.visibleText;
   while (true) {
@@ -468,6 +468,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     visibleText = extracted.promptText;
   }
   const elementContextState = extractTrailingElementContexts(visibleText);
+  const terminalContextState = extractTrailingTerminalContexts(elementContextState.promptText);
+  const terminalContexts = [...displayedUserMessage.contexts, ...terminalContextState.contexts];
   const elementContexts = [
     ...displayedUserMessage.elementContexts,
     ...elementContextState.contexts,
@@ -530,7 +532,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
         <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
+          text={terminalContextState.promptText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}

@@ -315,6 +315,49 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<element_context");
   });
 
+  it("strips terminal and element context blocks before trailing preview annotations", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Fix this interaction.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 lines 7-8:",
+              "  7 | pnpm test",
+              "  8 | failing assertion",
+              "</terminal_context>",
+              "",
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  url: https://example.com/dashboard",
+              "  selector: button.submit",
+              "</element_context>",
+              "",
+              "<preview_annotation>",
+              "Preview annotation:",
+              "Id: annotation_1",
+              "Page: Example",
+              "Targets: 1 selected element.",
+              "</preview_annotation>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Fix this interaction.");
+    expect(markup).toContain("Terminal 1 lines 7-8");
+    expect(markup).toContain("SubmitButton");
+    expect(markup).toContain("1 selected element.");
+    expect(markup).not.toContain("&lt;terminal_context");
+    expect(markup).not.toContain("&lt;element_context");
+    expect(markup).not.toContain("&lt;preview_annotation");
+  });
+
   it("keeps the copy button for collapsed long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
