@@ -183,6 +183,22 @@ Relevant tests live in:
 
 - `apps/web/src/components/chat/ThreadConversationWidth.test.tsx`
 
+## Archive Settings UX
+
+The settings Archive panel is intentionally denser than the upstream-style settings rows so large archives remain scannable.
+
+Expected behavior:
+
+- Archived conversations are grouped by project, and each project group is collapsed by default.
+- Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
+- Conversation rows show only the relative archived and created ages inline with the title by default. On row hover or keyboard focus, those age labels fade out and icon-only unarchive/delete actions appear as a right-side overlay with tooltips, matching the sidebar and source-control list-row action pattern.
+- Archived conversations can be deleted directly from the Archive panel without unarchiving first, and delete actions require confirmation.
+- Project headers expose icon-only `unarchive all` and `delete all` actions, both guarded by a single confirmation before running the per-thread action.
+
+Primary file:
+
+- `apps/web/src/components/settings/SettingsPanels.tsx`
+
 ## Terminal-backed Project Actions
 
 This branch should treat terminal-backed project actions as reusable terminal workflows, not as fire-and-forget terminal creation.
