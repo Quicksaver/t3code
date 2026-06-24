@@ -556,6 +556,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("contextWindow.test.ts");
     expect(markup).toContain("Keep this comment visible.");
     expect(markup).toContain('data-testid="file-diff"');
+    expectMarkupOrder(markup, "Terminal 1 line 1", "contextWindow.test.ts");
     expectNoContextTagLeak(markup);
   });
 
@@ -627,6 +628,28 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-copy-text="Copy this prompt."');
     expect(markup).not.toContain("hidden terminal output&quot;");
+    expectNoContextTagLeak(markup);
+  });
+
+  it("copies the original message text for context-only messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | hidden terminal output",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-copy-text="[contains-raw-markup]"');
     expectNoContextTagLeak(markup);
   });
 
