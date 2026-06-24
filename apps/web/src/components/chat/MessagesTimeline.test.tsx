@@ -46,6 +46,16 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("./MessageCopyButton", () => ({
+  MessageCopyButton: ({ text }: { text: string }) => (
+    <button
+      type="button"
+      aria-label="Copy link"
+      data-copy-text={text.includes("<") ? "[contains-raw-markup]" : text}
+    />
+  ),
+}));
+
 const storeMock = vi.hoisted(() => ({
   state: {
     environmentStateById: {},
@@ -418,6 +428,44 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Terminal 1 lines 9-10");
     expect(markup).toContain('data-user-message-terminal-context="true"');
     expect(markup).toContain('data-user-message-element-context="true"');
+    expectMarkupOrder(markup, "SubmitButton", "Terminal 1 lines 9-10");
+    expectNoContextTagLeak(markup);
+  });
+
+  it("preserves send order for mixed trailing context block types", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Fix this mixed interaction.",
+              "",
+              "<preview_annotation>",
+              "Preview annotation:",
+              "Id: annotation_1",
+              "Page: Example",
+              "Targets: 1 selected element.",
+              "</preview_annotation>",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 lines 9-10:",
+              "  9 | pnpm test",
+              "  10 | still failing",
+              "</terminal_context>",
+              "",
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  selector: button.submit",
+              "</element_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expectMarkupOrder(markup, "1 selected element.", "Terminal 1 lines 9-10", "SubmitButton");
     expectNoContextTagLeak(markup);
   });
 
@@ -518,6 +566,31 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Copy link"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("copies the stripped user message display text", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Copy this prompt.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | hidden terminal output",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-copy-text="Copy this prompt."');
+    expect(markup).not.toContain("hidden terminal output&quot;");
+    expectNoContextTagLeak(markup);
   });
 
   it("renders context compaction entries in the normal work log", async () => {

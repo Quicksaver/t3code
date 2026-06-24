@@ -128,7 +128,13 @@ interface ParsedUserMessageContextState {
   terminalContexts: ParsedTerminalContextEntry[];
   elementContexts: ParsedElementContextEntry[];
   previewAnnotations: ParsedPreviewAnnotation[];
+  contextEntries: ParsedUserMessageContextEntry[];
 }
+
+type ParsedUserMessageContextEntry =
+  | { kind: "terminal"; id: string; context: ParsedTerminalContextEntry }
+  | { kind: "element"; id: string; context: ParsedElementContextEntry }
+  | { kind: "preview"; id: string; annotation: ParsedPreviewAnnotation };
 
 const TRAILING_CONTEXT_BLOCK_OPENERS = [
   "<preview_annotation>",
@@ -163,11 +169,23 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
   const terminalContexts: ParsedTerminalContextEntry[] = [];
   const elementContexts: ParsedElementContextEntry[] = [];
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
+  const contextEntries: ParsedUserMessageContextEntry[] = [];
+  let nextContextEntryId = 0;
+
+  const allocateContextEntryId = (kind: ParsedUserMessageContextEntry["kind"], value: string) => {
+    nextContextEntryId += 1;
+    return `${kind}:${nextContextEntryId}:${value}`;
+  };
 
   while (true) {
     const previewState = extractTrailingPreviewAnnotation(visibleText);
     if (previewState.annotation && previewState.promptText !== visibleText) {
       previewAnnotations.unshift(previewState.annotation);
+      contextEntries.unshift({
+        kind: "preview",
+        id: allocateContextEntryId("preview", previewState.annotation.id),
+        annotation: previewState.annotation,
+      });
       visibleText = previewState.promptText;
       continue;
     }
@@ -175,6 +193,15 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
     const elementState = extractTrailingElementContexts(visibleText);
     if (elementState.promptText !== visibleText) {
       elementContexts.unshift(...elementState.contexts);
+      contextEntries.unshift(
+        ...elementState.contexts.map(
+          (context): ParsedUserMessageContextEntry => ({
+            kind: "element",
+            id: allocateContextEntryId("element", `${context.header}:${context.body}`),
+            context,
+          }),
+        ),
+      );
       visibleText = elementState.promptText;
       continue;
     }
@@ -182,6 +209,15 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
     const terminalState = extractTrailingTerminalContexts(visibleText);
     if (terminalState.promptText !== visibleText) {
       terminalContexts.unshift(...terminalState.contexts);
+      contextEntries.unshift(
+        ...terminalState.contexts.map(
+          (context): ParsedUserMessageContextEntry => ({
+            kind: "terminal",
+            id: allocateContextEntryId("terminal", `${context.header}:${context.body}`),
+            context,
+          }),
+        ),
+      );
       visibleText = terminalState.promptText;
       continue;
     }
@@ -200,6 +236,7 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
     terminalContexts,
     elementContexts,
     previewAnnotations,
+    contextEntries,
   };
 }
 
@@ -541,6 +578,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     () => extractUserMessageContextState(row.message.text),
     [row.message.text],
   );
+  const renderTerminalContextsInline = textContainsInlineTerminalContextLabels(
+    userMessageContextState.visibleText,
+    userMessageContextState.terminalContexts,
+  );
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
@@ -583,27 +624,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
         <CollapsibleUserMessageBody
           text={userMessageContextState.visibleText}
-          terminalContexts={userMessageContextState.terminalContexts}
+          terminalContexts={
+            renderTerminalContextsInline ? userMessageContextState.terminalContexts : []
+          }
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
-        {userMessageContextState.elementContexts.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-1.5" data-user-message-element-contexts="true">
-            {userMessageContextState.elementContexts.map((context) => (
-              <UserMessageElementContextChip
-                key={`${context.header}:${context.body}`}
-                context={context}
-              />
-            ))}
-          </div>
-        ) : null}
-        {userMessageContextState.previewAnnotations.map((annotation, index) => (
-          <UserMessagePreviewAnnotationCard
-            key={annotation.id}
-            annotation={annotation}
-            image={previewImages[index] ?? null}
-          />
-        ))}
+        <UserMessageContextEntries
+          entries={userMessageContextState.contextEntries}
+          previewImages={previewImages}
+          renderTerminalEntries={!renderTerminalContextsInline}
+        />
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -617,7 +648,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {row.message.text && <MessageCopyButton text={row.message.text} variant="ghost" />}
+            {row.message.text && (
+              <MessageCopyButton text={userMessageContextState.visibleText} variant="ghost" />
+            )}
           </div>
         </div>
       </div>
@@ -1058,6 +1091,59 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
     </Tooltip>
   );
 });
+
+function UserMessageContextEntries({
+  entries,
+  previewImages,
+  renderTerminalEntries,
+}: {
+  entries: ParsedUserMessageContextEntry[];
+  previewImages: NonNullable<TimelineMessage["attachments"]>;
+  renderTerminalEntries: boolean;
+}) {
+  let previewImageIndex = 0;
+
+  return (
+    <>
+      {entries.map((entry) => {
+        if (entry.kind === "terminal") {
+          if (!renderTerminalEntries) return null;
+          return (
+            <div
+              key={entry.id}
+              className="mt-2 flex flex-wrap gap-1.5"
+              data-user-message-terminal-contexts="true"
+            >
+              <UserMessageTerminalContextInlineLabel context={entry.context} />
+            </div>
+          );
+        }
+
+        if (entry.kind === "element") {
+          return (
+            <div
+              key={entry.id}
+              className="mt-2 flex flex-wrap gap-1.5"
+              data-user-message-element-contexts="true"
+            >
+              <UserMessageElementContextChip context={entry.context} />
+            </div>
+          );
+        }
+
+        const image = previewImages[previewImageIndex] ?? null;
+        previewImageIndex += 1;
+        return (
+          <UserMessagePreviewAnnotationCard
+            key={entry.id}
+            annotation={entry.annotation}
+            image={image}
+          />
+        );
+      })}
+    </>
+  );
+}
 
 function UserMessagePreviewAnnotationCard(props: {
   annotation: ParsedPreviewAnnotation;
