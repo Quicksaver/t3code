@@ -206,13 +206,48 @@ function findNextGeneratedContextBlockOpener(
   } | null = null;
 
   for (const tag of GENERATED_CONTEXT_BLOCK_TAGS) {
-    const index = prompt.indexOf(tag.opener, startIndex);
-    if (index >= 0 && (best === null || index < best.index)) {
-      best = { index, opener: tag.opener, closer: tag.closer };
+    let searchIndex = startIndex;
+    while (searchIndex < prompt.length) {
+      const index = prompt.indexOf(tag.opener, searchIndex);
+      if (index < 0) break;
+
+      const hasOpeningBoundary = index === 0 || /(\n\s*){2}$/.test(prompt.slice(0, index));
+      const hasSerializedOpener = prompt[index + tag.opener.length] === "\n";
+      if (hasOpeningBoundary && hasSerializedOpener) {
+        if (best === null || index < best.index) {
+          best = { index, opener: tag.opener, closer: tag.closer };
+        }
+        break;
+      }
+
+      searchIndex = index + tag.opener.length;
     }
   }
 
   return best;
+}
+
+function findStandaloneGeneratedContextCloser(
+  prompt: string,
+  closer: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["closer"],
+  startIndex: number,
+): number {
+  let searchIndex = startIndex;
+  while (searchIndex < prompt.length) {
+    const index = prompt.indexOf(closer, searchIndex);
+    if (index < 0) return -1;
+
+    const hasLineStart = prompt[index - 1] === "\n";
+    const nextChar = prompt[index + closer.length];
+    const hasLineEnd = nextChar === undefined || nextChar === "\n";
+    if (hasLineStart && hasLineEnd) {
+      return index;
+    }
+
+    searchIndex = index + closer.length;
+  }
+
+  return -1;
 }
 
 function splitTopLevelUserMessageSegments(prompt: string): TopLevelUserMessageSegment[] {
@@ -238,7 +273,8 @@ function splitTopLevelUserMessageSegments(prompt: string): TopLevelUserMessageSe
     }
 
     if (useContext) {
-      const closerIndex = prompt.indexOf(
+      const closerIndex = findStandaloneGeneratedContextCloser(
+        prompt,
         nextContext.closer,
         blockIndex + nextContext.opener.length,
       );
@@ -394,6 +430,17 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
   const allocateContentPartId = createUserMessageContentPartIdAllocator();
   const mergedState = createEmptyUserMessageContextState();
 
+  const appendRawTextPart = (text: string) => {
+    mergedState.visibleText += text;
+    if (text.trim().length > 0) {
+      mergedState.contentParts.push({
+        kind: "text",
+        id: allocateContentPartId(),
+        text,
+      });
+    }
+  };
+
   const appendTextSegment = (text: string) => {
     const reviewCommentSegments = parseReviewCommentMessageSegments(text);
     for (const segment of reviewCommentSegments) {
@@ -423,14 +470,16 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
 
   for (const segment of splitTopLevelUserMessageSegments(prompt)) {
     if (segment.kind === "context") {
-      appendUserMessageContextState(
-        mergedState,
-        extractUserMessageTextContextState(
-          segment.text,
-          allocateContextEntryId,
-          allocateContentPartId,
-        ),
+      const contextState = extractUserMessageTextContextState(
+        segment.text,
+        allocateContextEntryId,
+        allocateContentPartId,
       );
+      if (contextState.contextEntries.length > 0) {
+        appendUserMessageContextState(mergedState, contextState);
+      } else {
+        appendRawTextPart(segment.text);
+      }
       continue;
     }
 

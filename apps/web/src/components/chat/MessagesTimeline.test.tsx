@@ -590,6 +590,56 @@ describe("MessagesTimeline", () => {
     expectNoContextTagLeak(markup);
   });
 
+  it("keeps literal context tags in user-authored text visible", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Explain this sample:",
+              "",
+              "<terminal_context>",
+              "not generated context",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Explain this sample:");
+    expect(markup).toContain("not generated context");
+  });
+
+  it("does not truncate generated context at literal closing-tag output", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Inspect terminal output.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | </terminal_context>",
+              "  2 | after literal closing tag",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Inspect terminal output.");
+    expect(markup).toContain("Terminal 1 line 1");
+    expect(markup).not.toContain("after literal closing tag");
+    expectNoContextTagLeak(markup);
+  });
+
   it("escapes extracted context chip content", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
