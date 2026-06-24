@@ -442,7 +442,9 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
   };
 
   const appendTextSegment = (text: string) => {
-    const reviewCommentSegments = parseReviewCommentMessageSegments(text);
+    const strippedMalformedContext = stripTrailingMalformedContextBlock(text);
+    const reviewText = strippedMalformedContext ?? text;
+    const reviewCommentSegments = parseReviewCommentMessageSegments(reviewText);
     for (const segment of reviewCommentSegments) {
       if (segment.kind === "text") {
         appendUserMessageContextState(

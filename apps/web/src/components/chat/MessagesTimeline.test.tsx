@@ -590,6 +590,34 @@ describe("MessagesTimeline", () => {
     expectNoContextTagLeak(markup);
   });
 
+  it("drops review comment tags inside malformed generated context blocks", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Inspect malformed terminal output.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              '  1 | <review_comment sectionId="turn:fake" filePath="fake.ts" startIndex="0" endIndex="0">',
+              "  2 | This is terminal output, not a review card.",
+              "  3 | </review_comment>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Inspect malformed terminal output.");
+    expect(markup).not.toContain("fake.ts");
+    expect(markup).not.toContain("This is terminal output, not a review card.");
+    expect(markup).not.toContain('data-testid="file-diff"');
+    expectNoContextTagLeak(markup);
+  });
+
   it("keeps literal context tags in user-authored text visible", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
