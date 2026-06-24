@@ -206,6 +206,27 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function expectNoContextTagLeak(markup: string) {
+  for (const tag of ["terminal_context", "element_context", "preview_annotation"]) {
+    expect(markup).not.toContain(`<${tag}`);
+    expect(markup).not.toContain(`</${tag}>`);
+    expect(markup).not.toContain(`&lt;${tag}`);
+    expect(markup).not.toContain(`&lt;/${tag}&gt;`);
+  }
+}
+
+function expectMarkupOrder(markup: string, ...needles: string[]) {
+  let previousIndex = -1;
+  for (const needle of needles) {
+    const index = markup.indexOf(needle);
+    expect(index, `${needle} should exist`).toBeGreaterThan(-1);
+    expect(index, `${needle} should appear after the previous marker`).toBeGreaterThan(
+      previousIndex,
+    );
+    previousIndex = index;
+  }
+}
+
 describe("MessagesTimeline", () => {
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -311,8 +332,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("SubmitButton");
-    expect(markup).not.toContain("&lt;element_context");
-    expect(markup).not.toContain("<element_context");
+    expect(markup).toContain('data-user-message-element-context="true"');
+    expectNoContextTagLeak(markup);
   });
 
   it("strips terminal and element context blocks before trailing preview annotations", async () => {
@@ -353,9 +374,136 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Terminal 1 lines 7-8");
     expect(markup).toContain("SubmitButton");
     expect(markup).toContain("1 selected element.");
-    expect(markup).not.toContain("&lt;terminal_context");
-    expect(markup).not.toContain("&lt;element_context");
-    expect(markup).not.toContain("&lt;preview_annotation");
+    expect(markup).toContain('data-user-message-terminal-context="true"');
+    expect(markup).toContain('data-user-message-element-context="true"');
+    expect(markup).toContain('data-user-message-preview-annotation="true"');
+    expectMarkupOrder(
+      markup,
+      'data-user-message-body="true"',
+      'data-user-message-terminal-context="true"',
+      'data-user-message-element-context="true"',
+      'data-user-message-preview-annotation="true"',
+    );
+    expectNoContextTagLeak(markup);
+  });
+
+  it("strips trailing context blocks when terminal and element order is reversed", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Fix this reversed interaction.",
+              "",
+              "<element_context>",
+              "- <SubmitButton> (Button.tsx:12):",
+              "  selector: button.submit",
+              "</element_context>",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 lines 9-10:",
+              "  9 | pnpm test",
+              "  10 | still failing",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Fix this reversed interaction.");
+    expect(markup).toContain("SubmitButton");
+    expect(markup).toContain("Terminal 1 lines 9-10");
+    expect(markup).toContain('data-user-message-terminal-context="true"');
+    expect(markup).toContain('data-user-message-element-context="true"');
+    expectNoContextTagLeak(markup);
+  });
+
+  it("strips multiple trailing terminal context blocks in send order", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Compare these failures.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | first failure",
+              "</terminal_context>",
+              "",
+              "<terminal_context>",
+              "- Terminal 2 line 2:",
+              "  2 | second failure",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expectMarkupOrder(markup, "Terminal 1 line 1", "Terminal 2 line 2");
+    expectNoContextTagLeak(markup);
+  });
+
+  it("drops malformed trailing context blocks instead of leaking raw tags", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Fix malformed context.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 line 1:",
+              "  1 | incomplete generated context",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Fix malformed context.");
+    expect(markup).not.toContain("incomplete generated context");
+    expectNoContextTagLeak(markup);
+  });
+
+  it("escapes extracted context chip content", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Review unsafe context.",
+              "",
+              "<terminal_context>",
+              "- Terminal <script>alert(1)</script>:",
+              "  1 | <img src=x onerror=alert(1)>",
+              "</terminal_context>",
+              "",
+              "<element_context>",
+              "- <img src=x onerror=alert(1)>:",
+              "  selector: <script>alert(2)</script>",
+              "</element_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("<script>");
+    expect(markup).not.toContain("<img src=x");
+    expect(markup).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(markup).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expectNoContextTagLeak(markup);
   });
 
   it("keeps the copy button for collapsed long user messages", async () => {

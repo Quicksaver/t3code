@@ -90,7 +90,6 @@ import {
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
-  deriveDisplayedUserMessageState,
   extractTrailingTerminalContexts,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
@@ -123,6 +122,86 @@ import {
   type ReviewCommentContext,
 } from "../../reviewCommentContext";
 import { ThreadConversationWidthContainer } from "./ThreadConversationWidth";
+
+interface ParsedUserMessageContextState {
+  visibleText: string;
+  terminalContexts: ParsedTerminalContextEntry[];
+  elementContexts: ParsedElementContextEntry[];
+  previewAnnotations: ParsedPreviewAnnotation[];
+}
+
+const TRAILING_CONTEXT_BLOCK_OPENERS = [
+  "<preview_annotation>",
+  "<element_context>",
+  "<terminal_context>",
+] as const;
+
+function stripTrailingMalformedContextBlock(prompt: string): string | null {
+  let bestIndex = -1;
+
+  for (const opener of TRAILING_CONTEXT_BLOCK_OPENERS) {
+    const index = prompt.lastIndexOf(opener);
+    if (index > bestIndex) {
+      bestIndex = index;
+    }
+  }
+
+  if (bestIndex < 0) {
+    return null;
+  }
+
+  const prefix = prompt.slice(0, bestIndex);
+  if (prefix.length > 0 && !/(\n\s*){2}$/.test(prefix)) {
+    return null;
+  }
+
+  return prefix.replace(/\n+$/, "");
+}
+
+function extractUserMessageContextState(prompt: string): ParsedUserMessageContextState {
+  let visibleText = prompt;
+  const terminalContexts: ParsedTerminalContextEntry[] = [];
+  const elementContexts: ParsedElementContextEntry[] = [];
+  const previewAnnotations: ParsedPreviewAnnotation[] = [];
+
+  while (true) {
+    const previewState = extractTrailingPreviewAnnotation(visibleText);
+    if (previewState.annotation && previewState.promptText !== visibleText) {
+      previewAnnotations.unshift(previewState.annotation);
+      visibleText = previewState.promptText;
+      continue;
+    }
+
+    const elementState = extractTrailingElementContexts(visibleText);
+    if (elementState.promptText !== visibleText) {
+      elementContexts.unshift(...elementState.contexts);
+      visibleText = elementState.promptText;
+      continue;
+    }
+
+    const terminalState = extractTrailingTerminalContexts(visibleText);
+    if (terminalState.promptText !== visibleText) {
+      terminalContexts.unshift(...terminalState.contexts);
+      visibleText = terminalState.promptText;
+      continue;
+    }
+
+    const strippedMalformedBlock = stripTrailingMalformedContextBlock(visibleText);
+    if (strippedMalformedBlock !== null && strippedMalformedBlock !== visibleText) {
+      visibleText = strippedMalformedBlock;
+      continue;
+    }
+
+    break;
+  }
+
+  return {
+    visibleText,
+    terminalContexts,
+    elementContexts,
+    previewAnnotations,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -458,22 +537,10 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const userImages = row.message.attachments ?? [];
-  const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-  const previewAnnotations: ParsedPreviewAnnotation[] = [];
-  let visibleText = displayedUserMessage.visibleText;
-  while (true) {
-    const extracted = extractTrailingPreviewAnnotation(visibleText);
-    if (!extracted.annotation) break;
-    previewAnnotations.unshift(extracted.annotation);
-    visibleText = extracted.promptText;
-  }
-  const elementContextState = extractTrailingElementContexts(visibleText);
-  const terminalContextState = extractTrailingTerminalContexts(elementContextState.promptText);
-  const terminalContexts = [...displayedUserMessage.contexts, ...terminalContextState.contexts];
-  const elementContexts = [
-    ...displayedUserMessage.elementContexts,
-    ...elementContextState.contexts,
-  ];
+  const userMessageContextState = useMemo(
+    () => extractUserMessageContextState(row.message.text),
+    [row.message.text],
+  );
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
@@ -514,16 +581,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
-        {previewAnnotations.map((annotation, index) => (
-          <UserMessagePreviewAnnotationCard
-            key={annotation.id}
-            annotation={annotation}
-            image={previewImages[index] ?? null}
-          />
-        ))}
-        {elementContexts.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {elementContexts.map((context) => (
+        <CollapsibleUserMessageBody
+          text={userMessageContextState.visibleText}
+          terminalContexts={userMessageContextState.terminalContexts}
+          skills={ctx.skills}
+          markdownCwd={ctx.markdownCwd}
+        />
+        {userMessageContextState.elementContexts.length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5" data-user-message-element-contexts="true">
+            {userMessageContextState.elementContexts.map((context) => (
               <UserMessageElementContextChip
                 key={`${context.header}:${context.body}`}
                 context={context}
@@ -531,12 +597,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        <CollapsibleUserMessageBody
-          text={terminalContextState.promptText}
-          terminalContexts={terminalContexts}
-          skills={ctx.skills}
-          markdownCwd={ctx.markdownCwd}
-        />
+        {userMessageContextState.previewAnnotations.map((annotation, index) => (
+          <UserMessagePreviewAnnotationCard
+            key={annotation.id}
+            annotation={annotation}
+            image={previewImages[index] ?? null}
+          />
+        ))}
       </div>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -550,9 +617,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </Tooltip>
           <div className="flex items-center gap-0.5">
             {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
-            {displayedUserMessage.copyText && (
-              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-            )}
+            {row.message.text && <MessageCopyButton text={row.message.text} variant="ghost" />}
           </div>
         </div>
       </div>
@@ -960,7 +1025,11 @@ const UserMessageTerminalContextInlineLabel = memo(
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+    return (
+      <span data-user-message-terminal-context="true">
+        <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />
+      </span>
+    );
   },
 );
 
@@ -974,7 +1043,10 @@ const UserMessageElementContextChip = memo(function UserMessageElementContextChi
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 text-xs text-foreground/85">
+          <span
+            className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 text-xs text-foreground/85"
+            data-user-message-element-context="true"
+          >
             <MousePointerClickIcon className="size-3 shrink-0" />
             <span className="truncate">{props.context.header}</span>
           </span>
@@ -993,7 +1065,10 @@ function UserMessagePreviewAnnotationCard(props: {
 }) {
   const ctx = use(TimelineRowCtx);
   return (
-    <div className="mb-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70">
+    <div
+      className="mt-2 flex max-w-full items-center overflow-hidden rounded-lg border border-border/70 bg-background/70"
+      data-user-message-preview-annotation="true"
+    >
       {props.image?.previewUrl ? (
         <button
           type="button"
