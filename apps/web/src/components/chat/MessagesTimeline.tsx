@@ -232,22 +232,27 @@ function findStandaloneGeneratedContextCloser(
   closer: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["closer"],
   startIndex: number,
 ): number {
+  const useLastStandaloneCloser = closer === "</preview_annotation>";
+  let lastCloserIndex = -1;
   let searchIndex = startIndex;
   while (searchIndex < prompt.length) {
     const index = prompt.indexOf(closer, searchIndex);
-    if (index < 0) return -1;
+    if (index < 0) return useLastStandaloneCloser ? lastCloserIndex : -1;
 
     const hasLineStart = prompt[index - 1] === "\n";
     const nextChar = prompt[index + closer.length];
     const hasLineEnd = nextChar === undefined || nextChar === "\n";
     if (hasLineStart && hasLineEnd) {
-      return index;
+      if (!useLastStandaloneCloser) {
+        return index;
+      }
+      lastCloserIndex = index;
     }
 
     searchIndex = index + closer.length;
   }
 
-  return -1;
+  return lastCloserIndex;
 }
 
 function splitTopLevelUserMessageSegments(prompt: string): TopLevelUserMessageSegment[] {
@@ -441,6 +446,17 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
     }
   };
 
+  const trimGeneratedContextSeparator = () => {
+    mergedState.visibleText = mergedState.visibleText.replace(/\n+$/, "");
+    const lastPart = mergedState.contentParts.at(-1);
+    if (lastPart?.kind !== "text") return;
+
+    lastPart.text = lastPart.text.replace(/\n+$/, "");
+    if (lastPart.text.length === 0) {
+      mergedState.contentParts.pop();
+    }
+  };
+
   const appendTextSegment = (text: string) => {
     const strippedMalformedContext = stripTrailingMalformedContextBlock(text);
     const reviewText = strippedMalformedContext ?? text;
@@ -478,6 +494,7 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
         allocateContentPartId,
       );
       if (contextState.contextEntries.length > 0) {
+        trimGeneratedContextSeparator();
         appendUserMessageContextState(mergedState, contextState);
       } else {
         appendRawTextPart(segment.text);
@@ -836,7 +853,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const visibleCopyText = userMessageContextState.visibleText.trim();
+  const visibleCopyText = userMessageContextState.visibleText;
   const userMessageCopyText = visibleCopyText || row.message.text;
 
   return (

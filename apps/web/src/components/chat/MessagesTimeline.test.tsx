@@ -397,6 +397,38 @@ describe("MessagesTimeline", () => {
     expectNoContextTagLeak(markup);
   });
 
+  it("matches the final preview annotation closer", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Fix this annotated preview.",
+              "",
+              "<preview_annotation>",
+              "Preview annotation:",
+              "Id: annotation_1",
+              "Page: Example",
+              "Comment: literal closer follows",
+              "</preview_annotation>",
+              "inside the comment",
+              "Targets: 1 selected element.",
+              "</preview_annotation>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Fix this annotated preview.");
+    expect(markup).toContain("1 selected element.");
+    expect(markup).toContain('data-user-message-preview-annotation="true"');
+    expect(markup).not.toContain("inside the comment");
+    expectNoContextTagLeak(markup);
+  });
+
   it("strips trailing context blocks when terminal and element order is reversed", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -737,6 +769,18 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-copy-text="Copy this prompt."');
     expect(markup).not.toContain("hidden terminal output&quot;");
     expectNoContextTagLeak(markup);
+  });
+
+  it("preserves exact copy text for normal user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("  keep whitespace  ")]}
+      />,
+    );
+
+    expect(markup).toContain('data-copy-text="  keep whitespace  "');
   });
 
   it("copies the original message text for context-only messages", async () => {
