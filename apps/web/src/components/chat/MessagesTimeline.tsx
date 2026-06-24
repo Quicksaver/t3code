@@ -155,6 +155,20 @@ const TRAILING_CONTEXT_BLOCK_OPENERS = [
   "<terminal_context>",
 ] as const;
 
+const GENERATED_CONTEXT_BLOCK_TAGS = [
+  { opener: "<preview_annotation>", closer: "</preview_annotation>" },
+  { opener: "<element_context>", closer: "</element_context>" },
+  { opener: "<terminal_context>", closer: "</terminal_context>" },
+] as const;
+
+const REVIEW_COMMENT_BLOCK_OPENER = "<review_comment";
+const REVIEW_COMMENT_BLOCK_CLOSER = "</review_comment>";
+
+type TopLevelUserMessageSegment =
+  | { kind: "text"; text: string }
+  | { kind: "context"; text: string }
+  | { kind: "review-comment"; text: string };
+
 function stripTrailingMalformedContextBlock(prompt: string): string | null {
   let bestIndex = -1;
 
@@ -175,6 +189,85 @@ function stripTrailingMalformedContextBlock(prompt: string): string | null {
   }
 
   return prefix.replace(/\n+$/, "");
+}
+
+function findNextGeneratedContextBlockOpener(
+  prompt: string,
+  startIndex: number,
+): {
+  index: number;
+  opener: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["opener"];
+  closer: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["closer"];
+} | null {
+  let best: {
+    index: number;
+    opener: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["opener"];
+    closer: (typeof GENERATED_CONTEXT_BLOCK_TAGS)[number]["closer"];
+  } | null = null;
+
+  for (const tag of GENERATED_CONTEXT_BLOCK_TAGS) {
+    const index = prompt.indexOf(tag.opener, startIndex);
+    if (index >= 0 && (best === null || index < best.index)) {
+      best = { index, opener: tag.opener, closer: tag.closer };
+    }
+  }
+
+  return best;
+}
+
+function splitTopLevelUserMessageSegments(prompt: string): TopLevelUserMessageSegment[] {
+  const segments: TopLevelUserMessageSegment[] = [];
+  let cursor = 0;
+
+  while (cursor < prompt.length) {
+    const nextContext = findNextGeneratedContextBlockOpener(prompt, cursor);
+    const nextReviewCommentIndex = prompt.indexOf(REVIEW_COMMENT_BLOCK_OPENER, cursor);
+    const nextContextIndex = nextContext?.index ?? -1;
+
+    if (nextContextIndex < 0 && nextReviewCommentIndex < 0) {
+      segments.push({ kind: "text", text: prompt.slice(cursor) });
+      break;
+    }
+
+    const useContext =
+      nextContext !== null &&
+      (nextReviewCommentIndex < 0 || nextContext.index < nextReviewCommentIndex);
+    const blockIndex = useContext ? nextContext.index : nextReviewCommentIndex;
+    if (blockIndex > cursor) {
+      segments.push({ kind: "text", text: prompt.slice(cursor, blockIndex) });
+    }
+
+    if (useContext) {
+      const closerIndex = prompt.indexOf(
+        nextContext.closer,
+        blockIndex + nextContext.opener.length,
+      );
+      if (closerIndex < 0) {
+        segments.push({ kind: "text", text: prompt.slice(blockIndex) });
+        break;
+      }
+
+      const blockEndIndex = closerIndex + nextContext.closer.length;
+      segments.push({ kind: "context", text: prompt.slice(blockIndex, blockEndIndex) });
+      cursor = blockEndIndex;
+      continue;
+    }
+
+    const closerIndex = prompt.indexOf(
+      REVIEW_COMMENT_BLOCK_CLOSER,
+      blockIndex + REVIEW_COMMENT_BLOCK_OPENER.length,
+    );
+    if (closerIndex < 0) {
+      segments.push({ kind: "text", text: prompt.slice(blockIndex) });
+      break;
+    }
+
+    const blockEndIndex = closerIndex + REVIEW_COMMENT_BLOCK_CLOSER.length;
+    segments.push({ kind: "review-comment", text: prompt.slice(blockIndex, blockEndIndex) });
+    cursor = blockEndIndex;
+  }
+
+  return segments;
 }
 
 function createEmptyUserMessageContextState(): ParsedUserMessageContextState {
@@ -288,7 +381,7 @@ function extractUserMessageTextContextState(
     previewAnnotations,
     contextEntries,
     contentParts: [
-      ...(visibleText.length > 0
+      ...(visibleText.trim().length > 0
         ? [{ kind: "text" as const, id: allocateContentPartId(), text: visibleText }]
         : []),
       ...contextEntries,
@@ -299,18 +392,37 @@ function extractUserMessageTextContextState(
 function extractUserMessageContextState(prompt: string): ParsedUserMessageContextState {
   const allocateContextEntryId = createUserMessageContextEntryIdAllocator();
   const allocateContentPartId = createUserMessageContentPartIdAllocator();
-  const reviewCommentSegments = parseReviewCommentMessageSegments(prompt);
-  if (!reviewCommentSegments.some((segment) => segment.kind === "review-comment")) {
-    return extractUserMessageTextContextState(
-      prompt,
-      allocateContextEntryId,
-      allocateContentPartId,
-    );
-  }
-
   const mergedState = createEmptyUserMessageContextState();
-  for (const segment of reviewCommentSegments) {
-    if (segment.kind === "text") {
+
+  const appendTextSegment = (text: string) => {
+    const reviewCommentSegments = parseReviewCommentMessageSegments(text);
+    for (const segment of reviewCommentSegments) {
+      if (segment.kind === "text") {
+        appendUserMessageContextState(
+          mergedState,
+          extractUserMessageTextContextState(
+            segment.text,
+            allocateContextEntryId,
+            allocateContentPartId,
+          ),
+        );
+        continue;
+      }
+
+      const previousText = mergedState.visibleText;
+      const separator = previousText.length > 0 && !/(\n\s*){2}$/.test(previousText) ? "\n\n" : "";
+      const reviewCommentText = `${separator}${formatReviewCommentContext(segment.comment)}`;
+      mergedState.visibleText += reviewCommentText;
+      mergedState.contentParts.push({
+        kind: "text",
+        id: allocateContentPartId(),
+        text: reviewCommentText,
+      });
+    }
+  };
+
+  for (const segment of splitTopLevelUserMessageSegments(prompt)) {
+    if (segment.kind === "context") {
       appendUserMessageContextState(
         mergedState,
         extractUserMessageTextContextState(
@@ -322,15 +434,7 @@ function extractUserMessageContextState(prompt: string): ParsedUserMessageContex
       continue;
     }
 
-    const previousText = mergedState.visibleText;
-    const separator = previousText.length > 0 && !/(\n\s*){2}$/.test(previousText) ? "\n\n" : "";
-    const reviewCommentText = `${separator}${formatReviewCommentContext(segment.comment)}`;
-    mergedState.visibleText += reviewCommentText;
-    mergedState.contentParts.push({
-      kind: "text",
-      id: allocateContentPartId(),
-      text: reviewCommentText,
-    });
+    appendTextSegment(segment.text);
   }
 
   return mergedState;
@@ -681,7 +785,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const userMessageCopyText = userMessageContextState.visibleText || row.message.text;
+  const visibleCopyText = userMessageContextState.visibleText.trim();
+  const userMessageCopyText = visibleCopyText || row.message.text;
 
   return (
     <div className="group flex flex-col items-end gap-1">
