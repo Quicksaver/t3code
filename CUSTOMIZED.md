@@ -5,7 +5,7 @@
 
 ## Upstream Baseline
 
-Generated from local upstream-merge ref `1f78c00c2`, local `origin/main` ref `4dc799abc`, and `upstream/main` ref `a4964b3b3`. After the upstream merge and inventory refresh, the fork is 282 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 284 files with 40643 insertions and 1488 deletions.
+Generated from local upstream-merge ref `d44da0a3d`, local `origin/main` ref `4dc799abc`, and `upstream/main` ref `a4964b3b3`. After the upstream merge and inventory refresh, the fork is 291 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 284 files with 41707 insertions and 1595 deletions.
 
 ## Latest Merge Impact
 
@@ -387,5 +387,5 @@ When retiring the local changes, remove the corresponding tests or update them t
 
 **Last origin/main commit SHA:** 4dc799abc
 **Last upstream/main commit SHA:** a4964b3b3
-**Last post-merge main...upstream/main count:** 282 ahead / 0 behind
-**Last resolved main...upstream/main diff size:** 284 files changed, 40643 insertions, 1488 deletions
+**Last post-merge main...upstream/main count:** 291 ahead / 0 behind
+**Last resolved main...upstream/main diff size:** 284 files changed, 41707 insertions, 1595 deletions
