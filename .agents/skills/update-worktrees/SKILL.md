@@ -5,15 +5,15 @@ name: update-worktrees
 
 Study @CUSTOMIZED.md.
 
-The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches, as well as any new or adapted behavior and implementations that have been added to `origin/main` since the last update.
+The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches, as well as any new or adapted behavior and implementations related to each worktree that have been added to local `main` since the last update.
 
 $spawn-worktrees
 
 To achieve this goal, your task is to instruct each subagent to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
 
-Provide the subagents with all commit SHAs in `origin/main` since the last commit registered as updated, to apply the same conflict resolutions strategies to their own branches as well as any new or adapted behavior and implementations, related to their own branches, that have been added to `origin/main` since the last update. The idea is for each worktree branch to be consistent with `origin/main` but always remain focused in its own feature.
+Provide the subagents with all commit SHAs in local `main` since the last commit registered as updated, to apply the same conflict resolutions strategies to their own branches as well as any new or adapted behavior and implementations related to their own branches, that have been added to `main` since the last update. The idea is for each worktree branch to be consistent with `main` but always remain focused in its own feature.
 
-If their branch is already up to date with both `upstream/main` and customizations from `origin/main`, they can skip the verification and exit early, reporting only that their branch is already up to date.
+If their branch is already up to date with both `upstream/main` and customizations from the local `main` branch, they can skip the verification and exit early, reporting only that their branch is already up to date.
 
 Each worktree branch work should be individual and fully working standalone. If there is a specific md file in their own branch, update any stale or missing information in it.
 
