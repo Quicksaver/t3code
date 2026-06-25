@@ -1763,6 +1763,37 @@ export function ArchivedThreadsPanel() {
     [handleDeleteArchivedThread, handleUnarchiveThread],
   );
 
+  const handleArchivedProjectContextMenu = useCallback(
+    async (
+      projectName: string,
+      threads: ReadonlyArray<{
+        readonly id: ScopedThreadRef["threadId"];
+        readonly environmentId: ScopedThreadRef["environmentId"];
+      }>,
+      position: { x: number; y: number },
+    ) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "unarchive-all", label: "Unarchive all" },
+          { id: "delete-all", label: "Delete all", destructive: true },
+        ],
+        position,
+      );
+
+      if (clicked === "unarchive-all") {
+        await handleUnarchiveProjectThreads(projectName, threads);
+        return;
+      }
+
+      if (clicked === "delete-all") {
+        await handleDeleteProjectThreads(projectName, threads);
+      }
+    },
+    [handleDeleteProjectThreads, handleUnarchiveProjectThreads],
+  );
+
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
@@ -1802,9 +1833,31 @@ export function ArchivedThreadsPanel() {
                 <div
                   className={
                     isExpanded
-                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem_auto] items-center gap-2 px-1"
-                      : "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-1"
+                      ? "grid grid-cols-[minmax(0,1fr)_4.75rem_4.75rem] items-center gap-2 px-1"
+                      : "grid grid-cols-[minmax(0,1fr)] items-center gap-2 px-1"
                   }
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void (async () => {
+                      const result = await settlePromise(() =>
+                        handleArchivedProjectContextMenu(project.name, projectThreads, {
+                          x: event.clientX,
+                          y: event.clientY,
+                        }),
+                      );
+                      if (result._tag === "Failure") {
+                        const error = squashAtomCommandFailure(result);
+                        toastManager.add(
+                          stackedThreadToast({
+                            type: "error",
+                            title: "Archived project action failed",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          }),
+                        );
+                      }
+                    })();
+                  }}
                 >
                   <button
                     type="button"
@@ -1841,25 +1894,6 @@ export function ArchivedThreadsPanel() {
                       />
                     </>
                   ) : null}
-                  <div className="flex items-center justify-end gap-1">
-                    <ArchivedIconButton
-                      label={`Unarchive all in ${project.name}`}
-                      onClick={() => {
-                        void handleUnarchiveProjectThreads(project.name, projectThreads);
-                      }}
-                    >
-                      <ArchiveX className="size-3.5" />
-                    </ArchivedIconButton>
-                    <ArchivedIconButton
-                      label={`Delete all in ${project.name}`}
-                      destructive
-                      onClick={() => {
-                        void handleDeleteProjectThreads(project.name, projectThreads);
-                      }}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                    </ArchivedIconButton>
-                  </div>
                 </div>
                 {isExpanded ? (
                   <div className="mt-1 space-y-0.5">
