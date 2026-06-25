@@ -193,7 +193,7 @@ Expected behavior:
 - Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
 - Conversation rows show only the relative archived and created ages inline with the title by default. On row hover or keyboard focus, those age labels fade out and icon-only unarchive/delete actions appear as a right-side overlay with tooltips, matching the sidebar and source-control list-row action pattern.
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first, and delete actions require confirmation.
-- Project headers expose icon-only `unarchive all` and `delete all` actions, both guarded by a single confirmation before running the per-thread action.
+- Project group context menus expose `unarchive all` and `delete all` actions, both guarded by a single confirmation before running the per-thread action.
 
 Primary file:
 
