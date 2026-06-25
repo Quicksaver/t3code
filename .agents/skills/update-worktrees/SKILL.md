@@ -5,18 +5,10 @@ name: update-worktrees
 
 Study @CUSTOMIZED.md.
 
-The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches, as well as any new or adapted behavior and implementations related to each worktree that have been added to local `main` since the last update.
-
 $spawn-worktrees
 
-To achieve this goal, your task is to instruct each subagent to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
+The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches.
 
-Provide the subagents with all commit SHAs in local `main` since the last commit registered as updated, to apply the same conflict resolutions strategies to their own branches as well as any new or adapted behavior and implementations related to their own branches, that have been added to `main` since the last update. The idea is for each worktree branch to be consistent with `main` but always remain focused in its own feature.
+To achieve this goal, your task is to instruct each subagent to use the $update-worktree skill. **You do not validate any work yourself. You do not load this skill yourself. Your only task is to orchestrate the subagents' work and ensure they report back with the requested information.**
 
-If their branch is already up to date with both `upstream/main` and customizations from the local `main` branch, they can skip the verification and exit early, reporting only that their branch is already up to date.
-
-Each worktree branch work should be individual and fully working standalone. If there is a specific md file in their own branch, update any stale or missing information in it.
-
-When finished, each subagent is to report the status of the merge results, and you must then stop it explicitly.
-
-Finally, update the last commit SHAs for the `main` branch of both the `origin` and `upstream` remotes in CUSTOMIZED.md, so that future updates can be tracked accurately. Also report on the update status of all branches, if anything significantly diverged from the implementation details in `origin/main` and why.
+When all subagents are finished, report back on everything the subagents have reported. They will likely report similar incoming changes, you can deduplicate in these cases, but be explicit about every incoming change and every customization made and impacted by each worktree.

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Update Worktree"
+  short_description: "Update worktree with changes from main."
+
+policy:
+  allow_implicit_invocation: false
