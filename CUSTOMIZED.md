@@ -11,7 +11,7 @@ Generated from local upstream-merge ref `220ee7357`, local `origin/main` ref `e0
 
 The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation/composer defaults.
 
-The shared helper `packages/shared/src/chatList.ts` is now the canonical place for chat list anchor spacing. Web `MessagesTimeline` and mobile `ThreadFeed` should use `resolveChatListAnchoredEndSpace(...)` instead of reimplementing per-surface bottom-follow heuristics. The prior web-only first-row `scrollToEnd` effect in `MessagesTimeline` is retired by this merge, and mobile removed `apps/mobile/src/lib/threadFeedLayout.ts` in favor of Legend List's built-in keyboard and anchored end-space behavior. The remaining fold-settling suppression around turn-fold toggles is intentional: it temporarily disables `maintainScrollAtEnd` while inserted/removed fold rows settle so the clicked fold row does not jump.
+The shared helper `packages/shared/src/chatList.ts` is now the canonical place for chat list anchor spacing. Web `MessagesTimeline` and mobile `ThreadFeed` should use `resolveChatListAnchoredEndSpace(...)` instead of reimplementing per-surface bottom-follow heuristics. The prior web-only first-row `scrollToEnd` effect in `MessagesTimeline` is retired by this merge, and mobile removed `apps/mobile/src/lib/threadFeedLayout.ts` in favor of Legend List's built-in keyboard and anchored end-space behavior. The remaining fold-settling suppression around turn-fold toggles is intentional: `scheduleFoldToggleSettlingReset(...)` in `apps/web/src/components/chat/MessagesTimeline.tsx` temporarily disables `maintainScrollAtEnd` while inserted/removed fold rows settle so the clicked fold row does not jump.
 
 Upstream also moved the web composer into an absolute overlay with measured inset compensation, adjusts the scroll-to-bottom pill above the composer, returns mobile `onSendMessage` message ids so the sent row can become the anchor, removes queued-message feed rows from the mobile feed presentation path, bumps `@legendapp/list` to `3.2.0`, bumps `react-native-keyboard-controller` to `1.21.7`, pins `react-native-nitro-modules` to `0.35.9`, and adds the shared `@t3tools/shared/chatList` export. The fork keeps the upstream overlay model but removes the residual `max-w-208` cap from the web composer overlay wrapper so the visual blur/chrome matches the branch's full-width composer policy.
 
@@ -147,6 +147,7 @@ Relevant tests live in:
 
 - `apps/web/src/components/chat/MessagesTimeline.test.tsx`
 - `apps/web/src/session-logic.test.ts`
+- `apps/web/src/components/chat/ChatComposerOverlayBackground.test.tsx`
 
 Useful focused commands:
 
@@ -154,6 +155,7 @@ Useful focused commands:
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/session-logic.test.ts)
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/MessagesTimeline.test.tsx)
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/ThreadConversationWidth.test.tsx)
+(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/ChatComposerOverlayBackground.test.tsx)
 ```
 
 Before considering the branch healthy, also run:
@@ -185,6 +187,7 @@ Primary files:
 Relevant tests live in:
 
 - `apps/web/src/components/chat/ThreadConversationWidth.test.tsx`
+- `apps/web/src/components/chat/ChatComposerOverlayBackground.test.tsx`
 
 ## Archive Settings UX
 

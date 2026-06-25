@@ -19,6 +19,7 @@ vi.mock("@legendapp/list/react", async () => {
       anchorOffset?: number;
     };
     contentInsetEndAdjustment?: number;
+    maintainScrollAtEnd?: boolean;
     ref?: Ref<LegendListRef>;
   }) => (
     <div
@@ -27,6 +28,7 @@ vi.mock("@legendapp/list/react", async () => {
       data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
       data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
       data-content-inset-end={props.contentInsetEndAdjustment}
+      data-maintain-scroll-at-end={props.maintainScrollAtEnd}
     >
       {props.ListHeaderComponent}
       {props.data.map((item) => (
@@ -252,6 +254,67 @@ function expectMarkupOrder(markup: string, ...needles: string[]) {
 }
 
 describe("MessagesTimeline", () => {
+  it("passes maintainScrollAtEnd while fold rows are not settling", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Short prompt.")]}
+      />,
+    );
+
+    expect(markup).toContain('data-maintain-scroll-at-end="true"');
+  });
+
+  it("re-enables fold anchoring after the fold-settling frames complete", async () => {
+    const { scheduleFoldToggleSettlingReset } = await import("./MessagesTimeline");
+    const frameCallbacks: FrameRequestCallback[] = [];
+    const canceledFrameIds: number[] = [];
+    let settled = false;
+    const cleanup = scheduleFoldToggleSettlingReset({
+      requestAnimationFrame: (callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      },
+      cancelAnimationFrame: (handle) => {
+        canceledFrameIds.push(handle);
+      },
+      onSettled: () => {
+        settled = true;
+      },
+    });
+
+    expect(settled).toBe(false);
+    frameCallbacks[0]?.(0);
+    expect(settled).toBe(false);
+    frameCallbacks[1]?.(16);
+    expect(settled).toBe(true);
+    cleanup();
+    expect(canceledFrameIds).toEqual([1, 2]);
+  });
+
+  it("keeps a canceled fold-settling reset from re-enabling anchoring", async () => {
+    const { scheduleFoldToggleSettlingReset } = await import("./MessagesTimeline");
+    const frameCallbacks: FrameRequestCallback[] = [];
+    let settled = false;
+    const cleanup = scheduleFoldToggleSettlingReset({
+      requestAnimationFrame: (callback) => {
+        frameCallbacks.push(callback);
+        return frameCallbacks.length;
+      },
+      cancelAnimationFrame: () => {},
+      onSettled: () => {
+        settled = true;
+      },
+    });
+
+    cleanup();
+    frameCallbacks[0]?.(0);
+    frameCallbacks[1]?.(16);
+
+    expect(settled).toBe(false);
+  });
+
   it("anchors a sent attachment message using its measured height", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const firstEntry = buildUserTimelineEntry("First prompt.");

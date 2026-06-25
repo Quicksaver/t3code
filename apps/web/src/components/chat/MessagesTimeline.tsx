@@ -573,6 +573,33 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
+export function scheduleFoldToggleSettlingReset(options: {
+  readonly requestAnimationFrame: (callback: FrameRequestCallback) => number;
+  readonly cancelAnimationFrame: (handle: number) => void;
+  readonly onSettled: () => void;
+}) {
+  let disposed = false;
+  let secondFrameId: number | null = null;
+  const firstFrameId = options.requestAnimationFrame(() => {
+    if (disposed) {
+      return;
+    }
+    secondFrameId = options.requestAnimationFrame(() => {
+      if (!disposed) {
+        options.onSettled();
+      }
+    });
+  });
+
+  return () => {
+    disposed = true;
+    options.cancelAnimationFrame(firstFrameId);
+    if (secondFrameId !== null) {
+      options.cancelAnimationFrame(secondFrameId);
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
 // ---------------------------------------------------------------------------
@@ -626,18 +653,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     if (!foldToggleSettling) {
       return;
     }
-    let secondFrameId: number | null = null;
-    const firstFrameId = window.requestAnimationFrame(() => {
-      secondFrameId = window.requestAnimationFrame(() => {
+    return scheduleFoldToggleSettlingReset({
+      requestAnimationFrame: window.requestAnimationFrame,
+      cancelAnimationFrame: window.cancelAnimationFrame,
+      onSettled: () => {
         setFoldToggleSettling(false);
-      });
+      },
     });
-    return () => {
-      window.cancelAnimationFrame(firstFrameId);
-      if (secondFrameId !== null) {
-        window.cancelAnimationFrame(secondFrameId);
-      }
-    };
   }, [foldToggleSettling]);
 
   // An in-session interrupt leaves its turn expanded so the user keeps their
