@@ -190,6 +190,7 @@ The settings Archive panel is intentionally denser than the upstream-style setti
 Expected behavior:
 
 - Archived conversations are grouped by project, and each project group is collapsed by default.
+- The page includes a search box that filters archived thread titles across all projects case-insensitively. Multi-word searches match any term, rank exact phrase matches first, rank titles matching every term ahead of partial term matches, and auto-open matching project groups while search is active.
 - Expanded project headers include sortable `Archived` and `Created` columns; clicking either header toggles ascending/descending order for the conversations inside each group, with `Archived` descending as the default.
 - Conversation rows show only the relative archived and created ages inline with the title by default. On row hover or keyboard focus, those age labels fade out and icon-only unarchive/delete actions appear as a right-side overlay with tooltips, matching the sidebar and source-control list-row action pattern.
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first, and delete actions require confirmation.
