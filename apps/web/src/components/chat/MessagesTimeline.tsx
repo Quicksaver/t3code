@@ -654,8 +654,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
     return scheduleFoldToggleSettlingReset({
-      requestAnimationFrame: window.requestAnimationFrame,
-      cancelAnimationFrame: window.cancelAnimationFrame,
+      requestAnimationFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelAnimationFrame: (handle) => window.cancelAnimationFrame(handle),
       onSettled: () => {
         setFoldToggleSettling(false);
       },
