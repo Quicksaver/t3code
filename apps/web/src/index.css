@@ -214,10 +214,6 @@
 @utility pr-safe {
   padding-right: max(env(safe-area-inset-right), 0px);
 }
-@utility max-w-208 {
-  max-width: 52rem;
-}
-
 /* Suppress all transitions during theme changes */
 .no-transitions,
 .no-transitions *,

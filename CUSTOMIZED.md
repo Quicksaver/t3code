@@ -5,20 +5,20 @@
 
 ## Upstream Baseline
 
-Generated from local upstream-merge ref `220ee7357`, local `origin/main` ref `e047b12d9`, and `upstream/main` ref `22f021ed6`. After the upstream merge and inventory refresh, the fork is 297 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 285 files with 42303 insertions and 1719 deletions.
+Generated from local upstream-merge ref `220ee7357`, local `origin/main` ref `e047b12d9`, and `upstream/main` ref `22f021ed6`. After the upstream merge and inventory refresh, the fork is 297 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 285 files with 42303 insertions and 1721 deletions.
 
 ## Latest Merge Impact
 
-The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation defaults.
+The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation/composer defaults.
 
-The shared helper `packages/shared/src/chatList.ts` is now the canonical place for chat list anchor spacing. Web `MessagesTimeline` and mobile `ThreadFeed` should use `resolveChatListAnchoredEndSpace(...)` instead of reimplementing per-surface bottom-follow heuristics. The prior web-only first-row `scrollToEnd` effect in `MessagesTimeline` is retired by this merge, and mobile removed `apps/mobile/src/lib/threadFeedLayout.ts` in favor of Legend List's built-in keyboard and anchored end-space behavior.
+The shared helper `packages/shared/src/chatList.ts` is now the canonical place for chat list anchor spacing. Web `MessagesTimeline` and mobile `ThreadFeed` should use `resolveChatListAnchoredEndSpace(...)` instead of reimplementing per-surface bottom-follow heuristics. The prior web-only first-row `scrollToEnd` effect in `MessagesTimeline` is retired by this merge, and mobile removed `apps/mobile/src/lib/threadFeedLayout.ts` in favor of Legend List's built-in keyboard and anchored end-space behavior. The remaining fold-settling suppression around turn-fold toggles is intentional: it temporarily disables `maintainScrollAtEnd` while inserted/removed fold rows settle so the clicked fold row does not jump.
 
-Upstream also moved the web composer into an absolute overlay with measured inset compensation, adjusts the scroll-to-bottom pill above the composer, returns mobile `onSendMessage` message ids so the sent row can become the anchor, removes queued-message feed rows from the mobile feed presentation path, bumps `@legendapp/list` to `3.2.0`, bumps `react-native-keyboard-controller` to `1.21.7`, pins `react-native-nitro-modules` to `0.35.9`, and adds the shared `@t3tools/shared/chatList` export.
+Upstream also moved the web composer into an absolute overlay with measured inset compensation, adjusts the scroll-to-bottom pill above the composer, returns mobile `onSendMessage` message ids so the sent row can become the anchor, removes queued-message feed rows from the mobile feed presentation path, bumps `@legendapp/list` to `3.2.0`, bumps `react-native-keyboard-controller` to `1.21.7`, pins `react-native-nitro-modules` to `0.35.9`, and adds the shared `@t3tools/shared/chatList` export. The fork keeps the upstream overlay model but removes the residual `max-w-208` cap from the web composer overlay wrapper so the visual blur/chrome matches the branch's full-width composer policy.
 
 Customization-sensitive follow-up areas:
 
 - The fork's workspace-scoped provider skill loading must keep feeding `MessagesTimeline` from `activeProviderWorkspaceSkills.skills`; do not regress to provider snapshot skills when applying upstream chat scroll changes, or repo-local `$skill` chips in sent user prompts can go stale or disappear across workspace switches.
-- The fork's command/file activity expansion, turn folding, subagent child-thread rows, and full-width conversation containers now run inside upstream's anchored `LegendList` model. Future changes should remove any remaining local scroll-follow logic only after confirming fold toggles, streaming output, and optimistic sends still preserve the user's viewport.
+- The fork's command/file activity expansion, turn folding, subagent child-thread rows, and full-width conversation containers now run inside upstream's anchored `LegendList` model. Do not reintroduce per-surface bottom-follow heuristics; keep the targeted fold-settling suppression unless upstream provides equivalent no-jump behavior for fold toggles.
 - The fork's mobile EAS ownership remains fork-specific in `apps/mobile/app.config.ts`; upstream's mobile package/runtime upgrades are compatible with that metadata, but changing mobile native behavior now means `vp run lint:mobile` is part of the required validation.
 - The previous upstream sidebar toggle and titlebar inset merge remains relevant to `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's Electron forced-desktop sidebar layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
 - The remaining fork sidebar/header compatibility rules stay centralized in `apps/web/src/components/AppSidebarLayout.logic.ts`, `apps/web/src/components/Sidebar.logic.ts`, and `apps/web/src/components/chat/ChatHeader.tsx`; upstream's `SidebarTrigger` still owns the shared trigger state and chrome behavior directly.
@@ -169,7 +169,7 @@ This branch intentionally removes the default max width from the main chat conve
 
 Expected behavior:
 
-- By default, conversation rows, the composer, composer banners, and the branch toolbar expand across the available chat window space.
+- By default, conversation rows, the composer, the composer overlay chrome/blur, composer banners, and the branch toolbar expand across the available chat window space.
 - The VS Code `t3code.ui.threadConversationMaxWidth` setting remains available as an explicit opt-in max-width override.
 - Leaving the VS Code setting empty means no maximum width, not the upstream narrow conversation width.
 
@@ -178,6 +178,8 @@ Primary files:
 - `apps/web/src/components/chat/ThreadConversationWidth.tsx`
 - `apps/web/src/components/chat/ComposerBannerStack.tsx`
 - `apps/web/src/components/BranchToolbar.tsx`
+- `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/index.css`
 - `apps/vscode-extension/package.json`
 
 Relevant tests live in:
@@ -406,4 +408,4 @@ When retiring the local changes, remove the corresponding tests or update them t
 **Last origin/main commit SHA:** e047b12d9
 **Last upstream/main commit SHA:** 22f021ed6
 **Last post-merge main...upstream/main count:** 297 ahead / 0 behind
-**Last resolved main...upstream/main diff size:** 285 files changed, 42303 insertions, 1719 deletions
+**Last resolved main...upstream/main diff size:** 285 files changed, 42303 insertions, 1721 deletions
