@@ -37,6 +37,8 @@ export interface ProviderWorkspaceSkillsSnapshotInput {
 export interface ProviderWorkspaceSkillsResolutionInput extends ProviderWorkspaceSkillsSnapshotInput {
   readonly nextSkills: ReadonlyArray<ServerProviderSkill> | null;
   readonly isPending: boolean;
+  readonly error: string | null;
+  readonly fallbackSkills: ReadonlyArray<ServerProviderSkill>;
 }
 
 export interface ProviderWorkspaceSkillsSnapshot {
@@ -99,7 +101,10 @@ export function resolvePendingProviderWorkspaceSkills(
 export function resolveProviderWorkspaceSkills(
   input: ProviderWorkspaceSkillsResolutionInput,
 ): ReadonlyArray<ServerProviderSkill> {
-  if (input.nextSkills !== null) return input.nextSkills;
+  if (input.nextSkills !== null) {
+    return input.nextSkills.length > 0 ? input.nextSkills : input.fallbackSkills;
+  }
+  if (input.error !== null) return input.fallbackSkills;
   if (!input.isPending) return EMPTY_SKILLS;
   return resolvePendingProviderWorkspaceSkills(input);
 }
@@ -171,8 +176,10 @@ export function useProviderWorkspaceSkills(
       nextKey: key,
       nextSkills: querySkills,
       isPending: query.isPending,
+      error: query.error,
       currentKey: previousWorkspaceSkills?.key ?? null,
       currentSkills: previousWorkspaceSkills?.skills ?? EMPTY_SKILLS,
+      fallbackSkills: target.fallbackSkills,
     }),
     isPending: query.isPending,
     error: formatProviderWorkspaceSkillsError({ error: query.error, cause: query.errorCause }),

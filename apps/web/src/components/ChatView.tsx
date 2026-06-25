@@ -3361,24 +3361,37 @@ function ChatViewContent(props: ChatViewProps) {
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches.  LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
-  const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
+  const showScrollDebouncer = useMemo(
+    () =>
+      new Debouncer(
+        () => {
+          setShowScrollToBottom(true);
+          setTimelineAnchor((current) =>
+            current.messageId === null ? current : { ...current, messageId: null },
+          );
+        },
+        { wait: 150 },
+      ),
+    [],
   );
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
+  const onIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      if (isAtEndRef.current === isAtEnd) return;
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        showScrollDebouncer.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        showScrollDebouncer.maybeExecute();
+      }
+    },
+    [showScrollDebouncer],
+  );
 
   useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
-    showScrollDebouncer.current.cancel();
+    showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
@@ -3389,7 +3402,7 @@ function ChatViewContent(props: ChatViewProps) {
     planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeThread?.id]);
+  }, [activeThread?.id, showScrollDebouncer]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -3942,7 +3955,7 @@ function ChatViewContent(props: ChatViewProps) {
     // anchored end-space target so it lands near the top while the response
     // streams into the reserved space below it.
     isAtEndRef.current = true;
-    showScrollDebouncer.current.cancel();
+    showScrollDebouncer.cancel();
     setShowScrollToBottom(false);
     setTimelineAnchor({
       threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
@@ -4385,7 +4398,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       // Scroll to the current end *before* adding the optimistic message.
       isAtEndRef.current = true;
-      showScrollDebouncer.current.cancel();
+      showScrollDebouncer.cancel();
       setShowScrollToBottom(false);
       await legendListRef.current?.scrollToEnd?.({ animated: false });
 
@@ -4486,6 +4499,7 @@ function ChatViewContent(props: ChatViewProps) {
       resetLocalDispatch,
       runtimeMode,
       setComposerDraftInteractionMode,
+      showScrollDebouncer,
       setThreadError,
       startThreadTurn,
       autoOpenPlanSidebar,

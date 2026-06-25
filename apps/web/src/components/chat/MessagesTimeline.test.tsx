@@ -351,6 +351,49 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-content-inset-end="144"');
   });
 
+  it("passes updated contentInsetEndAdjustment values to the underlying list", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const timelineEntries = [buildUserTimelineEntry("Prompt.")];
+    const firstMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        contentInsetEndAdjustment={48}
+      />,
+    );
+    const secondMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={timelineEntries}
+        contentInsetEndAdjustment={96}
+      />,
+    );
+
+    expect(firstMarkup).toContain('data-content-inset-end="48"');
+    expect(secondMarkup).toContain('data-content-inset-end="96"');
+  });
+
+  it("normalizes invalid contentInsetEndAdjustment values", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const negativeMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Prompt.")]}
+        contentInsetEndAdjustment={-24}
+      />,
+    );
+    const invalidMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Prompt.")]}
+        contentInsetEndAdjustment={Number.NaN}
+      />,
+    );
+
+    expect(negativeMarkup).toContain('data-content-inset-end="0"');
+    expect(invalidMarkup).toContain('data-content-inset-end="0"');
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -859,7 +902,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-footer="true"');
   });
 
-  it("copies the stripped user message display text", async () => {
+  it("copies the raw user message text with structured context blocks", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -879,8 +922,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain('data-copy-text="Copy this prompt."');
-    expect(markup).not.toContain("hidden terminal output&quot;");
+    expect(markup).toContain('data-copy-text="[contains-raw-markup]"');
     expectNoContextTagLeak(markup);
   });
 

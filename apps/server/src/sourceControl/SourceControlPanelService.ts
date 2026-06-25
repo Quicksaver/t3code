@@ -47,7 +47,11 @@ import type { ChangeRequest } from "@t3tools/contracts";
 
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
-import { parseRemoteNames, parseRemoteRefWithRemoteNames } from "../git/remoteRefs.ts";
+import {
+  parseRemoteNames,
+  parseRemoteNamesInGitOrder,
+  parseRemoteRefWithRemoteNames,
+} from "../git/remoteRefs.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
 import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
@@ -623,14 +627,6 @@ function avatarUrlForEmail(email: string | null | undefined): string | null {
   if (!normalized || !normalized.includes("@")) return null;
   const hash = NodeCrypto.createHash("md5").update(normalized).digest("hex");
   return `https://www.gravatar.com/avatar/${hash}?d=identicon&s=64`;
-}
-
-function parseRefLines(output: string): string[] {
-  return output
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.endsWith("/HEAD") && !line.includes(" -> "))
-    .toSorted((left, right) => left.localeCompare(right));
 }
 
 function parsePathLines(output: string): string[] {
@@ -1324,6 +1320,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       case "behind":
         return Effect.succeed(baseRef ? `${refName}..${baseRef}` : "");
       case "compare-history":
+        return Effect.succeed(baseRef ? `${baseRef}...${refName}` : refName);
       case "history":
         return Effect.succeed(refName);
     }
@@ -1340,6 +1337,21 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       Effect.orElseSucceed(() => ""),
       Effect.map((value) => (value.length > 0 ? value : null)),
     );
+
+  const refExists = (operation: string, cwd: string, refName: string) =>
+    run(operation, cwd, ["show-ref", "--verify", refName], { allowNonZeroExit: true }).pipe(
+      Effect.map((output) => output.trim().length > 0),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const resolveRemoteBranchRef = (refName: string, remoteNamesByLength: readonly string[]) => {
+    const parsed = parseRemoteRefWithRemoteNames(refName, remoteNamesByLength);
+    if (!parsed) return null;
+    return {
+      remoteName: parsed.remoteName,
+      branchName: parsed.branchName,
+    };
+  };
 
   const createdFromRef = (cwd: string, refName: string) =>
     run("vcs.panel.branchCreatedFrom", cwd, [
@@ -1919,9 +1931,9 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             `Branch ${input.branchName} has no upstream.`,
           );
         }
-        const [remoteName = "origin", ...remoteBranchParts] = upstream.split("/");
-        const remoteBranchName = remoteBranchParts.join("/");
-        if (remoteBranchName.length === 0) {
+        const remoteOutput = yield* run("vcs.panel.pullBranch.remotes", input.cwd, ["remote"]);
+        const resolvedUpstream = resolveRemoteBranchRef(upstream, parseRemoteNames(remoteOutput));
+        if (!resolvedUpstream) {
           return yield* gitError(
             "vcs.panel.pullBranch",
             input.cwd,
@@ -1931,8 +1943,8 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         }
         yield* run("vcs.panel.pullBranch.nonCurrent", input.cwd, [
           "fetch",
-          remoteName,
-          `${input.force ? "+" : ""}refs/heads/${remoteBranchName}:refs/heads/${input.branchName}`,
+          resolvedUpstream.remoteName,
+          `${input.force ? "+" : ""}refs/heads/${resolvedUpstream.branchName}:refs/heads/${input.branchName}`,
         ]).pipe(Effect.asVoid);
         return {
           status: "pulled" as const,
@@ -1989,18 +2001,42 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const fetchBranch: SourceControlPanelService["Service"]["fetchBranch"] = Effect.fn("fetchBranch")(
     function* (input) {
-      const remotes = yield* run("vcs.panel.fetchBranch.remotes", input.cwd, ["remote"]).pipe(
-        Effect.map(parseRefLines),
+      const remoteOutput = yield* run("vcs.panel.fetchBranch.remotes", input.cwd, ["remote"]);
+      const gitOrderRemoteNames = parseRemoteNamesInGitOrder(remoteOutput);
+      const sortedRemoteNames = parseRemoteNames(remoteOutput);
+      // Local branches intentionally win over same-named remote refs.
+      const isLocalBranch = yield* refExists(
+        "vcs.panel.fetchBranch.localBranch",
+        input.cwd,
+        `refs/heads/${input.branchName}`,
       );
-      const remotePrefix = remotes.find((remote) => input.branchName.startsWith(`${remote}/`));
-      const upstream = remotePrefix
-        ? `${remotePrefix}/${input.branchName.slice(remotePrefix.length + 1)}`
-        : yield* upstreamForRef(input.cwd, input.branchName);
-      const [remoteNameRaw, ...remoteBranchParts] = upstream
-        ? upstream.split("/")
-        : [remotes[0] ?? "origin", input.branchName];
-      const remoteName = remoteNameRaw ?? "origin";
-      const remoteBranchName = remoteBranchParts.join("/") || input.branchName;
+      const parsedRemoteBranch = isLocalBranch
+        ? null
+        : parseRemoteRefWithRemoteNames(input.branchName, sortedRemoteNames);
+      const isRemoteBranch = parsedRemoteBranch
+        ? yield* refExists(
+            "vcs.panel.fetchBranch.remoteBranch",
+            input.cwd,
+            `refs/remotes/${parsedRemoteBranch.remoteRef}`,
+          )
+        : false;
+      const upstream =
+        isRemoteBranch && parsedRemoteBranch
+          ? parsedRemoteBranch.remoteRef
+          : yield* upstreamForRef(input.cwd, input.branchName);
+      const resolvedUpstream = upstream
+        ? resolveRemoteBranchRef(upstream, sortedRemoteNames)
+        : null;
+      if (upstream && !resolvedUpstream) {
+        return yield* gitError(
+          "vcs.panel.fetchBranch",
+          input.cwd,
+          ["fetch"],
+          `Branch ${input.branchName} has invalid upstream ${upstream}.`,
+        );
+      }
+      const remoteName = resolvedUpstream?.remoteName ?? gitOrderRemoteNames[0] ?? "origin";
+      const remoteBranchName = resolvedUpstream?.branchName ?? input.branchName;
       yield* run("vcs.panel.fetchBranch", input.cwd, [
         "fetch",
         remoteName,

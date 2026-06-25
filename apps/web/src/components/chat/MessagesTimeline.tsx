@@ -569,7 +569,8 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
-  contentInsetEndAdjustment: number;
+  /** Extra bottom inset for LegendList, measured in CSS pixels. */
+  contentInsetEndAdjustment?: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -625,10 +626,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   anchorMessageId,
-  contentInsetEndAdjustment,
+  contentInsetEndAdjustment = 0,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
+  const safeContentInsetEndAdjustment = Number.isFinite(contentInsetEndAdjustment)
+    ? Math.max(0, contentInsetEndAdjustment)
+    : 0;
 
   // Toggling a fold inserts/removes rows between the fold row and the final
   // message — everything above the trigger is unchanged, so the trigger stays
@@ -802,7 +806,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           estimatedItemSize={90}
           initialScrollAtEnd
           {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-          contentInsetEndAdjustment={contentInsetEndAdjustment}
+          contentInsetEndAdjustment={safeContentInsetEndAdjustment}
           maintainScrollAtEnd={!foldToggleSettling}
           maintainScrollAtEndThreshold={0.1}
           maintainVisibleContentPosition
@@ -876,8 +880,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
-  const visibleCopyText = userMessageContextState.visibleText;
-  const userMessageCopyText = visibleCopyText || row.message.text;
+  const userMessageCopyText = row.message.text;
 
   return (
     <div className="group flex flex-col items-end gap-1">

@@ -42,6 +42,7 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
+import { promptHasComposerSkillReference } from "../../composer-editor-mentions";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
@@ -794,6 +795,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => getComposerPromptInjectionState(prompt),
     [prompt],
   );
+  const promptHasSkillReference = useMemo(() => promptHasComposerSkillReference(prompt), [prompt]);
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
@@ -943,7 +945,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentId,
     instanceId: selectedProviderStatus?.instanceId ?? null,
     cwd: gitCwd,
-    enabled: true,
+    enabled: composerTriggerKind === "skill" || promptHasSkillReference,
     fallbackSkills: selectedProviderFallbackSkills,
   });
 

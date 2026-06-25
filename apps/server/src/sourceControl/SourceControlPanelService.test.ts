@@ -218,6 +218,84 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("uses the compare range for compare-history branch queries", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        baseRef: "main",
+        kind: "compare-history",
+        skip: 0,
+        limit: 10,
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          ["rev-list", "--count", "main...feature/source-control"],
+          [
+            "log",
+            "--skip=0",
+            "--max-count=10",
+            "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
+            "main...feature/source-control",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success(input.args[0] === "rev-list" ? "0" : "");
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("uses the selected branch for compare-history queries without a base", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        baseRef: null,
+        kind: "compare-history",
+        skip: 0,
+        limit: 10,
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          ["rev-list", "--count", "feature/source-control"],
+          [
+            "log",
+            "--skip=0",
+            "--max-count=10",
+            "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
+            "feature/source-control",
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success(input.args[0] === "rev-list" ? "0" : "");
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("preserves sanitized causes when wrapping git execution failures", () => {
     const cause = new Error("transport closed");
     return Effect.gen(function* () {
@@ -816,6 +894,269 @@ describe("SourceControlPanelService", () => {
       ),
     ),
   );
+
+  it.effect("pulls non-current branches from upstream remotes with slashes in their name", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.pullBranch({
+        cwd: "/repo",
+        branchName: "main",
+      });
+
+      const fetchCall = calls.find((call) => call.operation === "vcs.panel.pullBranch.nonCurrent");
+      assert.deepStrictEqual(fetchCall?.args, [
+        "fetch",
+        "team/upstream",
+        "refs/heads/main:refs/heads/main",
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.branchUpstream":
+                  return success("team/upstream/main\n");
+                case "vcs.panel.pullBranch.remotes":
+                  return success("origin\nteam/upstream\n");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "feature/source-control",
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects slashful upstreams that do not match a known remote", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .pullBranch({
+          cwd: "/repo",
+          branchName: "main",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "vcs.panel.pullBranch");
+      assert.equal(error.detail, "Branch main has invalid upstream team/upstream/main.");
+      assert.equal(
+        calls.some((call) => call.operation === "vcs.panel.pullBranch.nonCurrent"),
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.branchUpstream":
+                  return success("team/upstream/main\n");
+                case "vcs.panel.pullBranch.remotes":
+                  return success("origin\n");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "feature/source-control",
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects slashless local upstreams when pulling non-current branches", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .pullBranch({
+          cwd: "/repo",
+          branchName: "feature/source-control",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "vcs.panel.pullBranch");
+      assert.equal(error.detail, "Branch feature/source-control has invalid upstream main.");
+      assert.equal(
+        calls.some((call) => call.operation === "vcs.panel.pullBranch.nonCurrent"),
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.branchUpstream":
+                  return success("main\n");
+                case "vcs.panel.pullBranch.remotes":
+                  return success("origin\nupstream\n");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            status: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                hasUpstream: true,
+                aheadCount: 0,
+                behindCount: 0,
+                aheadOfDefaultCount: 0,
+                pr: null,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("fetches branches from upstream remotes with slashes in their name", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.fetchBranch({
+        cwd: "/repo",
+        branchName: "team/upstream/main",
+      });
+
+      const fetchCall = calls.find((call) => call.operation === "vcs.panel.fetchBranch");
+      assert.deepStrictEqual(fetchCall?.args, [
+        "fetch",
+        "team/upstream",
+        "refs/heads/main:refs/remotes/team/upstream/main",
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            switch (input.operation) {
+              case "vcs.panel.fetchBranch.remotes":
+                return success("origin\nteam/upstream\n");
+              case "vcs.panel.fetchBranch.remoteBranch":
+                return success("abc123 refs/remotes/team/upstream/main\n");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("fetches local branches with remote-looking names from their upstream", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.fetchBranch({
+        cwd: "/repo",
+        branchName: "origin/feature",
+      });
+
+      const fetchCall = calls.find((call) => call.operation === "vcs.panel.fetchBranch");
+      assert.deepStrictEqual(fetchCall?.args, [
+        "fetch",
+        "upstream",
+        "refs/heads/main:refs/remotes/upstream/main",
+      ]);
+      assert.equal(
+        calls.some((call) => call.operation === "vcs.panel.fetchBranch.remoteBranch"),
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            switch (input.operation) {
+              case "vcs.panel.fetchBranch.remotes":
+                return success("origin\nupstream\n");
+              case "vcs.panel.fetchBranch.localBranch":
+                return success("abc123 refs/heads/origin/feature\n");
+              case "vcs.panel.branchUpstream":
+                return success("upstream/main\n");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("rejects slashless local upstreams when fetching local branches", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const error = yield* service
+        .fetchBranch({
+          cwd: "/repo",
+          branchName: "feature/source-control",
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(error.operation, "vcs.panel.fetchBranch");
+      assert.equal(error.detail, "Branch feature/source-control has invalid upstream main.");
+      assert.equal(
+        calls.some((call) => call.operation === "vcs.panel.fetchBranch"),
+        false,
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            switch (input.operation) {
+              case "vcs.panel.fetchBranch.remotes":
+                return success("origin\nupstream\n");
+              case "vcs.panel.fetchBranch.localBranch":
+                return success("abc123 refs/heads/feature/source-control\n");
+              case "vcs.panel.branchUpstream":
+                return success("main\n");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("defers untracked detail loading from the initial snapshot", () =>
     Effect.gen(function* () {

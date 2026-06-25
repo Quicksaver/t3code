@@ -104,8 +104,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo",
         nextSkills: loadedSkills,
         isPending: false,
+        error: null,
         currentKey: null,
         currentSkills: [],
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toBe(loadedSkills);
   });
@@ -119,24 +121,29 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo",
         nextSkills: loadedSkills,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo",
         currentSkills,
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toBe(loadedSkills);
   });
 
-  it("uses an empty loaded skill list as available workspace data", () => {
+  it("uses fallback skills for empty loaded workspace skills", () => {
     const loadedSkills: ReadonlyArray<ServerProviderSkill> = [];
+    const fallbackSkills = [skill("provider-fallback")];
 
     expect(
       resolveProviderWorkspaceSkills({
         nextKey: "environment:codex:/repo",
         nextSkills: loadedSkills,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo",
         currentSkills: [skill("repo-local")],
+        fallbackSkills,
       }),
-    ).toBe(loadedSkills);
+    ).toBe(fallbackSkills);
   });
 
   it("preserves current skills while refreshing the same workspace", () => {
@@ -147,8 +154,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo",
         nextSkills: null,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo",
         currentSkills,
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toBe(currentSkills);
   });
@@ -159,8 +168,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/new-repo",
         nextSkills: null,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/old-repo",
         currentSkills: [skill("old-repo-skill")],
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toEqual([]);
   });
@@ -174,8 +185,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo-b",
         nextSkills: null,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo-a",
         currentSkills: repoASkills,
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toEqual([]);
     expect(
@@ -183,8 +196,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo-a",
         nextSkills: null,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo-b",
         currentSkills: repoBSkills,
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toEqual([]);
     expect(
@@ -192,8 +207,10 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo-a",
         nextSkills: null,
         isPending: true,
+        error: null,
         currentKey: "environment:codex:/repo-a",
         currentSkills: repoASkills,
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toBe(repoASkills);
   });
@@ -204,10 +221,28 @@ describe("resolveProviderWorkspaceSkills", () => {
         nextKey: "environment:codex:/repo",
         nextSkills: null,
         isPending: false,
+        error: null,
         currentKey: "environment:codex:/repo",
         currentSkills: [skill("repo-local")],
+        fallbackSkills: [skill("provider-fallback")],
       }),
     ).toEqual([]);
+  });
+
+  it("uses fallback skills after a query error", () => {
+    const fallbackSkills = [skill("provider-fallback")];
+
+    expect(
+      resolveProviderWorkspaceSkills({
+        nextKey: "environment:codex:/repo",
+        nextSkills: null,
+        isPending: false,
+        error: "Invalid git cwd",
+        currentKey: "environment:codex:/repo",
+        currentSkills: [],
+        fallbackSkills,
+      }),
+    ).toBe(fallbackSkills);
   });
 });
 
