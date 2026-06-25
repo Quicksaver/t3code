@@ -108,11 +108,19 @@ export interface ThreadJumpHintVisibilityController {
   dispose: () => void;
 }
 
+export const SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS = "md:hidden";
+
 export function resolveSidebarStageBadgeLabel(input: {
   primaryServerVersion: string | null | undefined;
   fallbackStageLabel: string;
 }): string {
   return resolveServerBackedAppStageLabel(input);
+}
+
+export function resolveSidebarTriggerVisibilityClassName(input: {
+  isVscodeWebview: boolean;
+}): string {
+  return input.isVscodeWebview ? "" : SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS;
 }
 
 export function createThreadJumpHintVisibilityController(input: {
