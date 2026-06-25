@@ -67,6 +67,12 @@ export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
 });
 export type GetAuthPairingLinkByCredentialInput = typeof GetAuthPairingLinkByCredentialInput.Type;
 
+export const DeleteExpiredAuthPairingLinksInput = Schema.Struct({
+  now: Schema.DateTimeUtcFromString,
+  subject: Schema.String,
+});
+export type DeleteExpiredAuthPairingLinksInput = typeof DeleteExpiredAuthPairingLinksInput.Type;
+
 const AuthPairingLinkRawDbRow = Schema.Struct({
   id: Schema.String,
   credential: Schema.Unknown,
@@ -101,6 +107,9 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
+    readonly deleteExpired: (
+      input: DeleteExpiredAuthPairingLinksInput,
+    ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
   }
 >()("t3/persistence/AuthPairingLinks/AuthPairingLinkRepository") {}
 
@@ -246,6 +255,18 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteExpiredPairingLinkRows = SqlSchema.findAll({
+    Request: DeleteExpiredAuthPairingLinksInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ now, subject }) =>
+      sql`
+        DELETE FROM auth_pairing_links
+        WHERE subject = ${subject}
+          AND expires_at <= ${now}
+        RETURNING id AS "id"
+      `,
+  });
+
   const create: AuthPairingLinkRepository["Service"]["create"] = (input) =>
     createPairingLinkRow(input).pipe(
       Effect.mapError(
@@ -344,12 +365,24 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const deleteExpired: AuthPairingLinkRepository["Service"]["deleteExpired"] = (input) =>
+    deleteExpiredPairingLinkRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthPairingLinkRepository.deleteExpired:query",
+          "AuthPairingLinkRepository.deleteExpired:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.length),
+    );
+
   return {
     create,
     consumeAvailable,
     listActive,
     revoke,
     getByCredential,
+    deleteExpired,
   } satisfies AuthPairingLinkRepository["Service"];
 });
 

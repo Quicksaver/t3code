@@ -4,8 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { AuthSessionRepository } from "../Services/AuthSessions.ts";
-import { AuthSessionRepositoryLive } from "./AuthSessions.ts";
+import { AuthSessionRepository, layer as AuthSessionRepositoryLive } from "../AuthSessions.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 
 const testLayer = it.layer(AuthSessionRepositoryLive.pipe(Layer.provide(SqlitePersistenceMemory)));

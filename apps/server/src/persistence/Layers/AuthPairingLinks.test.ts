@@ -4,8 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import { AuthPairingLinkRepository } from "../Services/AuthPairingLinks.ts";
-import { AuthPairingLinkRepositoryLive } from "./AuthPairingLinks.ts";
+import {
+  AuthPairingLinkRepository,
+  layer as AuthPairingLinkRepositoryLive,
+} from "../AuthPairingLinks.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 
 const testLayer = it.layer(

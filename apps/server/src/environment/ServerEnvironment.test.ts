@@ -41,10 +41,14 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,
+    hostIntegration: undefined,
     staticDir: undefined,
     devUrl: undefined,
     noBrowser: false,
     startupPresentation: "browser",
+    autoBootstrapWorkspaceFolders: [],
+    activeBootstrapWorkspaceFolderKey: undefined,
+    hostMcpServers: [],
   } satisfies ServerConfig.ServerConfig["Service"];
 });
 

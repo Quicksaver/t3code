@@ -297,8 +297,8 @@ it.effect("resolveAutoBootstrapWelcomeTargets bootstraps every VS Code workspace
 
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
-    const targets = yield* resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provideService(ServerConfig, {
+    const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/workspaces/a",
         autoBootstrapProjectFromCwd: true,
         autoBootstrapWorkspaceFolders: [
@@ -318,21 +318,22 @@ it.effect("resolveAutoBootstrapWelcomeTargets bootstraps every VS Code workspace
           },
         ],
         activeBootstrapWorkspaceFolderKey: "vscode-remote:ssh-remote+host:/workspaces/b",
+        hostMcpServers: [],
       } as never),
-      Effect.provideService(ProjectionSnapshotQuery, {
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
         getShellSnapshot: () => Effect.die("unused"),
         getArchivedShellSnapshot: () => Effect.die("unused"),
         getSnapshotSequence: () => Effect.die("unused"),
         getCounts: () => Effect.die("unused"),
-        getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+        getActiveProjectByWorkspaceRoot: (workspaceRoot: string) =>
           Effect.succeed(
             Option.some({
               id: workspaceRoot.endsWith("/a") ? projectA : projectB,
               title: workspaceRoot.endsWith("/a") ? "A" : "B",
               workspaceRoot,
-              defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
+              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapDefaultModelSelection(),
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -340,21 +341,21 @@ it.effect("resolveAutoBootstrapWelcomeTargets bootstraps every VS Code workspace
             }),
           ),
         getProjectShellById: () => Effect.die("unused"),
-        getFirstActiveThreadIdByProjectId: (projectId) =>
+        getFirstActiveThreadIdByProjectId: (projectId: ProjectId) =>
           Effect.succeed(Option.some(projectId === projectA ? threadA : threadB)),
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
       }),
-      Effect.provideService(OrchestrationEngineService, {
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
         dispatch: (command) =>
           Ref.update(dispatchCalls, (calls) => [...calls, command.type]).pipe(
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
-      } satisfies OrchestrationEngineShape),
+      } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
     );
 

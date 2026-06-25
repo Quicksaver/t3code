@@ -86,41 +86,41 @@ const respondToLegacyAuthError = (input: {
   });
 
 type LegacyAuthCompatibilityError =
-  | EnvironmentAuth.ServerAuthInvalidCredentialError
+  | EnvironmentAuth.ServerAuthCredentialError
   | EnvironmentAuth.ServerAuthInvalidRequestError
   | EnvironmentAuth.ServerAuthInternalError;
 
 const catchLegacyAuthErrors = <R>(
-  effect: Effect.Effect<
-    ReturnType<typeof HttpServerResponse.jsonUnsafe>,
-    LegacyAuthCompatibilityError,
-    R
-  >,
+  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, LegacyAuthCompatibilityError, R>,
 ) =>
   effect.pipe(
-    Effect.catchTags({
-      ServerAuthInvalidCredentialError: (error) =>
-        respondToLegacyAuthError({
-          status: 401,
-          message:
-            error.reason === "missing_credential"
-              ? "Authentication required."
-              : "Invalid bootstrap credential.",
-          cause: error,
-        }),
-      ServerAuthInvalidRequestError: (error) =>
-        respondToLegacyAuthError({
-          status: 400,
-          message: error.reason === "invalid_scope" ? "Invalid auth scope." : "Scope not granted.",
-          cause: error,
-        }),
-      ServerAuthInternalError: (error) =>
-        respondToLegacyAuthError({
-          status: 500,
-          message: error.message,
-          cause: error,
-        }),
-    }),
+    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+      respondToLegacyAuthError({
+        status: 401,
+        message:
+          EnvironmentAuth.serverAuthCredentialReason(error) === "missing_credential"
+            ? "Authentication required."
+            : "Invalid bootstrap credential.",
+        cause: error,
+      }),
+    ),
+    Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
+      respondToLegacyAuthError({
+        status: 400,
+        message:
+          EnvironmentAuth.serverAuthInvalidRequestReason(error) === "invalid_scope"
+            ? "Invalid auth scope."
+            : "Scope not granted.",
+        cause: error,
+      }),
+    ),
+    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+      respondToLegacyAuthError({
+        status: 500,
+        message: error.message,
+        cause: error,
+      }),
+    ),
   );
 
 export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
@@ -257,7 +257,6 @@ export const authBearerBootstrapCompatibilityRouteLayer = HttpRouter.add(
       Effect.mapError(
         (cause) =>
           new EnvironmentAuth.ServerAuthInvalidCredentialError({
-            reason: "invalid_credential",
             cause,
           }),
       ),

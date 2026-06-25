@@ -49,6 +49,7 @@ const makePairingGrantStoreTestLayer = (
           listActive: () => Effect.succeed([]),
           revoke: () => Effect.succeed(false),
           getByCredential: () => Effect.succeed(Option.none()),
+          deleteExpired: () => Effect.succeed(0),
           ...overrides,
         }),
       ),
