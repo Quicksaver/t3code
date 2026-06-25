@@ -31,22 +31,25 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 
+export type SidebarThreadParentRelation = {
+  readonly kind: string;
+  readonly rootThreadId?: string | undefined;
+  readonly parentThreadId?: string | undefined;
+  readonly parentTurnId?: string | undefined;
+  readonly parentActivitySequence?: number | undefined;
+  readonly depth?: number | undefined;
+  readonly status?: string | undefined;
+  readonly [key: string]: unknown;
+};
+
 type SidebarThreadParentRelationInput = {
-  readonly parentRelation?: { readonly kind: string } | null | undefined;
+  readonly id?: string;
+  readonly parentRelation?: SidebarThreadParentRelation | null | undefined;
 };
 
 type SidebarThreadVisibilityInput = {
   readonly id: string;
-  readonly parentRelation?:
-    | {
-        readonly kind: string;
-        readonly parentThreadId?: string | undefined;
-        readonly parentActivitySequence?: number | undefined;
-        readonly depth?: number | undefined;
-        readonly status?: string | undefined;
-      }
-    | null
-    | undefined;
+  readonly parentRelation?: SidebarThreadParentRelation | null | undefined;
   readonly session?: { readonly status: string } | null | undefined;
 };
 
