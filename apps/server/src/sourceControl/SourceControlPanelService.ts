@@ -63,7 +63,7 @@ const LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS = [
   "--format=%(refname:short)%09%(HEAD)%09%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
 ] as const;
 
-export interface SourceControlPanelServiceShape {
+interface SourceControlPanelServiceShape {
   readonly snapshot: (
     input: VcsPanelSnapshotInput,
   ) => Effect.Effect<VcsPanelSnapshotResult, GitCommandError>;
@@ -1478,7 +1478,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     }).pipe(Effect.orElseSucceed(() => null));
 
-  const enrichWorkingTreeFiles: SourceControlPanelServiceShape["enrichWorkingTreeFiles"] =
+  const enrichWorkingTreeFiles: SourceControlPanelService["Service"]["enrichWorkingTreeFiles"] =
     Effect.fn("enrichWorkingTreeFiles")(function* (input) {
       const requestedPaths = uniquePaths(input.paths);
       const [porcelain, unstagedNumstat] = yield* Effect.all(
@@ -1575,7 +1575,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       };
     });
 
-  const snapshot: SourceControlPanelServiceShape["snapshot"] = Effect.fn("snapshot")(
+  const snapshot: SourceControlPanelService["Service"]["snapshot"] = Effect.fn("snapshot")(
     function* (input) {
       const [
         localStatus,
@@ -1711,13 +1711,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     },
   );
 
-  const stageFiles: SourceControlPanelServiceShape["stageFiles"] = (input) =>
+  const stageFiles: SourceControlPanelService["Service"]["stageFiles"] = (input) =>
     run("vcs.panel.stageFiles", input.cwd, ["add", "-A", "--", ...input.paths]).pipe(Effect.asVoid);
 
-  const unstageFiles: SourceControlPanelServiceShape["unstageFiles"] = (input) =>
+  const unstageFiles: SourceControlPanelService["Service"]["unstageFiles"] = (input) =>
     run("vcs.panel.unstageFiles", input.cwd, ["reset", "--", ...input.paths]).pipe(Effect.asVoid);
 
-  const discardFiles: SourceControlPanelServiceShape["discardFiles"] = (input) =>
+  const discardFiles: SourceControlPanelService["Service"]["discardFiles"] = (input) =>
     Effect.gen(function* () {
       const paths = uniquePaths(input.paths);
       if (paths.length === 0) return;
@@ -1777,65 +1777,65 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     });
 
-  const readFileDiff: SourceControlPanelServiceShape["readFileDiff"] = Effect.fn("readFileDiff")(
-    function* (input) {
-      const source = input.source ?? {
-        kind: "working-tree" as const,
-        staged: input.staged ?? false,
-      };
-      if (source.kind === "commit") {
-        const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
-          "show",
-          "--format=",
-          "--no-ext-diff",
-          "--patch",
-          "--minimal",
-          source.sha,
-          "--",
-          input.path,
-        ]);
-        return { path: input.path, staged: false, patch };
-      }
-      if (source.kind === "compare") {
-        const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
-          "diff",
-          "--no-ext-diff",
-          "--patch",
-          "--minimal",
-          `${source.baseRef}...${source.refName}`,
-          "--",
-          input.path,
-        ]);
-        return { path: input.path, staged: false, patch };
-      }
-      if (source.kind === "stash") {
-        const patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
-          "stash",
-          "show",
-          "--patch",
-          "--include-untracked",
-          source.stashRef,
-          "--",
-          input.path,
-        ]);
-        return { path: input.path, staged: false, patch };
-      }
+  const readFileDiff: SourceControlPanelService["Service"]["readFileDiff"] = Effect.fn(
+    "readFileDiff",
+  )(function* (input) {
+    const source = input.source ?? {
+      kind: "working-tree" as const,
+      staged: input.staged ?? false,
+    };
+    if (source.kind === "commit") {
+      const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
+        "show",
+        "--format=",
+        "--no-ext-diff",
+        "--patch",
+        "--minimal",
+        source.sha,
+        "--",
+        input.path,
+      ]);
+      return { path: input.path, staged: false, patch };
+    }
+    if (source.kind === "compare") {
+      const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
+        "diff",
+        "--no-ext-diff",
+        "--patch",
+        "--minimal",
+        `${source.baseRef}...${source.refName}`,
+        "--",
+        input.path,
+      ]);
+      return { path: input.path, staged: false, patch };
+    }
+    if (source.kind === "stash") {
+      const patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
+        "stash",
+        "show",
+        "--patch",
+        "--include-untracked",
+        source.stashRef,
+        "--",
+        input.path,
+      ]);
+      return { path: input.path, staged: false, patch };
+    }
 
-      const args = source.staged
-        ? ["diff", "--cached", "--", input.path]
-        : ["diff", "--", input.path];
-      let patch = yield* run("vcs.panel.readFileDiff", input.cwd, args);
-      if (!source.staged && patch.trim().length === 0) {
-        patch = yield* run(
-          "vcs.panel.readUntrackedFileDiff",
-          input.cwd,
-          ["diff", "--no-index", "--", "/dev/null", input.path],
-          { allowNonZeroExit: true },
-        );
-      }
-      return { path: input.path, staged: source.staged, patch };
-    },
-  );
+    const args = source.staged
+      ? ["diff", "--cached", "--", input.path]
+      : ["diff", "--", input.path];
+    let patch = yield* run("vcs.panel.readFileDiff", input.cwd, args);
+    if (!source.staged && patch.trim().length === 0) {
+      patch = yield* run(
+        "vcs.panel.readUntrackedFileDiff",
+        input.cwd,
+        ["diff", "--no-index", "--", "/dev/null", input.path],
+        { allowNonZeroExit: true },
+      );
+    }
+    return { path: input.path, staged: source.staged, patch };
+  });
 
   const pushBranchDirect = Effect.fn("pushBranchDirect")(function* (
     cwd: string,
@@ -1869,32 +1869,32 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     ]).pipe(Effect.asVoid);
   });
 
-  const commitStaged: SourceControlPanelServiceShape["commitStaged"] = Effect.fn("commitStaged")(
-    function* (input) {
-      const args = ["commit", "-m", input.message.trim()];
-      yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
-      if (input.push) {
-        const status = yield* workflow
-          .status({ cwd: input.cwd })
-          .pipe(
-            Effect.mapError(
-              asGitCommandError("vcs.panel.commitStaged.status", input.cwd, ["status"]),
-            ),
-          );
-        if (!status.refName) {
-          return yield* gitError(
-            "vcs.panel.commitStaged.push",
-            input.cwd,
-            ["push"],
-            "Cannot push from detached HEAD.",
-          );
-        }
-        yield* pushBranchDirect(input.cwd, status.refName, false);
+  const commitStaged: SourceControlPanelService["Service"]["commitStaged"] = Effect.fn(
+    "commitStaged",
+  )(function* (input) {
+    const args = ["commit", "-m", input.message.trim()];
+    yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
+    if (input.push) {
+      const status = yield* workflow
+        .status({ cwd: input.cwd })
+        .pipe(
+          Effect.mapError(
+            asGitCommandError("vcs.panel.commitStaged.status", input.cwd, ["status"]),
+          ),
+        );
+      if (!status.refName) {
+        return yield* gitError(
+          "vcs.panel.commitStaged.push",
+          input.cwd,
+          ["push"],
+          "Cannot push from detached HEAD.",
+        );
       }
-    },
-  );
+      yield* pushBranchDirect(input.cwd, status.refName, false);
+    }
+  });
 
-  const pullBranch: SourceControlPanelServiceShape["pullBranch"] = Effect.fn("pullBranch")(
+  const pullBranch: SourceControlPanelService["Service"]["pullBranch"] = Effect.fn("pullBranch")(
     function* (input) {
       const status = yield* workflow
         .status({ cwd: input.cwd })
@@ -1981,13 +1981,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     },
   );
 
-  const pushBranch: SourceControlPanelServiceShape["pushBranch"] = Effect.fn("pushBranch")(
+  const pushBranch: SourceControlPanelService["Service"]["pushBranch"] = Effect.fn("pushBranch")(
     function* (input) {
       yield* pushBranchDirect(input.cwd, input.branchName, input.force ?? false, input.remoteName);
     },
   );
 
-  const fetchBranch: SourceControlPanelServiceShape["fetchBranch"] = Effect.fn("fetchBranch")(
+  const fetchBranch: SourceControlPanelService["Service"]["fetchBranch"] = Effect.fn("fetchBranch")(
     function* (input) {
       const remotes = yield* run("vcs.panel.fetchBranch.remotes", input.cwd, ["remote"]).pipe(
         Effect.map(parseRefLines),
@@ -2009,37 +2009,37 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     },
   );
 
-  const deleteBranch: SourceControlPanelServiceShape["deleteBranch"] = Effect.fn("deleteBranch")(
-    function* (input) {
-      if (input.branch.current) {
-        return yield* gitError(
-          "vcs.panel.deleteBranch",
-          input.cwd,
-          ["branch", "-d", input.branch.name],
-          "Cannot delete the current branch.",
-        );
-      }
-      if (input.branch.isRemote && input.branch.remoteName) {
-        const remoteBranchName = input.branch.name.startsWith(`${input.branch.remoteName}/`)
-          ? input.branch.name.slice(input.branch.remoteName.length + 1)
-          : input.branch.name;
-        yield* run("vcs.panel.deleteRemoteBranch", input.cwd, [
-          "push",
-          input.branch.remoteName,
-          "--delete",
-          remoteBranchName,
-        ]).pipe(Effect.asVoid);
-        return;
-      }
-      yield* run("vcs.panel.deleteLocalBranch", input.cwd, [
-        "branch",
-        input.force ? "-D" : "-d",
-        input.branch.name,
+  const deleteBranch: SourceControlPanelService["Service"]["deleteBranch"] = Effect.fn(
+    "deleteBranch",
+  )(function* (input) {
+    if (input.branch.current) {
+      return yield* gitError(
+        "vcs.panel.deleteBranch",
+        input.cwd,
+        ["branch", "-d", input.branch.name],
+        "Cannot delete the current branch.",
+      );
+    }
+    if (input.branch.isRemote && input.branch.remoteName) {
+      const remoteBranchName = input.branch.name.startsWith(`${input.branch.remoteName}/`)
+        ? input.branch.name.slice(input.branch.remoteName.length + 1)
+        : input.branch.name;
+      yield* run("vcs.panel.deleteRemoteBranch", input.cwd, [
+        "push",
+        input.branch.remoteName,
+        "--delete",
+        remoteBranchName,
       ]).pipe(Effect.asVoid);
-    },
-  );
+      return;
+    }
+    yield* run("vcs.panel.deleteLocalBranch", input.cwd, [
+      "branch",
+      input.force ? "-D" : "-d",
+      input.branch.name,
+    ]).pipe(Effect.asVoid);
+  });
 
-  const undoLatestCommit: SourceControlPanelServiceShape["undoLatestCommit"] = Effect.fn(
+  const undoLatestCommit: SourceControlPanelService["Service"]["undoLatestCommit"] = Effect.fn(
     "undoLatestCommit",
   )(function* (input) {
     const currentBranch = yield* run("vcs.panel.currentBranch", input.cwd, [
@@ -2064,12 +2064,12 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     ]).pipe(Effect.asVoid);
   });
 
-  const revertCommit: SourceControlPanelServiceShape["revertCommit"] = (input) =>
+  const revertCommit: SourceControlPanelService["Service"]["revertCommit"] = (input) =>
     run("vcs.panel.revertCommit", input.cwd, ["revert", "--no-edit", input.sha]).pipe(
       Effect.asVoid,
     );
 
-  const checkoutCommit: SourceControlPanelServiceShape["checkoutCommit"] = Effect.fn(
+  const checkoutCommit: SourceControlPanelService["Service"]["checkoutCommit"] = Effect.fn(
     "checkoutCommit",
   )(function* (input) {
     yield* run("vcs.panel.checkoutCommit", input.cwd, ["checkout", "--detach", input.sha]).pipe(
@@ -2078,7 +2078,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     return { refName: input.sha };
   });
 
-  const createBranchFromCommit: SourceControlPanelServiceShape["createBranchFromCommit"] =
+  const createBranchFromCommit: SourceControlPanelService["Service"]["createBranchFromCommit"] =
     Effect.fn("createBranchFromCommit")(function* (input) {
       const branchName = yield* validateGitPositionalName({
         operation: "vcs.panel.createBranchFromCommit",
@@ -2096,14 +2096,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       return { refName: branchName };
     });
 
-  const mergeBranchIntoCurrent: SourceControlPanelServiceShape["mergeBranchIntoCurrent"] = (
+  const mergeBranchIntoCurrent: SourceControlPanelService["Service"]["mergeBranchIntoCurrent"] = (
     input,
   ) =>
     run("vcs.panel.mergeBranchIntoCurrent", input.cwd, ["merge", "--no-edit", input.refName]).pipe(
       Effect.asVoid,
     );
 
-  const rebaseCurrentOnto: SourceControlPanelServiceShape["rebaseCurrentOnto"] = (input) =>
+  const rebaseCurrentOnto: SourceControlPanelService["Service"]["rebaseCurrentOnto"] = (input) =>
     run("vcs.panel.rebaseCurrentOnto", input.cwd, ["rebase", input.refName]).pipe(Effect.asVoid);
 
   return SourceControlPanelService.of({

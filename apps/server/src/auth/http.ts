@@ -98,33 +98,39 @@ const catchLegacyAuthErrors = <R>(
   >,
 ) =>
   effect.pipe(
-    Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
-      respondToLegacyAuthError({
-        status: 401,
-        message:
-          EnvironmentAuth.serverAuthCredentialReason(error) === "missing_credential"
-            ? "Authentication required."
-            : "Invalid bootstrap credential.",
-        cause: error,
-      }),
-    ),
-    Effect.catchIf(EnvironmentAuth.isServerAuthInvalidRequestError, (error) =>
-      respondToLegacyAuthError({
-        status: 400,
-        message:
-          EnvironmentAuth.serverAuthInvalidRequestReason(error) === "invalid_scope"
-            ? "Invalid auth scope."
-            : "Scope not granted.",
-        cause: error,
-      }),
-    ),
-    Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
-      respondToLegacyAuthError({
-        status: 500,
-        message: error.message,
-        cause: error,
-      }),
-    ),
+    Effect.catch((error) => {
+      if (EnvironmentAuth.isServerAuthCredentialError(error)) {
+        return respondToLegacyAuthError({
+          status: 401,
+          message:
+            EnvironmentAuth.serverAuthCredentialReason(error) === "missing_credential"
+              ? "Authentication required."
+              : "Invalid bootstrap credential.",
+          cause: error,
+        });
+      }
+
+      if (EnvironmentAuth.isServerAuthInvalidRequestError(error)) {
+        return respondToLegacyAuthError({
+          status: 400,
+          message:
+            EnvironmentAuth.serverAuthInvalidRequestReason(error) === "invalid_scope"
+              ? "Invalid auth scope."
+              : "Scope not granted.",
+          cause: error,
+        });
+      }
+
+      if (EnvironmentAuth.isServerAuthInternalError(error)) {
+        return respondToLegacyAuthError({
+          status: 500,
+          message: "Internal authentication error.",
+          cause: error,
+        });
+      }
+
+      return Effect.fail(error satisfies never);
+    }),
   );
 
 export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(

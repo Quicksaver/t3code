@@ -320,11 +320,13 @@ Implemented so far:
   - reads extension-local `dist/webview/index.html`
   - injects a `<base>` tag using `webview.asWebviewUri(...)`
   - injects `window.t3HostBridge`
+  - escapes serialized bridge payloads before injecting them into inline scripts
   - injects the exchanged or restored bearer session token for app HTTP/WebSocket auth; VS Code host bridge bootstrap metadata no longer carries a pairing credential
   - injects VS Code display preferences from extension configuration
   - broadcasts display preference changes to open T3 Code webviews
   - injects VS Code host appearance and broadcasts theme/default-theme toggle changes to open T3 Code webviews
   - handles neutral host bridge requests for shared client settings persistence
+  - disposes superseded or failed connected-webview resources so stale reconnect renders cannot replace newer webview HTML
   - initializes the hash route
   - overwrites stale retained hash routes with the requested initial route
   - applies a restrictive CSP with local backend HTTP and WebSocket connect sources
@@ -338,6 +340,8 @@ Implemented so far:
   - runtime advertisement helpers in `packages/shared/desktopBackendAdvertisement`
   - desktop-side advertisement writes after backend readiness
   - VS Code-side advertisement discovery, loopback validation, readiness polling, stored-bearer validation, manual pairing, and bearer-session exchange
+  - bounded readiness response body reads so stalled desktop readiness JSON does not hang a reconnect attempt
+  - sanitized workspace-bootstrap HTTP errors so internal server failures are logged locally without leaking details to the webview
 - Added extension settings for restoring VS Code-hidden T3 Code controls:
   - `t3code.ui.showOpenInPicker`
   - `t3code.ui.showCheckoutModeIndicator`

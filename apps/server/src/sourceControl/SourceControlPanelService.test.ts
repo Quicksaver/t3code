@@ -20,7 +20,7 @@ import {
 } from "./SourceControlPanelService.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
-import { GitWorkflowService, type GitWorkflowServiceShape } from "../git/GitWorkflowService.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
   GitVcsDriver,
@@ -106,7 +106,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
 
 function makeTestLayer(
   execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, never>,
-  workflow: Partial<GitWorkflowServiceShape> = {},
+  workflow: Partial<GitWorkflowService["Service"]> = {},
   providers: Partial<
     Record<SourceControlProviderKind, SourceControlProvider.SourceControlProvider["Service"]>
   > = {},
@@ -144,7 +144,7 @@ function makeTestLayer(
             }),
           ),
         ...workflow,
-      } as GitWorkflowServiceShape),
+      } as GitWorkflowService["Service"]),
     ),
     Layer.provide(
       Layer.succeed(GitVcsDriver, {
