@@ -3,8 +3,8 @@ import {
   THREAD_CONVERSATION_MIN_WIDTH_PX,
   normalizeThreadConversationMaxWidth,
 } from "@t3tools/shared/displayPreferences";
-import * as crypto from "node:crypto";
-import * as fs from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import * as vscode from "vscode";
 
 import type { BackendConnection } from "./backendManager.ts";
@@ -62,8 +62,8 @@ export interface WebviewRenderInput {
 export async function renderT3Webview(input: WebviewRenderInput): Promise<string> {
   const webRoot = vscode.Uri.joinPath(input.extensionUri, "dist", "webview");
   const indexUri = vscode.Uri.joinPath(webRoot, "index.html");
-  const indexHtml = await fs.readFile(indexUri.fsPath, "utf8");
-  const nonce = crypto.randomBytes(16).toString("base64");
+  const indexHtml = await NodeFSP.readFile(indexUri.fsPath, "utf8");
+  const nonce = NodeCrypto.randomBytes(16).toString("base64");
   const webRootUri = input.webview.asWebviewUri(webRoot).toString().replace(/\/?$/, "/");
   const connectSources = [
     input.webview.cspSource,
@@ -105,7 +105,7 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
     `<head$1>
     <meta http-equiv="Content-Security-Policy" content="${escapeHtml(csp)}">
     <base href="${escapeHtml(webRootUri)}">
-    <script nonce="${escapeHtml(nonce)}">${bridgeScript}</script>`,
+    <script nonce="${escapeHtml(nonce)}">${escapeInlineScriptContent(bridgeScript)}</script>`,
   );
   if (html === indexHtml) {
     throw new Error("Unable to inject T3 webview host bridge: index.html is missing <head>.");
@@ -113,8 +113,32 @@ export async function renderT3Webview(input: WebviewRenderInput): Promise<string
   return html;
 }
 
+function escapeInlineScriptContent(value: string): string {
+  return value.replace(/<\//giu, "<\\/");
+}
+
+const SCRIPT_JSON_ESCAPE_PATTERN = /[<>&\u2028\u2029]/gu;
+const SCRIPT_JSON_ESCAPE_REPLACEMENTS: Readonly<Record<string, string>> = {
+  "<": "\\u003c",
+  ">": "\\u003e",
+  "&": "\\u0026",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+function serializeScriptJson(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    return "undefined";
+  }
+  return serialized.replace(
+    SCRIPT_JSON_ESCAPE_PATTERN,
+    (character) => SCRIPT_JSON_ESCAPE_REPLACEMENTS[character] ?? character,
+  );
+}
+
 export function renderDesktopBackendRequiredWebview(): string {
-  const nonce = crypto.randomBytes(16).toString("base64");
+  const nonce = NodeCrypto.randomBytes(16).toString("base64");
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -280,10 +304,7 @@ const DEFAULT_HOST_APPEARANCE: WebviewHostAppearance = {
 const HOST_BRIDGE_REQUEST_TIMEOUT_MS = 30_000;
 
 function makeBridgeScript(input: {
-  readonly bootstrap: WebviewBackendConnection & {
-    readonly environmentId: string;
-    readonly label: string;
-  };
+  readonly bootstrap: WebviewBackendConnection & { readonly label: string };
   readonly displayPreferences: WebviewDisplayPreferences;
   readonly hostAppearance: WebviewHostAppearance;
   readonly initialRoute: string;
@@ -292,11 +313,11 @@ function makeBridgeScript(input: {
   return `
     (() => {
       const vscode = acquireVsCodeApi();
-      let bootstrap = ${JSON.stringify(input.bootstrap)};
-      let displayPreferences = ${JSON.stringify(input.displayPreferences)};
-      let hostAppearance = ${JSON.stringify(input.hostAppearance)};
-      const initialRoute = ${JSON.stringify(input.initialRoute)};
-      const vscodeWorkspaceBootstrap = ${JSON.stringify(input.vscodeWorkspaceBootstrap)};
+      let bootstrap = ${serializeScriptJson(input.bootstrap)};
+      let displayPreferences = ${serializeScriptJson(input.displayPreferences)};
+      let hostAppearance = ${serializeScriptJson(input.hostAppearance)};
+      const initialRoute = ${serializeScriptJson(input.initialRoute)};
+      const vscodeWorkspaceBootstrap = ${serializeScriptJson(input.vscodeWorkspaceBootstrap)};
       const threadConversationMinWidthPx = ${THREAD_CONVERSATION_MIN_WIDTH_PX};
       const threadConversationMaxWidthPx = ${THREAD_CONVERSATION_MAX_WIDTH_PX};
       const THREAD_CONVERSATION_MIN_WIDTH_PX = threadConversationMinWidthPx;

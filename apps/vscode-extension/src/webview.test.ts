@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   THREAD_CONVERSATION_MAX_WIDTH_PX,
   THREAD_CONVERSATION_MIN_WIDTH_PX,
@@ -14,7 +14,7 @@ import { renderDesktopBackendRequiredWebview, renderT3Webview } from "./webview.
 vi.mock("vscode", () => ({
   Uri: {
     joinPath: (base: { fsPath: string }, ...segments: readonly string[]) => ({
-      fsPath: path.join(base.fsPath, ...segments),
+      fsPath: NodePath.join(base.fsPath, ...segments),
     }),
   },
 }));
@@ -23,16 +23,16 @@ describe("renderT3Webview", () => {
   let extensionRoot: string;
 
   beforeEach(() => {
-    extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-vscode-webview-"));
-    fs.mkdirSync(path.join(extensionRoot, "dist", "webview"), { recursive: true });
-    fs.writeFileSync(
-      path.join(extensionRoot, "dist", "webview", "index.html"),
+    extensionRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-vscode-webview-"));
+    NodeFS.mkdirSync(NodePath.join(extensionRoot, "dist", "webview"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(extensionRoot, "dist", "webview", "index.html"),
       '<!doctype html><html><head><title>T3</title></head><body><div id="root"></div></body></html>',
     );
   });
 
   afterEach(() => {
-    fs.rmSync(extensionRoot, { force: true, recursive: true });
+    NodeFS.rmSync(extensionRoot, { force: true, recursive: true });
     vi.restoreAllMocks();
   });
 
@@ -120,8 +120,9 @@ describe("renderT3Webview", () => {
     expect(html).toContain("clearTimeout(pending.timeoutId)");
     expect(html).not.toContain('"bootstrapToken"');
     expect(html).toContain('"bearerToken":"bearer-token"');
-    expect(html).toContain('"label":"Local VS Code"');
-    expect(html).toContain('"httpBaseUrl":"http://127.0.0.1:49111"');
+    expect(html).toContain(
+      '"label":"Local VS Code","environmentId":"environment-desktop","httpBaseUrl"',
+    );
     expect(html).toContain('"environmentId":"environment-desktop"');
     expect(html).toContain('"projectId":"project-workspace"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');
@@ -129,8 +130,8 @@ describe("renderT3Webview", () => {
   });
 
   it("injects into head tags with attributes", async () => {
-    fs.writeFileSync(
-      path.join(extensionRoot, "dist", "webview", "index.html"),
+    NodeFS.writeFileSync(
+      NodePath.join(extensionRoot, "dist", "webview", "index.html"),
       '<!doctype html><html><head data-test="true"><title>T3</title></head><body></body></html>',
     );
 
@@ -199,6 +200,35 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"threadConversationMaxWidthPx":960');
     expect(html).toContain('"themeSource":"vscode"');
     expect(html).toContain('"colorScheme":"dark"');
+  });
+
+  it("escapes script parser sentinels in serialized host bridge data", async () => {
+    const html = await renderT3Webview({
+      extensionUri: { fsPath: extensionRoot } as never,
+      webview: {
+        cspSource: "vscode-webview:",
+        asWebviewUri: (uri: { fsPath: string }) => ({
+          toString: () => `vscode-resource:${uri.fsPath}`,
+        }),
+      } as never,
+      connection: {
+        httpBaseUrl: "http://127.0.0.1:49111",
+        wsBaseUrl: "ws://127.0.0.1:49111",
+        bearerToken: 'token</script><script>alert("x")</script><!--',
+        cwd: "/workspace",
+        t3Home: "/home/user/.t3",
+        environmentId: "environment-desktop",
+        workspaceFolders: [],
+        bootstrapProjects: [],
+      },
+    });
+
+    expect(html).toContain(
+      '"bearerToken":"token\\u003c/script\\u003e\\u003cscript\\u003ealert(\\"x\\")\\u003c/script\\u003e\\u003c!--"',
+    );
+    expect(html).toContain("</script>");
+    expect(html).not.toContain('token</script><script>alert("x")</script><!--');
+    expect(html).not.toContain("<!--");
   });
 });
 

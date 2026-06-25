@@ -1,6 +1,6 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
@@ -102,7 +102,7 @@ const workspaceFolders = [
 
 function makeStoredBearerSecretKey() {
   return resolveStoredBearerTokenSecretKey({
-    t3Home: path.join(os.homedir(), ".t3"),
+    t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
     httpBaseUrl: "http://127.0.0.1:3773/",
     workspaceFolders,
   });
@@ -203,7 +203,7 @@ describe("BackendManager", () => {
   let extensionRoot: string;
 
   beforeEach(() => {
-    extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-vscode-extension-"));
+    extensionRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-vscode-extension-"));
     vscodeState.settings = {};
     vscodeState.workspaceFolders = [
       {
@@ -221,7 +221,7 @@ describe("BackendManager", () => {
   });
 
   afterEach(() => {
-    fs.rmSync(extensionRoot, { force: true, recursive: true });
+    NodeFS.rmSync(extensionRoot, { force: true, recursive: true });
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -288,7 +288,7 @@ describe("BackendManager", () => {
       wsBaseUrl: "ws://127.0.0.1:3773/",
       bearerToken: "desktop-bearer-token",
       cwd: "/workspace",
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       environmentId: "environment-desktop",
       workspaceFolders,
       activeWorkspaceFolderKey: "file::/workspace",
@@ -307,7 +307,7 @@ describe("BackendManager", () => {
 
     expect(promptForPairingToken).toHaveBeenCalledWith({
       httpBaseUrl: "http://127.0.0.1:3773/",
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       workspaceFolders,
     });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -322,7 +322,7 @@ describe("BackendManager", () => {
       "desktop-bearer-token",
     );
     expect(writeHostMcpAdvertisementMock).toHaveBeenCalledWith({
-      t3Home: path.join(os.homedir(), ".t3"),
+      t3Home: NodePath.join(NodeOS.homedir(), ".t3"),
       advertisement: expect.objectContaining({
         hostKind: "vscode",
         mcpServer: {
@@ -604,6 +604,203 @@ describe("BackendManager", () => {
       bearerToken: "desktop-bearer-token",
       initialThreadRoute: "/_chat/environment-desktop/thread-slow",
     });
+  });
+
+  it("surfaces malformed readiness responses without retrying until timeout", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/.well-known/t3/environment") {
+        return new Response(JSON.stringify({}), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected request URL: ${url.href}`);
+    });
+    const manager = new BackendManager(
+      makeContext(makeSecretStorage()),
+      makeOutputChannel() as never,
+      makeDependencies({ fetch: fetchMock }),
+    );
+
+    await expect(manager.ensureStarted()).rejects.toThrow(
+      "Desktop backend readiness response did not include an environment id.",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces null readiness responses without retrying until timeout", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/.well-known/t3/environment") {
+        return new Response("null", {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected request URL: ${url.href}`);
+    });
+    const manager = new BackendManager(
+      makeContext(makeSecretStorage()),
+      makeOutputChannel() as never,
+      makeDependencies({ fetch: fetchMock }),
+    );
+
+    await expect(manager.ensureStarted()).rejects.toThrow(
+      "Desktop backend readiness response did not include an environment id.",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces invalid readiness JSON without retrying until timeout", async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/.well-known/t3/environment") {
+        return new Response("{", {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      throw new Error(`Unexpected request URL: ${url.href}`);
+    });
+    const manager = new BackendManager(
+      makeContext(makeSecretStorage()),
+      makeOutputChannel() as never,
+      makeDependencies({ fetch: fetchMock }),
+    );
+
+    await expect(manager.ensureStarted()).rejects.toThrow(SyntaxError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient readiness body read failures", async () => {
+    let readinessAttempts = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/.well-known/t3/environment") {
+        readinessAttempts += 1;
+        if (readinessAttempts === 1) {
+          return {
+            ok: true,
+            json: () => Promise.reject(new Error("socket reset while reading body")),
+          } as Response;
+        }
+        return new Response(JSON.stringify({ environmentId: "environment-desktop" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (url.pathname === "/api/auth/bootstrap/bearer") {
+        return new Response(JSON.stringify({ sessionToken: "desktop-bearer-token" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (url.pathname === "/api/vscode/workspace-bootstrap") {
+        return new Response(
+          JSON.stringify({
+            bootstrapProjects: [
+              {
+                workspaceFolderKey: "file::/workspace",
+                workspaceFolderName: "workspace",
+                cwd: "/workspace",
+                projectId: "project-workspace",
+                bootstrapThreadId: "thread-retried",
+                isActive: true,
+              },
+            ],
+          }),
+          {
+            headers: { "content-type": "application/json" },
+            status: 200,
+          },
+        );
+      }
+      throw new Error(`Unexpected request URL: ${url.href}`);
+    });
+    const manager = new BackendManager(
+      makeContext(makeSecretStorage()),
+      makeOutputChannel() as never,
+      makeDependencies({ fetch: fetchMock }),
+    );
+
+    await expect(manager.ensureStarted()).resolves.toMatchObject({
+      bearerToken: "desktop-bearer-token",
+      initialThreadRoute: "/_chat/environment-desktop/thread-retried",
+    });
+    expect(readinessAttempts).toBe(2);
+  });
+
+  it("keeps stalled readiness body reads under the attempt timeout", async () => {
+    vi.useFakeTimers();
+
+    let resolveReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      resolveReadStarted = resolve;
+    });
+    let readinessAttempts = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(input.toString());
+      if (url.pathname === "/.well-known/t3/environment") {
+        readinessAttempts += 1;
+        if (readinessAttempts === 1) {
+          return {
+            ok: true,
+            json: () => {
+              resolveReadStarted();
+              return new Promise(() => {});
+            },
+          } as Response;
+        }
+        return new Response(JSON.stringify({ environmentId: "environment-desktop" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (url.pathname === "/api/auth/bootstrap/bearer") {
+        return new Response(JSON.stringify({ sessionToken: "desktop-bearer-token" }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (url.pathname === "/api/vscode/workspace-bootstrap") {
+        return new Response(
+          JSON.stringify({
+            bootstrapProjects: [
+              {
+                workspaceFolderKey: "file::/workspace",
+                workspaceFolderName: "workspace",
+                cwd: "/workspace",
+                projectId: "project-workspace",
+                bootstrapThreadId: "thread-retried",
+                isActive: true,
+              },
+            ],
+          }),
+          {
+            headers: { "content-type": "application/json" },
+            status: 200,
+          },
+        );
+      }
+      throw new Error(`Unexpected request URL: ${url.href}`);
+    });
+    const manager = new BackendManager(
+      makeContext(makeSecretStorage()),
+      makeOutputChannel() as never,
+      makeDependencies({ fetch: fetchMock }),
+    );
+    const started = manager.ensureStarted();
+
+    await readStarted;
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(100);
+
+    await expect(started).resolves.toMatchObject({
+      bearerToken: "desktop-bearer-token",
+      initialThreadRoute: "/_chat/environment-desktop/thread-retried",
+    });
+    expect(readinessAttempts).toBe(2);
   });
 
   it("fails when no desktop backend advertisement is available", async () => {

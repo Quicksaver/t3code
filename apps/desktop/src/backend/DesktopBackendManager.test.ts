@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import {
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
@@ -175,6 +175,78 @@ describe("DesktopBackendManager", () => {
     assert.equal(error.reason, "backend exited with code 1");
     assert.equal(error.delayMs, 500);
     assert.equal(error.message, "Desktop backend restart failed after a scheduled 500ms delay.");
+  });
+
+  it("preserves desktop backend advertisement failure context without deriving the message from the cause", () => {
+    const cause = new Error("private advertisement failure detail");
+    const error = new DesktopBackendManager.DesktopBackendAdvertisementError({
+      operation: "write",
+      t3Home: "/tmp/t3-home",
+      cause,
+    });
+
+    assert.strictEqual(error.cause, cause);
+    assert.equal(error.operation, "write");
+    assert.equal(error.t3Home, "/tmp/t3-home");
+    assert.equal(
+      error.message,
+      "Failed to write the desktop backend advertisement in /tmp/t3-home.",
+    );
+    assert.notInclude(error.message, cause.message);
+    assert.notInclude(JSON.stringify(error), cause.message);
+  });
+
+  it("describes advertisement causes without throwing", () => {
+    const plain = new Error("plain failure");
+    assert.include(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(plain),
+      "plain failure",
+    );
+
+    const nested = new Error("nested https://user:secret@example.com/path?token=hidden#fragment");
+    const withCause = new Error("outer failure");
+    Object.defineProperty(withCause, "cause", { value: nested });
+    const withCauseDescription =
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(withCause);
+    assert.include(withCauseDescription, "outer failure");
+    assert.include(withCauseDescription, "nested");
+    assert.include(withCauseDescription, "https://example.com/path");
+    assert.notInclude(withCauseDescription, "secret");
+    assert.notInclude(withCauseDescription, "token=hidden");
+
+    const malformedUrl = new Error(
+      "bad https://user:secret@example.com:bad/path?token=hidden#fragment",
+    );
+    const malformedUrlDescription =
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(malformedUrl);
+    assert.include(malformedUrlDescription, "https://example.com:bad/path");
+    assert.notInclude(malformedUrlDescription, "secret");
+    assert.notInclude(malformedUrlDescription, "token=hidden");
+    assert.notInclude(malformedUrlDescription, "#fragment");
+
+    const pojo = { code: "EWRITE", path: "/tmp/t3/backend.json" };
+    assert.equal(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(pojo),
+      '{"code":"EWRITE","path":"/tmp/t3/backend.json"}',
+    );
+
+    const nullPrototype = Object.create(null) as Record<string, unknown>;
+    nullPrototype.code = "ENOENT";
+    assert.equal(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(nullPrototype),
+      '{"code":"ENOENT"}',
+    );
+
+    const advertisementError = new DesktopBackendManager.DesktopBackendAdvertisementError({
+      operation: "write",
+      t3Home: "/tmp/t3-home",
+      cause: pojo,
+    });
+    assert.strictEqual(advertisementError.cause, pojo);
+    assert.include(
+      DesktopBackendManager.describeDesktopBackendAdvertisementCause(advertisementError),
+      '"code":"EWRITE"',
+    );
   });
 
   it.effect("spawns the backend with fd3 bootstrap JSON and reports HTTP readiness", () =>
@@ -620,7 +692,7 @@ describe("DesktopBackendManager", () => {
 
   it.effect("removes the backend advertisement after closing the run scope", () =>
     Effect.gen(function* () {
-      const t3Home = fs.mkdtempSync(path.join(os.tmpdir(), "t3-desktop-stop-order-"));
+      const t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-stop-order-"));
       const closeObservedAdvertisement = yield* Deferred.make<void>();
       const ready = yield* Deferred.make<void>();
       const closed = yield* Deferred.make<void>();
@@ -673,7 +745,7 @@ describe("DesktopBackendManager", () => {
           assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
         }).pipe(Effect.provide(managerLayer));
       } finally {
-        fs.rmSync(t3Home, { force: true, recursive: true });
+        NodeFS.rmSync(t3Home, { force: true, recursive: true });
       }
     }),
   );
