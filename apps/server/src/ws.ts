@@ -641,24 +641,6 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
-      const streamThreadDetailEventsAfterSnapshot = (
-        threadId: ThreadId,
-        snapshotSequence: number,
-      ) =>
-        orchestrationEngine.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) =>
-              event.sequence > snapshotSequence &&
-              event.aggregateKind === "thread" &&
-              event.aggregateId === threadId &&
-              isThreadDetailEvent(event),
-          ),
-          Stream.map((event) => ({
-            kind: "event" as const,
-            event,
-          })),
-        );
-
       const toShellStreamEvent = (
         event: OrchestrationEvent,
       ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> => {
@@ -1161,15 +1143,6 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const liveEventQueue = yield* Queue.unbounded<{
-                readonly kind: "event";
-                readonly event: OrchestrationEvent;
-              }>();
-              yield* streamThreadDetailEventsAfterSnapshot(input.threadId, 0).pipe(
-                Stream.runForEach((item) => Queue.offer(liveEventQueue, item).pipe(Effect.asVoid)),
-                Effect.forkScoped,
-              );
-
               const [threadDetail, snapshotSequence] = yield* Effect.all([
                 projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
                   Effect.mapError(
@@ -1199,8 +1172,18 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 });
               }
 
-              const liveStream = Stream.fromQueue(liveEventQueue).pipe(
-                Stream.filter((item) => item.event.sequence > snapshotSequence),
+              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.sequence > snapshotSequence &&
+                    event.aggregateKind === "thread" &&
+                    event.aggregateId === input.threadId &&
+                    isThreadDetailEvent(event),
+                ),
+                Stream.map((event) => ({
+                  kind: "event" as const,
+                  event,
+                })),
               );
 
               return Stream.concat(

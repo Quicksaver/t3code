@@ -147,7 +147,6 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { useHostDisplayPreferences } from "../hostDisplayPreferences";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -1051,9 +1050,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
-  const hostDisplayPreferences = useHostDisplayPreferences();
   const terminalEnabled = true;
-  const sourceControlPanelEnabled = hostDisplayPreferences.enableSourceControlPanel;
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
@@ -2153,8 +2150,7 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitCwd },
         }),
   );
-  const sourceControlAvailable =
-    sourceControlPanelEnabled && activeThreadRef !== null && gitCwd !== null;
+  const sourceControlAvailable = activeThreadRef !== null && gitCwd !== null;
   const visibleRightPanelSurfaces = useMemo(
     () =>
       sourceControlAvailable

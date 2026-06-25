@@ -22,11 +22,10 @@ Primary implementation files:
 - `packages/contracts/src/rpc.ts`
 - `packages/contracts/src/ipc.ts`
 - `packages/client-runtime/src/state/sourceControl.ts`
-- `packages/client-runtime/src/environment/workspaceScope.ts`
 
 ## Entry Points And Host Behavior
 
-Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when the host setting allows it, a thread or draft-thread ref exists for right-panel state, and the active project resolves to a repository cwd.
+Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when a thread or draft-thread ref exists for right-panel state and the active project resolves to a repository cwd.
 
 Right-panel integration is owned by:
 
@@ -34,8 +33,6 @@ Right-panel integration is owned by:
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/state/sourceControlPanel.ts`
-
-The VS Code extension exposes the shared T3 Code panel through the `t3code.ui.enableSourceControlPanel` display setting. Browser and desktop hosts enable the panel by default; VS Code webviews hide it by default so it does not compete with VS Code's native Source Control view. The setting only controls visibility of the shared panel; it does not fork source-control behavior or change backend capabilities.
 
 ## Layout
 
@@ -75,7 +72,7 @@ When a repository has multiple remotes, the server checks local branches against
 
 The server also checks open change requests for every local branch across all configured remotes whose fetch URL maps to a supported provider: GitHub, GitLab, Azure DevOps, and Bitbucket. For each matching open PR/MR where the local branch is the head branch, the panel compares the local branch only against the found change request's base branch on that same remote. A PR/MR-derived Actionable row is shown only when the local branch is behind that remote base branch; if the branch is already current with, ahead of, or unrelated to the base branch, no Actionable entry is shown. Provider lookup is best-effort: authentication, CLI/API, or unsupported-remote failures omit PR/MR-derived rows without blocking the Git snapshot, but provider-specific errors still preserve structured causes for diagnostics.
 
-Client-side Actionable/Remotes expansion, row selection, and working-tree enrichment state is owned by `apps/web/src/components/source-control/SourceControlPanel.tsx`, while `apps/web/src/state/sourceControlPanel.ts` owns the environment-scoped panel RPC wrapper and presentation-state helper. Shared workspace scoping helpers in `packages/client-runtime/src/environment/workspaceScope.ts` resolve the active project/thread context used by the panel after the upstream connection-runtime rewrite, so the panel does not duplicate subagent/root-thread filtering logic in the component.
+Client-side Actionable/Remotes expansion, row selection, and working-tree enrichment state is owned by `apps/web/src/components/source-control/SourceControlPanel.tsx`, while `apps/web/src/state/sourceControlPanel.ts` owns the environment-scoped panel RPC wrapper and presentation-state helper.
 
 The `Actionable` header has a `Fetch` action. The panel also periodically fetches remotes every five minutes so local upstream status and same-name fork status stay fresh without requiring a manual refresh while keeping idle network and Git churn conservative.
 
@@ -222,10 +219,12 @@ The current implementation has been exercised against the throwaway repository a
 
 Focused unit coverage now also covers the sync-vs-compare split: a local branch configured against `upstream/main` is treated as unpublished/publishable instead of diverged, a same-name remote tracking branch remains a normal sync upstream, server-side publishing targets the local branch name even when Git reports a different configured upstream/base ref, the current default branch remains the default compare ref, branch worktree paths fall back from porcelain worktree output to branch-format placeholders without failing on older Git versions, tracked discard restore failures are surfaced, fallback line-based rename parsing preserves source paths, merged working-tree row stats are summed, late-month relative dates do not fall through to `0 years ago`, panel error wrapping preserves original causes, provider adapter errors preserve sanitized transport context through `sourceControlProviderError`, and upstream typed GitLab CLI errors preserve structured process failures without the retired local string normalizer.
 
-Before considering source-control changes complete, run:
+Before considering source-control changes complete, run the focused source-control checks plus the repository-wide checks:
 
 ```sh
-pnpm run test:source-control
+pnpm exec vp test run apps/server/src/sourceControl/SourceControlPanelService.test.ts apps/server/src/vcs/VcsStatusBroadcaster.test.ts apps/server/src/vcs/GitVcsDriverCore.test.ts
+pnpm exec vp test run apps/web/src/components/source-control/SourceControlPanel.logic.test.ts apps/web/src/state/sourceControlPanel.test.ts
+pnpm exec vp test run packages/contracts/src/git.test.ts packages/shared/src/git.test.ts packages/client-runtime/src/state/vcsAction.test.ts
 pnpm exec vp check
 pnpm exec vp run typecheck
 ```

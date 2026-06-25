@@ -11,13 +11,6 @@ import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 
-export {
-  filterProjectsForVscodeScope,
-  resolveVscodeInitialThreadRef,
-  resolveVscodeProjectScope,
-} from "@t3tools/client-runtime/environment";
-export type { VscodeProjectScope } from "@t3tools/client-runtime/environment";
-
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a

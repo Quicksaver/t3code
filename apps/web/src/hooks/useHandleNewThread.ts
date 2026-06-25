@@ -1,9 +1,7 @@
 import {
-  filterProjectsForVscodeScope,
   scopedProjectKey,
   scopeProjectRef,
   scopeThreadRef,
-  resolveVscodeProjectScope,
 } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_RUNTIME_MODE,
@@ -11,7 +9,6 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo } from "react";
 import {
   markPromotedDraftThreadByRef,
@@ -21,7 +18,6 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
-import { isVscodeWebview } from "../env";
 import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
@@ -29,7 +25,6 @@ import {
 } from "../logicalProject";
 import { readThreadShell, useProjects, useServerConfigs, useThread } from "../state/entities";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
-import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -209,22 +204,9 @@ export function useHandleNewThread() {
       : null,
   );
   const projects = useProjects();
-  const serverConfig = useAtomValue(primaryServerConfigAtom);
-  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
-  const vscodeWorkspaceBootstrap = null;
-  const visibleProjects = useMemo(
-    () =>
-      isVscodeWebview
-        ? filterProjectsForVscodeScope(
-            projects,
-            resolveVscodeProjectScope({ serverConfig, serverWelcome, vscodeWorkspaceBootstrap }),
-          )
-        : projects,
-    [projects, serverConfig, serverWelcome, vscodeWorkspaceBootstrap],
-  );
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
-      items: visibleProjects,
+      items: projects,
       preferredIds: projectOrder,
       getId: getProjectOrderKey,
       getPreferenceIds: (project) => [
@@ -232,7 +214,7 @@ export function useHandleNewThread() {
         legacyProjectCwdPreferenceKey(project.workspaceRoot),
       ],
     });
-  }, [projectOrder, visibleProjects]);
+  }, [projectOrder, projects]);
   const handleNewThread = useNewThreadHandler();
 
   return {

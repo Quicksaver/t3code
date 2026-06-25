@@ -161,16 +161,7 @@ export interface ContextMenuItemSchemaType {
   readonly children?: readonly ContextMenuItemSchemaType[];
 }
 
-export interface T3HostDisplayPreferences {
-  enableSourceControlPanel: boolean;
-}
-
-export interface T3HostBridge {
-  getDisplayPreferences?: () => Partial<T3HostDisplayPreferences> | null;
-  onDisplayPreferencesChanged?: (
-    callback: (preferences: Partial<T3HostDisplayPreferences> | null) => void,
-  ) => () => void;
-}
+export type T3HostBridge = object;
 
 export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
   id: Schema.String,
