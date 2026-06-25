@@ -1,5 +1,15 @@
 # UI-Aware Subagent Orchestration Plan
 
+## Branch Metadata
+
+- Last upstream merge: `upstream/main` at `31dfe3596e429725d95d31ecff396caa02a47d12` merged into `split/subagent-threading-work` by `1d5b9337bbcd7f7414c4843adae0f3938a5a0168`.
+- Pre-merge branch HEAD: `2c6368e8622b1507876dd67dbede8a168eac0ddc`.
+- Post-merge branch diff against `upstream/main`: 25 branch-only commits, 0 upstream-only commits, 38 files changed, 5127 insertions, 256 deletions.
+- Remote tracking status after the merge: `split/subagent-threading-work` is 6 commits ahead and 265 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
+- Conflict notes for the `31dfe3596` merge: Git merged cleanly with no textual conflicts. Incoming changes affected Electron renderer startup, server HTTP startup, web Vite config, workspace package metadata, and `pnpm-lock.yaml`; none changed the subagent lineage, projection, lifecycle, sidebar, timeline, child-stop, or archive/delete contracts described below.
+- New fork customizations introduced by this merge: none. The merge only incorporated upstream behavior and refreshed this branch metadata.
+- Retired customizations made redundant by upstream: none identified. Upstream's Electron/server startup changes do not supersede the Codex subagent threading implementation.
+
 ## Status
 
 This plan has been updated after the implementation and review-fix pass. The feature is implemented for Codex only. Unsupported providers should continue using the previous inline subagent-output behavior until they expose durable child-thread lineage.
