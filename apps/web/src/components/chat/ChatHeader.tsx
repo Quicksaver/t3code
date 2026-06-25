@@ -16,7 +16,6 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { cn } from "~/lib/utils";
@@ -84,41 +83,38 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <h2
+                aria-label={activeThreadTitle}
+                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+              >
+                {activeThreadTitle}
+              </h2>
+            }
+          />
+          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+        </Tooltip>
+        {onOpenParentThread && (
           <Tooltip>
             <TooltipTrigger
               render={
-                <h2
-                  aria-label={activeThreadTitle}
-                  className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
-                >
-                  {activeThreadTitle}
-                </h2>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="outline"
+                  className="shrink-0"
+                  aria-label="Open parent conversation"
+                  onClick={onOpenParentThread}
+                />
               }
-            />
-            <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
+            >
+              <CornerLeftUpIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Open parent conversation</TooltipPopup>
           </Tooltip>
-          {onOpenParentThread && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="outline"
-                    className="shrink-0"
-                    aria-label="Open parent conversation"
-                    onClick={onOpenParentThread}
-                  />
-                }
-              >
-                <CornerLeftUpIcon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">Open parent conversation</TooltipPopup>
-            </Tooltip>
-          )}
-        </div>
+        )}
       </div>
       <div
         data-chat-header-actions
