@@ -7,7 +7,7 @@ Study @CUSTOMIZED.md.
 
 $spawn-worktrees
 
-Instruct each subagent to report any extra customizations or fixes from its branch that do not yet exist in the current main branch.
+Instruct each subagent to report all extra customizations or fixes from its branch that do not yet exist in the current main branch.
 
 When all subagents finish, analyse their findings, and update the current main branch with the extra customizations or fixes that need to be ported.
 
