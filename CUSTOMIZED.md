@@ -5,22 +5,23 @@
 
 ## Upstream Baseline
 
-Generated from local upstream-merge ref `d44da0a3d`, local `origin/main` ref `4dc799abc`, and `upstream/main` ref `a4964b3b3`. After the upstream merge and inventory refresh, the fork is 291 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 284 files with 41707 insertions and 1595 deletions.
+Generated from local upstream-merge ref `220ee7357`, local `origin/main` ref `e047b12d9`, and `upstream/main` ref `22f021ed6`. After the upstream merge and inventory refresh, the fork is 297 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 285 files with 42303 insertions and 1719 deletions.
 
 ## Latest Merge Impact
 
-The upstream sidebar toggle and titlebar inset work is now merged into the fork's app chrome. The conflict-prone files are `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's Electron forced-desktop sidebar layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
+The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation defaults.
 
-The remaining fork sidebar/header compatibility rules are centralized in small helpers: `apps/web/src/components/AppSidebarLayout.logic.ts` owns the thread-sidebar open/persist decisions, `apps/web/src/components/Sidebar.logic.ts` owns the VS Code trigger visibility exception, and `apps/web/src/components/chat/ChatHeader.tsx` treats host `showOpenInPicker` as a post-filter over the upstream-style project/environment eligibility predicate. Upstream's `SidebarTrigger` provides the shared trigger state and chrome behavior directly, so the fork no longer carries a separate `apps/web/src/components/sidebar/MainSidebarTrigger.tsx` wrapper.
+The shared helper `packages/shared/src/chatList.ts` is now the canonical place for chat list anchor spacing. Web `MessagesTimeline` and mobile `ThreadFeed` should use `resolveChatListAnchoredEndSpace(...)` instead of reimplementing per-surface bottom-follow heuristics. The prior web-only first-row `scrollToEnd` effect in `MessagesTimeline` is retired by this merge, and mobile removed `apps/mobile/src/lib/threadFeedLayout.ts` in favor of Legend List's built-in keyboard and anchored end-space behavior.
 
-Upstream also added persistent word wrapping for chat code blocks and tables, reduced `ChatMarkdown` settings rerenders by reading the initial word-wrap setting without subscribing every code/table block, stabilized composer provider state while typing, restored T3 Connect account controls, persisted mobile composer selectors across drafts, ignored stale shell reducer events, rejected unsupported remote pairing protocols, guarded DPoP fallback URL construction, preserved localhost preview hosts, clarified Cursor CLI setup errors, guarded trace-id clipboard copy, restored pending-input keyboard activation, showed standalone element-pick context chips in user messages, bumped Clerk packages, and renamed `AnnotatableFileDiff` to `AnnotatableCodeView`.
+Upstream also moved the web composer into an absolute overlay with measured inset compensation, adjusts the scroll-to-bottom pill above the composer, returns mobile `onSendMessage` message ids so the sent row can become the anchor, removes queued-message feed rows from the mobile feed presentation path, bumps `@legendapp/list` to `3.2.0`, bumps `react-native-keyboard-controller` to `1.21.7`, pins `react-native-nitro-modules` to `0.35.9`, and adds the shared `@t3tools/shared/chatList` export.
 
 Customization-sensitive follow-up areas:
 
-- The fork's conversation-width default, user-message context chips, and command/file activity rendering should be checked against upstream's chat word-wrap, `ChatMarkdown` rerender reduction, standalone element-pick chips, and `AnnotatableCodeView` changes before removing local chat presentation code. The latest clean merge touched `apps/web/src/components/ChatMarkdown.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, and `apps/web/src/components/chat/MessagesTimeline.test.tsx`; keep the upstream standalone element-context merge additive to the fork's displayed-message and work-log rendering paths.
-- The fork's host-aware Open In picker and VS Code sidebar behavior now sit on top of upstream's simplified chat header/sidebar chrome through centralized helpers; future sidebar changes should preserve the VS Code webview trigger exception and parent-thread action intentionally.
-- The fork's workspace-aware Cursor ACP/model discovery still passes cwd through provider status and model probes. Upstream's Cursor CLI setup wording can coexist with that, but tests should keep exercising cwd-aware calls in `apps/server/src/provider/Layers/CursorProvider.test.ts`.
-- Mobile composer/outbox persistence changed upstream, but local EAS project ownership remains fork-specific and should still be preserved in `apps/mobile/app.config.ts`.
+- The fork's workspace-scoped provider skill loading must keep feeding `MessagesTimeline` from `activeProviderWorkspaceSkills.skills`; do not regress to provider snapshot skills when applying upstream chat scroll changes, or repo-local `$skill` chips in sent user prompts can go stale or disappear across workspace switches.
+- The fork's command/file activity expansion, turn folding, subagent child-thread rows, and full-width conversation containers now run inside upstream's anchored `LegendList` model. Future changes should remove any remaining local scroll-follow logic only after confirming fold toggles, streaming output, and optimistic sends still preserve the user's viewport.
+- The fork's mobile EAS ownership remains fork-specific in `apps/mobile/app.config.ts`; upstream's mobile package/runtime upgrades are compatible with that metadata, but changing mobile native behavior now means `vp run lint:mobile` is part of the required validation.
+- The previous upstream sidebar toggle and titlebar inset merge remains relevant to `apps/web/src/components/AppSidebarLayout.tsx`, `apps/web/src/components/Sidebar.tsx`, `apps/web/src/components/ui/sidebar.tsx`, `apps/web/src/components/chat/ChatHeader.tsx`, `apps/web/src/components/NoActiveThreadState.tsx`, `apps/web/src/routes/_chat.index.tsx`, and `apps/web/src/routes/settings.tsx`. Preserve upstream's global/floating sidebar control and collapsed-titlebar inset behavior, while keeping the fork's Electron forced-desktop sidebar layout, VS Code-visible sidebar trigger, version tooltip, and parent-conversation header action.
+- The remaining fork sidebar/header compatibility rules stay centralized in `apps/web/src/components/AppSidebarLayout.logic.ts`, `apps/web/src/components/Sidebar.logic.ts`, and `apps/web/src/components/chat/ChatHeader.tsx`; upstream's `SidebarTrigger` still owns the shared trigger state and chrome behavior directly.
 
 ## Debug Browser Launch
 
@@ -402,7 +403,7 @@ When retiring the local changes, remove the corresponding tests or update them t
 
 > Here are referenced the latest commit SHAs for the `main` branch of both the `origin` and `upstream` remotes. These SHAs are used to determine if any worktrees need to be updated with changes from `upstream/main` and `origin/main`.
 
-**Last origin/main commit SHA:** 4dc799abc
-**Last upstream/main commit SHA:** a4964b3b3
-**Last post-merge main...upstream/main count:** 291 ahead / 0 behind
-**Last resolved main...upstream/main diff size:** 284 files changed, 41707 insertions, 1595 deletions
+**Last origin/main commit SHA:** e047b12d9
+**Last upstream/main commit SHA:** 22f021ed6
+**Last post-merge main...upstream/main count:** 297 ahead / 0 behind
+**Last resolved main...upstream/main diff size:** 285 files changed, 42303 insertions, 1719 deletions
