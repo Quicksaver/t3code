@@ -741,34 +741,34 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
       const events = Array.from(yield* Fiber.join(eventsFiber));
 
-      assert.equal(events.length, 2);
+      NodeAssert.equal(events.length, 2);
       const runningEvent = events[0];
-      assert.equal(runningEvent?.type, "item.updated");
+      NodeAssert.equal(runningEvent?.type, "item.updated");
       if (runningEvent?.type === "item.updated") {
-        assert.equal(runningEvent.payload.itemType, "collab_agent_tool_call");
-        assert.equal(runningEvent.payload.status, "inProgress");
-        assert.equal(runningEvent.payload.title, "Subagent");
-        assert.equal(runningEvent.payload.detail, "Inspect routing");
+        NodeAssert.equal(runningEvent.payload.itemType, "collab_agent_tool_call");
+        NodeAssert.equal(runningEvent.payload.status, "inProgress");
+        NodeAssert.equal(runningEvent.payload.title, "Subagent");
+        NodeAssert.equal(runningEvent.payload.detail, "Inspect routing");
       }
 
       const completedEvent = events[1];
-      assert.equal(completedEvent?.type, "item.completed");
+      NodeAssert.equal(completedEvent?.type, "item.completed");
       if (completedEvent?.type !== "item.completed") {
         return;
       }
-      assert.equal(completedEvent.payload.itemType, "collab_agent_tool_call");
-      assert.equal(completedEvent.payload.detail, "Inspect routing");
+      NodeAssert.equal(completedEvent.payload.itemType, "collab_agent_tool_call");
+      NodeAssert.equal(completedEvent.payload.detail, "Inspect routing");
       const completedData = completedEvent.payload.data as Record<string, unknown>;
-      assert.deepEqual(completedData.parentCollab, {
+      NodeAssert.deepEqual(completedData.parentCollab, {
         parentThreadId: "thread-1",
         itemId: "collab-1",
         detail: "Inspect routing",
       });
-      assert.equal(completedData.toolCallId, "collab-1");
-      assert.deepEqual(completedData.rawOutput, {
+      NodeAssert.equal(completedData.toolCallId, "collab-1");
+      NodeAssert.deepEqual(completedData.rawOutput, {
         content: "Subagent result",
       });
-      assert.deepEqual(completedData.item, {
+      NodeAssert.deepEqual(completedData.item, {
         id: "collab-1",
         type: "collabAgentToolCall",
         tool: "spawnAgent",
