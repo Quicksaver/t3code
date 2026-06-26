@@ -66,6 +66,13 @@ export interface ArchivedProjectBulkActionOptions {
   readonly concurrency?: number;
 }
 
+function archivedProjectGroupKey(
+  environmentId: EnvironmentId,
+  projectId: OrchestrationProjectShell["id"],
+): string {
+  return JSON.stringify([environmentId, projectId]);
+}
+
 export function parseArchivedThreadSearchInput(query: string): ArchivedThreadSearchInput {
   const normalizedQuery = normalizeSearchQuery(query);
   return {
@@ -230,7 +237,7 @@ export function buildArchivedThreadGroups(input: {
 
   for (const { environmentId, snapshot } of input.snapshots) {
     for (const project of snapshot.projects) {
-      const key = `${environmentId}:${project.id}`;
+      const key = archivedProjectGroupKey(environmentId, project.id);
       // Later snapshots for the same environment/project replace older project metadata.
       projectsByEnvironmentAndId.set(key, {
         id: project.id,
@@ -250,7 +257,7 @@ export function buildArchivedThreadGroups(input: {
       if (searchScore === null) {
         continue;
       }
-      const key = `${environmentId}:${thread.projectId}`;
+      const key = archivedProjectGroupKey(environmentId, thread.projectId);
       const projectThreads = threadsByEnvironmentAndProjectId.get(key);
       const archivedThread = {
         ...thread,

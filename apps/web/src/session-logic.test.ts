@@ -3436,6 +3436,33 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.id).toBe("a-complete-same-timestamp");
   });
+
+  it("keeps deterministic ordering for same-timestamp unrelated tool updates without match keys", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "z-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool update",
+        payload: {
+          detail: "second by id",
+        },
+      }),
+      makeActivity({
+        id: "a-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Tool update",
+        payload: {
+          detail: "first by id",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["a-update", "z-update"]);
+  });
 });
 
 describe("deriveTimelineEntries", () => {

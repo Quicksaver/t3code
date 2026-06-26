@@ -1979,7 +1979,7 @@ function shouldPreserveSameTimestampToolUpdateOrder(
   const leftTitle = extractToolTitle(leftPayload);
   const rightTitle = extractToolTitle(rightPayload);
   return (
-    (leftItemType !== null || leftTitle !== null) &&
+    (leftItemType != null || leftTitle !== null) &&
     leftItemType === rightItemType &&
     leftTitle === rightTitle
   );

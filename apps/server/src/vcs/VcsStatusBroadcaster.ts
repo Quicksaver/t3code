@@ -637,6 +637,8 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
+        yield* retainLocalWatcher(cwd);
+        yield* Effect.yieldNow;
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
@@ -646,7 +648,6 @@ export const make = Effect.gen(function* () {
             Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
-        yield* retainLocalWatcher(cwd);
 
         const release = releaseRemotePoller(cwd).pipe(
           Effect.andThen(releaseLocalWatcher(cwd)),

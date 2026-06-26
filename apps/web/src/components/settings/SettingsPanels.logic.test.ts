@@ -243,6 +243,60 @@ describe("buildArchivedThreadGroups", () => {
       "thread-remote",
     ]);
   });
+
+  it("keeps projects separate when environment and project ids contain colons", () => {
+    const firstEnvironmentId = EnvironmentId.make("environment:one");
+    const secondEnvironmentId = EnvironmentId.make("environment");
+    const firstProject = makeProject({
+      id: ProjectId.make("project"),
+      title: "First Project",
+    });
+    const secondProject = makeProject({
+      id: ProjectId.make("one:project"),
+      title: "Second Project",
+    });
+    const firstThread = makeThread({
+      id: ThreadId.make("thread-first"),
+      projectId: firstProject.id,
+      title: "First thread",
+    });
+    const secondThread = makeThread({
+      id: ThreadId.make("thread-second"),
+      projectId: secondProject.id,
+      title: "Second thread",
+    });
+    const search = parseArchivedThreadSearchInput("");
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [
+        makeSnapshot([firstProject], [firstThread], firstEnvironmentId),
+        makeSnapshot([secondProject], [secondThread], secondEnvironmentId),
+      ],
+      normalizedSearchQuery: search.normalizedQuery,
+      searchTokens: search.tokens,
+      isSearching: search.isSearching,
+      sort: { field: "archivedAt", direction: "desc" },
+    });
+
+    expect(
+      result.map((group) => ({
+        environmentId: group.project.environmentId,
+        projectId: group.project.id,
+        threadIds: group.threads.map((thread) => thread.id),
+      })),
+    ).toEqual([
+      {
+        environmentId: "environment:one",
+        projectId: "project",
+        threadIds: ["thread-first"],
+      },
+      {
+        environmentId: "environment",
+        projectId: "one:project",
+        threadIds: ["thread-second"],
+      },
+    ]);
+  });
 });
 
 describe("nextArchivedThreadSortState", () => {

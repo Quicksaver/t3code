@@ -2231,6 +2231,7 @@ export function SourceControlPanel({
           return next;
         });
       } catch (nextError) {
+        if (isSourceControlPanelCommandInterrupted(nextError)) return;
         setError(errorMessage(nextError));
       } finally {
         setLoadingBranchDetails((current) => {
