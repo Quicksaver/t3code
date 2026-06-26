@@ -5,9 +5,13 @@
 
 ## Upstream Baseline
 
-Generated from local `main` ref `aebcb6be9`, local `origin/main` ref `e047b12d9`, and `upstream/main` ref `22f021ed6`. After the upstream merge and inventory refresh, the fork is 300 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 287 files with 42430 insertions and 1738 deletions.
+Generated from local `main` ref `5e8d8ed69`, local `origin/main` ref `8454550fa`, and `upstream/main` ref `52b04b947`. After the upstream merge and inventory refresh, the fork is 325 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 289 files with 44407 insertions and 1749 deletions.
 
 ## Latest Merge Impact
+
+The fork is now merged through upstream `52b04b947`. This brings in the right-panel inset restoration when maximized, Electron dev and packaged renderer startup fixes, the preview automation migration from single-owner components to live owner streams, preview automation viewport/readiness/device-toolbar edge-case handling, and Grok ACP resume hardening that waits for replay-idle readiness during `session/load`. The merge conflict-prone files were `apps/server/src/mcp/McpHttpServer.test.ts`, `apps/server/src/provider/acp/AcpSessionRuntime.ts`, `apps/server/src/ws.ts`, `apps/web/src/components/ChatView.logic.ts`, `apps/web/src/components/ChatView.tsx`, and `pnpm-lock.yaml`; preserve the fork's workspace-aware provider-skill RPC layer and source-control metadata helpers while keeping upstream's preview automation broker wiring and ACP replay-idle load gate.
+
+The latest worktree review-port pass also brought in the archived-action local-API fallback, activity detail patch merging/deleted-file/MCP-row handling, terminal-backed project action readiness/probing hardening, source-control panel review fixes, and stricter subagent interrupt turn targeting. These ports intentionally adapt the isolated worktree fixes onto current `main` instead of replaying whole split-branch trees, because several worktrees lack root-owned VS Code, provider-skill, source-control, and chat customizations.
 
 The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation/composer defaults.
 
