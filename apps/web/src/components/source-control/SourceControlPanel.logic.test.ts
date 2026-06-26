@@ -5,6 +5,7 @@ import {
   beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
+  branchOperationCwd,
   branchSyncState,
   completePanelFileDiffLoad,
   failPanelFileDiffLoad,
@@ -88,6 +89,18 @@ describe("SourceControlPanel branch sync logic", () => {
     expect(branchHasUpstream(localBranch, baseSnapshot)).toBe(true);
     expect(branchSyncState(localBranch, baseSnapshot)).toBe("pull");
     expect(branchAttention(localBranch, baseSnapshot)).toBe("behind");
+  });
+
+  it("targets the branch worktree cwd for branch operations when present", () => {
+    expect(
+      branchOperationCwd(
+        branch({
+          worktreePath: "/repo.worktrees/feature",
+        }),
+        "/repo",
+      ),
+    ).toBe("/repo.worktrees/feature");
+    expect(branchOperationCwd(branch({}), "/repo")).toBe("/repo");
   });
 });
 

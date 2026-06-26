@@ -182,6 +182,10 @@ export function branchSyncState(branch: VcsRef, snapshot: VcsPanelSnapshotResult
   return "fetch";
 }
 
+export function branchOperationCwd(branch: VcsRef, fallbackCwd: string): string {
+  return branch.worktreePath ?? fallbackCwd;
+}
+
 export function branchAttention(branch: VcsRef, snapshot: VcsPanelSnapshotResult): AttentionKind {
   const hasUpstream = branchHasUpstream(branch, snapshot);
   const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);

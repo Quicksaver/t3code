@@ -103,6 +103,7 @@ import {
   beginPanelFileDiffLoad,
   branchAttention,
   branchHasUpstream,
+  branchOperationCwd,
   branchSyncCounts,
   branchSyncState,
   completePanelFileDiffLoad,
@@ -1906,7 +1907,12 @@ export function SourceControlPanel({
   const publishBranch = useCallback(
     (branch: VcsRef, remoteName?: string, force = false) =>
       runAction(`branch-sync:${branch.name}`, async () => {
-        await api?.vcs.pushBranch({ cwd, branchName: branch.name, remoteName, force });
+        await api?.vcs.pushBranch({
+          cwd: branchOperationCwd(branch, cwd),
+          branchName: branch.name,
+          remoteName,
+          force,
+        });
       }),
     [api, cwd, runAction],
   );
@@ -1953,40 +1959,42 @@ export function SourceControlPanel({
           state === "fetch" ? `branch-fetch:${branch.name}` : `branch-sync:${branch.name}`;
         void runAction(actionKey, async () => {
           if (!api) return;
+          const targetCwd = branchOperationCwd(branch, cwd);
           if (state === "push") {
-            await api.vcs.pushBranch({ cwd, branchName: branch.name, force });
+            await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name, force });
             return;
           }
           if (state === "pull") {
             await api.vcs.pullBranch({
-              cwd,
+              cwd: targetCwd,
               branchName: branch.name,
               force,
             });
             return;
           }
-          await api.vcs.fetchBranch({ cwd, branchName: branch.name });
+          await api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
         });
         return;
       }
       void runAction(`branch-sync:${branch.name}`, async () => {
         if (!api) return;
+        const targetCwd = branchOperationCwd(branch, cwd);
         if (fetchFirst) {
-          await api.vcs.fetchBranch({ cwd, branchName: branch.name });
+          await api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
         }
         if (aheadCount > 0) {
-          await api.vcs.pushBranch({ cwd, branchName: branch.name });
+          await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name });
           return;
         }
         if (behindCount > 0) {
           await api.vcs.pullBranch({
-            cwd,
+            cwd: targetCwd,
             branchName: branch.name,
             force,
           });
           return;
         }
-        await api.vcs.fetchBranch({ cwd, branchName: branch.name });
+        await api.vcs.fetchBranch({ cwd: targetCwd, branchName: branch.name });
       });
     },
     [api, cwd, publishBranchWithRemoteChoice, runAction, snapshot],
@@ -2008,12 +2016,13 @@ export function SourceControlPanel({
       if (!branch) return;
       void runAction(`branch-sync:${branch.name}`, async () => {
         if (!api) return;
+        const targetCwd = branchOperationCwd(branch, cwd);
         if (mode === "force-push") {
-          await api.vcs.pushBranch({ cwd, branchName: branch.name, force: true });
+          await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name, force: true });
           return;
         }
         if (mode === "force-pull") {
-          await api.vcs.pullBranch({ cwd, branchName: branch.name, force: true });
+          await api.vcs.pullBranch({ cwd: targetCwd, branchName: branch.name, force: true });
           return;
         }
         if (!branch.current) {
@@ -2022,8 +2031,8 @@ export function SourceControlPanel({
           });
           return;
         }
-        await api.vcs.pullBranch({ cwd, branchName: branch.name, merge: true });
-        await api.vcs.pushBranch({ cwd, branchName: branch.name });
+        await api.vcs.pullBranch({ cwd: targetCwd, branchName: branch.name, merge: true });
+        await api.vcs.pushBranch({ cwd: targetCwd, branchName: branch.name });
       });
     },
     [api, cwd, divergedSyncBranch, runAction],
