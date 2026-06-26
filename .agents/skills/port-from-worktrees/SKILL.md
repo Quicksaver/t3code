@@ -17,8 +17,8 @@ To achieve this goal, your task is to instruct each subagent to report all merge
 When all subagents finish:
 
 - make the necessary equivalent merges from `upstream/main` up to the point where it is also merged into the worktree branches, i.e. do not include any commits from `upstream/main` that are not yet in the worktree branches.
-- cherrypick all other reported commits from the worktree branches.
-- update any stale or missing information in CUSTOMIZED.md, including any necessary glue-like fixes to bring all worktrees together into the same branch.
+- cherrypick all other reported commits from the worktree branches. Prefer cherrypicking over bundling all worktree changes into a single commit, as this will make it easier to track and resolve any potential conflicts. Apply any conflict resolutions and glue-like fixes needed in the cherrypicked commits so that they can be cleanly integrated into a single branch.
+- update any stale or missing information in CUSTOMIZED.md.
 - finally, use $commit.
 
 Report on everything that has been merged and cherrypicked, including:
