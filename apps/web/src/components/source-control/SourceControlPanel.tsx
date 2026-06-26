@@ -14,6 +14,7 @@ import type {
   VcsPanelWorktreeChangeSet,
   VcsPanelWorkingTreeFileEnrichmentResult,
   VcsRef,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -1034,8 +1035,13 @@ export function SourceControlPanel({
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const expandedTreeRef = useRef<ReadonlySet<string>>(new Set());
+  const expandedFileDiffsRef = useRef<ReadonlySet<string>>(new Set());
+  const fileDiffRequestIdsRef = useRef(new Map<string, number>());
   const lastFocusRefreshAtRef = useRef(0);
-  const lastVcsStatusFingerprintRef = useRef<string | null>(null);
+  const lastVcsStatusRefreshRef = useRef<{
+    readonly data: VcsStatusResult;
+    readonly fingerprint: string;
+  } | null>(null);
   const previousChangedPathsRef = useRef<ReadonlySet<string>>(new Set());
   const previousWorktreeChangedPathsRef = useRef<ReadonlyMap<string, ReadonlySet<string>>>(
     new Map(),
@@ -1352,6 +1358,88 @@ export function SourceControlPanel({
     [],
   );
 
+  const fileDiffSourceKey = useCallback((source: FileDiffSource) => {
+    switch (source.kind) {
+      case "working-tree":
+        return `working:${source.staged ? "staged" : "unstaged"}`;
+      case "commit":
+        return `commit:${source.sha}`;
+      case "compare":
+        return `compare:${source.baseRef}:${source.refName}`;
+      case "stash":
+        return `stash:${source.stashRef}`;
+    }
+  }, []);
+
+  const fileDiffKey = useCallback(
+    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) =>
+      `${targetCwd}:${fileDiffSourceKey(source)}:${file.path}:${file.originalPath ?? ""}:${file.status}`,
+    [cwd, fileDiffSourceKey],
+  );
+
+  const loadFileDiff = useCallback(
+    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) => {
+      if (!api) return;
+      const key = fileDiffKey(file, source, targetCwd);
+      const nextRequestId = (fileDiffRequestIdsRef.current.get(key) ?? 0) + 1;
+      fileDiffRequestIdsRef.current.set(key, nextRequestId);
+      setFileDiffsByKey((current) => {
+        const next = new Map(current);
+        next.set(key, { status: "loading" });
+        return next;
+      });
+      void api.vcs
+        .readFileDiff({
+          cwd: targetCwd,
+          path: file.path,
+          staged: source.kind === "working-tree" ? source.staged : false,
+          source,
+        })
+        .then((result) => {
+          if (fileDiffRequestIdsRef.current.get(key) !== nextRequestId) return;
+          setFileDiffsByKey((current) => {
+            const next = new Map(current);
+            next.set(key, { status: "loaded", patch: result.patch });
+            return next;
+          });
+        })
+        .catch((nextError: unknown) => {
+          if (fileDiffRequestIdsRef.current.get(key) !== nextRequestId) return;
+          setFileDiffsByKey((current) => {
+            const next = new Map(current);
+            next.set(key, { status: "error", message: errorMessage(nextError) });
+            return next;
+          });
+        });
+    },
+    [api, cwd, fileDiffKey],
+  );
+
+  const reloadExpandedWorkingTreeDiffs = useCallback(
+    (nextSnapshot: VcsPanelSnapshotResult) => {
+      const expandedKeys = expandedFileDiffsRef.current;
+      if (expandedKeys.size === 0) return;
+
+      const reloadChangeSet = (targetCwd: string, files: readonly PanelChangedFile[]) => {
+        for (const file of files) {
+          const source = {
+            kind: "working-tree",
+            staged: !file.hasUnstagedChanges && file.hasStagedChanges,
+          } satisfies FileDiffSource;
+          if (expandedKeys.has(fileDiffKey(file, source, targetCwd))) {
+            loadFileDiff(file, source, targetCwd);
+          }
+        }
+      };
+
+      reloadChangeSet(cwd, mergeChangeGroups(nextSnapshot.changeGroups));
+      for (const changeSet of nextSnapshot.worktreeChangeSets) {
+        reloadChangeSet(changeSet.worktreePath, mergeChangeGroups(changeSet.changeGroups));
+      }
+    },
+    [cwd, fileDiffKey, loadFileDiff],
+  );
+
   const refresh = useCallback(async () => {
     if (!api) {
       setError("Version Control panel is unavailable for this connection runtime.");
@@ -1373,6 +1461,7 @@ export function SourceControlPanel({
         syncChangedPathSelection(nextSnapshot.changeGroups);
         syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
         setSnapshot(nextSnapshot);
+        reloadExpandedWorkingTreeDiffs(nextSnapshot);
         const expandedBranches = expandedBranchesForSnapshot(nextSnapshot, expandedTreeRef.current);
         const nextDetails = new Map(mapBranchDetails(nextSnapshot.branchDetails));
         setLoadingBranchDetails(new Set());
@@ -1415,6 +1504,7 @@ export function SourceControlPanel({
     api,
     compareBaseOverrides,
     cwd,
+    reloadExpandedWorkingTreeDiffs,
     resetWorkingTreeFileEnrichment,
     syncChangedPathSelection,
     syncWorktreeChangedPathSelection,
@@ -1425,15 +1515,24 @@ export function SourceControlPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if (vcsStatusFingerprint === null) return;
-    if (lastVcsStatusFingerprintRef.current === vcsStatusFingerprint) return;
-    lastVcsStatusFingerprintRef.current = vcsStatusFingerprint;
+    if (vcsStatus.data === undefined || vcsStatus.data === null || vcsStatusFingerprint === null)
+      return;
+    const previous = lastVcsStatusRefreshRef.current;
+    if (previous?.data === vcsStatus.data && previous.fingerprint === vcsStatusFingerprint) return;
+    lastVcsStatusRefreshRef.current = {
+      data: vcsStatus.data,
+      fingerprint: vcsStatusFingerprint,
+    };
     void refresh();
-  }, [refresh, vcsStatusFingerprint]);
+  }, [refresh, vcsStatus.data, vcsStatusFingerprint]);
 
   useEffect(() => {
     expandedTreeRef.current = expandedTree;
   }, [expandedTree]);
+
+  useEffect(() => {
+    expandedFileDiffsRef.current = expandedFileDiffs;
+  }, [expandedFileDiffs]);
 
   useEffect(() => {
     const refreshOnFocus = () => {
@@ -1557,25 +1656,6 @@ export function SourceControlPanel({
     [copyText, cwd, openContextMenu, openFilePanel, openInVsCode],
   );
 
-  const fileDiffSourceKey = useCallback((source: FileDiffSource) => {
-    switch (source.kind) {
-      case "working-tree":
-        return `working:${source.staged ? "staged" : "unstaged"}`;
-      case "commit":
-        return `commit:${source.sha}`;
-      case "compare":
-        return `compare:${source.baseRef}:${source.refName}`;
-      case "stash":
-        return `stash:${source.stashRef}`;
-    }
-  }, []);
-
-  const fileDiffKey = useCallback(
-    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) =>
-      `${targetCwd}:${fileDiffSourceKey(source)}:${file.path}:${file.originalPath ?? ""}:${file.status}`,
-    [cwd, fileDiffSourceKey],
-  );
-
   const toggleFileDiff = useCallback(
     (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) => {
       const key = fileDiffKey(file, source, targetCwd);
@@ -1591,35 +1671,10 @@ export function SourceControlPanel({
       });
       if (!api || !expanding) return;
       const existingState = fileDiffsByKey.get(key);
-      if (existingState?.status === "loaded") return;
-      setFileDiffsByKey((current) => {
-        const next = new Map(current);
-        next.set(key, { status: "loading" });
-        return next;
-      });
-      void api.vcs
-        .readFileDiff({
-          cwd: targetCwd,
-          path: file.path,
-          staged: source.kind === "working-tree" ? source.staged : false,
-          source,
-        })
-        .then((result) => {
-          setFileDiffsByKey((current) => {
-            const next = new Map(current);
-            next.set(key, { status: "loaded", patch: result.patch });
-            return next;
-          });
-        })
-        .catch((nextError: unknown) => {
-          setFileDiffsByKey((current) => {
-            const next = new Map(current);
-            next.set(key, { status: "error", message: errorMessage(nextError) });
-            return next;
-          });
-        });
+      if (source.kind !== "working-tree" && existingState?.status === "loaded") return;
+      loadFileDiff(file, source, targetCwd);
     },
-    [api, cwd, expandedFileDiffs, fileDiffKey, fileDiffsByKey],
+    [api, cwd, expandedFileDiffs, fileDiffKey, fileDiffsByKey, loadFileDiff],
   );
 
   const renderFileDiff = useCallback(

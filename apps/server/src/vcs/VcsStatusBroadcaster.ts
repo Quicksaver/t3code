@@ -212,7 +212,11 @@ export const make = Effect.gen(function* () {
   });
 
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
-    function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
+    function* (
+      cwd: string,
+      local: VcsStatusLocalResult,
+      options?: { publish?: boolean; forcePublish?: boolean },
+    ) {
       const nextLocal = {
         fingerprint: fingerprintStatusPart(local),
         value: local,
@@ -224,7 +228,10 @@ export const make = Effect.gen(function* () {
           ...previous,
           local: nextLocal,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [
+          options?.forcePublish === true || previous.local?.fingerprint !== nextLocal.fingerprint,
+          nextCache,
+        ] as const;
       });
 
       if (options?.publish && shouldPublish) {
@@ -351,10 +358,13 @@ export const make = Effect.gen(function* () {
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string) {
+    function* (cwd: string, options?: { forcePublish?: boolean }) {
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      return yield* updateCachedLocalStatus(cwd, local, {
+        publish: true,
+        ...(options?.forcePublish === true ? { forcePublish: true } : {}),
+      });
     },
   );
 
@@ -362,7 +372,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshLocalStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    return yield* refreshLocalStatusCore(cwd);
+    return yield* refreshLocalStatusCore(cwd, { forcePublish: true });
   });
 
   const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (

@@ -420,6 +420,46 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("publishes explicit local updates even when the status summary is unchanged", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      const localUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
+        if (event._tag === "snapshot") {
+          return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+        }
+        if (event._tag === "localUpdated") {
+          return Deferred.succeed(localUpdatedDeferred, event).pipe(Effect.ignore);
+        }
+        return Effect.void;
+      }).pipe(Effect.forkScoped);
+
+      yield* Deferred.await(snapshotDeferred).pipe(Effect.timeout("2 seconds"));
+      yield* broadcaster.refreshLocalStatus("/repo");
+      const localUpdated = yield* Deferred.await(localUpdatedDeferred).pipe(
+        Effect.timeout("2 seconds"),
+      );
+
+      assert.deepStrictEqual(localUpdated, {
+        _tag: "localUpdated",
+        local: baseLocalStatus,
+      } satisfies VcsStatusStreamEvent);
+      assert.isAtLeast(state.localStatusCalls, 2);
+      assert.isAtLeast(state.localInvalidationCalls, 1);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
   it.effect("loads remote status once when periodic refreshes are disabled", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

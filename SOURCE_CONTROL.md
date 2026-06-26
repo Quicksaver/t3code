@@ -50,9 +50,9 @@ The repository summary shows the current ref, upstream status, changed-file coun
 
 ## Live Updates
 
-The panel refreshes from the VCS status stream, explicit panel operations, window focus, and document visibility changes. `VcsStatusBroadcaster` also maintains ref-counted filesystem watchers per cwd while a repository is subscribed, with local path filtering and debounced refresh signal handling factored into `VcsLocalWatch`. Internal `.git/` events are ignored before any refresh decision, file events are debounced, remaining paths are checked against Git ignore rules when possible, and only publish a new status when the working-tree fingerprint actually changes. If a local watch fiber has already terminated while an entry remains subscribed, the next subscriber replaces the stale watcher instead of attaching to a dead fiber.
+The panel refreshes from the VCS status stream, explicit panel operations, window focus, and document visibility changes. `VcsStatusBroadcaster` also maintains ref-counted filesystem watchers per cwd while a repository is subscribed, with local path filtering and debounced refresh signal handling factored into `VcsLocalWatch`. Internal `.git/` events are ignored before any refresh decision, file events are debounced, remaining paths are checked against Git ignore rules when possible, and explicit local refreshes publish a local status update even when the summary fingerprint is unchanged so same-path/same-stat file edits can refresh live working-tree diffs. If a local watch fiber has already terminated while an entry remains subscribed, the next subscriber replaces the stale watcher instead of attaching to a dead fiber.
 
-This keeps externally-created changes visible without requiring a window blur/refocus cycle, while avoiding repeated no-op refreshes for gitignored files or unchanged status.
+This keeps externally-created changes visible without requiring a window blur/refocus cycle, while avoiding repeated no-op refreshes for gitignored files and unrelated background churn.
 
 ## Actionable
 
