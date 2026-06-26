@@ -183,10 +183,24 @@ export function shouldApplySourceControlMetadataUpdateResult(input: {
   return input.currentSequence === input.requestSequence;
 }
 
-export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
+export function buildThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "latestTurn" | "parentRelation" | "session">,
+): {
   threadId: ThreadId;
   turnId?: TurnId;
 } {
+  if (thread.parentRelation?.kind === "subagent") {
+    if (thread.parentRelation.status !== "running") {
+      return { threadId: thread.id };
+    }
+    const runningSubagentTurnId =
+      thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null;
+    return {
+      threadId: thread.id,
+      ...(runningSubagentTurnId ? { turnId: runningSubagentTurnId } : {}),
+    };
+  }
+
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
