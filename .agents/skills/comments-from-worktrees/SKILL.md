@@ -11,4 +11,4 @@ Your task is to instruct each subagent to use the $piz-comments skill. **You do 
 
 This process will likely take a long time, possibly hours. Wait patiently and let the subagents finish without querying for current status.
 
-When all subagents finish, if at least one of them reported changes made, you use the $port-from-worktrees skill.
+When all subagents finish, if at least one of them said changes were made, you use the $pick-from-worktrees skill.

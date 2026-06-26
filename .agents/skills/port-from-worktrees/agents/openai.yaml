@@ -1,6 +1,0 @@
-interface:
-  display_name: "Port From Worktrees"
-  short_description: "Port everything from worktrees into the current branch."
-
-policy:
-  allow_implicit_invocation: false

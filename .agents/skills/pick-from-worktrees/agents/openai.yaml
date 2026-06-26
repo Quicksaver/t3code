@@ -1,0 +1,6 @@
+interface:
+  display_name: "Pick From Worktrees"
+  short_description: "Update the current branch by picking commits from worktrees."
+
+policy:
+  allow_implicit_invocation: false
