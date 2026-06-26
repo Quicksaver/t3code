@@ -324,7 +324,10 @@ function normalizeChildCommandName(raw: string, platform: NodeJS.Platform): stri
 }
 
 function isInteractiveShellCommand(command: string | null): boolean {
-  return command !== null && INTERACTIVE_SHELL_COMMANDS.has(command.trim().toLowerCase());
+  return (
+    command !== null &&
+    INTERACTIVE_SHELL_COMMANDS.has(command.trim().toLowerCase().replace(/^-+/, ""))
+  );
 }
 
 interface ProcessTableEntry {

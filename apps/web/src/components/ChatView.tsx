@@ -2582,18 +2582,25 @@ function ChatViewContent(props: ChatViewProps) {
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
       });
-      const reusableTerminalById = new Map(
+      const projectActionTerminalSessionById = new Map(
         activeThreadKnownSessions.map((session) => [session.target.terminalId, session] as const),
       );
+      const readyProjectActionTerminalIds = new Set(
+        runningTerminalIds.filter((terminalId) => {
+          const session = projectActionTerminalSessionById.get(terminalId);
+          if (!session) {
+            return false;
+          }
+          return terminalSessionIsReadyForProjectActionInput({
+            summary: session.state.summary,
+            buffer: session.state.buffer,
+            targetCwd,
+            targetWorktreePath,
+          });
+        }),
+      );
       const effectiveRunningTerminalIds = runningTerminalIds.filter((terminalId) => {
-        const session = reusableTerminalById.get(terminalId);
-        if (!session) return true;
-        return !terminalSessionIsReadyForProjectActionInput({
-          summary: session.state.summary,
-          buffer: session.state.buffer,
-          targetCwd,
-          targetWorktreePath,
-        });
+        return !readyProjectActionTerminalIds.has(terminalId);
       });
       const targetTerminalId =
         options?.preferNewTerminal === true
@@ -2605,7 +2612,7 @@ function ChatViewContent(props: ChatViewProps) {
             });
       const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
       const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
-      const targetSession = reusableTerminalById.get(targetTerminalId) ?? null;
+      const targetSession = projectActionTerminalSessionById.get(targetTerminalId) ?? null;
       const canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
         summary: targetSession?.state.summary ?? null,
         buffer: targetSession?.state.buffer ?? "",

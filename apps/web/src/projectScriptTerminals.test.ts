@@ -175,6 +175,8 @@ describe("terminalOutputLooksReadyForInput", () => {
   it("detects common shell prompts", () => {
     expect(terminalOutputLooksReadyForInput("initializing...\n$ ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("\u001B[32mrepo\u001B[0m % ")).toBe(true);
+    expect(terminalOutputLooksReadyForInput("PS C:\\repo> ")).toBe(true);
+    expect(terminalOutputLooksReadyForInput("C:\\repo> ")).toBe(true);
   });
 
   it("ignores terminal title control sequences around prompts", () => {
@@ -183,6 +185,8 @@ describe("terminalOutputLooksReadyForInput", () => {
 
   it("does not treat plain command text as readiness", () => {
     expect(terminalOutputLooksReadyForInput("pnpm run dist:desktop:dmg:arm64\n")).toBe(false);
+    expect(terminalOutputLooksReadyForInput("rendered <span>\n")).toBe(false);
+    expect(terminalOutputLooksReadyForInput("status: waiting>\n")).toBe(false);
   });
 });
 
@@ -215,6 +219,23 @@ describe("terminalSessionIsReadyForProjectActionInput", () => {
           worktreePath: null,
         },
         buffer: "loading profile...\n",
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not reuse a busy shell-labeled session without prompt output", () => {
+    expect(
+      terminalSessionIsReadyForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: true,
+          label: "bash",
+          status: "running",
+          worktreePath: null,
+        },
+        buffer: "",
         targetCwd: "/repo",
         targetWorktreePath: null,
       }),
@@ -366,6 +387,63 @@ describe("openTerminalAndWaitForInputReady", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for readiness after opening when the first attach throws", async () => {
+    vi.useFakeTimers();
+    const unsubscribe = vi.fn();
+    let openResolve: () => void = () => {
+      throw new Error("Open promise was not initialized.");
+    };
+    let listener: (event: TerminalAttachStreamEvent) => void = () => {
+      throw new Error("Terminal attach listener was not initialized.");
+    };
+    let settled = false;
+    const api: Pick<EnvironmentApi, "terminal"> = {
+      terminal: {
+        attach: vi
+          .fn()
+          .mockImplementationOnce(() => {
+            throw new Error("attach unavailable");
+          })
+          .mockImplementationOnce((_input: TerminalAttachInput, callback) => {
+            listener = callback;
+            return unsubscribe;
+          }),
+        open: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              openResolve = resolve;
+            }),
+        ),
+      } as unknown as EnvironmentApi["terminal"],
+    };
+
+    const ready = openTerminalAndWaitForInputReady(api, OPEN_INPUT);
+    void ready.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(api.terminal.open).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    openResolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(api.terminal.attach).toHaveBeenCalledTimes(2);
+    expect(settled).toBe(false);
+
+    listener({
+      type: "output",
+      threadId: OPEN_INPUT.threadId,
+      terminalId: OPEN_INPUT.terminalId,
+      data: "$ ",
+    });
+    await ready;
+
+    expect(settled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
   effectIt.effect(
     "fails strict readiness on terminal closure but preserves best-effort fallback",
     () =>
@@ -427,6 +505,40 @@ describe("openTerminalAndWaitForInputReady", () => {
       yield* waitForProjectActionTerminalInputReady(OPEN_INPUT, 1_000).pipe(
         Effect.provideService(EnvironmentSupervisor, supervisor),
       );
+    }),
+  );
+
+  effectIt.effect("maps attach subscription failures to typed readiness failures", () =>
+    Effect.gen(function* () {
+      const supervisor = yield* makeSupervisor;
+      subscribeMock.mockImplementationOnce(() => {
+        throw new Error("attach transport unavailable");
+      });
+
+      const thrownError = yield* waitForProjectActionTerminalInputReadyStrict(
+        OPEN_INPUT,
+        1_000,
+      ).pipe(Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
+
+      assert.strictEqual(thrownError._tag, "ProjectActionTerminalAttachError");
+      if (thrownError._tag !== "ProjectActionTerminalAttachError") {
+        return yield* Effect.die(new Error("Expected a terminal attach error."));
+      }
+      assert.strictEqual(thrownError.threadId, OPEN_INPUT.threadId);
+      assert.strictEqual(thrownError.terminalId, OPEN_INPUT.terminalId);
+      assert.match(thrownError.detail, /attach transport unavailable/);
+
+      subscribeMock.mockReturnValueOnce(Stream.fail(new Error("attach stream rejected")));
+      const failedStreamError = yield* waitForProjectActionTerminalInputReadyStrict(
+        OPEN_INPUT,
+        1_000,
+      ).pipe(Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
+
+      assert.strictEqual(failedStreamError._tag, "ProjectActionTerminalAttachError");
+      if (failedStreamError._tag !== "ProjectActionTerminalAttachError") {
+        return yield* Effect.die(new Error("Expected a terminal attach error."));
+      }
+      assert.match(failedStreamError.detail, /attach stream rejected/);
     }),
   );
 });

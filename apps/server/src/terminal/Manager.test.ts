@@ -953,6 +953,21 @@ it.layer(
     ).toEqual({ hasRunningSubprocess: false, childCommand: null, processIds: [] });
   });
 
+  it("treats a dash-prefixed POSIX login shell child as no running subprocess", () => {
+    expect(
+      TerminalManager.__testing.inspectPosixProcessTree({
+        terminalPid: 9000,
+        childPid: 9001,
+        childCommand: "-bash",
+        platform: "darwin",
+        processTable: [
+          { pid: 9000, ppid: 1, command: "node-pty" },
+          { pid: 9001, ppid: 9000, command: "-bash" },
+        ],
+      }),
+    ).toEqual({ hasRunningSubprocess: false, childCommand: null, processIds: [] });
+  });
+
   it("reports the first non-shell POSIX descendant as the running subprocess", () => {
     expect(
       TerminalManager.__testing.inspectPosixProcessTree({

@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import { subscribe } from "@t3tools/client-runtime/rpc";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -30,6 +31,8 @@ const OSC_ESCAPE_PATTERN = new RegExp(
 );
 const BELL_CHARACTER = String.fromCharCode(7);
 const SHELL_LABELS = new Set(["bash", "zsh", "sh", "fish", "csh", "tcsh", "pwsh", "powershell"]);
+const POWERSHELL_PROMPT_PATTERN = /^PS\s+\S.*>\s*$/;
+const WINDOWS_PROMPT_PATTERN = /^[A-Za-z]:[\\/][^<>]*>\s*$/;
 
 export class ProjectActionTerminalReadinessTimeoutError extends Schema.TaggedErrorClass<ProjectActionTerminalReadinessTimeoutError>()(
   "ProjectActionTerminalReadinessTimeoutError",
@@ -147,7 +150,10 @@ export function terminalOutputLooksReadyForInput(value: string): boolean {
     if (line.length > PROMPT_LINE_MAX_LENGTH) {
       return false;
     }
-    return /[$#%>]\s*$/.test(line);
+    if (/[$#%]\s*$/.test(line)) {
+      return true;
+    }
+    return POWERSHELL_PROMPT_PATTERN.test(line) || WINDOWS_PROMPT_PATTERN.test(line);
   }
   return false;
 }
@@ -239,6 +245,18 @@ export function projectActionTerminalReadinessFailureFromEvent(
   return null;
 }
 
+function projectActionTerminalAttachErrorFromCause(
+  input: TerminalOpenInput,
+  cause: unknown,
+): ProjectActionTerminalAttachError {
+  return new ProjectActionTerminalAttachError({
+    threadId: input.threadId,
+    terminalId: input.terminalId,
+    cwd: input.cwd,
+    detail: `Terminal attach failed before it was ready for input: ${Cause.pretty(cause as Cause.Cause<unknown>)}`,
+  });
+}
+
 function projectActionTerminalReadinessTimeoutError(
   input: TerminalOpenInput,
   timeoutMs: number,
@@ -265,7 +283,12 @@ export function waitForProjectActionTerminalInputReadyStrict(
     return terminalOutputLooksReadyForInput(bufferTail);
   };
 
-  return subscribe(WS_METHODS.terminalAttach, terminalAttachInputFromOpenInput(input)).pipe(
+  return Stream.suspend(() =>
+    subscribe(WS_METHODS.terminalAttach, terminalAttachInputFromOpenInput(input)),
+  ).pipe(
+    Stream.catchCause((cause) =>
+      Stream.fail(projectActionTerminalAttachErrorFromCause(input, cause)),
+    ),
     Stream.filterMap((event) => {
       const error = projectActionTerminalReadinessFailureFromEvent(input, event);
       if (error) {
@@ -365,13 +388,27 @@ export async function openTerminalAndWaitForInputReady(
       }
     }
 
-    try {
-      unsubscribe = api.terminal.attach(terminalAttachInputFromOpenInput(input), onEvent);
-      if (shouldUnsubscribe) {
-        cleanup();
+    function attach(): boolean {
+      try {
+        unsubscribe = api.terminal.attach(terminalAttachInputFromOpenInput(input), onEvent);
+        if (shouldUnsubscribe) {
+          cleanup();
+        }
+        return true;
+      } catch {
+        return false;
       }
-    } catch {
-      void api.terminal.open(input).finally(settle);
+    }
+
+    if (!attach()) {
+      void api.terminal.open(input).then(
+        () => {
+          if (!settled && !attach()) {
+            settle();
+          }
+        },
+        () => settle(),
+      );
     }
   });
 }
