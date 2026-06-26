@@ -2,12 +2,12 @@
 
 ## Current Status
 
-Branch maintenance snapshot after the latest upstream merge:
+Branch maintenance snapshot for the current upstream merge resolution:
 
-- Generated from `upstream/main` `31dfe3596e429725d95d31ecff396caa02a47d12` with branch HEAD `b704651764d98b6c83c70451a0433ceb4fba90ad`.
-- Shared refs at merge time: `origin/main` `fa101adc87689d9755c877bbf4e460ebb06ce036`, local `main` `8454550fad7b40b0571daf41e6462779d1742100`.
-- Branch delta after merge: `31 ahead / 0 behind upstream/main`, `33 ahead / 303 behind origin/main`, `33 ahead / 308 behind local main`; fork diff size is `40 files changed, 11267 insertions(+), 293 deletions(-)` against `upstream/main...HEAD`.
-- Merge note: upstream commit `31dfe3596e429725d95d31ecff396caa02a47d12` brought Electron renderer startup/protocol handling, HTTP dev serving, Vite config, workspace metadata, and lockfile updates. It merged cleanly with no source-control conflicts and did not retire any Version Control panel customization. No new source-control fork customization was introduced by the merge.
+- Generated from `upstream/main` `52b04b947e3604e426386be53e6d20c6a4366fef` with starting branch HEAD `ea9bf9bb15712bc2a581bfb650e0963a8f88229a`; the merge resolution is staged but uncommitted.
+- Shared refs at merge time: `origin/main` `8454550fad7b40b0571daf41e6462779d1742100`, local `main` `58602fcb860a40ca861e8a7389c7ee4bf2442499`.
+- Effective branch delta if committed as the current merge resolution: `33 ahead / 0 behind upstream/main`, `38 ahead / 308 behind origin/main`, `38 ahead / 310 behind local main`; fork diff size is `40 files changed, 11274 insertions(+), 293 deletions(-)` against the `upstream/main` tree.
+- Merge note: upstream commits `ffae5410e17d6344f0f542d3655dfb3c21f938ba`, `e9ed70c5b3f0a056d493a10e9fe62d17465f8fd9`, and `52b04b947e3604e426386be53e6d20c6a4366fef` brought live-owner preview automation streams, browser device toolbar and viewport resizing, preview-open readiness handling, and ACP/Grok resume load-readiness hardening. Conflicts in `apps/web/src/components/ChatView.logic.ts` and `apps/web/src/components/ChatView.logic.test.ts` were resolved additively by keeping upstream `buildThreadTurnInterruptInput` behavior and this branch's source-control metadata/error helpers (`clearThreadErrorRecord`, `retainThreadKeyRecord`, and `shouldApplySourceControlMetadataUpdateResult`). No Version Control panel customization was retired, and no new source-control fork customization was introduced by the merge.
 
 T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
 

@@ -110,6 +110,17 @@ export function shouldApplySourceControlMetadataUpdateResult(input: {
   return input.currentSequence === input.requestSequence;
 }
 
+export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
+  threadId: ThreadId;
+  turnId?: TurnId;
+} {
+  const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
+  return {
+    threadId: thread.id,
+    ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
+  };
+}
+
 export function reconcileMountedTerminalThreadIds(input: {
   currentThreadIds: ReadonlyArray<string>;
   openThreadIds: ReadonlyArray<string>;
