@@ -4498,25 +4498,25 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
+      const missingWorkspacePath = "/definitely/not/a/real/workspace/path";
+      const requestedCwd = `  ${missingWorkspacePath}  `;
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.serverListProviderSkills]({
             instanceId,
-            cwd: "/definitely/not/a/real/workspace/path",
+            cwd: requestedCwd,
           }),
         ).pipe(Effect.result),
       );
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ServerProviderSkillsListError");
-      assert.equal(
-        result.failure.message,
-        "Invalid Codex skills cwd '/definitely/not/a/real/workspace/path'.",
-      );
+      assert.equal(result.failure.message, `Invalid Codex skills cwd '${missingWorkspacePath}'.`);
+      assert.equal(result.failure.cwd, missingWorkspacePath);
       assert.notInclude(result.failure.message, "Workspace root does not exist");
       assert.equal(
         result.failure.detail,
-        "Workspace root does not exist: /definitely/not/a/real/workspace/path.",
+        `Workspace root does not exist: ${missingWorkspacePath}.`,
       );
       assert.property(result.failure, "cause");
       const failureCause = result.failure.cause;

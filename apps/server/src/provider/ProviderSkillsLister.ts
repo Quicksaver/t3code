@@ -84,9 +84,9 @@ export const makeBoundedRequestCache = Effect.fn("makeBoundedRequestCache")(func
   };
 });
 
-function optionalTrimmedNonEmptyString(value: string | undefined): string | undefined {
+export function optionalTrimmedNonEmptyString(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? value : undefined;
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
 function providerSkillsListError(input: {

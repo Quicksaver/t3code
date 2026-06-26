@@ -4,7 +4,18 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
 
-import { makeBoundedRequestCache } from "./ProviderSkillsLister.ts";
+import { makeBoundedRequestCache, optionalTrimmedNonEmptyString } from "./ProviderSkillsLister.ts";
+
+describe("optionalTrimmedNonEmptyString", () => {
+  it("returns a trimmed value for non-empty strings", () => {
+    expect(optionalTrimmedNonEmptyString("  /tmp/project  ")).toBe("/tmp/project");
+  });
+
+  it("returns undefined for missing or blank strings", () => {
+    expect(optionalTrimmedNonEmptyString(undefined)).toBeUndefined();
+    expect(optionalTrimmedNonEmptyString("   ")).toBeUndefined();
+  });
+});
 
 describe("makeBoundedRequestCache", () => {
   it.effect("coalesces concurrent requests for the same key", () =>

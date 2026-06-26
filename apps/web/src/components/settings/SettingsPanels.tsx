@@ -32,7 +32,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
-import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -94,8 +93,18 @@ import {
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import {
+  archivedProjectBulkScopeLabel,
+  type ArchivedProjectBulkFailure,
+  type ArchivedProjectBulkScope,
+  type ArchivedProjectBulkThread,
+  type ArchivedThreadSortField,
+  type ArchivedThreadSortState,
+  buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
+  runArchivedProjectThreadActions,
 } from "./SettingsPanels.logic";
 import {
   SettingResetButton,
@@ -1438,145 +1447,6 @@ export function ProviderSettingsPanel() {
   );
 }
 
-type ArchivedThreadSortField = "archivedAt" | "createdAt";
-type ArchivedThreadSortDirection = "asc" | "desc";
-type ArchivedProjectBulkScope = "all" | "matching";
-
-interface ArchivedThreadSortState {
-  readonly field: ArchivedThreadSortField;
-  readonly direction: ArchivedThreadSortDirection;
-}
-
-type ArchivedProjectBulkThread = {
-  readonly id: ScopedThreadRef["threadId"];
-  readonly environmentId: ScopedThreadRef["environmentId"];
-};
-type ArchivedProjectBulkFailure = Extract<
-  AtomCommandResult<unknown, unknown>,
-  { readonly _tag: "Failure" }
->;
-
-const ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY = 4;
-
-async function runArchivedProjectThreadActions(
-  threads: ReadonlyArray<ArchivedProjectBulkThread>,
-  action: (thread: ArchivedProjectBulkThread) => Promise<AtomCommandResult<unknown, unknown>>,
-): Promise<ReadonlyArray<ArchivedProjectBulkFailure>> {
-  const failures: Array<ArchivedProjectBulkFailure> = [];
-  let nextThreadIndex = 0;
-  async function worker() {
-    for (;;) {
-      const thread = threads[nextThreadIndex];
-      nextThreadIndex += 1;
-      if (!thread) {
-        return;
-      }
-      const result = await action(thread);
-      if (result._tag === "Failure") {
-        failures.push(result);
-      }
-    }
-  }
-
-  await Promise.all(
-    Array.from(
-      { length: Math.min(ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY, threads.length) },
-      worker,
-    ),
-  );
-  return failures;
-}
-
-function archivedProjectBulkScopeLabel(scope: ArchivedProjectBulkScope): string {
-  return scope === "matching" ? "matching archived conversations" : "all archived conversations";
-}
-
-function archivedThreadSortTimestamp(
-  thread: { readonly archivedAt: string | null; readonly createdAt: string },
-  field: ArchivedThreadSortField,
-): number {
-  const timestamp = Date.parse(
-    field === "archivedAt" ? (thread.archivedAt ?? thread.createdAt) : thread.createdAt,
-  );
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function compareArchivedThreads<
-  T extends { readonly id: string; readonly archivedAt: string | null; readonly createdAt: string },
->(left: T, right: T, sort: ArchivedThreadSortState): number {
-  const leftTimestamp = archivedThreadSortTimestamp(left, sort.field);
-  const rightTimestamp = archivedThreadSortTimestamp(right, sort.field);
-  const timestampComparison =
-    sort.direction === "asc" ? leftTimestamp - rightTimestamp : rightTimestamp - leftTimestamp;
-  return timestampComparison || left.id.localeCompare(right.id);
-}
-
-function nextArchivedThreadSortState(
-  current: ArchivedThreadSortState,
-  field: ArchivedThreadSortField,
-): ArchivedThreadSortState {
-  if (current.field !== field) {
-    return { field, direction: "desc" };
-  }
-  return { field, direction: current.direction === "desc" ? "asc" : "desc" };
-}
-
-function archivedThreadSearchScore(input: {
-  readonly title: string;
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-}): number | null {
-  if (input.normalizedQuery.length === 0) {
-    return 0;
-  }
-
-  const title = normalizeSearchQuery(input.title);
-  if (!title) {
-    return null;
-  }
-
-  const phraseScore = scoreQueryMatch({
-    value: title,
-    query: input.normalizedQuery,
-    exactBase: 0,
-    prefixBase: 1,
-    boundaryBase: 2,
-    includesBase: 3,
-  });
-  if (phraseScore !== null) {
-    return phraseScore;
-  }
-
-  let matchedTokenCount = 0;
-  let tokenScore = 0;
-  for (const token of input.tokens) {
-    const score = scoreQueryMatch({
-      value: title,
-      query: token,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
-    });
-    if (score === null) {
-      continue;
-    }
-    matchedTokenCount += 1;
-    tokenScore += score;
-  }
-
-  if (matchedTokenCount === 0) {
-    return null;
-  }
-
-  if (matchedTokenCount === input.tokens.length) {
-    return 1_000 + tokenScore;
-  }
-
-  return 5_000 + (input.tokens.length - matchedTokenCount) * 1_000 + tokenScore;
-}
-
 function ArchivedSortButton({
   field,
   label,
@@ -1664,97 +1534,32 @@ export function ArchivedThreadsPanel() {
     isLoading: isLoadingArchive,
     refresh: refreshArchivedThreads,
   } = useArchivedThreadSnapshots(environmentIds);
-  const normalizedArchiveSearchQuery = useMemo(
-    () => normalizeSearchQuery(archiveSearchQuery),
+  const archiveSearch = useMemo(
+    () => parseArchivedThreadSearchInput(archiveSearchQuery),
     [archiveSearchQuery],
   );
-  const archiveSearchTokens = useMemo(
-    () => normalizedArchiveSearchQuery.split(/\s+/u).filter((token) => token.length > 0),
-    [normalizedArchiveSearchQuery],
-  );
-  const isSearchingArchive = normalizedArchiveSearchQuery.length > 0;
   const hasArchivedThreads = useMemo(
     () => archivedSnapshots.some(({ snapshot }) => snapshot.threads.length > 0),
     [archivedSnapshots],
   );
 
-  const archivedGroups = useMemo(() => {
-    const projectsByEnvironmentAndId = new Map(
-      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-        snapshot.projects.map(
-          (project) =>
-            [
-              `${environmentId}:${project.id}`,
-              {
-                id: project.id,
-                environmentId,
-                name: project.title,
-                cwd: project.workspaceRoot,
-              },
-            ] as const,
-        ),
-      ),
-    );
-    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => ({
-        ...thread,
-        environmentId,
-      })),
-    );
-
-    const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
-    type ArchivedThreadWithSearchScore = (typeof threads)[number] & {
-      readonly searchScore: number;
-    };
-    const groups: Array<{
-      readonly project: (typeof archivedProjects)[number];
-      readonly threads: Array<ArchivedThreadWithSearchScore>;
-      readonly searchScore: number;
-    }> = [];
-    for (const project of archivedProjects) {
-      const projectThreads: Array<ArchivedThreadWithSearchScore> = [];
-      for (const thread of threads) {
-        if (thread.projectId === project.id && thread.environmentId === project.environmentId) {
-          const searchScore = archivedThreadSearchScore({
-            title: thread.title,
-            normalizedQuery: normalizedArchiveSearchQuery,
-            tokens: archiveSearchTokens,
-          });
-          if (searchScore === null) {
-            continue;
-          }
-          projectThreads.push({
-            ...thread,
-            searchScore,
-          });
-        }
-      }
-      if (projectThreads.length > 0) {
-        groups.push({
-          project,
-          threads: projectThreads.toSorted((left, right) =>
-            isSearchingArchive
-              ? left.searchScore - right.searchScore || compareArchivedThreads(left, right, sort)
-              : compareArchivedThreads(left, right, sort),
-          ),
-          searchScore: Math.min(...projectThreads.map((thread) => thread.searchScore)),
-        });
-      }
-    }
-    return isSearchingArchive
-      ? groups.toSorted(
-          (left, right) =>
-            left.searchScore - right.searchScore ||
-            left.project.name.localeCompare(right.project.name),
-        )
-      : groups;
-  }, [
-    archiveSearchTokens,
-    archivedSnapshots,
-    isSearchingArchive,
-    normalizedArchiveSearchQuery,
-    sort,
-  ]);
+  const archivedGroups = useMemo(
+    () =>
+      buildArchivedThreadGroups({
+        snapshots: archivedSnapshots,
+        normalizedSearchQuery: archiveSearch.normalizedQuery,
+        searchTokens: archiveSearch.tokens,
+        isSearching: archiveSearch.isSearching,
+        sort,
+      }),
+    [
+      archiveSearch.isSearching,
+      archiveSearch.normalizedQuery,
+      archiveSearch.tokens,
+      archivedSnapshots,
+      sort,
+    ],
+  );
 
   const toggleProjectExpanded = useCallback((projectKey: string) => {
     setExpandedProjectKeys((current) => {
@@ -1811,13 +1616,16 @@ export function ArchivedThreadsPanel() {
       const visibleFailures = failures.filter((failure) => !isAtomCommandInterrupted(failure));
       if (visibleFailures.length === 0) return;
       const error = squashAtomCommandFailure(visibleFailures[0]!);
+      const interruptedCount = failures.length - visibleFailures.length;
       const successCount = totalCount - failures.length;
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title,
           description: [
-            `${successCount} succeeded, ${visibleFailures.length} failed.`,
+            `${successCount} succeeded, ${visibleFailures.length} failed${
+              interruptedCount > 0 ? `, ${interruptedCount} interrupted` : ""
+            }.`,
             error instanceof Error ? error.message : "An error occurred.",
           ].join(" "),
         }),
@@ -2008,7 +1816,7 @@ export function ArchivedThreadsPanel() {
                   ? "Loading archived threads"
                   : archiveError
                     ? "Could not load archived threads"
-                    : isSearchingArchive && hasArchivedThreads
+                    : archiveSearch.isSearching && hasArchivedThreads
                       ? "No matching archived threads"
                       : "No archived threads"}
               </span>
@@ -2018,7 +1826,7 @@ export function ArchivedThreadsPanel() {
                 ? "Checking connected environments."
                 : archiveError
                   ? archiveError
-                  : isSearchingArchive && hasArchivedThreads
+                  : archiveSearch.isSearching && hasArchivedThreads
                     ? `No archived conversation titles match "${archiveSearchQuery.trim()}".`
                     : "Archived threads will appear here."
             }
@@ -2028,8 +1836,8 @@ export function ArchivedThreadsPanel() {
         <div className="space-y-3">
           {archivedGroups.map(({ project, threads: projectThreads }) => {
             const projectKey = `${project.environmentId}:${project.id}`;
-            const isExpanded = isSearchingArchive || expandedProjectKeys.has(projectKey);
-            const bulkScope = isSearchingArchive ? "matching" : "all";
+            const isExpanded = archiveSearch.isSearching || expandedProjectKeys.has(projectKey);
+            const bulkScope = archiveSearch.isSearching ? "matching" : "all";
             return (
               <section
                 key={projectKey}
@@ -2067,6 +1875,7 @@ export function ArchivedThreadsPanel() {
                   <button
                     type="button"
                     className="group flex min-w-0 items-center gap-2 text-left"
+                    disabled={archiveSearch.isSearching}
                     aria-expanded={isExpanded}
                     onClick={() => toggleProjectExpanded(projectKey)}
                   >

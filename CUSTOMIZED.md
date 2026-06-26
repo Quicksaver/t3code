@@ -5,13 +5,13 @@
 
 ## Upstream Baseline
 
-Generated from local `main` ref `5e8d8ed69`, local `origin/main` ref `8454550fa`, and `upstream/main` ref `52b04b947`. After the upstream merge and inventory refresh, the fork is 325 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 289 files with 44407 insertions and 1749 deletions.
+Generated after the worktree port refresh against local `origin/main` ref `8454550fa` and `upstream/main` ref `52b04b947`. After the upstream merge and worktree port refresh, the fork is 328 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 293 files with 45052 insertions and 1789 deletions.
 
 ## Latest Merge Impact
 
 The fork is now merged through upstream `52b04b947`. This brings in the right-panel inset restoration when maximized, Electron dev and packaged renderer startup fixes, the preview automation migration from single-owner components to live owner streams, preview automation viewport/readiness/device-toolbar edge-case handling, and Grok ACP resume hardening that waits for replay-idle readiness during `session/load`. The merge conflict-prone files were `apps/server/src/mcp/McpHttpServer.test.ts`, `apps/server/src/provider/acp/AcpSessionRuntime.ts`, `apps/server/src/ws.ts`, `apps/web/src/components/ChatView.logic.ts`, `apps/web/src/components/ChatView.tsx`, and `pnpm-lock.yaml`; preserve the fork's workspace-aware provider-skill RPC layer and source-control metadata helpers while keeping upstream's preview automation broker wiring and ACP replay-idle load gate.
 
-The latest worktree review-port pass also brought in the archived-action local-API fallback, activity detail patch merging/deleted-file/MCP-row handling, terminal-backed project action readiness/probing hardening, source-control panel review fixes, and stricter subagent interrupt turn targeting. These ports intentionally adapt the isolated worktree fixes onto current `main` instead of replaying whole split-branch trees, because several worktrees lack root-owned VS Code, provider-skill, source-control, and chat customizations.
+The latest worktree review-port pass also brought in the archived-action local-API fallback, archive grouping/search helper extraction and bulk-action hardening, activity detail patch merging/deleted-file/MCP-row handling, terminal-backed project action readiness/probing hardening, source-control panel review fixes, Codex workspace-skill invalid-cwd normalization, VS Code persistence cleanup coverage, and stricter subagent interrupt turn targeting. These ports intentionally adapt the isolated worktree fixes onto current `main` instead of replaying whole split-branch trees, because several worktrees lack root-owned VS Code, provider-skill, source-control, and chat customizations.
 
 The upstream Legend List chat scrolling upgrade is now merged into the fork's web and mobile chat surfaces. The conflict-prone files were `apps/web/src/components/ChatView.tsx` and `apps/web/src/components/chat/MessagesTimeline.tsx`; preserve upstream's anchored end-space, composer inset adjustment, `getItemType`, upgraded `@legendapp/list` APIs, and mobile `KeyboardAwareLegendList` / `useKeyboardChatComposerInset` / `useKeyboardScrollToEnd` flow while keeping the fork's workspace-aware provider skill rendering, subagent child-thread navigation, command/file activity rows, and full-width conversation/composer defaults.
 
@@ -205,10 +205,12 @@ Expected behavior:
 - Conversation rows show only the relative archived and created ages inline with the title by default. On row hover or keyboard focus, those age labels fade out and icon-only unarchive/delete actions appear as a right-side overlay with tooltips, matching the sidebar and source-control list-row action pattern.
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first, and delete actions respect the shared `confirmThreadDelete` client setting.
 - Project group context menus expose `unarchive all` and `delete all` actions. While search is active, those bulk actions apply to the visible matching archived conversations; otherwise they apply to all archived conversations in the project. Delete confirmations respect `confirmThreadDelete`, unarchive bulk actions remain guarded, and partial failures surface as not-fully-completed toasts instead of implying every archived thread failed.
+- Archive grouping, search ranking, sort state, and project bulk-action concurrency live in `apps/web/src/components/settings/SettingsPanels.logic.ts` so the dense Archive panel behavior stays covered without growing the React component. Bulk actions stop scheduling new work after thrown failures, wait for active workers to settle, and report interrupted counts separately from visible failures.
 
-Primary file:
+Primary files:
 
 - `apps/web/src/components/settings/SettingsPanels.tsx`
+- `apps/web/src/components/settings/SettingsPanels.logic.ts`
 
 ## Terminal-backed Project Actions
 
@@ -233,12 +235,12 @@ Primary files:
 - `apps/web/src/components/ThreadTerminalDrawer.tsx`
 - `apps/web/src/projectScriptTerminals.ts`
 - `apps/web/src/state/projectActionTerminal.ts`
-- `apps/server/src/terminal/Layers/Manager.ts`
+- `apps/server/src/terminal/Manager.ts`
 
 Relevant tests live in:
 
 - `apps/web/src/projectScriptTerminals.test.ts`
-- `apps/server/src/terminal/Layers/Manager.test.ts`
+- `apps/server/src/terminal/Manager.test.ts`
 - `packages/shared/src/terminalLabels.test.ts`
 
 Useful focused command:
@@ -257,7 +259,7 @@ Expected behavior:
 - The server exposes a workspace-aware `server.listProviderSkills` path and validates enabled Codex skill-listing requests against the requested cwd.
 - The server routes skill listing through a bounded request lister that coalesces concurrent requests for the same provider/cwd, limits cross-workspace concurrency, and applies a short TTL so reconnects or repeated composer renders do not repeatedly spawn Codex app-server probes.
 - The Codex provider requests `skills/list` with the current workspace cwd, times out hung app-server probes, and terminates the probe process when a timeout occurs.
-- Provider skill-list failures preserve structured reason, operation, provider instance, cwd, and bounded cause diagnostics for missing providers, invalid cwd, settings failures, Codex home preparation, probe timeouts, and probe failures while keeping stable user-facing messages. Raw thrown values are not sent directly to clients; the server keeps a small plain diagnostic shape so file paths, process output, and unexpected objects do not expand the wire payload.
+- Provider skill-list failures preserve structured reason, operation, provider instance, normalized cwd, and bounded cause diagnostics for missing providers, invalid cwd, settings failures, Codex home preparation, probe timeouts, and probe failures while keeping stable user-facing messages. Raw thrown values are not sent directly to clients; the server keeps a small plain diagnostic shape so file paths, process output, and unexpected objects do not expand the wire payload.
 - Non-Codex or disabled providers keep returning provider snapshot skills instead of failing workspace skill search.
 - The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a bounded stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot.
 - The composer loads workspace skills lazily: it starts workspace skill discovery when the `$` skill menu is active or the prompt already contains a complete `$skill` token, rather than probing on every empty composer mount. It preserves already loaded repo-local skills while refreshing the same workspace, falls back to provider snapshot skills when a settled workspace lookup returns no skills or errors, and clears stale repo-local skills during workspace switches or settled no-data states.
@@ -414,7 +416,7 @@ When retiring the local changes, remove the corresponding tests or update them t
 
 > Here are referenced the latest commit SHAs for the `main` branch of both the `origin` and `upstream` remotes. These SHAs are used to determine if any worktrees need to be updated with changes from `upstream/main` and `origin/main`.
 
-**Last origin/main commit SHA:** e047b12d9
-**Last upstream/main commit SHA:** 22f021ed6
-**Last post-merge main...upstream/main count:** 300 ahead / 0 behind
-**Last resolved main...upstream/main diff size:** 287 files changed, 42430 insertions, 1738 deletions
+**Last origin/main commit SHA:** 8454550fa
+**Last upstream/main commit SHA:** 52b04b947
+**Last post-merge main...upstream/main count:** 328 ahead / 0 behind
+**Last resolved main...upstream/main diff size:** 293 files changed, 45052 insertions, 1789 deletions
