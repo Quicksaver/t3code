@@ -1647,7 +1647,7 @@ export function SourceControlPanel({
     (path: string, targetCwd = cwd) => {
       useRightPanelStore
         .getState()
-        .openFile(threadRef, targetCwd === cwd ? path : resolvePathLinkTarget(path, targetCwd));
+        .openFile(threadRef, path, undefined, targetCwd === cwd ? undefined : targetCwd);
     },
     [cwd, threadRef],
   );

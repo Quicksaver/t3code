@@ -73,67 +73,73 @@ interface WorktreeBranchEntry {
   readonly worktreePath: string;
 }
 
-interface SourceControlPanelServiceShape {
-  readonly snapshot: (
-    input: VcsPanelSnapshotInput,
-  ) => Effect.Effect<VcsPanelSnapshotResult, GitCommandError>;
-  readonly branchDetails: (
-    input: VcsPanelBranchDetailsInput,
-  ) => Effect.Effect<VcsPanelBranchDetails, GitCommandError>;
-  readonly branchCommits: (
-    input: VcsPanelBranchCommitsInput,
-  ) => Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError>;
-  readonly stashDetails: (
-    input: VcsPanelStashDetailsInput,
-  ) => Effect.Effect<VcsPanelStashDetails, GitCommandError>;
-  readonly stageFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly unstageFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly discardFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly enrichWorkingTreeFiles: (
-    input: VcsPanelWorkingTreeFileEnrichmentInput,
-  ) => Effect.Effect<VcsPanelWorkingTreeFileEnrichmentResult, GitCommandError>;
-  readonly readFileDiff: (
-    input: VcsPanelFileDiffInput,
-  ) => Effect.Effect<VcsPanelFileDiffResult, GitCommandError>;
-  readonly commitStaged: (input: VcsPanelCommitInput) => Effect.Effect<void, GitCommandError>;
-  readonly pullBranch: (
-    input: VcsPanelBranchActionInput,
-  ) => Effect.Effect<VcsPullResult, GitCommandError>;
-  readonly pushBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly deleteBranch: (input: VcsPanelDeleteBranchInput) => Effect.Effect<void, GitCommandError>;
-  readonly undoLatestCommit: (
-    input: VcsPanelUndoCommitInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly revertCommit: (input: VcsPanelCommitActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly checkoutCommit: (
-    input: VcsPanelCommitActionInput,
-  ) => Effect.Effect<{ readonly refName: string }, GitCommandError>;
-  readonly createBranchFromCommit: (
-    input: VcsPanelCommitActionInput,
-  ) => Effect.Effect<{ readonly refName: string }, GitCommandError>;
-  readonly mergeBranchIntoCurrent: (
-    input: VcsPanelRefActionInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly rebaseCurrentOnto: (
-    input: VcsPanelRefActionInput,
-  ) => Effect.Effect<void, GitCommandError>;
-  readonly fetchBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
-  readonly fetchRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
-  readonly fetchAllRemotes: (input: VcsPanelSnapshotInput) => Effect.Effect<void, GitCommandError>;
-  readonly addRemote: (input: VcsPanelAddRemoteInput) => Effect.Effect<void, GitCommandError>;
-  readonly removeRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
-  readonly createStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
-  readonly applyStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
-  readonly popStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
-  readonly dropStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
-  readonly compare: (
-    input: VcsPanelCompareInput,
-  ) => Effect.Effect<VcsPanelCompareResult, GitCommandError>;
-}
-
 export class SourceControlPanelService extends Context.Service<
   SourceControlPanelService,
-  SourceControlPanelServiceShape
+  {
+    readonly snapshot: (
+      input: VcsPanelSnapshotInput,
+    ) => Effect.Effect<VcsPanelSnapshotResult, GitCommandError>;
+    readonly branchDetails: (
+      input: VcsPanelBranchDetailsInput,
+    ) => Effect.Effect<VcsPanelBranchDetails, GitCommandError>;
+    readonly branchCommits: (
+      input: VcsPanelBranchCommitsInput,
+    ) => Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError>;
+    readonly stashDetails: (
+      input: VcsPanelStashDetailsInput,
+    ) => Effect.Effect<VcsPanelStashDetails, GitCommandError>;
+    readonly stageFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstageFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
+    readonly discardFiles: (input: VcsPanelFileActionInput) => Effect.Effect<void, GitCommandError>;
+    readonly enrichWorkingTreeFiles: (
+      input: VcsPanelWorkingTreeFileEnrichmentInput,
+    ) => Effect.Effect<VcsPanelWorkingTreeFileEnrichmentResult, GitCommandError>;
+    readonly readFileDiff: (
+      input: VcsPanelFileDiffInput,
+    ) => Effect.Effect<VcsPanelFileDiffResult, GitCommandError>;
+    readonly commitStaged: (input: VcsPanelCommitInput) => Effect.Effect<void, GitCommandError>;
+    readonly pullBranch: (
+      input: VcsPanelBranchActionInput,
+    ) => Effect.Effect<VcsPullResult, GitCommandError>;
+    readonly pushBranch: (input: VcsPanelBranchActionInput) => Effect.Effect<void, GitCommandError>;
+    readonly deleteBranch: (
+      input: VcsPanelDeleteBranchInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly undoLatestCommit: (
+      input: VcsPanelUndoCommitInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly revertCommit: (
+      input: VcsPanelCommitActionInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly checkoutCommit: (
+      input: VcsPanelCommitActionInput,
+    ) => Effect.Effect<{ readonly refName: string }, GitCommandError>;
+    readonly createBranchFromCommit: (
+      input: VcsPanelCommitActionInput,
+    ) => Effect.Effect<{ readonly refName: string }, GitCommandError>;
+    readonly mergeBranchIntoCurrent: (
+      input: VcsPanelRefActionInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly rebaseCurrentOnto: (
+      input: VcsPanelRefActionInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly fetchBranch: (
+      input: VcsPanelBranchActionInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly fetchRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
+    readonly fetchAllRemotes: (
+      input: VcsPanelSnapshotInput,
+    ) => Effect.Effect<void, GitCommandError>;
+    readonly addRemote: (input: VcsPanelAddRemoteInput) => Effect.Effect<void, GitCommandError>;
+    readonly removeRemote: (input: VcsPanelRemoteInput) => Effect.Effect<void, GitCommandError>;
+    readonly createStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
+    readonly applyStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
+    readonly popStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
+    readonly dropStash: (input: VcsPanelStashInput) => Effect.Effect<void, GitCommandError>;
+    readonly compare: (
+      input: VcsPanelCompareInput,
+    ) => Effect.Effect<VcsPanelCompareResult, GitCommandError>;
+  }
 >()("t3/sourceControl/SourceControlPanelService") {}
 
 function commandLabel(args: readonly string[]): string {

@@ -682,9 +682,14 @@ export const make = Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const siblingWatchCwds = yield* worktreeWatchPaths(cwd);
         const watchedCwds = [cwd, ...siblingWatchCwds];
-        yield* Effect.forEach(watchedCwds, (watchCwd) => retainLocalWatcher(watchCwd, cwd), {
-          discard: true,
-        });
+        yield* Effect.forEach(
+          watchedCwds,
+          (watchCwd) =>
+            Effect.acquireRelease(retainLocalWatcher(watchCwd, cwd), () =>
+              releaseLocalWatcher(watchCwd, cwd),
+            ),
+          { discard: true },
+        );
         yield* Effect.yieldNow;
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
@@ -696,15 +701,10 @@ export const make = Effect.gen(function* () {
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = Effect.all(
-          [
-            releaseRemotePoller(cwd),
-            Effect.forEach(watchedCwds, (watchCwd) => releaseLocalWatcher(watchCwd, cwd), {
-              discard: true,
-            }),
-          ],
-          { discard: true },
-        ).pipe(Effect.ignore, Effect.asVoid);
+        const release = Effect.all([releaseRemotePoller(cwd)], { discard: true }).pipe(
+          Effect.ignore,
+          Effect.asVoid,
+        );
 
         return Stream.concat(
           Stream.make({
