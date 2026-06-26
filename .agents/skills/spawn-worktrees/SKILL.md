@@ -5,6 +5,6 @@ name: spawn-worktrees
 
 $spawn-worktree
 
-Spawn one new subagent for each active worktree in this repository.
+Spawn one new subagent for each active worktree in this repository, except for the main worktree.
 
-Since they are running in parallel, assign each subagent a unique port number for their own dev server, to to avoid conflicts.
+Since they are running in parallel, assign each subagent a unique port number for their own dev server, to avoid conflicts.
