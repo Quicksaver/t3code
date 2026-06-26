@@ -2037,12 +2037,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   )(function* (input) {
     const paths = uniquePaths(input.paths ?? []);
     const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths));
-    const args = [
-      "commit",
-      "-m",
-      message,
-      ...(paths.length > 0 ? (["--", ...paths] as const) : []),
-    ];
+    const args = ["commit", "-m", message];
     yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
     if (input.push) {
       const status = yield* workflow
@@ -2312,9 +2307,12 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const mergeBranchIntoCurrent: SourceControlPanelService["Service"]["mergeBranchIntoCurrent"] = (
     input,
   ) =>
-    run("vcs.panel.mergeBranchIntoCurrent", input.cwd, ["merge", "--no-edit", input.refName]).pipe(
-      Effect.asVoid,
-    );
+    run("vcs.panel.mergeBranchIntoCurrent", input.cwd, [
+      "merge",
+      "--no-edit",
+      "--",
+      input.refName,
+    ]).pipe(Effect.asVoid);
 
   const rebaseCurrentOnto: SourceControlPanelService["Service"]["rebaseCurrentOnto"] = (input) =>
     run("vcs.panel.rebaseCurrentOnto", input.cwd, ["rebase", input.refName]).pipe(Effect.asVoid);

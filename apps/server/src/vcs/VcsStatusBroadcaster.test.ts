@@ -460,6 +460,24 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it("parses worktree paths from porcelain output", () => {
+    assert.deepStrictEqual(
+      VcsStatusBroadcaster.parseWorktreePaths(
+        [
+          "worktree /repo",
+          "HEAD abc",
+          "branch refs/heads/main",
+          "",
+          "worktree /repo.worktrees/feature",
+          "HEAD def",
+          "branch refs/heads/feature/source-control",
+          "",
+        ].join("\n"),
+      ),
+      ["/repo", "/repo.worktrees/feature"],
+    );
+  });
+
   it.effect("loads remote status once when periodic refreshes are disabled", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

@@ -148,6 +148,19 @@ interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
 
+const LOCAL_WATCHER_KEY_SEPARATOR = "\0";
+
+function localWatcherKey(watchCwd: string, refreshCwd: string): string {
+  return `${watchCwd}${LOCAL_WATCHER_KEY_SEPARATOR}${refreshCwd}`;
+}
+
+export function parseWorktreePaths(output: string): readonly string[] {
+  return output
+    .split(/\r?\n/u)
+    .flatMap((line) => (line.startsWith("worktree ") ? [line.slice("worktree ".length)] : []))
+    .filter((worktreePath) => worktreePath.length > 0);
+}
+
 export function remoteRefreshFailureDelay(
   consecutiveFailures: number,
   configuredInterval: Duration.Duration,
@@ -525,10 +538,32 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const makeLocalWatchLoop = (cwd: string) =>
+  const worktreeWatchPaths = Effect.fn("VcsStatusBroadcaster.worktreeWatchPaths")(function* (
+    cwd: string,
+  ) {
+    if (Option.isNone(vcsProcess)) return [];
+    const result = yield* vcsProcess.value
+      .run({
+        operation: "VcsStatusBroadcaster.worktrees",
+        command: "git",
+        args: ["worktree", "list", "--porcelain"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 1_000_000,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (result === null || result.exitCode !== 0) return [];
+    const rootPath = path.resolve(cwd);
+    return parseWorktreePaths(result.stdout).filter(
+      (worktreePath) => path.resolve(worktreePath) !== rootPath,
+    );
+  });
+
+  const makeLocalWatchLoop = (watchCwd: string, refreshCwd: string) =>
     localWatchRefreshSignals(
-      fs.watch(cwd).pipe(
-        Stream.map((event) => watchEventPath(path, cwd, event.path)),
+      fs.watch(watchCwd).pipe(
+        Stream.map((event) => watchEventPath(path, watchCwd, event.path)),
         Stream.filter((relativePath): relativePath is string => relativePath !== null),
       ),
       (relativePaths) =>
@@ -540,7 +575,7 @@ export const make = Effect.gen(function* () {
                 operation: "VcsStatusBroadcaster.watch.checkIgnore",
                 command: "git",
                 args: ["check-ignore", "-z", "--stdin"],
-                cwd,
+                cwd: watchCwd,
                 stdin: `${relativePaths.join("\0")}\0`,
                 allowNonZeroExit: true,
                 timeoutMs: 5_000,
@@ -558,30 +593,36 @@ export const make = Effect.gen(function* () {
               ),
         }),
     ).pipe(
-      Stream.runForEach(() => refreshLocalStatus(cwd).pipe(Effect.ignoreCause({ log: true }))),
+      Stream.runForEach(() =>
+        refreshLocalStatusCore(refreshCwd, { forcePublish: true }).pipe(
+          Effect.ignoreCause({ log: true }),
+        ),
+      ),
       Effect.ignoreCause({ log: true }),
     );
 
   const retainLocalWatcher = Effect.fn("VcsStatusBroadcaster.retainLocalWatcher")(function* (
-    cwd: string,
+    watchCwd: string,
+    refreshCwd: string,
   ) {
+    const key = localWatcherKey(watchCwd, refreshCwd);
     yield* SynchronizedRef.modifyEffect(watchersRef, (activeWatchers) => {
-      const existing = activeWatchers.get(cwd);
+      const existing = activeWatchers.get(key);
       if (existing) {
         const exit = existing.fiber.pollUnsafe();
         if (exit === undefined) {
           const nextWatchers = new Map(activeWatchers);
-          nextWatchers.set(cwd, {
+          nextWatchers.set(key, {
             ...existing,
             subscriberCount: existing.subscriberCount + 1,
           });
           return Effect.succeed([undefined, nextWatchers] as const);
         }
-        return makeLocalWatchLoop(cwd).pipe(
+        return makeLocalWatchLoop(watchCwd, refreshCwd).pipe(
           Effect.forkIn(broadcasterScope),
           Effect.map((fiber) => {
             const nextWatchers = new Map(activeWatchers);
-            nextWatchers.set(cwd, {
+            nextWatchers.set(key, {
               fiber,
               subscriberCount: existing.subscriberCount + 1,
             });
@@ -590,11 +631,11 @@ export const make = Effect.gen(function* () {
         );
       }
 
-      return makeLocalWatchLoop(cwd).pipe(
+      return makeLocalWatchLoop(watchCwd, refreshCwd).pipe(
         Effect.forkIn(broadcasterScope),
         Effect.map((fiber) => {
           const nextWatchers = new Map(activeWatchers);
-          nextWatchers.set(cwd, {
+          nextWatchers.set(key, {
             fiber,
             subscriberCount: 1,
           });
@@ -605,17 +646,19 @@ export const make = Effect.gen(function* () {
   });
 
   const releaseLocalWatcher = Effect.fn("VcsStatusBroadcaster.releaseLocalWatcher")(function* (
-    cwd: string,
+    watchCwd: string,
+    refreshCwd: string,
   ) {
+    const key = localWatcherKey(watchCwd, refreshCwd);
     const watcherToInterrupt = yield* SynchronizedRef.modify(watchersRef, (activeWatchers) => {
-      const existing = activeWatchers.get(cwd);
+      const existing = activeWatchers.get(key);
       if (!existing) {
         return [null, activeWatchers] as const;
       }
 
       if (existing.subscriberCount > 1) {
         const nextWatchers = new Map(activeWatchers);
-        nextWatchers.set(cwd, {
+        nextWatchers.set(key, {
           ...existing,
           subscriberCount: existing.subscriberCount - 1,
         });
@@ -623,7 +666,7 @@ export const make = Effect.gen(function* () {
       }
 
       const nextWatchers = new Map(activeWatchers);
-      nextWatchers.delete(cwd);
+      nextWatchers.delete(key);
       return [existing.fiber, nextWatchers] as const;
     });
 
@@ -637,7 +680,11 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
-        yield* retainLocalWatcher(cwd);
+        const siblingWatchCwds = yield* worktreeWatchPaths(cwd);
+        const watchedCwds = [cwd, ...siblingWatchCwds];
+        yield* Effect.forEach(watchedCwds, (watchCwd) => retainLocalWatcher(watchCwd, cwd), {
+          discard: true,
+        });
         yield* Effect.yieldNow;
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
@@ -649,11 +696,15 @@ export const make = Effect.gen(function* () {
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = releaseRemotePoller(cwd).pipe(
-          Effect.andThen(releaseLocalWatcher(cwd)),
-          Effect.ignore,
-          Effect.asVoid,
-        );
+        const release = Effect.all(
+          [
+            releaseRemotePoller(cwd),
+            Effect.forEach(watchedCwds, (watchCwd) => releaseLocalWatcher(watchCwd, cwd), {
+              discard: true,
+            }),
+          ],
+          { discard: true },
+        ).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({
