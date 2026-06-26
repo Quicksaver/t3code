@@ -175,6 +175,8 @@ describe("terminalOutputLooksReadyForInput", () => {
   it("detects common shell prompts", () => {
     expect(terminalOutputLooksReadyForInput("initializing...\n$ ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("\u001B[32mrepo\u001B[0m % ")).toBe(true);
+    expect(terminalOutputLooksReadyForInput("user@host:~/repo$ ")).toBe(true);
+    expect(terminalOutputLooksReadyForInput("host% ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("PS C:\\repo> ")).toBe(true);
     expect(terminalOutputLooksReadyForInput("C:\\repo> ")).toBe(true);
   });
