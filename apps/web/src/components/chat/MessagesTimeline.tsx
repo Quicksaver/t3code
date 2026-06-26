@@ -77,8 +77,12 @@ import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
+  buildSupplementalToolDetailBody,
   computeStableMessagesTimelineRows,
+  filterChangedFilesWithoutInlineDiff,
   getRenderableCommandOutputLines,
+  hasCommandWorkEntryDetails,
+  hasFileChangeWorkEntryDetails,
   hasRenderableCommandOutput,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
@@ -2186,78 +2190,6 @@ function ToolEntryDetails({
   );
 }
 
-function buildSupplementalToolDetailBody(
-  workEntry: TimelineWorkEntry,
-  options: { dedupeRenderedCommandOutput: boolean },
-): string | null {
-  const detail = workEntry.detail?.trim();
-  if (!detail) {
-    return null;
-  }
-  const command = workEntry.command?.trim();
-  const rawCommand = workEntry.rawCommand?.trim();
-  const renderedOutputMatchesDetail =
-    options.dedupeRenderedCommandOutput && commandOutputMatchesDetail(workEntry, detail);
-  if (detail === command || detail === rawCommand || renderedOutputMatchesDetail) {
-    return null;
-  }
-  return detail;
-}
-
-function commandOutputMatchesDetail(workEntry: TimelineWorkEntry, detail: string): boolean {
-  const hasStreamOutput =
-    hasRenderableCommandOutput(workEntry.stdout) || hasRenderableCommandOutput(workEntry.stderr);
-  return [workEntry.stdout, workEntry.stderr, !hasStreamOutput ? workEntry.output : undefined].some(
-    (value) => getRenderableCommandOutputLines(value).join("\n") === detail,
-  );
-}
-
-function hasCommandWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
-  if (!hasCommandWorkEntryMetadata(workEntry)) {
-    return false;
-  }
-  if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
-    return true;
-  }
-  if (
-    workEntry.itemType === "file_change" ||
-    workEntry.itemType === "collab_agent_tool_call" ||
-    workEntry.requestKind === "file-change"
-  ) {
-    return false;
-  }
-  if (workEntry.itemType || workEntry.requestKind) {
-    return workEntry.itemType === "dynamic_tool_call" || workEntry.itemType === "mcp_tool_call";
-  }
-  return hasCommandWorkEntryCommand(workEntry);
-}
-
-function hasCommandWorkEntryMetadata(workEntry: TimelineWorkEntry): boolean {
-  return Boolean(
-    workEntry.command ||
-    workEntry.rawCommand ||
-    workEntry.output ||
-    workEntry.stdout ||
-    workEntry.stderr ||
-    workEntry.exitCode !== undefined ||
-    workEntry.durationMs !== undefined,
-  );
-}
-
-function hasCommandWorkEntryCommand(workEntry: TimelineWorkEntry): boolean {
-  return Boolean(workEntry.command || workEntry.rawCommand);
-}
-
-function hasFileChangeWorkEntryDetails(workEntry: TimelineWorkEntry): boolean {
-  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
-    return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
-  }
-  if (workEntry.itemType === "collab_agent_tool_call") {
-    return false;
-  }
-  return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
-}
-
 function CommandEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry }) {
   const command = workEntry.command ?? workEntry.rawCommand ?? null;
   const rawCommand =
@@ -2364,12 +2296,18 @@ function FileChangeEntryDetails({ workEntry }: { workEntry: TimelineWorkEntry })
     `tool-file-change:${workEntry.id}:${ctx.resolvedTheme}`,
   );
   const hasInlineDiff = renderablePatch?.kind === "files";
+  const changedFilesWithoutInlineDiff = hasInlineDiff
+    ? filterChangedFilesWithoutInlineDiff(
+        workEntry.changedFiles,
+        renderablePatch.files.map(resolveFileDiffPath),
+      )
+    : (workEntry.changedFiles ?? []);
 
   return (
     <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
-      {!hasInlineDiff && (workEntry.changedFiles?.length ?? 0) > 0 && (
+      {changedFilesWithoutInlineDiff.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {workEntry.changedFiles?.map((filePath) => {
+          {changedFilesWithoutInlineDiff.map((filePath) => {
             const displayPath = formatWorkspaceRelativePath(filePath, ctx.workspaceRoot);
             return (
               <span

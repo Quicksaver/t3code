@@ -963,7 +963,7 @@ function mergeDerivedWorkLogEntries(
   const stderr = mergeTextOutput(previous.stderr, next.stderr, next);
   const exitCode = next.exitCode ?? previous.exitCode;
   const durationMs = next.durationMs ?? previous.durationMs;
-  const patch = next.patch ?? previous.patch;
+  const patch = mergePatchText(previous.patch, next.patch);
   const subagentPrompt =
     itemType === "collab_agent_tool_call"
       ? (previous.subagentPrompt ?? next.subagentPrompt)
@@ -1025,6 +1025,19 @@ function mergeSubagentChildren(
     });
   }
   return [...byChildActivity.values()];
+}
+
+function mergePatchText(
+  previous: string | undefined,
+  next: string | undefined,
+): string | undefined {
+  if (!previous) {
+    return next;
+  }
+  if (!next || next === previous) {
+    return previous;
+  }
+  return `${previous.trimEnd()}\n\n${next.trimStart()}`;
 }
 
 function mergeTextOutput(
@@ -1681,6 +1694,15 @@ function toUnifiedPatchFromRecordDiff(
     return `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${lines.length} @@\n${addedLines}`;
   }
 
+  if (codexChangeKindType(record) === "delete") {
+    if (trimmed.startsWith("@@ ")) {
+      return `diff --git a/${path} b/${path}\ndeleted file mode 100644\n--- a/${path}\n+++ /dev/null\n${trimmed}`;
+    }
+    const lines = trimmed.length > 0 ? trimmed.split(/\r?\n/u) : [];
+    const removedLines = lines.map((line) => `-${line}`).join("\n");
+    return `diff --git a/${path} b/${path}\ndeleted file mode 100644\n--- a/${path}\n+++ /dev/null\n@@ -1,${lines.length} +0,0 @@\n${removedLines}`;
+  }
+
   if (trimmed.startsWith("@@ ")) {
     return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n${trimmed}`;
   }
@@ -1918,10 +1940,11 @@ function compareActivitiesByOrder(
     return lifecycleRankComparison;
   }
 
-  // Stable sort preserves arrival order for unsequenced same-timestamp events.
-  // Streaming text chunks can share millisecond timestamps; sorting those by
-  // random event ids can scramble the reconstructed output.
-  return 0;
+  if (shouldPreserveSameTimestampToolUpdateOrder(left, right)) {
+    return 0;
+  }
+
+  return left.id.localeCompare(right.id);
 }
 
 function compareActivityLifecycleRank(kind: string): number {
@@ -1935,6 +1958,31 @@ function compareActivityLifecycleRank(kind: string): number {
     return 2;
   }
   return 1;
+}
+
+function shouldPreserveSameTimestampToolUpdateOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): boolean {
+  if (left.kind !== "tool.updated" || right.kind !== "tool.updated") {
+    return false;
+  }
+  const leftPayload = asRecord(left.payload);
+  const rightPayload = asRecord(right.payload);
+  const leftToolCallId = extractToolCallId(leftPayload);
+  const rightToolCallId = extractToolCallId(rightPayload);
+  if (leftToolCallId && rightToolCallId) {
+    return leftToolCallId === rightToolCallId;
+  }
+  const leftItemType = extractWorkLogItemType(leftPayload);
+  const rightItemType = extractWorkLogItemType(rightPayload);
+  const leftTitle = extractToolTitle(leftPayload);
+  const rightTitle = extractToolTitle(rightPayload);
+  return (
+    (leftItemType !== null || leftTitle !== null) &&
+    leftItemType === rightItemType &&
+    leftTitle === rightTitle
+  );
 }
 
 export function deriveTimelineEntries(

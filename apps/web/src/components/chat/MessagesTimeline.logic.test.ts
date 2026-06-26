@@ -1,13 +1,31 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { WorkLogEntry } from "../../session-logic";
 import {
+  buildSupplementalToolDetailBody,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  filterChangedFilesWithoutInlineDiff,
   getRenderableCommandOutputLines,
+  hasCommandWorkEntryDetails,
+  hasFileChangeWorkEntryDetails,
   hasRenderableCommandOutput,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
 } from "./MessagesTimeline.logic";
+
+let workLogEntrySequence = 0;
+
+function buildWorkLogEntry(overrides: Partial<WorkLogEntry>): WorkLogEntry {
+  const sequence = workLogEntrySequence++;
+  return {
+    id: `work-${sequence + 1}`,
+    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString(),
+    label: "Tool",
+    tone: "tool",
+    ...overrides,
+  };
+}
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -282,6 +300,214 @@ describe("hasRenderableCommandOutput", () => {
       "\t",
       "stderr",
     ]);
+  });
+});
+
+describe("activity detail expansion", () => {
+  it("expands command entries and dynamic tool calls with command metadata", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "command_execution",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "dynamic_tool_call",
+          stdout: "passed",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("expands command entries that only have runtime metadata", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "command_execution",
+          exitCode: 0,
+          durationMs: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          exitCode: 0,
+          durationMs: 0,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("falls back to command metadata when request kind alone is not enough", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-read",
+          command: "sed -n '1,20p' package.json",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-read",
+          stdout: '{ "name": "t3code" }',
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat file-change and collab-agent entries as command details", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "file_change",
+          command: "apply_patch",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "command",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not treat MCP calls with runtime metadata as command details", () => {
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "mcp_tool_call",
+          durationMs: 1234,
+          exitCode: 0,
+          toolData: {
+            server: "filesystem",
+            name: "read_file",
+            arguments: { path: "package.json" },
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("expands file-change entries and patch-carrying tool calls", () => {
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "file_change",
+          changedFiles: ["apps/web/src/session-logic.ts"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          requestKind: "file-change",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "dynamic_tool_call",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "file-change",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps supplemental detail only when it adds distinct information", () => {
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          command: "vp test",
+          detail: "vp test",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "passed",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "line 1\r\n  line 2  \r\n\r\n",
+          detail: "line 1\nline 2",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBeNull();
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "passed",
+        }),
+        { dedupeRenderedCommandOutput: false },
+      ),
+    ).toBe("passed");
+    expect(
+      buildSupplementalToolDetailBody(
+        buildWorkLogEntry({
+          stdout: "passed\n",
+          detail: "exit code 0",
+        }),
+        { dedupeRenderedCommandOutput: true },
+      ),
+    ).toBe("exit code 0");
+  });
+
+  it("keeps changed files not represented by inline diff paths", () => {
+    expect(
+      filterChangedFilesWithoutInlineDiff(
+        [
+          "/Users/example/t3code/apps/web/src/session-logic.ts",
+          "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
+        ],
+        ["apps/web/src/session-logic.ts"],
+      ),
+    ).toEqual(["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"]);
   });
 });
 

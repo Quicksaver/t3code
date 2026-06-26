@@ -134,6 +134,117 @@ export function getRenderableCommandOutputLines(value: string | null | undefined
   return lines.slice(startIndex, endIndex);
 }
 
+export function buildSupplementalToolDetailBody(
+  workEntry: WorkLogEntry,
+  options: { dedupeRenderedCommandOutput: boolean },
+): string | null {
+  const detail = workEntry.detail?.trim();
+  if (!detail) {
+    return null;
+  }
+  const command = workEntry.command?.trim();
+  const rawCommand = workEntry.rawCommand?.trim();
+  const renderedOutputMatchesDetail =
+    options.dedupeRenderedCommandOutput && commandOutputMatchesDetail(workEntry, detail);
+  if (detail === command || detail === rawCommand || renderedOutputMatchesDetail) {
+    return null;
+  }
+  return detail;
+}
+
+function commandOutputMatchesDetail(workEntry: WorkLogEntry, detail: string): boolean {
+  const stdoutLines = getRenderableCommandOutputLines(workEntry.stdout);
+  const stderrLines = getRenderableCommandOutputLines(workEntry.stderr);
+  const hasStreamOutput = stdoutLines.length > 0 || stderrLines.length > 0;
+  const outputLines = hasStreamOutput ? [] : getRenderableCommandOutputLines(workEntry.output);
+  const normalizedDetail = normalizeToolDetailLines(detail.split(/\r?\n/u));
+
+  return [stdoutLines, stderrLines, outputLines].some(
+    (lines) => lines.length > 0 && normalizeToolDetailLines(lines) === normalizedDetail,
+  );
+}
+
+function normalizeToolDetailLines(lines: ReadonlyArray<string>): string {
+  const normalizedLines = lines.map((line) => line.trim());
+  let startIndex = 0;
+  let endIndex = normalizedLines.length;
+  while (startIndex < endIndex && normalizedLines[startIndex]?.length === 0) {
+    startIndex += 1;
+  }
+  while (endIndex > startIndex && normalizedLines[endIndex - 1]?.length === 0) {
+    endIndex -= 1;
+  }
+  return normalizedLines.slice(startIndex, endIndex).join("\n");
+}
+
+function isCollabAgentWorkEntry(workEntry: WorkLogEntry): boolean {
+  return workEntry.itemType === "collab_agent_tool_call";
+}
+
+export function hasCommandWorkEntryDetails(workEntry: WorkLogEntry): boolean {
+  if (!hasCommandWorkEntryMetadata(workEntry)) {
+    return false;
+  }
+  if (isCollabAgentWorkEntry(workEntry)) {
+    return false;
+  }
+  if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
+    return true;
+  }
+  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
+    return false;
+  }
+  if (workEntry.itemType) {
+    return workEntry.itemType === "dynamic_tool_call";
+  }
+  return Boolean(workEntry.command || workEntry.rawCommand);
+}
+
+function hasCommandWorkEntryMetadata(workEntry: WorkLogEntry): boolean {
+  return Boolean(
+    workEntry.command ||
+    workEntry.rawCommand ||
+    workEntry.output ||
+    workEntry.stdout ||
+    workEntry.stderr ||
+    workEntry.exitCode != null ||
+    workEntry.durationMs != null,
+  );
+}
+
+export function hasFileChangeWorkEntryDetails(workEntry: WorkLogEntry): boolean {
+  if (isCollabAgentWorkEntry(workEntry)) {
+    return false;
+  }
+  return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
+}
+
+export function filterChangedFilesWithoutInlineDiff(
+  changedFiles: ReadonlyArray<string> | undefined,
+  inlineDiffPaths: ReadonlyArray<string>,
+): string[] {
+  if (!changedFiles || changedFiles.length === 0) {
+    return [];
+  }
+  if (inlineDiffPaths.length === 0) {
+    return [...changedFiles];
+  }
+  return changedFiles.filter(
+    (changedFile) =>
+      !inlineDiffPaths.some((diffPath) => changedFileMatchesDiffPath(changedFile, diffPath)),
+  );
+}
+
+function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
+  const normalizedChangedFile = changedFile.replace(/\\/gu, "/");
+  const normalizedDiffPath = diffPath.replace(/\\/gu, "/");
+  return (
+    normalizedChangedFile === normalizedDiffPath ||
+    normalizedChangedFile.endsWith(`/${normalizedDiffPath}`) ||
+    normalizedDiffPath.endsWith(`/${normalizedChangedFile.replace(/^\/+/u, "")}`)
+  );
+}
+
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
   let nullTurnResponseIndex = 0;

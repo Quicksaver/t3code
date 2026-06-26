@@ -369,6 +369,37 @@ describe("deriveActivePlanState", () => {
       steps: [{ step: "Write tests", status: "completed" }],
     });
   });
+
+  it("uses deterministic ordering for same-timestamp plan updates", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "plan-b",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "Second by id", status: "pending" }],
+        },
+      }),
+      makeActivity({
+        id: "plan-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "turn.plan.updated",
+        summary: "Plan updated",
+        tone: "info",
+        turnId: "turn-1",
+        payload: {
+          plan: [{ step: "First by id", status: "pending" }],
+        },
+      }),
+    ];
+
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))).toMatchObject({
+      steps: [{ step: "Second by id", status: "pending" }],
+    });
+  });
 });
 
 describe("findLatestProposedPlan", () => {
@@ -2086,6 +2117,58 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.patch).toBe(patch);
   });
 
+  it("merges file-change patches across collapsed lifecycle events", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "file-tool-patch-update",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "file-tool-1",
+            item: {
+              changes: [
+                {
+                  path: "first.ts",
+                  patch:
+                    "diff --git a/first.ts b/first.ts\n--- a/first.ts\n+++ b/first.ts\n@@ -1 +1 @@\n-old\n+new\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "file-tool-patch-complete",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolCallId: "file-tool-1",
+            item: {
+              changes: [
+                {
+                  path: "second.ts",
+                  patch:
+                    "diff --git a/second.ts b/second.ts\n--- a/second.ts\n+++ b/second.ts\n@@ -1 +1 @@\n-old\n+new\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["first.ts", "second.ts"]);
+    expect(entry?.patch).toContain("diff --git a/first.ts b/first.ts");
+    expect(entry?.patch).toContain("diff --git a/second.ts b/second.ts");
+  });
+
   it("normalizes Codex file-change content diffs into unified patches", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -2116,6 +2199,38 @@ describe("deriveWorkLogEntries", () => {
     );
     expect(entry?.patch).toContain("--- /dev/null");
     expect(entry?.patch).toContain("+Smoke test file-change row.");
+  });
+
+  it("normalizes Codex deleted-file content diffs into deleted unified patches", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "codex-file-tool-delete-patch",
+        kind: "tool.completed",
+        summary: "File change",
+        payload: {
+          itemType: "file_change",
+          data: {
+            item: {
+              changes: [
+                {
+                  path: "SMOKE_TEST_DELETE.md",
+                  kind: { type: "delete" },
+                  diff: "Removed line.\n",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.changedFiles).toEqual(["SMOKE_TEST_DELETE.md"]);
+    expect(entry?.patch).toContain("diff --git a/SMOKE_TEST_DELETE.md b/SMOKE_TEST_DELETE.md");
+    expect(entry?.patch).toContain("deleted file mode 100644");
+    expect(entry?.patch).toContain("--- a/SMOKE_TEST_DELETE.md");
+    expect(entry?.patch).toContain("+++ /dev/null");
+    expect(entry?.patch).toContain("-Removed line.");
   });
 
   it("normalizes string Codex file-change kinds before normalizing patches", () => {
