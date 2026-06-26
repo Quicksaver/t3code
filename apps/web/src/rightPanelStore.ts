@@ -42,6 +42,7 @@ export type RightPanelSurface =
   | {
       id: `file:${string}`;
       kind: "file";
+      cwd?: string;
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
@@ -61,7 +62,7 @@ interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (ref: ScopedThreadRef, kind: Exclude<RightPanelKind, "file" | "terminal">) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number, cwd?: string) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -115,9 +116,11 @@ const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  cwd?: string,
 ): RightPanelSurface => ({
-  id: `file:${relativePath}`,
+  id: cwd ? `file:${cwd}:${relativePath}` : `file:${relativePath}`,
   kind: "file",
+  ...(cwd ? { cwd } : {}),
   relativePath,
   revealLine,
   revealRequestId,
@@ -182,6 +185,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     if (surface.kind === "file") {
+                      const { cwd: _persistedCwd, ...surfaceWithoutCwd } = surface;
+                      const cwd = typeof _persistedCwd === "string" ? _persistedCwd : undefined;
                       const revealLine =
                         typeof surface.revealLine === "number" &&
                         Number.isFinite(surface.revealLine)
@@ -193,7 +198,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      return [
+                        {
+                          ...surfaceWithoutCwd,
+                          ...(cwd ? { cwd } : {}),
+                          revealLine,
+                          revealRequestId,
+                        },
+                      ];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -270,13 +282,15 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
         })),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line, cwd) =>
         set((state) => ({
           byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
-            const surfaceId = `file:${relativePath}` as const;
+            const surfaceId: `file:${string}` = cwd
+              ? `file:${cwd}:${relativePath}`
+              : `file:${relativePath}`;
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -285,6 +299,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
+              cwd,
             );
             return {
               isOpen: true,
