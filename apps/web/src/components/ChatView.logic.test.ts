@@ -145,13 +145,14 @@ describe("buildThreadTurnInterruptInput", () => {
     ).toEqual({ threadId, turnId: childTurnId });
   });
 
-  it("falls back to the session turn when a running subagent has no latest turn", () => {
+  it("omits a turn id when a running subagent has no latest turn", () => {
     const activeTurnId = TurnId.make("turn-running");
 
     expect(
       buildThreadTurnInterruptInput(
         makeThread({
           parentRelation: makeSubagentParentRelation(),
+          latestTurn: null,
           session: {
             ...readySession,
             status: "running",
@@ -159,7 +160,52 @@ describe("buildThreadTurnInterruptInput", () => {
           },
         }),
       ),
-    ).toEqual({ threadId, turnId: activeTurnId });
+    ).toEqual({ threadId });
+  });
+
+  it("omits a turn id when a running subagent latest turn is not running", () => {
+    const activeTurnId = TurnId.make("turn-running");
+
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          parentRelation: makeSubagentParentRelation(),
+          latestTurn: completedTurn,
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId,
+          },
+        }),
+      ),
+    ).toEqual({ threadId });
+  });
+
+  it("omits a turn id when the subagent relation is not running", () => {
+    const activeTurnId = TurnId.make("turn-running");
+    const childTurnId = TurnId.make("child-latest-turn");
+
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          parentRelation: makeSubagentParentRelation({
+            status: "completed",
+            completedAt: "2026-03-29T00:00:20.000Z",
+          }),
+          latestTurn: {
+            ...completedTurn,
+            turnId: childTurnId,
+            state: "running",
+            completedAt: null,
+          },
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId,
+          },
+        }),
+      ),
+    ).toEqual({ threadId });
   });
 });
 
