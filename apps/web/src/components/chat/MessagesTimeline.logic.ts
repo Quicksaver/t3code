@@ -164,14 +164,13 @@ export function hasCommandWorkEntryDetails(workEntry: WorkLogEntry): boolean {
   if (!hasCommandWorkEntryMetadata(workEntry)) {
     return false;
   }
+  if (workEntry.itemType === "collab_agent_tool_call") {
+    return false;
+  }
   if (workEntry.itemType === "command_execution" || workEntry.requestKind === "command") {
     return true;
   }
-  if (
-    workEntry.itemType === "file_change" ||
-    workEntry.itemType === "collab_agent_tool_call" ||
-    workEntry.requestKind === "file-change"
-  ) {
+  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
     return false;
   }
   if (workEntry.itemType || workEntry.requestKind) {
@@ -193,11 +192,11 @@ function hasCommandWorkEntryMetadata(workEntry: WorkLogEntry): boolean {
 }
 
 export function hasFileChangeWorkEntryDetails(workEntry: WorkLogEntry): boolean {
-  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
-    return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
-  }
   if (workEntry.itemType === "collab_agent_tool_call") {
     return false;
+  }
+  if (workEntry.itemType === "file_change" || workEntry.requestKind === "file-change") {
+    return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
   }
   return Boolean(workEntry.patch || (workEntry.changedFiles?.length ?? 0) > 0);
 }

@@ -336,6 +336,15 @@ describe("activity detail expansion", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      hasCommandWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "command",
+          command: "vp test",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("expands file-change entries with changed files or patches", () => {
@@ -355,6 +364,15 @@ describe("activity detail expansion", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      hasFileChangeWorkEntryDetails(
+        buildWorkLogEntry({
+          itemType: "collab_agent_tool_call",
+          requestKind: "file-change",
+          patch: "diff --git a/a b/a\n",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("keeps supplemental detail only when it adds distinct information", () => {
