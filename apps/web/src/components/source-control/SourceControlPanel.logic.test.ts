@@ -24,6 +24,7 @@ const baseSnapshot: VcsPanelSnapshotResult = {
     pr: null,
   },
   changeGroups: [],
+  worktreeChangeSets: [],
   localBranches: [],
   branchDetails: [],
   remotes: [

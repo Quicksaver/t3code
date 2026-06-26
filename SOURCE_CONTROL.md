@@ -71,6 +71,8 @@ This keeps externally-created changes visible without requiring a window blur/re
 
 Checked-out worktree labels are resolved from `git worktree list --porcelain` first. When that output is unavailable or empty, the service falls back to `git branch --format` worktree placeholders where supported; older Git versions that do not support `%(worktreepath)` fall back to the branch format without paths instead of failing the whole panel snapshot.
 
+When the panel is opened from the root checkout and other non-root worktrees are active, dirty sibling worktrees are shown as separate Actionable entries keyed by their checked-out branch and worktree path. These entries are populated by running the same status and diff snapshot commands in the sibling worktree cwd, so staged, unstaged, untracked, and conflicted files remain scoped to the checkout where they exist. Sibling worktree rows are omitted when clean.
+
 Fully synced local branches are omitted from `Actionable`; they remain visible under `Remotes` when they track a same-name remote branch.
 
 Actionable branch sync state is intentionally separate from branch comparison state. A local branch can have a configured Git upstream/base such as `upstream/main` because it was created from that ref, while still being unpublished as `origin/<local-branch-name>` or another remote branch. The panel treats only same-name remote tracking refs as publish/sync upstreams for branch actions. Different-name refs remain valid compare bases and can still make the branch appear in `Actionable`, but they do not make the branch `behind` or `diverged` for sync purposes. In that state the row's sync action is `Publish`, and publishing targets the local branch name on the chosen remote rather than the base ref.
@@ -88,6 +90,8 @@ Items are sorted by operational urgency, then recency. An unclean working tree i
 ## Working Tree
 
 The `Working tree` row expands to a compact changed-file list. There is no staged-versus-unstaged grouping in the panel UI. Each changed file has a selector, and newly appearing changed files are selected by default.
+
+Dirty sibling worktree rows expand to the same compact changed-file list and selection model. File diff, open-in-editor, stash, commit, and discard operations for those rows target the sibling worktree path, not the panel's root cwd. This prevents same relative paths in different checkouts from sharing diff state or executing Git actions against the wrong worktree.
 
 The working-tree subsection header shows a tri-state checkbox before the selection summary. Checked means all files are selected, unchecked means none are selected, and partial means some files are selected; clicking a partial or unchecked checkbox selects all files, while clicking a checked checkbox unselects all files. The summary reads `x of y files selected` and shows selected-file `+x`/`-y` line stats immediately after the label when non-zero. When staged and unstaged entries for the same file are merged into one displayed row, the displayed stats sum both sides instead of taking only the larger staged or unstaged count. These numbers are aggregate staged-plus-unstaged churn, not a de-duplicated net diff against `HEAD`; for example, a selected file with `+2/-1` staged and `+3/-4` unstaged is shown as `+5/-5`.
 

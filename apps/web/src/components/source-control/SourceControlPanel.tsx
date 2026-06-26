@@ -12,6 +12,7 @@ import type {
   VcsPanelSnapshotResult,
   VcsPanelStash,
   VcsPanelStashDetails,
+  VcsPanelWorktreeChangeSet,
   VcsPanelWorkingTreeFileEnrichmentResult,
   VcsRef,
 } from "@t3tools/contracts";
@@ -125,6 +126,19 @@ type FileDiffLoadState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly patch: string }
   | { readonly status: "error"; readonly message: string };
+
+interface WorkingTreeChangeSetView {
+  readonly id: string;
+  readonly label: string;
+  readonly cwd: string;
+  readonly branchName: string | null;
+  readonly worktreePath: string | null;
+  readonly current: boolean;
+  readonly changeGroups: readonly VcsPanelChangeGroup[];
+  readonly files: readonly PanelChangedFile[];
+  readonly selectedPaths: ReadonlySet<string>;
+  readonly activity: number;
+}
 
 type SectionKey = "work" | "remotes";
 
@@ -771,6 +785,18 @@ function operationPathsForFile(file: Pick<VcsPanelFileChange, "path" | "original
   return uniquePaths(file.originalPath ? [file.path, file.originalPath] : [file.path]);
 }
 
+function worktreeChangeSetId(changeSet: Pick<VcsPanelWorktreeChangeSet, "worktreePath">): string {
+  return `worktree:${changeSet.worktreePath}`;
+}
+
+function changeSetAttention(files: readonly PanelChangedFile[]): AttentionKind {
+  return files.some((file) => file.hasConflicts)
+    ? "conflicts"
+    : files.length > 0
+      ? "dirty"
+      : "stale";
+}
+
 function commitCountLabel(count: number): string {
   return count === 1 ? "1 commit" : `${count} commits`;
 }
@@ -1011,6 +1037,9 @@ export function SourceControlPanel({
   const lastFocusRefreshAtRef = useRef(0);
   const lastVcsStatusFingerprintRef = useRef<string | null>(null);
   const previousChangedPathsRef = useRef<ReadonlySet<string>>(new Set());
+  const previousWorktreeChangedPathsRef = useRef<ReadonlyMap<string, ReadonlySet<string>>>(
+    new Map(),
+  );
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
   const enrichedWorkingTreeFilesRef = useRef<ReadonlyMap<string, VcsPanelFileChange>>(new Map());
@@ -1069,6 +1098,8 @@ export function SourceControlPanel({
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [stashDialogTarget, setStashDialogTarget] = useState<{
     readonly label: string;
+    readonly cwd: string;
+    readonly actionKey: string;
     readonly paths: readonly string[];
   } | null>(null);
   const [dialogStashMessage, setDialogStashMessage] = useState("");
@@ -1077,6 +1108,9 @@ export function SourceControlPanel({
   const [selectedChangePaths, setSelectedChangePaths] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [selectedWorktreeChangePaths, setSelectedWorktreeChangePaths] = useState<
+    ReadonlyMap<string, ReadonlySet<string>>
+  >(() => new Map());
   const displayedChangeGroups = useMemo(
     () =>
       applyWorkingTreeFileEnrichment(
@@ -1089,6 +1123,29 @@ export function SourceControlPanel({
   const changedFiles = useMemo(
     () => mergeChangeGroups(displayedChangeGroups),
     [displayedChangeGroups],
+  );
+  const worktreeChangeSetViews = useMemo<WorkingTreeChangeSetView[]>(
+    () =>
+      (snapshot?.worktreeChangeSets ?? [])
+        .map((changeSet) => {
+          const id = worktreeChangeSetId(changeSet);
+          const files = mergeChangeGroups(changeSet.changeGroups);
+          return {
+            id,
+            label: changeSet.branchName,
+            cwd: changeSet.worktreePath,
+            branchName: changeSet.branchName,
+            worktreePath: changeSet.worktreePath,
+            current: false,
+            changeGroups: changeSet.changeGroups,
+            files,
+            selectedPaths:
+              selectedWorktreeChangePaths.get(id) ?? new Set(files.map((file) => file.path)),
+            activity: branchActivityTimestamp(changeSet),
+          };
+        })
+        .filter((changeSet) => changeSet.files.length > 0),
+    [selectedWorktreeChangePaths, snapshot?.worktreeChangeSets],
   );
   const compareBaseRefs = useMemo(() => compareBaseRefNames(snapshot), [snapshot]);
   const deferredCompareBaseQuery = useDeferredValue(compareBaseQuery);
@@ -1114,12 +1171,8 @@ export function SourceControlPanel({
     () => uniquePaths(selectedChangedFiles.flatMap((file) => operationPathsForFile(file))),
     [selectedChangedFiles],
   );
-  const selectedChangeStats = useMemo(() => sumFiles(selectedChangedFiles), [selectedChangedFiles]);
   const allChangedFilesSelected =
     changedFiles.length > 0 && selectedChangedFiles.length === changedFiles.length;
-  const noChangedFilesSelected = selectedChangedFiles.length === 0;
-  const partialChangedFilesSelected =
-    changedFiles.length > 0 && !allChangedFilesSelected && !noChangedFilesSelected;
   const toggleAllChangedFilesSelection = useCallback(() => {
     setSelectedChangePaths(allChangedFilesSelected ? new Set() : new Set(changedPaths));
   }, [allChangedFilesSelected, changedPaths]);
@@ -1269,6 +1322,36 @@ export function SourceControlPanel({
     previousChangedPathsRef.current = currentPaths;
   }, []);
 
+  const syncWorktreeChangedPathSelection = useCallback(
+    (changeSets: readonly VcsPanelWorktreeChangeSet[]) => {
+      const previousById = previousWorktreeChangedPathsRef.current;
+      const nextPreviousById = new Map<string, ReadonlySet<string>>();
+      setSelectedWorktreeChangePaths((current) => {
+        const next = new Map<string, ReadonlySet<string>>();
+        for (const changeSet of changeSets) {
+          const id = worktreeChangeSetId(changeSet);
+          const paths = mergeChangeGroups(changeSet.changeGroups).map((file) => file.path);
+          const currentPaths = new Set(paths);
+          if (currentPaths.size === 0) continue;
+          const previousPaths = previousById.get(id) ?? new Set<string>();
+          const selectedPaths = new Set(
+            [...(current.get(id) ?? [])].filter((path) => currentPaths.has(path)),
+          );
+          for (const path of paths) {
+            if (!previousPaths.has(path)) {
+              selectedPaths.add(path);
+            }
+          }
+          next.set(id, selectedPaths);
+          nextPreviousById.set(id, currentPaths);
+        }
+        return next;
+      });
+      previousWorktreeChangedPathsRef.current = nextPreviousById;
+    },
+    [],
+  );
+
   const refresh = useCallback(async () => {
     if (!api) {
       setError("Version Control panel is unavailable for this connection runtime.");
@@ -1288,6 +1371,7 @@ export function SourceControlPanel({
         const nextSnapshot = await api.vcs.panelSnapshot({ cwd });
         resetWorkingTreeFileEnrichment();
         syncChangedPathSelection(nextSnapshot.changeGroups);
+        syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
         setSnapshot(nextSnapshot);
         const expandedBranches = expandedBranchesForSnapshot(nextSnapshot, expandedTreeRef.current);
         const nextDetails = new Map(mapBranchDetails(nextSnapshot.branchDetails));
@@ -1327,7 +1411,14 @@ export function SourceControlPanel({
       setLoadingBranchDetails(new Set());
       setLoading(false);
     }
-  }, [api, compareBaseOverrides, cwd, resetWorkingTreeFileEnrichment, syncChangedPathSelection]);
+  }, [
+    api,
+    compareBaseOverrides,
+    cwd,
+    resetWorkingTreeFileEnrichment,
+    syncChangedPathSelection,
+    syncWorktreeChangedPathSelection,
+  ]);
 
   useEffect(() => {
     void refresh();
@@ -1383,15 +1474,17 @@ export function SourceControlPanel({
   );
 
   const openFilePanel = useCallback(
-    (path: string) => {
-      useRightPanelStore.getState().openFile(threadRef, path);
+    (path: string, targetCwd = cwd) => {
+      useRightPanelStore
+        .getState()
+        .openFile(threadRef, targetCwd === cwd ? path : resolvePathLinkTarget(path, targetCwd));
     },
-    [threadRef],
+    [cwd, threadRef],
   );
 
   const openInVsCode = useCallback(
-    async (path: string) => {
-      const result = await openInPreferredEditor(resolvePathLinkTarget(path, cwd));
+    async (path: string, targetCwd = cwd) => {
+      const result = await openInPreferredEditor(resolvePathLinkTarget(path, targetCwd));
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
         return;
       }
@@ -1478,14 +1571,14 @@ export function SourceControlPanel({
   }, []);
 
   const fileDiffKey = useCallback(
-    (file: VcsPanelFileChange, source: FileDiffSource) =>
-      `${fileDiffSourceKey(source)}:${file.path}:${file.originalPath ?? ""}:${file.status}`,
-    [fileDiffSourceKey],
+    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) =>
+      `${targetCwd}:${fileDiffSourceKey(source)}:${file.path}:${file.originalPath ?? ""}:${file.status}`,
+    [cwd, fileDiffSourceKey],
   );
 
   const toggleFileDiff = useCallback(
-    (file: VcsPanelFileChange, source: FileDiffSource) => {
-      const key = fileDiffKey(file, source);
+    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) => {
+      const key = fileDiffKey(file, source, targetCwd);
       const expanding = !expandedFileDiffs.has(key);
       setExpandedFileDiffs((current) => {
         const next = new Set(current);
@@ -1506,7 +1599,7 @@ export function SourceControlPanel({
       });
       void api.vcs
         .readFileDiff({
-          cwd,
+          cwd: targetCwd,
           path: file.path,
           staged: source.kind === "working-tree" ? source.staged : false,
           source,
@@ -1530,8 +1623,8 @@ export function SourceControlPanel({
   );
 
   const renderFileDiff = useCallback(
-    (file: VcsPanelFileChange, source: FileDiffSource) => {
-      const state = fileDiffsByKey.get(fileDiffKey(file, source));
+    (file: VcsPanelFileChange, source: FileDiffSource, targetCwd = cwd) => {
+      const state = fileDiffsByKey.get(fileDiffKey(file, source, targetCwd));
       if (!state || state.status === "loading") {
         return <div className="px-2 py-1 text-xs text-muted-foreground">Loading diff...</div>;
       }
@@ -1540,20 +1633,30 @@ export function SourceControlPanel({
       }
       return <InlineFileDiff patch={state.patch} resolvedTheme={resolvedTheme} />;
     },
-    [fileDiffKey, fileDiffsByKey, resolvedTheme],
+    [cwd, fileDiffKey, fileDiffsByKey, resolvedTheme],
   );
 
   const fileDiffListProps = useCallback(
-    (sourceForFile: (file: VcsPanelFileChange) => FileDiffSource) => ({
-      getFileKey: (file: VcsPanelFileChange) => fileDiffKey(file, sourceForFile(file)),
+    (sourceForFile: (file: VcsPanelFileChange) => FileDiffSource, targetCwd = cwd) => ({
+      getFileKey: (file: VcsPanelFileChange) => fileDiffKey(file, sourceForFile(file), targetCwd),
       isFileExpanded: (file: VcsPanelFileChange) =>
-        expandedFileDiffs.has(fileDiffKey(file, sourceForFile(file))),
-      onFileToggle: (file: VcsPanelFileChange) => toggleFileDiff(file, sourceForFile(file)),
-      renderExpandedFile: (file: VcsPanelFileChange) => renderFileDiff(file, sourceForFile(file)),
-      onOpenFile: (file: VcsPanelFileChange) => openFilePanel(file.path),
-      onOpenInVsCode: (file: VcsPanelFileChange) => void openInVsCode(file.path),
+        expandedFileDiffs.has(fileDiffKey(file, sourceForFile(file), targetCwd)),
+      onFileToggle: (file: VcsPanelFileChange) =>
+        toggleFileDiff(file, sourceForFile(file), targetCwd),
+      renderExpandedFile: (file: VcsPanelFileChange) =>
+        renderFileDiff(file, sourceForFile(file), targetCwd),
+      onOpenFile: (file: VcsPanelFileChange) => openFilePanel(file.path, targetCwd),
+      onOpenInVsCode: (file: VcsPanelFileChange) => void openInVsCode(file.path, targetCwd),
     }),
-    [expandedFileDiffs, fileDiffKey, openFilePanel, openInVsCode, renderFileDiff, toggleFileDiff],
+    [
+      cwd,
+      expandedFileDiffs,
+      fileDiffKey,
+      openFilePanel,
+      openInVsCode,
+      renderFileDiff,
+      toggleFileDiff,
+    ],
   );
 
   const switchRef = useCallback(
@@ -1847,12 +1950,12 @@ export function SourceControlPanel({
   }, []);
 
   const createStash = useCallback(
-    (paths: readonly string[], message?: string) => {
+    (paths: readonly string[], message?: string, targetCwd = cwd, actionKey = "changes-stash") => {
       const stashMessage = message?.trim();
-      return runAction("changes-stash", async () => {
+      return runAction(actionKey, async () => {
         if (!api) return;
         await api.vcs.createStash({
-          cwd,
+          cwd: targetCwd,
           mode: "all",
           includeUntracked: true,
           paths: [...paths],
@@ -1867,19 +1970,90 @@ export function SourceControlPanel({
     return createStash(selectedChangePathList);
   }, [createStash, selectedChangePathList]);
 
-  const openStashDialog = useCallback((label: string, paths: readonly string[]) => {
-    setStashDialogTarget({ label, paths });
-    setDialogStashMessage("");
-  }, []);
+  const openStashDialog = useCallback(
+    (label: string, paths: readonly string[], targetCwd = cwd, actionKey = "changes-stash") => {
+      setStashDialogTarget({ label, cwd: targetCwd, actionKey, paths });
+      setDialogStashMessage("");
+    },
+    [cwd],
+  );
 
   const runPanelStash = useCallback(() => {
     if (!stashDialogTarget) return;
     const paths = stashDialogTarget.paths;
     const message = dialogStashMessage.trim();
+    const targetCwd = stashDialogTarget.cwd;
+    const actionKey = stashDialogTarget.actionKey;
     setStashDialogTarget(null);
     setDialogStashMessage("");
-    void createStash(paths, message);
+    void createStash(paths, message, targetCwd, actionKey);
   }, [createStash, dialogStashMessage, stashDialogTarget]);
+
+  const commitSelectedInCwd = useCallback(
+    (input: {
+      readonly targetCwd: string;
+      readonly actionKey: string;
+      readonly files: readonly PanelChangedFile[];
+    }) =>
+      runAction(input.actionKey, async () => {
+        if (!api) return;
+        const paths = uniquePaths(input.files.flatMap((file) => operationPathsForFile(file)));
+        if (paths.length === 0) return;
+        await api.vcs.stageFiles({ cwd: input.targetCwd, paths });
+        await api.vcs.commitStaged({ cwd: input.targetCwd, paths });
+      }),
+    [api, runAction],
+  );
+
+  const stashSelectedInCwd = useCallback(
+    (input: {
+      readonly targetCwd: string;
+      readonly actionKey: string;
+      readonly paths: readonly string[];
+      readonly message?: string;
+    }) => createStash(input.paths, input.message, input.targetCwd, input.actionKey),
+    [createStash],
+  );
+
+  const discardSelectedInCwd = useCallback(
+    (input: {
+      readonly targetCwd: string;
+      readonly actionKey: string;
+      readonly files: readonly PanelChangedFile[];
+    }) =>
+      void (async () => {
+        if (input.files.length === 0) return;
+        const countLabel =
+          input.files.length === 1
+            ? "the selected change"
+            : `${input.files.length} selected changes`;
+        if (!(await confirm(`Discard ${countLabel}?`))) return;
+        const stagedPaths = uniquePaths(
+          input.files
+            .filter((file) => file.hasStagedChanges)
+            .flatMap((file) => operationPathsForFile(file)),
+        );
+        const unstagedPaths = uniquePaths(
+          input.files
+            .filter((file) => file.hasUnstagedChanges)
+            .flatMap((file) => operationPathsForFile(file)),
+        );
+        await runAction(input.actionKey, async () => {
+          if (!api) return;
+          if (unstagedPaths.length > 0) {
+            await api.vcs.discardFiles({
+              cwd: input.targetCwd,
+              paths: unstagedPaths,
+              staged: false,
+            });
+          }
+          if (stagedPaths.length > 0) {
+            await api.vcs.discardFiles({ cwd: input.targetCwd, paths: stagedPaths, staged: true });
+          }
+        });
+      })(),
+    [api, confirm, runAction],
+  );
 
   const discardSelectedChanges = useCallback(
     () =>
@@ -2238,23 +2412,38 @@ export function SourceControlPanel({
     return null;
   }
 
-  const toggleChangedFileSelection = (path: string, checked: boolean) => {
-    setSelectedChangePaths((current) => {
-      const next = new Set(current);
-      if (checked) next.add(path);
-      else next.delete(path);
+  const toggleChangeSetFileSelection = (
+    changeSet: WorkingTreeChangeSetView,
+    path: string,
+    checked: boolean,
+  ) => {
+    if (changeSet.current) {
+      setSelectedChangePaths((current) => {
+        const next = new Set(current);
+        if (checked) next.add(path);
+        else next.delete(path);
+        return next;
+      });
+      return;
+    }
+    setSelectedWorktreeChangePaths((current) => {
+      const next = new Map(current);
+      const paths = new Set(next.get(changeSet.id) ?? []);
+      if (checked) paths.add(path);
+      else paths.delete(path);
+      next.set(changeSet.id, paths);
       return next;
     });
   };
 
-  const renderWorkingFile = (file: PanelChangedFile) => {
-    const selected = selectedChangePaths.has(file.path);
-    const discardKey = `file-discard:${file.path}`;
+  const renderWorkingFile = (changeSet: WorkingTreeChangeSetView) => (file: PanelChangedFile) => {
+    const selected = changeSet.selectedPaths.has(file.path);
+    const discardKey = `${changeSet.id}:file-discard:${file.path}`;
     const diffSource = {
       kind: "working-tree",
       staged: !file.hasUnstagedChanges && file.hasStagedChanges,
     } satisfies FileDiffSource;
-    const diffExpanded = expandedFileDiffs.has(fileDiffKey(file, diffSource));
+    const diffExpanded = expandedFileDiffs.has(fileDiffKey(file, diffSource, changeSet.cwd));
     const discardFile = () =>
       void (async () => {
         if (!(await confirm(`Discard changes in ${file.path}?`))) return;
@@ -2262,10 +2451,10 @@ export function SourceControlPanel({
           if (!api) return;
           const paths = operationPathsForFile(file);
           if (file.hasUnstagedChanges) {
-            await api.vcs.discardFiles({ cwd, paths, staged: false });
+            await api.vcs.discardFiles({ cwd: changeSet.cwd, paths, staged: false });
           }
           if (file.hasStagedChanges) {
-            await api.vcs.discardFiles({ cwd, paths, staged: true });
+            await api.vcs.discardFiles({ cwd: changeSet.cwd, paths, staged: true });
           }
         });
       })();
@@ -2275,11 +2464,11 @@ export function SourceControlPanel({
           role="button"
           tabIndex={0}
           className="group relative flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-xs hover:bg-accent/50"
-          onClick={() => toggleFileDiff(file, diffSource)}
+          onClick={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
             event.preventDefault();
-            toggleFileDiff(file, diffSource);
+            toggleFileDiff(file, diffSource, changeSet.cwd);
           }}
           onContextMenu={(event) =>
             openContextMenu(
@@ -2301,10 +2490,10 @@ export function SourceControlPanel({
               ],
               {
                 discard: discardFile,
-                "open-file": () => openFilePanel(file.path),
-                "open-vscode": () => openInVsCode(file.path),
+                "open-file": () => openFilePanel(file.path, changeSet.cwd),
+                "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
                 "copy-filename": () => copyText(fileBasename(file.path)),
-                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, cwd)),
+                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
               },
             )
           }
@@ -2319,7 +2508,9 @@ export function SourceControlPanel({
               checked={selected}
               disabled={isActionRunning(discardKey)}
               aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
-              onCheckedChange={(checked) => toggleChangedFileSelection(file.path, checked === true)}
+              onCheckedChange={(checked) =>
+                toggleChangeSetFileSelection(changeSet, file.path, checked === true)
+              }
             />
           </span>
           <span
@@ -2342,17 +2533,20 @@ export function SourceControlPanel({
             >
               <Trash2 className="size-3.5" />
             </IconButton>
-            <IconButton label="Open file" onClick={() => openFilePanel(file.path)}>
+            <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
               <FileText className="size-3.5" />
             </IconButton>
-            <IconButton label="Open in VS Code" onClick={() => void openInVsCode(file.path)}>
+            <IconButton
+              label="Open in VS Code"
+              onClick={() => void openInVsCode(file.path, changeSet.cwd)}
+            >
               <VisualStudioCode className="size-3.5" />
             </IconButton>
           </RowActions>
         </div>
         {diffExpanded ? (
           <div className="ml-4 border-l border-border/60 pl-1">
-            {renderFileDiff(file, diffSource)}
+            {renderFileDiff(file, diffSource, changeSet.cwd)}
           </div>
         ) : null}
       </div>
@@ -3386,100 +3580,178 @@ export function SourceControlPanel({
     </div>
   );
 
-  const changesSection = (
-    <div className="space-y-2">
-      {changedFiles.length === 0 ? (
-        <div className="px-1 py-1 text-sm text-muted-foreground">Working tree clean</div>
-      ) : (
-        <>
-          <div className="flex h-6 shrink-0 items-center justify-between gap-2 rounded px-1 text-xs font-medium uppercase text-muted-foreground">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className="inline-flex shrink-0 items-center">
-                      <Checkbox
-                        checked={allChangedFilesSelected}
-                        indeterminate={partialChangedFilesSelected}
-                        aria-label={
-                          allChangedFilesSelected ? "Unselect all files" : "Select all files"
-                        }
-                        onCheckedChange={toggleAllChangedFilesSelection}
-                      />
-                    </span>
-                  }
+  const currentBranch = snapshot.localBranches.find((branch) => branch.current) ?? null;
+  const currentWorkingTreeChangeSet: WorkingTreeChangeSetView = {
+    id: "working-tree",
+    label: "Working tree",
+    cwd,
+    branchName: currentBranch?.name ?? null,
+    worktreePath,
+    current: true,
+    changeGroups: displayedChangeGroups,
+    files: changedFiles,
+    selectedPaths: selectedChangePaths,
+    activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
+  };
+
+  const renderChangesSection = (changeSet: WorkingTreeChangeSetView) => {
+    const files = changeSet.files;
+    const selectedFiles = files.filter((file) => changeSet.selectedPaths.has(file.path));
+    const selectedPathList = uniquePaths(
+      selectedFiles.flatMap((file) => operationPathsForFile(file)),
+    );
+    const selectedStats = sumFiles(selectedFiles);
+    const allSelected = files.length > 0 && selectedFiles.length === files.length;
+    const noneSelected = selectedFiles.length === 0;
+    const partialSelected = files.length > 0 && !allSelected && !noneSelected;
+    const commitActionKey = changeSet.current ? "changes-commit" : `${changeSet.id}:changes-commit`;
+    const stashActionKey = changeSet.current ? "changes-stash" : `${changeSet.id}:changes-stash`;
+    const discardActionKey = changeSet.current
+      ? "changes-discard-selected"
+      : `${changeSet.id}:changes-discard-selected`;
+    const toggleAllSelection = () => {
+      if (changeSet.current) {
+        toggleAllChangedFilesSelection();
+        return;
+      }
+      setSelectedWorktreeChangePaths((current) => {
+        const next = new Map(current);
+        next.set(changeSet.id, allSelected ? new Set() : new Set(files.map((file) => file.path)));
+        return next;
+      });
+    };
+    const commitSelected = () => {
+      if (changeSet.current) {
+        void runGeneratedPanelCommit();
+        return;
+      }
+      void commitSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: commitActionKey,
+        files: selectedFiles,
+      });
+    };
+    const stashSelected = (event: ReactMouseEvent<HTMLButtonElement>) => {
+      if (event.shiftKey) {
+        openStashDialog("selected", selectedPathList, changeSet.cwd, stashActionKey);
+        return;
+      }
+      if (changeSet.current) {
+        void runGeneratedPanelStash();
+        return;
+      }
+      void stashSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: stashActionKey,
+        paths: selectedPathList,
+      });
+    };
+    const discardSelected = () => {
+      if (changeSet.current) {
+        discardSelectedChanges();
+        return;
+      }
+      discardSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: discardActionKey,
+        files: selectedFiles,
+      });
+    };
+
+    return (
+      <div className="space-y-2">
+        {files.length === 0 ? (
+          <div className="px-1 py-1 text-sm text-muted-foreground">Working tree clean</div>
+        ) : (
+          <>
+            <div className="flex h-6 shrink-0 items-center justify-between gap-2 rounded px-1 text-xs font-medium uppercase text-muted-foreground">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center">
+                        <Checkbox
+                          checked={allSelected}
+                          indeterminate={partialSelected}
+                          aria-label={allSelected ? "Unselect all files" : "Select all files"}
+                          onCheckedChange={toggleAllSelection}
+                        />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    {allSelected ? "Unselect all files" : "Select all files"}
+                  </TooltipPopup>
+                </Tooltip>
+                <span className="min-w-0 truncate">
+                  {selectedFiles.length} of {files.length} files selected
+                </span>
+                <StatLabels
+                  insertions={selectedStats.insertions}
+                  deletions={selectedStats.deletions}
                 />
-                <TooltipPopup side="top">
-                  {allChangedFilesSelected ? "Unselect all files" : "Select all files"}
-                </TooltipPopup>
-              </Tooltip>
-              <span className="min-w-0 truncate">
-                {selectedChangedFiles.length} of {changedFiles.length} files selected
-              </span>
-              <StatLabels
-                insertions={selectedChangeStats.insertions}
-                deletions={selectedChangeStats.deletions}
-              />
+              </div>
+              <div className="flex items-center gap-1">
+                <IconButton
+                  label={
+                    changeSet.current
+                      ? "Commit selected changes. Shift: message."
+                      : "Commit selected changes"
+                  }
+                  disabled={
+                    isActionRunning(commitActionKey) ||
+                    (changeSet.current && gitAction.isPending) ||
+                    selectedFiles.length === 0
+                  }
+                  loading={
+                    isActionRunning(commitActionKey) || (changeSet.current && gitAction.isPending)
+                  }
+                  onClick={(event) =>
+                    changeSet.current && event.shiftKey ? openCommitDialog() : commitSelected()
+                  }
+                >
+                  <GitCommit className="size-3.5" />
+                </IconButton>
+                <IconButton
+                  label="Stash selected changes. Shift: message."
+                  disabled={isActionRunning(stashActionKey) || selectedFiles.length === 0}
+                  loading={isActionRunning(stashActionKey)}
+                  onClick={stashSelected}
+                >
+                  <Archive className="size-3.5" />
+                </IconButton>
+                <IconButton
+                  label="Discard selected changes"
+                  destructive
+                  disabled={isActionRunning(discardActionKey) || selectedFiles.length === 0}
+                  loading={isActionRunning(discardActionKey)}
+                  onClick={discardSelected}
+                >
+                  <Trash2 className="size-3.5" />
+                </IconButton>
+              </div>
             </div>
-            <div className="flex items-center gap-1">
-              <IconButton
-                label="Commit selected changes. Shift: message."
-                disabled={
-                  isActionRunning("changes-commit") ||
-                  gitAction.isPending ||
-                  selectedChangedFiles.length === 0
-                }
-                loading={isActionRunning("changes-commit") || gitAction.isPending}
-                onClick={(event) =>
-                  event.shiftKey ? openCommitDialog() : void runGeneratedPanelCommit()
-                }
-              >
-                <GitCommit className="size-3.5" />
-              </IconButton>
-              <IconButton
-                label="Stash selected changes. Shift: message."
-                disabled={isActionRunning("changes-stash") || selectedChangedFiles.length === 0}
-                loading={isActionRunning("changes-stash")}
-                onClick={(event) =>
-                  event.shiftKey
-                    ? openStashDialog("selected", selectedChangePathList)
-                    : void runGeneratedPanelStash()
-                }
-              >
-                <Archive className="size-3.5" />
-              </IconButton>
-              <IconButton
-                label="Discard selected changes"
-                destructive
-                disabled={
-                  isActionRunning("changes-discard-selected") || selectedChangedFiles.length === 0
-                }
-                loading={isActionRunning("changes-discard-selected")}
-                onClick={discardSelectedChanges}
-              >
-                <Trash2 className="size-3.5" />
-              </IconButton>
+            <div className="space-y-0.5">
+              {files.map((file) => (
+                <WorkingFileRow
+                  key={file.path}
+                  file={file}
+                  onRendered={changeSet.current ? queueWorkingTreeFileEnrichment : () => {}}
+                  renderFile={renderWorkingFile(changeSet)}
+                />
+              ))}
             </div>
-          </div>
-          <div className="space-y-0.5">
-            {changedFiles.map((file) => (
-              <WorkingFileRow
-                key={file.path}
-                file={file}
-                onRendered={queueWorkingTreeFileEnrichment}
-                renderFile={renderWorkingFile}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
+          </>
+        )}
+      </div>
+    );
+  };
 
   type WorkItem =
     | {
         readonly kind: "working-tree";
         readonly key: string;
+        readonly changeSet: WorkingTreeChangeSetView;
         readonly attention: AttentionKind;
         readonly activity: number;
       }
@@ -3506,24 +3778,19 @@ export function SourceControlPanel({
         readonly activity: number;
       };
 
-  const currentBranch = snapshot.localBranches.find((branch) => branch.current) ?? null;
   const localBranchesWithoutUpstream = localOnlyBranches(snapshot);
-  const workingTreeAttention: AttentionKind = changedFiles.some((file) => file.hasConflicts)
-    ? "conflicts"
-    : changedFiles.length > 0
-      ? "dirty"
-      : "stale";
+  const workingTreeChangeSets = [
+    ...(currentWorkingTreeChangeSet.files.length > 0 ? [currentWorkingTreeChangeSet] : []),
+    ...worktreeChangeSetViews,
+  ];
   const workItems: WorkItem[] = [
-    ...(changedFiles.length > 0
-      ? [
-          {
-            kind: "working-tree" as const,
-            key: "working-tree",
-            attention: workingTreeAttention,
-            activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
-          },
-        ]
-      : []),
+    ...workingTreeChangeSets.map((changeSet) => ({
+      kind: "working-tree" as const,
+      key: changeSet.id,
+      changeSet,
+      attention: changeSetAttention(changeSet.files),
+      activity: changeSet.activity,
+    })),
     ...snapshot.localBranches
       .filter((branch) => {
         const { aheadCount, behindCount } = branchSyncCounts(branch, snapshot);
@@ -3562,25 +3829,75 @@ export function SourceControlPanel({
   ].toSorted((left, right) => {
     if (left.kind === "working-tree" && right.kind !== "working-tree") return -1;
     if (right.kind === "working-tree" && left.kind !== "working-tree") return 1;
+    if (left.kind === "working-tree" && right.kind === "working-tree") {
+      if (left.changeSet.current !== right.changeSet.current)
+        return left.changeSet.current ? -1 : 1;
+    }
     const attention = ATTENTION_RANK[left.attention] - ATTENTION_RANK[right.attention];
     if (attention !== 0) return attention;
     return right.activity - left.activity;
   });
 
-  const renderWorkingTreeRow = () => {
-    const key = treeKey("work", "working-tree");
-    const expanded = isTreeExpanded(key, true);
-    const { aheadCount, behindCount } = currentBranch
-      ? branchSyncCounts(currentBranch, snapshot)
+  const renderWorkingTreeRow = (changeSet: WorkingTreeChangeSetView) => {
+    const key = treeKey("work", changeSet.id);
+    const expanded = isTreeExpanded(key, changeSet.current);
+    const branch = changeSet.branchName
+      ? snapshot.localBranches.find((candidate) => candidate.name === changeSet.branchName)
+      : currentBranch;
+    const { aheadCount, behindCount } = branch
+      ? branchSyncCounts(branch, snapshot)
       : { aheadCount: 0, behindCount: 0 };
+    const attention = changeSetAttention(changeSet.files);
+    const selectedFiles = changeSet.files.filter((file) => changeSet.selectedPaths.has(file.path));
+    const selectedPathList = uniquePaths(
+      selectedFiles.flatMap((file) => operationPathsForFile(file)),
+    );
+    const commitActionKey = changeSet.current ? "changes-commit" : `${changeSet.id}:changes-commit`;
+    const stashActionKey = changeSet.current ? "changes-stash" : `${changeSet.id}:changes-stash`;
+    const discardActionKey = changeSet.current
+      ? "changes-discard-selected"
+      : `${changeSet.id}:changes-discard-selected`;
+    const commitSelected = () => {
+      if (changeSet.current) {
+        void runGeneratedPanelCommit();
+        return;
+      }
+      void commitSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: commitActionKey,
+        files: selectedFiles,
+      });
+    };
+    const stashSelected = () => {
+      if (changeSet.current) {
+        void runGeneratedPanelStash();
+        return;
+      }
+      void stashSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: stashActionKey,
+        paths: selectedPathList,
+      });
+    };
+    const discardSelected = () => {
+      if (changeSet.current) {
+        discardSelectedChanges();
+        return;
+      }
+      discardSelectedInCwd({
+        targetCwd: changeSet.cwd,
+        actionKey: discardActionKey,
+        files: selectedFiles,
+      });
+    };
     return (
       <div className="space-y-0.5">
         <div
           role="button"
           tabIndex={0}
           className="group relative flex h-7 w-full min-w-0 items-center gap-1.5 rounded px-1.5 text-left text-xs hover:bg-accent/60"
-          onClick={() => toggleTree(key, true)}
-          onKeyDown={(event) => toggleTreeFromKeyboard(key, event, true)}
+          onClick={() => toggleTree(key, changeSet.current)}
+          onKeyDown={(event) => toggleTreeFromKeyboard(key, event, changeSet.current)}
           onContextMenu={(event) =>
             openContextMenu(
               event,
@@ -3589,30 +3906,28 @@ export function SourceControlPanel({
                   id: "commit-selected",
                   label: "Commit selected changes",
                   disabled:
-                    isActionRunning("changes-commit") ||
-                    gitAction.isPending ||
-                    selectedChangedFiles.length === 0,
+                    isActionRunning(commitActionKey) ||
+                    (changeSet.current && gitAction.isPending) ||
+                    selectedFiles.length === 0,
                 },
                 {
                   id: "stash-selected",
                   label: "Stash selected changes",
-                  disabled: isActionRunning("changes-stash") || selectedChangedFiles.length === 0,
+                  disabled: isActionRunning(stashActionKey) || selectedFiles.length === 0,
                 },
                 contextMenuSeparator("discard-separator-before"),
                 {
                   id: "discard-selected",
                   label: "Discard selected changes",
                   destructive: true,
-                  disabled:
-                    isActionRunning("changes-discard-selected") ||
-                    selectedChangedFiles.length === 0,
+                  disabled: isActionRunning(discardActionKey) || selectedFiles.length === 0,
                   icon: "trash",
                 },
               ],
               {
-                "commit-selected": () => void runGeneratedPanelCommit(),
-                "stash-selected": () => void runGeneratedPanelStash(),
-                "discard-selected": discardSelectedChanges,
+                "commit-selected": commitSelected,
+                "stash-selected": stashSelected,
+                "discard-selected": discardSelected,
               },
             )
           }
@@ -3622,13 +3937,18 @@ export function SourceControlPanel({
           ) : (
             <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <AttentionIcon kind={workingTreeAttention} />
-          <span className="min-w-0 flex-1 truncate text-sm">Working tree</span>
+          <AttentionIcon kind={attention} />
+          <span className="min-w-0 flex-1 truncate text-sm">{changeSet.label}</span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {currentBranch ? <CompactBadge>{currentBranch.name}</CompactBadge> : null}
-            {changedFiles.length > 0 ? (
+            {changeSet.current && currentBranch ? (
+              <CompactBadge>{currentBranch.name}</CompactBadge>
+            ) : null}
+            {!changeSet.current && changeSet.worktreePath ? (
+              <CompactBadge>{fileBasename(changeSet.worktreePath)}</CompactBadge>
+            ) : null}
+            {changeSet.files.length > 0 ? (
               <span className="shrink-0 text-[11px] text-muted-foreground">
-                {changedFiles.length === 1 ? "1 file" : `${changedFiles.length} files`}
+                {changeSet.files.length === 1 ? "1 file" : `${changeSet.files.length} files`}
               </span>
             ) : (
               <span className="shrink-0 text-[11px] text-muted-foreground">clean</span>
@@ -3637,7 +3957,9 @@ export function SourceControlPanel({
           </div>
         </div>
         {expanded ? (
-          <div className="ml-2 border-l border-border/60 pl-1">{changesSection}</div>
+          <div className="ml-2 border-l border-border/60 pl-1">
+            {renderChangesSection(changeSet)}
+          </div>
         ) : null}
       </div>
     );
@@ -3648,7 +3970,7 @@ export function SourceControlPanel({
       {workItems.map((item) => {
         switch (item.kind) {
           case "working-tree":
-            return <div key={item.key}>{renderWorkingTreeRow()}</div>;
+            return <div key={item.key}>{renderWorkingTreeRow(item.changeSet)}</div>;
           case "branch":
             return branchRow(item.branch);
           case "fork-branch": {
