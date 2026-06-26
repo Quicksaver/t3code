@@ -2,13 +2,12 @@
 
 ## Branch Metadata
 
-- Last upstream merge: `upstream/main` at `31dfe3596e429725d95d31ecff396caa02a47d12` merged into `split/subagent-threading-work` by `1d5b9337bbcd7f7414c4843adae0f3938a5a0168`.
-- Pre-merge branch HEAD: `2c6368e8622b1507876dd67dbede8a168eac0ddc`.
-- Post-merge branch diff against `upstream/main`: 25 branch-only commits, 0 upstream-only commits, 38 files changed, 5127 insertions, 256 deletions.
-- Remote tracking status after the merge: `split/subagent-threading-work` is 6 commits ahead and 265 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
-- Conflict notes for the `31dfe3596` merge: Git merged cleanly with no textual conflicts. Incoming changes affected Electron renderer startup, server HTTP startup, web Vite config, workspace package metadata, and `pnpm-lock.yaml`; none changed the subagent lineage, projection, lifecycle, sidebar, timeline, child-stop, or archive/delete contracts described below.
-- New fork customizations introduced by this merge: none. The merge only incorporated upstream behavior and refreshed this branch metadata.
-- Retired customizations made redundant by upstream: none identified. Upstream's Electron/server startup changes do not supersede the Codex subagent threading implementation.
+- Last upstream merge: `upstream/main` at `52b04b947e3604e426386be53e6d20c6a4366fef` merged into `split/subagent-threading-work` from pre-merge branch HEAD `7952b897d9ec6636d372fe008e75bc2e852b850a`.
+- Post-merge branch diff against `upstream/main`: 26 branch-only commits, 0 upstream-only commits, 38 files changed, 5127 insertions, 257 deletions.
+- Remote tracking status after the merge: `split/subagent-threading-work` is 4 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
+- Conflict notes for the `52b04b947` merge: `apps/web/src/components/ChatView.tsx` conflicted where upstream routed normal interrupts through `buildThreadTurnInterruptInput(activeThread)` while this branch routed running subagent stops through `activeThread.latestTurn.turnId`. The resolution keeps upstream's helper for normal threads and preserves the branch-specific latest-turn target only for running subagent child threads. Other incoming changes merged cleanly and primarily affected preview automation ownership/readiness, browser viewport controls, desktop preview handling, Grok ACP replay-idle resume readiness, server MCP preview tooling, and related tests/contracts.
+- New fork customizations introduced by this merge: none. The only branch-owned code adjustment was the conflict resolution that keeps existing subagent stop targeting compatible with upstream's generalized interrupt helper.
+- Retired customizations made redundant by upstream: none identified. Upstream's preview automation and Grok ACP resume-readiness changes do not supersede the Codex subagent threading implementation.
 
 ## Status
 
