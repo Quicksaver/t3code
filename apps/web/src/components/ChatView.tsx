@@ -4030,10 +4030,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const result = await interruptThreadTurn({
       environmentId,
-      input:
-        activeSubagentIsRunning && activeThread.latestTurn?.turnId
-          ? { threadId: activeThread.id, turnId: activeThread.latestTurn.turnId }
-          : buildThreadTurnInterruptInput(activeThread),
+      input: buildThreadTurnInterruptInput(activeThread),
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

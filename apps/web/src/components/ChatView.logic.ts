@@ -74,10 +74,20 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
-export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
+export function buildThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "latestTurn" | "parentRelation" | "session">,
+): {
   threadId: ThreadId;
   turnId?: TurnId;
 } {
+  const runningSubagentTurnId =
+    thread.parentRelation?.kind === "subagent" && thread.parentRelation.status === "running"
+      ? thread.latestTurn?.turnId
+      : null;
+  if (runningSubagentTurnId) {
+    return { threadId: thread.id, turnId: runningSubagentTurnId };
+  }
+
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,

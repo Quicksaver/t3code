@@ -1,4 +1,12 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderItemId,
+  ThreadId,
+  TurnId,
+  type OrchestrationThreadParentRelation,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Thread } from "../types";
@@ -70,6 +78,26 @@ const readySession = {
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
 
+function makeSubagentParentRelation(
+  overrides: Partial<Extract<OrchestrationThreadParentRelation, { kind: "subagent" }>> = {},
+): Extract<OrchestrationThreadParentRelation, { kind: "subagent" }> {
+  return {
+    kind: "subagent",
+    rootThreadId: ThreadId.make("root-thread"),
+    parentThreadId: ThreadId.make("parent-thread"),
+    parentTurnId: TurnId.make("parent-turn"),
+    parentItemId: ProviderItemId.make("parent-item"),
+    parentActivitySequence: 1,
+    providerThreadId: "provider-child-thread",
+    titleSeed: "Child task",
+    depth: 1,
+    startedAt: now,
+    completedAt: null,
+    status: "running",
+    ...overrides,
+  };
+}
+
 describe("buildThreadTurnInterruptInput", () => {
   it("targets the session's active running turn", () => {
     const activeTurnId = TurnId.make("turn-running");
@@ -91,6 +119,47 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+
+  it("targets the latest child turn when interrupting a running subagent thread", () => {
+    const sessionTurnId = TurnId.make("root-session-turn");
+    const childTurnId = TurnId.make("child-latest-turn");
+
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          parentRelation: makeSubagentParentRelation(),
+          latestTurn: {
+            ...completedTurn,
+            turnId: childTurnId,
+            state: "running",
+            completedAt: null,
+          },
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId: sessionTurnId,
+          },
+        }),
+      ),
+    ).toEqual({ threadId, turnId: childTurnId });
+  });
+
+  it("falls back to the session turn when a running subagent has no latest turn", () => {
+    const activeTurnId = TurnId.make("turn-running");
+
+    expect(
+      buildThreadTurnInterruptInput(
+        makeThread({
+          parentRelation: makeSubagentParentRelation(),
+          session: {
+            ...readySession,
+            status: "running",
+            activeTurnId,
+          },
+        }),
+      ),
+    ).toEqual({ threadId, turnId: activeTurnId });
   });
 });
 
