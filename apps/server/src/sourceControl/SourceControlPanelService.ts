@@ -36,6 +36,7 @@ import {
   type VcsPanelStashDetailsInput,
   type VcsPanelStashInput,
   type VcsPanelUndoCommitInput,
+  type VcsPanelWorktreeChangeSet,
   type VcsPanelWorkingTreeFileEnrichmentInput,
   type VcsPanelWorkingTreeFileEnrichmentResult,
   type VcsPullResult,
@@ -66,6 +67,11 @@ const LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS = [
   "branch",
   "--format=%(refname:short)%09%(HEAD)%09%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
 ] as const;
+
+interface WorktreeBranchEntry {
+  readonly branchName: string;
+  readonly worktreePath: string;
+}
 
 interface SourceControlPanelServiceShape {
   readonly snapshot: (
@@ -585,8 +591,8 @@ function parseAheadBehindCounts(output: string): {
   };
 }
 
-function parseWorktreeBranchPaths(output: string): Map<string, string> {
-  const paths = new Map<string, string>();
+function parseWorktreeBranchEntries(output: string): WorktreeBranchEntry[] {
+  const entries: WorktreeBranchEntry[] = [];
   let currentPath: string | null = null;
 
   for (const rawLine of output.split(/\r?\n/u)) {
@@ -600,11 +606,20 @@ function parseWorktreeBranchPaths(output: string): Map<string, string> {
       continue;
     }
     if (currentPath && line.startsWith("branch refs/heads/")) {
-      paths.set(line.slice("branch refs/heads/".length), currentPath);
+      entries.push({
+        branchName: line.slice("branch refs/heads/".length),
+        worktreePath: currentPath,
+      });
     }
   }
 
-  return paths;
+  return entries;
+}
+
+function parseWorktreeBranchPaths(output: string): Map<string, string> {
+  return new Map(
+    parseWorktreeBranchEntries(output).map((entry) => [entry.branchName, entry.worktreePath]),
+  );
 }
 
 function parseLocalBranches(
@@ -898,6 +913,57 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     );
 
   const COMMIT_PAGE_SIZE = 10;
+
+  const readWorkingTreeChangeGroups = (
+    cwd: string,
+  ): Effect.Effect<
+    {
+      readonly porcelain: string;
+      readonly changeGroups: VcsPanelChangeGroup[];
+    },
+    GitCommandError
+  > =>
+    Effect.all(
+      [
+        run("vcs.panel.statusPorcelain", cwd, ["status", "--porcelain=2", "--branch", "-uall"]),
+        run("vcs.panel.unstagedNumstat", cwd, ["diff", "--numstat", "-z", "--find-renames=20%"]),
+        run("vcs.panel.stagedNumstat", cwd, [
+          "diff",
+          "--cached",
+          "--numstat",
+          "-z",
+          "--find-renames=20%",
+        ]),
+        run("vcs.panel.stagedNameStatus", cwd, [
+          "diff",
+          "--cached",
+          "--name-status",
+          "-z",
+          "--find-renames=20%",
+        ]),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(([porcelain, unstagedNumstat, stagedNumstat, stagedNameStatus]) => {
+        const stagedFiles = parseFileChangesFromNumstat({
+          numstat: stagedNumstat,
+          statuses: parseNameStatus(stagedNameStatus),
+        });
+        return {
+          porcelain,
+          changeGroups: parsePorcelainStatus({
+            status: porcelain,
+            stagedFiles,
+            stagedStats: parseNumstat(stagedNumstat),
+            unstagedStats: parseNumstat(unstagedNumstat),
+            untrackedStats: new Map(),
+          }),
+        };
+      }),
+    );
+
+  const changeGroupsHaveFiles = (groups: readonly VcsPanelChangeGroup[]) =>
+    groups.some((group) => group.files.length > 0);
 
   const commitFiles = (cwd: string, sha: string) =>
     Effect.all(
@@ -1328,6 +1394,40 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       return generated.subject.trim() || fallback;
     }).pipe(Effect.orElseSucceed(() => `T3 Code ${mode} stash`));
 
+  const generatedCommitMessage = (
+    cwd: string,
+    paths?: readonly string[],
+  ): Effect.Effect<string, never> =>
+    Effect.gen(function* () {
+      const fallback = "T3 Code changes";
+      const pathArgs = paths && paths.length > 0 ? (["--", ...paths] as const) : [];
+      const [settings, summary, patch] = yield* Effect.all(
+        [
+          serverSettings.getSettings,
+          run("vcs.panel.commitMessageSummary", cwd, ["diff", "--cached", "--stat", ...pathArgs]),
+          run("vcs.panel.commitMessagePatch", cwd, [
+            "diff",
+            "--cached",
+            "--no-ext-diff",
+            "--patch",
+            "--minimal",
+            ...pathArgs,
+          ]),
+        ],
+        { concurrency: "unbounded" },
+      );
+      if (!textGeneration) return fallback;
+      if (summary.trim().length === 0 && patch.trim().length === 0) return fallback;
+      const generated = yield* textGeneration.generateCommitMessage({
+        cwd,
+        branch: null,
+        stagedSummary: summary.slice(0, 8_000),
+        stagedPatch: patch.slice(0, 50_000),
+        modelSelection: settings.textGenerationModelSelection,
+      });
+      return generated.subject.trim() || fallback;
+    }).pipe(Effect.orElseSucceed(() => "T3 Code changes"));
+
   const compareFiles = (cwd: string, baseRef: string | null, refName: string) => {
     if (!baseRef) return Effect.succeed([]);
     return Effect.all(
@@ -1643,10 +1743,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         localStatus,
         localBranchesOutput,
         worktreeListOutput,
-        porcelain,
-        unstagedNumstat,
-        stagedNumstat,
-        stagedNameStatus,
+        workingTree,
         remotesOutput,
         stashes,
       ] = yield* Effect.all(
@@ -1679,32 +1776,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           run("vcs.panel.worktrees", input.cwd, ["worktree", "list", "--porcelain"], {
             allowNonZeroExit: true,
           }),
-          run("vcs.panel.statusPorcelain", input.cwd, [
-            "status",
-            "--porcelain=2",
-            "--branch",
-            "-uall",
-          ]),
-          run("vcs.panel.unstagedNumstat", input.cwd, [
-            "diff",
-            "--numstat",
-            "-z",
-            "--find-renames=20%",
-          ]),
-          run("vcs.panel.stagedNumstat", input.cwd, [
-            "diff",
-            "--cached",
-            "--numstat",
-            "-z",
-            "--find-renames=20%",
-          ]),
-          run("vcs.panel.stagedNameStatus", input.cwd, [
-            "diff",
-            "--cached",
-            "--name-status",
-            "-z",
-            "--find-renames=20%",
-          ]),
+          readWorkingTreeChangeGroups(input.cwd),
           run("vcs.panel.remotes", input.cwd, ["remote", "-v"]),
           run("vcs.panel.stashes", input.cwd, [
             "stash",
@@ -1719,10 +1791,6 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         localBranchesOutput,
         parseWorktreeBranchPaths(worktreeListOutput),
       );
-      const stagedFiles = parseFileChangesFromNumstat({
-        numstat: stagedNumstat,
-        statuses: parseNameStatus(stagedNameStatus),
-      });
       const remotes = parseRemoteVerbose(remotesOutput);
       const remotesWithBranches = yield* Effect.forEach(
         remotes,
@@ -1751,15 +1819,50 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         localBranches,
         remotesWithBranches,
       );
-      return {
-        status: panelStatusFromLocal(localStatus, porcelain),
-        changeGroups: parsePorcelainStatus({
-          status: porcelain,
-          stagedFiles,
-          stagedStats: parseNumstat(stagedNumstat),
-          unstagedStats: parseNumstat(unstagedNumstat),
-          untrackedStats: new Map(),
+      const worktreeBranchEntries = parseWorktreeBranchEntries(worktreeListOutput);
+      const worktreeChangeSets = yield* Effect.forEach(
+        localBranches.filter((branch) => {
+          if (branch.current || !branch.worktreePath) return false;
+          if (path.resolve(branch.worktreePath) === path.resolve(input.cwd)) return false;
+          return worktreeBranchEntries.some(
+            (entry) =>
+              entry.branchName === branch.name && entry.worktreePath === branch.worktreePath,
+          );
         }),
+        (branch) =>
+          readWorkingTreeChangeGroups(branch.worktreePath!).pipe(
+            Effect.map((result): VcsPanelWorktreeChangeSet | null =>
+              changeGroupsHaveFiles(result.changeGroups)
+                ? {
+                    branchName: branch.name,
+                    worktreePath: branch.worktreePath!,
+                    current: false,
+                    lastActivityAt: branch.lastActivityAt ?? null,
+                    changeGroups: result.changeGroups,
+                  }
+                : null,
+            ),
+            Effect.orElseSucceed(() => null),
+          ),
+        { concurrency: 4 },
+      ).pipe(
+        Effect.map((sets) =>
+          sets
+            .filter((set): set is VcsPanelWorktreeChangeSet => set !== null)
+            .toSorted((left, right) => {
+              const leftTime = Date.parse(left.lastActivityAt ?? "");
+              const rightTime = Date.parse(right.lastActivityAt ?? "");
+              const activity =
+                (Number.isFinite(rightTime) ? rightTime : 0) -
+                (Number.isFinite(leftTime) ? leftTime : 0);
+              return activity !== 0 ? activity : left.branchName.localeCompare(right.branchName);
+            }),
+        ),
+      );
+      return {
+        status: panelStatusFromLocal(localStatus, workingTree.porcelain),
+        changeGroups: workingTree.changeGroups,
+        worktreeChangeSets,
         localBranches,
         branchDetails: [],
         remotes: remotesWithBranches,
@@ -1932,7 +2035,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const commitStaged: SourceControlPanelService["Service"]["commitStaged"] = Effect.fn(
     "commitStaged",
   )(function* (input) {
-    const args = ["commit", "-m", input.message.trim()];
+    const paths = uniquePaths(input.paths ?? []);
+    const message = input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths));
+    const args = [
+      "commit",
+      "-m",
+      message,
+      ...(paths.length > 0 ? (["--", ...paths] as const) : []),
+    ];
     yield* run("vcs.panel.commitStaged", input.cwd, args).pipe(Effect.asVoid);
     if (input.push) {
       const status = yield* workflow

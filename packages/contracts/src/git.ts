@@ -352,6 +352,15 @@ export const VcsPanelChangeGroup = Schema.Struct({
 });
 export type VcsPanelChangeGroup = typeof VcsPanelChangeGroup.Type;
 
+export const VcsPanelWorktreeChangeSet = Schema.Struct({
+  branchName: TrimmedNonEmptyStringSchema,
+  worktreePath: TrimmedNonEmptyStringSchema,
+  current: Schema.Boolean,
+  lastActivityAt: Schema.optional(Schema.NullOr(Schema.String)),
+  changeGroups: Schema.Array(VcsPanelChangeGroup),
+});
+export type VcsPanelWorktreeChangeSet = typeof VcsPanelWorktreeChangeSet.Type;
+
 export const VcsPanelRemote = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   fetchUrl: Schema.NullOr(TrimmedNonEmptyStringSchema),
@@ -466,6 +475,7 @@ export type VcsPanelSnapshotInput = typeof VcsPanelSnapshotInput.Type;
 export const VcsPanelSnapshotResult = Schema.Struct({
   status: VcsStatusResult,
   changeGroups: Schema.Array(VcsPanelChangeGroup),
+  worktreeChangeSets: Schema.Array(VcsPanelWorktreeChangeSet),
   localBranches: Schema.Array(VcsRef),
   branchDetails: Schema.Array(VcsPanelBranchDetails),
   remotes: Schema.Array(VcsPanelRemote),
@@ -534,8 +544,9 @@ export type VcsPanelFileDiffResult = typeof VcsPanelFileDiffResult.Type;
 
 export const VcsPanelCommitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  message: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000)),
+  message: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   push: Schema.optional(Schema.Boolean),
+  paths: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1))),
 });
 export type VcsPanelCommitInput = typeof VcsPanelCommitInput.Type;
 

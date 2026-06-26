@@ -1588,6 +1588,120 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("includes dirty non-current worktrees as separate change sets", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+
+      assert.deepStrictEqual(
+        snapshot.worktreeChangeSets.map((changeSet) => ({
+          branchName: changeSet.branchName,
+          worktreePath: changeSet.worktreePath,
+          files: changeSet.changeGroups.flatMap((group) =>
+            group.files.map((file) => ({
+              group: group.kind,
+              path: file.path,
+              status: file.status,
+              insertions: file.insertions,
+              deletions: file.deletions,
+            })),
+          ),
+        })),
+        [
+          {
+            branchName: "feature/source-control",
+            worktreePath: "/repo/worktrees/feature",
+            files: [
+              {
+                group: "staged",
+                path: "src/staged.ts",
+                status: "added",
+                insertions: 2,
+                deletions: 0,
+              },
+              {
+                group: "unstaged",
+                path: "src/unstaged.ts",
+                status: "modified",
+                insertions: 3,
+                deletions: 1,
+              },
+            ],
+          },
+        ],
+      );
+      assert.equal(snapshot.changeGroups.flatMap((group) => group.files).length, 0);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    [
+                      "main\t*\t/repo\t2026-06-20T12:00:00.000Z\torigin/main\t",
+                      "feature/source-control\t\t/repo/worktrees/feature\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.worktrees":
+                  return success(
+                    [
+                      "worktree /repo",
+                      "HEAD abc",
+                      "branch refs/heads/main",
+                      "",
+                      "worktree /repo/worktrees/feature",
+                      "HEAD def",
+                      "branch refs/heads/feature/source-control",
+                      "",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.statusPorcelain":
+                  if (input.cwd === "/repo/worktrees/feature") {
+                    return success(
+                      [
+                        "# branch.oid def",
+                        "# branch.head feature/source-control",
+                        "1 A. N... 000000 100644 100644 000000 111111 src/staged.ts",
+                        "1 .M N... 100644 100644 100644 222222 333333 src/unstaged.ts",
+                      ].join("\n"),
+                    );
+                  }
+                  return success("# branch.oid abc\n# branch.head main");
+                case "vcs.panel.stagedNumstat":
+                  return input.cwd === "/repo/worktrees/feature"
+                    ? success("2\t0\tsrc/staged.ts\0")
+                    : success("");
+                case "vcs.panel.stagedNameStatus":
+                  return input.cwd === "/repo/worktrees/feature"
+                    ? success("A\0src/staged.ts\0")
+                    : success("");
+                case "vcs.panel.unstagedNumstat":
+                  return input.cwd === "/repo/worktrees/feature"
+                    ? success("3\t1\tsrc/unstaged.ts\0")
+                    : success("");
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "main",
+                hasWorkingTreeChanges: false,
+              }),
+          },
+        ),
+      ),
+    ),
+  );
+
   it.effect("falls back to branch-format worktree paths when worktree porcelain is empty", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
