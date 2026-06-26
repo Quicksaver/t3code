@@ -187,6 +187,7 @@ describe("terminalOutputLooksReadyForInput", () => {
     expect(terminalOutputLooksReadyForInput("pnpm run dist:desktop:dmg:arm64\n")).toBe(false);
     expect(terminalOutputLooksReadyForInput("rendered <span>\n")).toBe(false);
     expect(terminalOutputLooksReadyForInput("status: waiting>\n")).toBe(false);
+    expect(terminalOutputLooksReadyForInput("progress 100%\n")).toBe(false);
   });
 });
 

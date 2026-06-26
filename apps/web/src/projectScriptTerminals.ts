@@ -31,6 +31,7 @@ const OSC_ESCAPE_PATTERN = new RegExp(
 );
 const BELL_CHARACTER = String.fromCharCode(7);
 const SHELL_LABELS = new Set(["bash", "zsh", "sh", "fish", "csh", "tcsh", "pwsh", "powershell"]);
+const UNIX_PROMPT_SUFFIX_PATTERN = /(?:^|\s)[$#%]\s*$/;
 const POWERSHELL_PROMPT_PATTERN = /^PS\s+\S.*>\s*$/;
 const WINDOWS_PROMPT_PATTERN = /^[A-Za-z]:[\\/][^<>]*>\s*$/;
 
@@ -150,7 +151,7 @@ export function terminalOutputLooksReadyForInput(value: string): boolean {
     if (line.length > PROMPT_LINE_MAX_LENGTH) {
       return false;
     }
-    if (/[$#%]\s*$/.test(line)) {
+    if (UNIX_PROMPT_SUFFIX_PATTERN.test(line)) {
       return true;
     }
     return POWERSHELL_PROMPT_PATTERN.test(line) || WINDOWS_PROMPT_PATTERN.test(line);
