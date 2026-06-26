@@ -5,7 +5,7 @@ name: update-worktree
 
 $spawn-worktree
 
-Your task is to instruct the subagent in several steps, provide it instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions. **You do not validate any work yourself, your only task is to orchestrate the subagent's work and ensure they report back with the requested information.**
+Your task is to instruct the subagent in several steps, provide it instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions. **You do not validate any work yourself. You do not load any skill mentioned in the steps. Your only task is to orchestrate the subagent's work and ensure they report back with the requested information.**
 
 **Step 1**: instruct subagent to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
 
@@ -23,7 +23,7 @@ Each worktree branch work should be individual and fully working standalone. If 
 
 Finally, the subagent must report on
 
-- new features or behaviors introduced by the upstream merge.
+- new or altered features or behaviors introduced by the upstream merge.
 - highlight those features or behaviors that can impact the customized behavior or functionality, or that should be otherwise specifically addressed.
 - analyse what from our customizations implementation could now be considered tech debt when compared to the changes that merge brought, and should be refactored for consistency with the new code.
 
@@ -34,5 +34,7 @@ Finally, the subagent must report on
 **Step 4**: If there were changes made in step 3, instruct the subagent to update any stale or missing information in the related md file if any.
 
 **Step 5**: If there were changes made in step 3, instruct the subagent to use the $assess-work skill.
+
+**Final Step**: Instruct the subagent to use $commit skill.
 
 When all steps are finished, report back on everything the subagent has reported.

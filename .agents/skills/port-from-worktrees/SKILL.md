@@ -1,5 +1,5 @@
 ---
-description: Port any extra customizations or fixes from worktrees into the current branch.
+description: Port everything from worktrees into the current branch.
 name: port-from-worktrees
 ---
 
@@ -7,8 +7,22 @@ Study @CUSTOMIZED.md.
 
 $spawn-worktrees
 
-Instruct each subagent to report all extra customizations or fixes from its branch that do not yet exist in the current main branch.
+The goal is to port all changes from worktrees into the local `main` branch, so that it is up-to-date with all worktree changes and reflects the full set of customizations and fixes from those worktrees.
 
-When all subagents finish, analyse their findings, and update the current main branch with the extra customizations or fixes that need to be ported.
+To achieve this goal, your task is to instruct each subagent to report all merges, customizations, and fixes from its branch that do not yet exist in the current main branch; include:
 
-If any changes are made, update any stale or missing information in CUSTOMIZED.md and related md docs, then use $commit.
+- SHAs for merge commits from `upstream/main` into the worktree branch.
+- SHAs for commits not related to any `upstream/main` merges.
+
+When all subagents finish:
+
+- make the necessary equivalent merges from `upstream/main` up to the point where it is also merged into the worktree branches, i.e. do not include any commits from `upstream/main` that are not yet in the worktree branches.
+- cherrypick all other reported commits from the worktree branches.
+- update any stale or missing information in CUSTOMIZED.md, including any necessary glue-like fixes to bring all worktrees together into the same branch.
+- finally, use $commit.
+
+Report on everything that has been merged and cherrypicked, including:
+
+- new or altered features or behaviors introduced by upstream merges if any.
+- highlight those features or behaviors that can impact the customized behavior or functionality, or that should be otherwise specifically addressed.
+- any potential behavior conflicts between worktree branches that were resolved or may still need to be resolved.

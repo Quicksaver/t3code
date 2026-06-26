@@ -1,6 +1,6 @@
 interface:
   display_name: "Port From Worktrees"
-  short_description: "Port any extra customizations or fixes from worktrees into the current branch."
+  short_description: "Port everything from worktrees into the current branch."
 
 policy:
   allow_implicit_invocation: false
