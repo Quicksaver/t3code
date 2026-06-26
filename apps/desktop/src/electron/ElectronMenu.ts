@@ -166,10 +166,10 @@ export const make = Effect.gen(function* () {
       }
 
       if (item.destructive && !hasInsertedDestructiveSeparator) {
-        hasInsertedDestructiveSeparator = true;
         if (template.length > 0 && !lastWasSeparator) {
           template.push({ type: "separator" });
           lastWasSeparator = true;
+          hasInsertedDestructiveSeparator = true;
         }
       }
 

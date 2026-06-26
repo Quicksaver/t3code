@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   type AtomCommandResult,
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo } from "react";
@@ -19,11 +20,27 @@ import { useAtomCommand } from "./use-atom-command";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
 import { vcsEnvironment } from "./vcs";
 
+export class SourceControlPanelCommandInterrupted extends Error {
+  constructor() {
+    super("Source control panel command was interrupted.");
+    this.name = "SourceControlPanelCommandInterrupted";
+  }
+}
+
+export function isSourceControlPanelCommandInterrupted(
+  value: unknown,
+): value is SourceControlPanelCommandInterrupted {
+  return value instanceof SourceControlPanelCommandInterrupted;
+}
+
 async function unwrapPanelCommand<TResult>(
   result: AtomCommandResult<TResult, unknown>,
 ): Promise<TResult> {
   if (result._tag === "Success") {
     return result.value;
+  }
+  if (isAtomCommandInterrupted(result)) {
+    throw new SourceControlPanelCommandInterrupted();
   }
   throw squashAtomCommandFailure(result);
 }

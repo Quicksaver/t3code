@@ -84,6 +84,42 @@ it.effect("lists Azure DevOps PRs against the requested remote repository contex
   }),
 );
 
+it.effect("preserves Azure DevOps fallback project context when _git is absent", () =>
+  Effect.gen(function* () {
+    let listInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["listPullRequests"]>[0] | null =
+      null;
+    const provider = yield* makeProvider({
+      listPullRequests: (input) => {
+        listInput = input;
+        return Effect.succeed([]);
+      },
+    });
+
+    yield* provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "legacy",
+        remoteUrl: "https://dev.azure.com/acme/project/repo",
+      },
+      headSelector: "feature/provider",
+      state: "open",
+    });
+
+    assert.deepStrictEqual(listInput, {
+      cwd: "/repo",
+      headSelector: "feature/provider",
+      repository: "repo",
+      project: "project",
+      state: "open",
+    });
+  }),
+);
+
 it.effect("adds change-request context while bounding Azure CLI causes", () =>
   Effect.gen(function* () {
     const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({

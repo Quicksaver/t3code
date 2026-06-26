@@ -7,6 +7,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  VcsPanelDeleteBranchInput,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -16,6 +17,7 @@ const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
 const decodeRunStackedActionResult = Schema.decodeUnknownSync(GitRunStackedActionResult);
 const decodeResolvePullRequestResult = Schema.decodeUnknownSync(GitResolvePullRequestResult);
+const decodeVcsPanelDeleteBranchInput = Schema.decodeUnknownSync(VcsPanelDeleteBranchInput);
 
 describe("VcsCreateWorktreeInput", () => {
   it("accepts omitted newRefName for existing-refName worktrees", () => {
@@ -70,6 +72,19 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("VcsPanelDeleteBranchInput", () => {
+  it("accepts a server-resolved branch name instead of client-supplied ref metadata", () => {
+    const parsed = decodeVcsPanelDeleteBranchInput({
+      cwd: "/repo",
+      branchName: "origin/feature/source-control",
+      force: true,
+    });
+
+    expect(parsed.branchName).toBe("origin/feature/source-control");
+    expect(parsed.force).toBe(true);
   });
 });
 

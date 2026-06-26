@@ -558,12 +558,26 @@ export const make = Effect.gen(function* () {
     yield* SynchronizedRef.modifyEffect(watchersRef, (activeWatchers) => {
       const existing = activeWatchers.get(cwd);
       if (existing) {
-        const nextWatchers = new Map(activeWatchers);
-        nextWatchers.set(cwd, {
-          ...existing,
-          subscriberCount: existing.subscriberCount + 1,
-        });
-        return Effect.succeed([undefined, nextWatchers] as const);
+        const exit = existing.fiber.pollUnsafe();
+        if (exit === undefined) {
+          const nextWatchers = new Map(activeWatchers);
+          nextWatchers.set(cwd, {
+            ...existing,
+            subscriberCount: existing.subscriberCount + 1,
+          });
+          return Effect.succeed([undefined, nextWatchers] as const);
+        }
+        return makeLocalWatchLoop(cwd).pipe(
+          Effect.forkIn(broadcasterScope),
+          Effect.map((fiber) => {
+            const nextWatchers = new Map(activeWatchers);
+            nextWatchers.set(cwd, {
+              fiber,
+              subscriberCount: existing.subscriberCount + 1,
+            });
+            return [undefined, nextWatchers] as const;
+          }),
+        );
       }
 
       return makeLocalWatchLoop(cwd).pipe(
@@ -624,9 +638,11 @@ export const make = Effect.gen(function* () {
         );
         yield* retainLocalWatcher(cwd);
 
-        const release = Effect.all([releaseRemotePoller(cwd), releaseLocalWatcher(cwd)], {
-          concurrency: "unbounded",
-        }).pipe(Effect.ignore, Effect.asVoid);
+        const release = releaseRemotePoller(cwd).pipe(
+          Effect.andThen(releaseLocalWatcher(cwd)),
+          Effect.ignore,
+          Effect.asVoid,
+        );
 
         return Stream.concat(
           Stream.make({
