@@ -26,6 +26,7 @@ import {
   projectActionTerminalId,
   resolveProjectActionTerminalId,
   terminalSessionIsReadyForProjectActionInput,
+  terminalSessionShouldProbeForProjectActionInput,
   terminalOutputLooksReadyForInput,
   waitForProjectActionTerminalInputReady,
   waitForProjectActionTerminalInputReadyStrict,
@@ -258,6 +259,56 @@ describe("terminalSessionIsReadyForProjectActionInput", () => {
           worktreePath: null,
         },
         buffer: "$ ",
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("terminalSessionShouldProbeForProjectActionInput", () => {
+  it("probes shell-labeled busy sessions in the target workspace", () => {
+    expect(
+      terminalSessionShouldProbeForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: true,
+          label: "bash",
+          status: "running",
+          worktreePath: "/repo-worktree",
+        },
+        targetCwd: "/repo",
+        targetWorktreePath: "/repo-worktree",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not probe non-shell subprocess labels", () => {
+    expect(
+      terminalSessionShouldProbeForProjectActionInput({
+        summary: {
+          cwd: "/repo",
+          hasRunningSubprocess: true,
+          label: "node",
+          status: "running",
+          worktreePath: null,
+        },
+        targetCwd: "/repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not probe terminals from another cwd", () => {
+    expect(
+      terminalSessionShouldProbeForProjectActionInput({
+        summary: {
+          cwd: "/other",
+          hasRunningSubprocess: true,
+          label: "bash",
+          status: "running",
+          worktreePath: null,
+        },
         targetCwd: "/repo",
         targetWorktreePath: null,
       }),

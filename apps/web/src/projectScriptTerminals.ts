@@ -190,6 +190,25 @@ export function terminalSessionIsReadyForProjectActionInput(input: {
   return false;
 }
 
+export function terminalSessionShouldProbeForProjectActionInput(input: {
+  readonly summary: Pick<
+    TerminalSummary,
+    "cwd" | "hasRunningSubprocess" | "label" | "status" | "worktreePath"
+  > | null;
+  readonly targetCwd: string;
+  readonly targetWorktreePath: string | null;
+}): boolean {
+  const summary = input.summary;
+  return (
+    summary !== null &&
+    summary.status === "running" &&
+    summary.cwd === input.targetCwd &&
+    summary.worktreePath === input.targetWorktreePath &&
+    summary.hasRunningSubprocess &&
+    SHELL_LABELS.has(normalizedShellLabel(summary.label))
+  );
+}
+
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
   return {
     threadId: input.threadId,

@@ -148,6 +148,7 @@ import {
 import {
   resolveProjectActionTerminalId,
   terminalSessionIsReadyForProjectActionInput,
+  terminalSessionShouldProbeForProjectActionInput,
 } from "~/projectScriptTerminals";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
@@ -1019,6 +1020,10 @@ function ChatViewContent(props: ChatViewProps) {
   const waitForProjectActionTerminalReady = useAtomCommand(
     projectActionTerminalEnvironment.waitForInputReady,
     "project action terminal readiness",
+  );
+  const requireProjectActionTerminalReady = useAtomCommand(
+    projectActionTerminalEnvironment.requireInputReady,
+    { label: "project action terminal require input ready", reportFailure: false },
   );
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
@@ -2599,10 +2604,26 @@ function ChatViewContent(props: ChatViewProps) {
           });
         }),
       );
+      const probeProjectActionTerminalIds = new Set(
+        runningTerminalIds.filter((terminalId) => {
+          const session = projectActionTerminalSessionById.get(terminalId);
+          if (!session) {
+            return false;
+          }
+          return terminalSessionShouldProbeForProjectActionInput({
+            summary: session.state.summary,
+            targetCwd,
+            targetWorktreePath,
+          });
+        }),
+      );
       const effectiveRunningTerminalIds = runningTerminalIds.filter((terminalId) => {
-        return !readyProjectActionTerminalIds.has(terminalId);
+        return (
+          !readyProjectActionTerminalIds.has(terminalId) &&
+          !probeProjectActionTerminalIds.has(terminalId)
+        );
       });
-      const targetTerminalId =
+      let targetTerminalId =
         options?.preferNewTerminal === true
           ? nextTerminalId(activeKnownTerminalIds)
           : resolveProjectActionTerminalId({
@@ -2610,16 +2631,16 @@ function ChatViewContent(props: ChatViewProps) {
               terminalIds: activeKnownTerminalIds,
               runningTerminalIds: effectiveRunningTerminalIds,
             });
-      const isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
-      const isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
-      const targetSession = projectActionTerminalSessionById.get(targetTerminalId) ?? null;
-      const canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+      let isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
+      let isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+      let targetSession = projectActionTerminalSessionById.get(targetTerminalId) ?? null;
+      let canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
         summary: targetSession?.state.summary ?? null,
         buffer: targetSession?.state.buffer ?? "",
         targetCwd,
         targetWorktreePath,
       });
-      const openTerminalInput: TerminalOpenInput = {
+      let openTerminalInput: TerminalOpenInput = {
         threadId: activeThreadId,
         terminalId: targetTerminalId,
         cwd: targetCwd,
@@ -2629,6 +2650,43 @@ function ChatViewContent(props: ChatViewProps) {
           ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
           : {}),
       };
+
+      if (!canWriteImmediately && probeProjectActionTerminalIds.has(targetTerminalId)) {
+        const readyResult = await requireProjectActionTerminalReady({
+          environmentId,
+          input: openTerminalInput,
+        });
+        if (readyResult._tag === "Success") {
+          canWriteImmediately = true;
+        } else {
+          targetTerminalId = resolveProjectActionTerminalId({
+            scriptId: script.id,
+            terminalIds: activeKnownTerminalIds,
+            runningTerminalIds: runningTerminalIds.filter(
+              (terminalId) => !readyProjectActionTerminalIds.has(terminalId),
+            ),
+          });
+          isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
+          isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+          targetSession = projectActionTerminalSessionById.get(targetTerminalId) ?? null;
+          canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+            summary: targetSession?.state.summary ?? null,
+            buffer: targetSession?.state.buffer ?? "",
+            targetCwd,
+            targetWorktreePath,
+          });
+          openTerminalInput = {
+            threadId: activeThreadId,
+            terminalId: targetTerminalId,
+            cwd: targetCwd,
+            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+            env: runtimeEnv,
+            ...(!isKnownServerTerminal
+              ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+              : {}),
+          };
+        }
+      }
 
       if (!isVisibleTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
@@ -2689,6 +2747,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeKnownTerminalIds,
       runningTerminalIds,
       terminalEnabled,
+      requireProjectActionTerminalReady,
       terminalUiState.terminalIds,
       waitForProjectActionTerminalReady,
       writeTerminal,
