@@ -4234,9 +4234,6 @@ function ChatViewContent(props: ChatViewProps) {
 
   const onInterrupt = async () => {
     if (!activeThread) return;
-    const activeSubagentIsRunning =
-      activeThread.parentRelation?.kind === "subagent" &&
-      activeThread.parentRelation.status === "running";
     const result = await interruptThreadTurn({
       environmentId,
       input: buildThreadTurnInterruptInput(activeThread),
