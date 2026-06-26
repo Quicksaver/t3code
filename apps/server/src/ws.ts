@@ -336,14 +336,14 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeTerminalMetadata, AuthTerminalOperateScope],
   [WS_METHODS.previewOpen, AuthOrchestrationOperateScope],
   [WS_METHODS.previewNavigate, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewResize, AuthOrchestrationOperateScope],
   [WS_METHODS.previewRefresh, AuthOrchestrationOperateScope],
   [WS_METHODS.previewClose, AuthOrchestrationOperateScope],
   [WS_METHODS.previewList, AuthOrchestrationReadScope],
   [WS_METHODS.previewReportStatus, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationConnect, AuthOrchestrationOperateScope],
   [WS_METHODS.previewAutomationRespond, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationReportOwner, AuthOrchestrationOperateScope],
-  [WS_METHODS.previewAutomationClearOwner, AuthOrchestrationOperateScope],
+  [WS_METHODS.previewAutomationFocusHost, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribePreviewEvents, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeDiscoveredLocalServers, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeServerConfig, AuthOrchestrationReadScope],
@@ -396,6 +396,7 @@ const makeWsRpcLayer = (
   listProviderSkills: (
     input: ProviderSkillsListInput,
   ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>,
+  previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -411,7 +412,6 @@ const makeWsRpcLayer = (
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager.TerminalManager;
-      const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1637,6 +1637,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewNavigate, previewManager.navigate(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewResize]: (input) =>
+          observeRpcEffect(WS_METHODS.previewResize, previewManager.resize(input), {
+            "rpc.aggregate": "preview",
+          }),
         [WS_METHODS.previewRefresh]: (input) =>
           observeRpcEffect(WS_METHODS.previewRefresh, previewManager.refresh(input), {
             "rpc.aggregate": "preview",
@@ -1665,16 +1669,10 @@ const makeWsRpcLayer = (
             previewAutomationBroker.respond(input),
             { "rpc.aggregate": "preview-automation" },
           ),
-        [WS_METHODS.previewAutomationReportOwner]: (input) =>
+        [WS_METHODS.previewAutomationFocusHost]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewAutomationReportOwner,
-            previewAutomationBroker.reportOwner(input),
-            { "rpc.aggregate": "preview-automation" },
-          ),
-        [WS_METHODS.previewAutomationClearOwner]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewAutomationClearOwner,
-            previewAutomationBroker.clearOwner(input),
+            WS_METHODS.previewAutomationFocusHost,
+            previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
@@ -1808,6 +1806,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const listProviderSkills = yield* makeProviderSkillsLister();
+    const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -1827,9 +1826,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, listProviderSkills).pipe(
+            makeWsRpcLayer(session, listProviderSkills, previewAutomationBroker).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
-              Layer.provide(PreviewAutomationBroker.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
