@@ -885,7 +885,8 @@ const make = Effect.gen(function* () {
     }
 
     const childTurnId = subagentRelation
-      ? (event.payload.turnId ?? thread.latestTurn?.turnId)
+      ? (event.payload.turnId ??
+        (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined))
       : undefined;
     if (subagentRelation && !childTurnId) {
       yield* appendProviderFailureActivity({

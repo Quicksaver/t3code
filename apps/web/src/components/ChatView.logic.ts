@@ -189,16 +189,12 @@ export function buildThreadTurnInterruptInput(
   threadId: ThreadId;
   turnId?: TurnId;
 } {
-  if (thread.parentRelation?.kind === "subagent") {
-    if (thread.parentRelation.status !== "running") {
-      return { threadId: thread.id };
+  const parentRelation = thread.parentRelation;
+  if (parentRelation?.kind === "subagent") {
+    if (parentRelation.status === "running" && thread.latestTurn?.state === "running") {
+      return { threadId: thread.id, turnId: thread.latestTurn.turnId };
     }
-    const runningSubagentTurnId =
-      thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : null;
-    return {
-      threadId: thread.id,
-      ...(runningSubagentTurnId ? { turnId: runningSubagentTurnId } : {}),
-    };
+    return { threadId: thread.id };
   }
 
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
