@@ -1,16 +1,29 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ThreadId,
+  type OrchestrationProjectShell,
+  type OrchestrationThreadShell,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import { describe, expect, it } from "vite-plus/test";
 import {
   archivedThreadSearchScore,
+  buildArchivedThreadGroups,
   buildProviderInstanceUpdatePatch,
   formatDiagnosticsDescription,
+  nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
+  runArchivedProjectThreadActions,
 } from "./SettingsPanels.logic";
+
+const environmentId = EnvironmentId.make("environment-1");
 
 function scoreArchivedTitle(title: string, query: string): number | null {
   const normalizedQuery = normalizeSearchQuery(query);
@@ -19,6 +32,67 @@ function scoreArchivedTitle(title: string, query: string): number | null {
     normalizedQuery,
     tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
   });
+}
+
+function makeProject(
+  input: Partial<OrchestrationProjectShell> & Pick<OrchestrationProjectShell, "id" | "title">,
+): OrchestrationProjectShell {
+  return {
+    workspaceRoot: `/workspaces/${input.id}`,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    ...input,
+  };
+}
+
+function makeThread(
+  input: Partial<OrchestrationThreadShell> &
+    Pick<OrchestrationThreadShell, "id" | "projectId" | "title">,
+): OrchestrationThreadShell {
+  return {
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    archivedAt: "2026-06-02T00:00:00.000Z",
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...input,
+  };
+}
+
+function makeSnapshot(
+  projects: ReadonlyArray<OrchestrationProjectShell>,
+  threads: ReadonlyArray<OrchestrationThreadShell>,
+  targetEnvironmentId = environmentId,
+): ArchivedSnapshotEntry {
+  return {
+    environmentId: targetEnvironmentId,
+    snapshot: {
+      snapshotSequence: 1,
+      projects,
+      threads,
+      updatedAt: "2026-06-04T00:00:00.000Z",
+    },
+  };
+}
+
+function successResult(value: unknown = null): AtomCommandResult<unknown, unknown> {
+  return { _tag: "Success", value, waiting: false } as AtomCommandResult<unknown, unknown>;
+}
+
+function failureResult(cause: unknown): AtomCommandResult<unknown, unknown> {
+  return { _tag: "Failure", cause, waiting: false } as AtomCommandResult<unknown, unknown>;
 }
 
 describe("archivedThreadSearchScore", () => {
@@ -37,6 +111,106 @@ describe("archivedThreadSearchScore", () => {
   it("matches titles case-insensitively and rejects unrelated titles", () => {
     expect(scoreArchivedTitle("Release Candidate Notes", "candidate")).not.toBeNull();
     expect(scoreArchivedTitle("Release Candidate Notes", "missing")).toBeNull();
+  });
+});
+
+describe("buildArchivedThreadGroups", () => {
+  it("keeps project order when not searching and sorts threads by archive timestamp", () => {
+    const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "First" });
+    const secondProject = makeProject({ id: ProjectId.make("project-2"), title: "Second" });
+    const older = makeThread({
+      id: ThreadId.make("thread-older"),
+      projectId: firstProject.id,
+      title: "Older",
+    });
+    const newer = makeThread({
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      id: ThreadId.make("thread-newer"),
+      projectId: firstProject.id,
+      title: "Newer",
+    });
+    const search = parseArchivedThreadSearchInput("");
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([firstProject, secondProject], [older, newer])],
+      normalizedSearchQuery: search.normalizedQuery,
+      searchTokens: search.tokens,
+      isSearching: search.isSearching,
+      sort: { field: "archivedAt", direction: "desc" },
+    });
+
+    expect(result.map((group) => group.project.id)).toEqual(["project-1"]);
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-newer", "thread-older"]);
+  });
+
+  it("filters ranked title matches and sorts matching projects by best score", () => {
+    const partialProject = makeProject({ id: ProjectId.make("project-partial"), title: "Partial" });
+    const phraseProject = makeProject({ id: ProjectId.make("project-phrase"), title: "Phrase" });
+    const partialThread = makeThread({
+      id: ThreadId.make("thread-partial"),
+      projectId: partialProject.id,
+      title: "Alpha cleanup",
+    });
+    const phraseThread = makeThread({
+      id: ThreadId.make("thread-phrase"),
+      projectId: phraseProject.id,
+      title: "Alpha Beta cleanup",
+    });
+    const missingThread = makeThread({
+      id: ThreadId.make("thread-missing"),
+      projectId: partialProject.id,
+      title: "Gamma cleanup",
+    });
+    const search = parseArchivedThreadSearchInput("alpha beta");
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [
+        makeSnapshot([partialProject, phraseProject], [partialThread, phraseThread, missingThread]),
+      ],
+      normalizedSearchQuery: search.normalizedQuery,
+      searchTokens: search.tokens,
+      isSearching: search.isSearching,
+      sort: { field: "archivedAt", direction: "desc" },
+    });
+
+    expect(result.map((group) => group.project.id)).toEqual(["project-phrase", "project-partial"]);
+    expect(result.flatMap((group) => group.threads.map((thread) => thread.id))).toEqual([
+      "thread-phrase",
+      "thread-partial",
+    ]);
+  });
+});
+
+describe("nextArchivedThreadSortState", () => {
+  it("toggles the active sort field and defaults new fields to descending", () => {
+    expect(
+      nextArchivedThreadSortState({ field: "archivedAt", direction: "desc" }, "archivedAt"),
+    ).toEqual({ field: "archivedAt", direction: "asc" });
+    expect(
+      nextArchivedThreadSortState({ field: "archivedAt", direction: "asc" }, "createdAt"),
+    ).toEqual({ field: "createdAt", direction: "desc" });
+  });
+});
+
+describe("runArchivedProjectThreadActions", () => {
+  it("runs all archived project thread actions and returns failures", async () => {
+    const threads = Array.from({ length: 6 }, (_, index) => ({
+      id: ThreadId.make(`thread-${index}`),
+      environmentId,
+    }));
+    let activeCount = 0;
+    let maxActiveCount = 0;
+
+    const failures = await runArchivedProjectThreadActions(threads, async (thread) => {
+      activeCount += 1;
+      maxActiveCount = Math.max(maxActiveCount, activeCount);
+      await Promise.resolve();
+      activeCount -= 1;
+      return thread.id === "thread-2" ? failureResult(new Error("failed")) : successResult();
+    });
+
+    expect(failures).toHaveLength(1);
+    expect(maxActiveCount).toBeLessThanOrEqual(4);
   });
 });
 
