@@ -1773,9 +1773,9 @@ export function ArchivedThreadsPanel() {
   }, []);
 
   const confirmArchivedAction = useCallback(async (message: string) => {
-    const confirmationResult = await settlePromise(() =>
-      (readLocalApi() ?? ensureLocalApi()).dialogs.confirm(message),
-    );
+    const localApi = readLocalApi();
+    if (!localApi) return true;
+    const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
     if (confirmationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(confirmationResult);
       toastManager.add(
