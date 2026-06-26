@@ -62,6 +62,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import {
+  isSourceControlPanelCommandInterrupted,
   resolveSourceControlPanelPresentationState,
   useSourceControlPanelApi,
 } from "~/state/sourceControlPanel";
@@ -462,15 +463,28 @@ type DisplayHeadRef =
   | { readonly kind: "local"; readonly name: string; readonly synced: boolean }
   | { readonly kind: "remote"; readonly name: string };
 
-function displayHeadRefs(headRefs: readonly string[]): DisplayHeadRef[] {
-  const localRefs = new Set(headRefs.filter((ref) => !ref.includes("/")));
+function displayHeadRefs(
+  headRefs: readonly string[],
+  remoteNames: readonly string[] = [],
+): DisplayHeadRef[] {
+  const remoteNameSet = new Set(remoteNames);
+  const remoteRefParts = (
+    ref: string,
+  ): { readonly remoteName: string; readonly branchName: string } | null => {
+    const slashIndex = ref.indexOf("/");
+    if (slashIndex <= 0) return null;
+    const remoteName = ref.slice(0, slashIndex);
+    if (!remoteNameSet.has(remoteName)) return null;
+    const branchName = ref.slice(slashIndex + 1);
+    if (branchName.length === 0 || branchName === "HEAD") return null;
+    return { remoteName, branchName };
+  };
+  const localRefs = new Set(headRefs.filter((ref) => remoteRefParts(ref) === null));
   const remoteByBranch = new Map<string, string>();
   for (const ref of headRefs) {
-    const slashIndex = ref.indexOf("/");
-    if (slashIndex <= 0) continue;
-    const branchName = ref.slice(slashIndex + 1);
-    if (branchName.length === 0 || branchName === "HEAD") continue;
-    remoteByBranch.set(branchName, ref);
+    const parsed = remoteRefParts(ref);
+    if (!parsed) continue;
+    remoteByBranch.set(parsed.branchName, ref);
   }
 
   const refs: DisplayHeadRef[] = [...localRefs]
@@ -495,8 +509,14 @@ function SyncedIcon({ className }: { readonly className?: string }) {
   return <Target className={cn("size-3 shrink-0", className)} aria-label="Synced upstream" />;
 }
 
-function RefLabels({ commit }: { readonly commit: VcsPanelCommitSummary }) {
-  const headRefs = displayHeadRefs(commit.headRefs);
+function RefLabels({
+  commit,
+  remoteNames,
+}: {
+  readonly commit: VcsPanelCommitSummary;
+  readonly remoteNames?: readonly string[] | undefined;
+}) {
+  const headRefs = displayHeadRefs(commit.headRefs, remoteNames);
   if (headRefs.length === 0 && commit.tags.length === 0) return null;
   return (
     <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
@@ -520,7 +540,13 @@ function RefLabels({ commit }: { readonly commit: VcsPanelCommitSummary }) {
   );
 }
 
-function CommitTooltip({ commit }: { readonly commit: VcsPanelCommitSummary }) {
+function CommitTooltip({
+  commit,
+  remoteNames,
+}: {
+  readonly commit: VcsPanelCommitSummary;
+  readonly remoteNames?: readonly string[] | undefined;
+}) {
   const relativeDate = formatRelativeDate(commit.authoredAt);
   const readableDate = formatReadableDate(commit.authoredAt);
   return (
@@ -545,7 +571,7 @@ function CommitTooltip({ commit }: { readonly commit: VcsPanelCommitSummary }) {
         insertions={sumFiles(commit.files).insertions}
         deletions={sumFiles(commit.files).deletions}
       />
-      <RefLabels commit={commit} />
+      <RefLabels commit={commit} remoteNames={remoteNames} />
     </div>
   );
 }
@@ -594,6 +620,7 @@ function RowActions({ children }: { readonly children: ReactNode }) {
     <div
       className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded bg-background/95 opacity-0 shadow-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
     >
       {children}
     </div>
@@ -808,6 +835,7 @@ function FileChangeList({
               onKeyDown={
                 onFileToggle
                   ? (event) => {
+                      if (event.target !== event.currentTarget) return;
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
                       onFileToggle(file);
@@ -1292,6 +1320,7 @@ export function SourceControlPanel({
         setBranchDetailsByRef(nextDetails);
       } while (refreshQueuedRef.current);
     } catch (nextError) {
+      if (isSourceControlPanelCommandInterrupted(nextError)) return;
       setError(errorMessage(nextError));
     } finally {
       refreshInFlightRef.current = false;
@@ -1340,6 +1369,7 @@ export function SourceControlPanel({
         vcsStatus.refresh();
         await refresh();
       } catch (nextError) {
+        if (isSourceControlPanelCommandInterrupted(nextError)) return;
         setError(errorMessage(nextError));
       } finally {
         setRunningActions((current) => {
@@ -1545,7 +1575,7 @@ export function SourceControlPanel({
         if (!(await confirm(`Delete ${branchLabel}?`))) return;
         await runAction(
           `branch-delete:${branch.name}`,
-          () => api?.vcs.deleteBranch({ cwd, branch, force }) ?? Promise.resolve(),
+          () => api?.vcs.deleteBranch({ cwd, branchName: branch.name, force }) ?? Promise.resolve(),
         );
       })(),
     [api, confirm, cwd, runAction],
@@ -1793,12 +1823,15 @@ export function SourceControlPanel({
       return runAction("changes-commit", async () => {
         setCommitDialogOpen(false);
         setDialogCommitMessage("");
-        await gitAction.run({
+        const result = await gitAction.run({
           actionId: newCommandId(),
           action: "commit",
           ...(commitMessage ? { commitMessage } : {}),
           filePaths: [...selectedChangePathList],
         });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          throw squashAtomCommandFailure(result);
+        }
       });
     },
     [gitAction, runAction, selectedChangePathList],
@@ -2219,7 +2252,7 @@ export function SourceControlPanel({
     const discardKey = `file-discard:${file.path}`;
     const diffSource = {
       kind: "working-tree",
-      staged: file.hasStagedChanges,
+      staged: !file.hasUnstagedChanges && file.hasStagedChanges,
     } satisfies FileDiffSource;
     const diffExpanded = expandedFileDiffs.has(fileDiffKey(file, diffSource));
     const discardFile = () =>
@@ -2395,7 +2428,10 @@ export function SourceControlPanel({
                 )}
                 <AuthorAvatar commit={commit} />
                 <span className="min-w-0 flex-1 truncate">{commit.message}</span>
-                <RefLabels commit={commit} />
+                <RefLabels
+                  commit={commit}
+                  remoteNames={snapshot.remotes.map((remote) => remote.name)}
+                />
                 <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
                 {relativeDate ? (
                   <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
@@ -2450,7 +2486,10 @@ export function SourceControlPanel({
             }
           />
           <TooltipPopup side="top" className="max-w-80">
-            <CommitTooltip commit={commit} />
+            <CommitTooltip
+              commit={commit}
+              remoteNames={snapshot.remotes.map((remote) => remote.name)}
+            />
           </TooltipPopup>
         </Tooltip>
         {expanded ? (

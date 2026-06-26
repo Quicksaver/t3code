@@ -93,8 +93,11 @@ function azureRepositoryFromContext(
   if (parts[0]?.toLowerCase() === "v3" && sshProject && sshRepository) {
     return { project: sshProject, repository: sshRepository };
   }
+  const fallbackProject = parts.at(-2);
   const repository = parts.at(-1);
-  return repository ? { repository } : undefined;
+  return repository
+    ? { repository, ...(fallbackProject ? { project: fallbackProject } : {}) }
+    : undefined;
 }
 
 export const make = Effect.gen(function* () {

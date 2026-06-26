@@ -116,15 +116,30 @@ function makeTestLayer(
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provide(
       Layer.succeed(GitWorkflowService, {
-        status: () =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "test.status",
-              command: "git status",
-              cwd: "/repo",
-              detail: "status not stubbed",
-            }),
-          ),
+        status: (input) =>
+          workflow.status
+            ? workflow.status(input)
+            : workflow.localStatus
+              ? workflow.localStatus(input).pipe(
+                  Effect.map((status) => ({
+                    ...status,
+                    hasUpstream: false,
+                    aheadCount: 0,
+                    behindCount: 0,
+                    aheadOfDefaultCount:
+                      (status as { readonly aheadOfDefaultCount?: number }).aheadOfDefaultCount ??
+                      0,
+                    pr: null,
+                  })),
+                )
+              : Effect.fail(
+                  new GitCommandError({
+                    operation: "test.status",
+                    command: "git status",
+                    cwd: "/repo",
+                    detail: "status not stubbed",
+                  }),
+                ),
         localStatus: () =>
           Effect.fail(
             new GitCommandError({
@@ -612,6 +627,73 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("decodes quoted porcelain paths and keeps mixed unstaged rows in snapshots", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+      const unstagedFiles =
+        snapshot.changeGroups.find((group) => group.kind === "unstaged")?.files ?? [];
+
+      assert.equal(snapshot.status.aheadOfDefaultCount, 4);
+      assert.deepStrictEqual(unstagedFiles, [
+        {
+          path: "src/áudio.ts",
+          originalPath: null,
+          status: "untracked",
+          insertions: 0,
+          deletions: 0,
+        },
+        {
+          path: "src/mixed.ts",
+          originalPath: null,
+          status: "modified",
+          insertions: 2,
+          deletions: 1,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                  return success("");
+                case "vcs.panel.statusPorcelain":
+                  return success(
+                    [
+                      "# branch.oid abc",
+                      "# branch.head feature/source-control",
+                      "# branch.ab +2 -0",
+                      "1 MM N... 100644 100644 100644 abc abc src/mixed.ts",
+                      '? "src/\\303\\241udio.ts"',
+                    ].join("\n"),
+                  );
+                case "vcs.panel.stagedNumstat":
+                  return success("1\t0\tsrc/mixed.ts\0");
+                case "vcs.panel.stagedNameStatus":
+                  return success("M\0src/mixed.ts\0");
+                case "vcs.panel.unstagedNumstat":
+                  return success("2\t1\tsrc/mixed.ts\0");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                aheadOfDefaultCount: 4,
+              }),
+          },
+        ),
+      ),
+    ),
+  );
+
   it.effect("enriches visible untracked files with stats and rename matches", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
@@ -1073,6 +1155,104 @@ describe("SourceControlPanelService", () => {
                 return success("");
             }
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("resolves local branch deletion from the server snapshot", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.deleteBranch({
+        cwd: "/repo",
+        branchName: "feature/source-control",
+        force: true,
+      });
+
+      const deleteCall = calls.find((call) => call.operation === "vcs.panel.deleteLocalBranch");
+      assert.deepStrictEqual(deleteCall?.args, ["branch", "-D", "feature/source-control"]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    "feature/source-control\t\t\t2026-06-20T12:00:00.000Z\torigin/feature/source-control\t",
+                  );
+                case "vcs.panel.statusPorcelain":
+                  return success("# branch.oid abc\n# branch.head main");
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.stagedNameStatus":
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () => Effect.succeed(localStatus),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("resolves remote branch deletion from the server snapshot", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.deleteBranch({
+        cwd: "/repo",
+        branchName: "origin/feature/source-control",
+      });
+
+      const deleteCall = calls.find((call) => call.operation === "vcs.panel.deleteRemoteBranch");
+      assert.deepStrictEqual(deleteCall?.args, [
+        "push",
+        "origin",
+        "--delete",
+        "feature/source-control",
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success("");
+                case "vcs.panel.remotes":
+                  return success(
+                    [
+                      "origin\tgit@example.test:fork/repo.git\t(fetch)",
+                      "origin\tgit@example.test:fork/repo.git\t(push)",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.remoteBranches":
+                  return success("origin/feature/source-control\t2026-06-20T12:00:00.000Z\n");
+                case "vcs.panel.statusPorcelain":
+                  return success("# branch.oid abc\n# branch.head main");
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.stagedNameStatus":
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () => Effect.succeed(localStatus),
+          },
         ),
       ),
     );

@@ -550,7 +550,7 @@ export type VcsPanelBranchActionInput = typeof VcsPanelBranchActionInput.Type;
 
 export const VcsPanelDeleteBranchInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  branch: VcsRef,
+  branchName: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
 });
 export type VcsPanelDeleteBranchInput = typeof VcsPanelDeleteBranchInput.Type;
