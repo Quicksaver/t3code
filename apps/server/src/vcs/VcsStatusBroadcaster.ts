@@ -555,9 +555,16 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.orElseSucceed(() => null));
     if (result === null || result.exitCode !== 0) return [];
     const rootPath = path.resolve(cwd);
-    return parseWorktreePaths(result.stdout).filter(
+    const candidatePaths = parseWorktreePaths(result.stdout).filter(
       (worktreePath) => path.resolve(worktreePath) !== rootPath,
     );
+    const existingPaths = yield* Effect.forEach(candidatePaths, (worktreePath) =>
+      fs.exists(worktreePath).pipe(
+        Effect.orElseSucceed(() => false),
+        Effect.map((exists) => (exists ? worktreePath : null)),
+      ),
+    );
+    return existingPaths.filter((worktreePath): worktreePath is string => worktreePath !== null);
   });
 
   const makeLocalWatchLoop = (watchCwd: string, refreshCwd: string) =>
