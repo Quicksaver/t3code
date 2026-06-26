@@ -30,7 +30,17 @@ const OSC_ESCAPE_PATTERN = new RegExp(
   "g",
 );
 const BELL_CHARACTER = String.fromCharCode(7);
-const SHELL_LABELS = new Set(["bash", "zsh", "sh", "fish", "csh", "tcsh", "pwsh", "powershell"]);
+const SHELL_LABELS = new Set([
+  "bash",
+  "zsh",
+  "sh",
+  "fish",
+  "csh",
+  "tcsh",
+  "pwsh",
+  "powershell",
+  "cmd",
+]);
 const UNIX_PERCENT_PROGRESS_SUFFIX_PATTERN = /\d\s+%\s*$/;
 const UNIX_PROMPT_SUFFIX_PATTERN = /(?:[$#]|(?:^|[^\d])%)\s*$/;
 const POWERSHELL_PROMPT_PATTERN = /^PS\s+\S.*>\s*$/;
@@ -163,7 +173,7 @@ export function terminalOutputLooksReadyForInput(value: string): boolean {
 function normalizedShellLabel(label: string): string {
   const trimmed = label.trim().toLowerCase();
   const basename = trimmed.split(/[\\/]/).at(-1) ?? trimmed;
-  return basename.replace(/^-+/, "");
+  return basename.replace(/^-+/, "").replace(/\.exe$/, "");
 }
 
 export function terminalSessionIsReadyForProjectActionInput(input: {

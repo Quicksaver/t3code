@@ -2640,6 +2640,7 @@ function ChatViewContent(props: ChatViewProps) {
         targetCwd,
         targetWorktreePath,
       });
+      let waitAfterOpen = !canWriteImmediately;
       let openTerminalInput: TerminalOpenInput = {
         threadId: activeThreadId,
         terminalId: targetTerminalId,
@@ -2657,8 +2658,11 @@ function ChatViewContent(props: ChatViewProps) {
           input: openTerminalInput,
         });
         if (readyResult._tag === "Success") {
-          canWriteImmediately = true;
+          waitAfterOpen = true;
         } else {
+          if (isAtomCommandInterrupted(readyResult)) {
+            return;
+          }
           targetTerminalId = resolveProjectActionTerminalId({
             scriptId: script.id,
             terminalIds: activeKnownTerminalIds,
@@ -2675,6 +2679,7 @@ function ChatViewContent(props: ChatViewProps) {
             targetCwd,
             targetWorktreePath,
           });
+          waitAfterOpen = !canWriteImmediately;
           openTerminalInput = {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
@@ -2706,7 +2711,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
-      if (!canWriteImmediately) {
+      if (waitAfterOpen) {
         await waitForProjectActionTerminalReady({
           environmentId,
           input: openTerminalInput,

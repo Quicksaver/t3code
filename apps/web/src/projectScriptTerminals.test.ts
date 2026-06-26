@@ -283,6 +283,22 @@ describe("terminalSessionShouldProbeForProjectActionInput", () => {
     ).toBe(true);
   });
 
+  it("probes Windows cmd sessions", () => {
+    expect(
+      terminalSessionShouldProbeForProjectActionInput({
+        summary: {
+          cwd: "C:\\repo",
+          hasRunningSubprocess: true,
+          label: "cmd.exe",
+          status: "running",
+          worktreePath: null,
+        },
+        targetCwd: "C:\\repo",
+        targetWorktreePath: null,
+      }),
+    ).toBe(true);
+  });
+
   it("does not probe non-shell subprocess labels", () => {
     expect(
       terminalSessionShouldProbeForProjectActionInput({
