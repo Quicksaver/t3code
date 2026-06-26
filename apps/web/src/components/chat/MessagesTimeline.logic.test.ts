@@ -509,6 +509,16 @@ describe("activity detail expansion", () => {
       ),
     ).toEqual(["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"]);
   });
+
+  it("does not hide basename-only changed files for unrelated inline diff suffixes", () => {
+    expect(filterChangedFilesWithoutInlineDiff(["index.ts"], ["apps/web/src/index.ts"])).toEqual([
+      "index.ts",
+    ]);
+
+    expect(
+      filterChangedFilesWithoutInlineDiff(["src/index.ts"], ["apps/web/src/index.ts"]),
+    ).toEqual([]);
+  });
 });
 
 describe("deriveMessagesTimelineRows", () => {

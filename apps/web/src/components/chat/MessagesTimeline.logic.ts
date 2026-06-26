@@ -240,10 +240,12 @@ export function filterChangedFilesWithoutInlineDiff(
 function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
   const normalizedChangedFile = changedFile.replace(/\\/gu, "/");
   const normalizedDiffPath = diffPath.replace(/\\/gu, "/");
+  const normalizedChangedFileSuffix = normalizedChangedFile.replace(/^\/+/u, "");
+  const changedFileHasPathSeparator = normalizedChangedFileSuffix.includes("/");
   return (
     normalizedChangedFile === normalizedDiffPath ||
     normalizedChangedFile.endsWith(`/${normalizedDiffPath}`) ||
-    normalizedDiffPath.endsWith(`/${normalizedChangedFile.replace(/^\/+/u, "")}`)
+    (changedFileHasPathSeparator && normalizedDiffPath.endsWith(`/${normalizedChangedFileSuffix}`))
   );
 }
 
