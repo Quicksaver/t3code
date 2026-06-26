@@ -24,11 +24,11 @@ Local packages use the temporary publisher id `t3tools` when `VSCE_PUBLISHER` is
 
 ## Branch Maintenance Snapshot
 
-This split branch is synchronized through `upstream/main` `31dfe3596e429725d95d31ecff396caa02a47d12` (`Fix Electron dev and packaged renderer startup (#3557)`) as of 2026-06-25. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
+This split branch is synchronized through `upstream/main` `52b04b947e3604e426386be53e6d20c6a4366fef` (`fix(grok): Harden ACP resume with replay-idle load readiness (#3156)`) as of 2026-06-26. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
 
-After the 2026-06-25 upstream merge, `split/vscode-extension-work` is expected to be 14 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 108 files changed, 16273 insertions(+), and 670 deletions(-).
+After the 2026-06-26 upstream merge, `split/vscode-extension-work` is expected to be 15 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 108 files changed, 16273 insertions(+), and 670 deletions(-).
 
-The 2026-06-25 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's Electron renderer startup fix was accepted as-is; the only conflict was generated dependency state in `pnpm-lock.yaml`, resolved by regenerating the lockfile from the merged manifests so upstream's Astro/vite-plus catalog changes and this branch's `apps/vscode-extension` package both remain represented.
+The 2026-06-26 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's live-owner preview automation routing, browser viewport toolbar, Electron preview keyboard handling, and Grok ACP replay-idle load readiness were accepted as-is. No VS Code extension customization was retired by this merge, and there were no textual conflicts.
 
 ## Desktop Backend Dependency
 
