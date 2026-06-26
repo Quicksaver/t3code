@@ -481,6 +481,59 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("commits the staged index without pathspecs after staging selected files", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.commitStaged({
+        cwd: "/repo",
+        paths: ["src/mixed.ts"],
+        message: "Commit selected file",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["commit", "-m", "Commit selected file"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("passes merge refs after a positional separator", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      yield* service.mergeBranchIntoCurrent({
+        cwd: "/repo",
+        refName: "feature/source-control",
+      });
+
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["merge", "--no-edit", "--", "feature/source-control"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("sets upstream when force-pushing an unpublished branch", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {

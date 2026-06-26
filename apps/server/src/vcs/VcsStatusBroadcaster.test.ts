@@ -380,7 +380,7 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(testLayer));
   });
 
-  it.effect("streams a local snapshot first and remote updates later", () => {
+  it.effect("streams a local snapshot first and explicit refresh snapshots later", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -391,30 +391,35 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
+      const cwd = "/repo-stream";
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
-        if (event._tag === "snapshot") {
+      const refreshedSnapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+      yield* Stream.runForEach(broadcaster.streamStatus({ cwd }), (event) => {
+        if (event._tag === "snapshot" && event.remote === null) {
           return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
         }
+        if (event._tag === "snapshot") {
+          return Deferred.succeed(refreshedSnapshotDeferred, event).pipe(Effect.ignore);
+        }
         if (event._tag === "remoteUpdated") {
-          return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
+          return Effect.void;
         }
         return Effect.void;
       }).pipe(Effect.forkScoped);
 
       const snapshot = yield* Deferred.await(snapshotDeferred);
-      yield* broadcaster.refreshStatus("/repo");
-      const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred);
+      yield* broadcaster.refreshStatus(cwd);
+      const refreshedSnapshot = yield* Deferred.await(refreshedSnapshotDeferred);
 
       assert.deepStrictEqual(snapshot, {
         _tag: "snapshot",
         local: baseLocalStatus,
         remote: null,
       } satisfies VcsStatusStreamEvent);
-      assert.deepStrictEqual(remoteUpdated, {
-        _tag: "remoteUpdated",
+      assert.deepStrictEqual(refreshedSnapshot, {
+        _tag: "snapshot",
+        local: baseLocalStatus,
         remote: baseRemoteStatus,
       } satisfies VcsStatusStreamEvent);
     }).pipe(Effect.provide(makeTestLayer(state)));
@@ -458,6 +463,24 @@ describe("VcsStatusBroadcaster", () => {
       assert.isAtLeast(state.localStatusCalls, 2);
       assert.isAtLeast(state.localInvalidationCalls, 1);
     }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it("parses worktree paths from porcelain output", () => {
+    assert.deepStrictEqual(
+      VcsStatusBroadcaster.parseWorktreePaths(
+        [
+          "worktree /repo",
+          "HEAD abc",
+          "branch refs/heads/main",
+          "",
+          "worktree /repo.worktrees/feature",
+          "HEAD def",
+          "branch refs/heads/feature/source-control",
+          "",
+        ].join("\n"),
+      ),
+      ["/repo", "/repo.worktrees/feature"],
+    );
   });
 
   it.effect("loads remote status once when periodic refreshes are disabled", () => {

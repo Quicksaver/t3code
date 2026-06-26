@@ -161,6 +161,7 @@ const COLLAPSED_SECTION_HEIGHT = 32;
 const MIN_SECTION_WEIGHT = 0.35;
 const COMMIT_PAGE_SIZE = 10;
 const WORKING_FILE_PREFETCH_MARGIN = 600;
+const ENRICHMENT_KEY_SEPARATOR = "\0";
 const commitDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
@@ -172,6 +173,7 @@ function errorMessage(error: unknown): string {
 
 function applyWorkingTreeFileEnrichment(
   groups: readonly VcsPanelChangeGroup[],
+  targetCwd: string,
   enrichedFilesByPath: ReadonlyMap<string, VcsPanelFileChange>,
   hiddenPaths: ReadonlySet<string>,
 ): VcsPanelChangeGroup[] {
@@ -182,13 +184,16 @@ function applyWorkingTreeFileEnrichment(
     if (group.kind !== "unstaged") return { ...group, files: [...group.files] };
     const seenPaths = new Set<string>();
     const files = group.files.flatMap((file) => {
-      if (hiddenPaths.has(file.path)) return [];
-      const enrichedFile = enrichedFilesByPath.get(file.path) ?? file;
+      const key = enrichmentFileKey(targetCwd, file.path);
+      if (hiddenPaths.has(key)) return [];
+      const enrichedFile = enrichedFilesByPath.get(key) ?? file;
       seenPaths.add(enrichedFile.path);
       return [enrichedFile];
     });
-    for (const enrichedFile of enrichedFilesByPath.values()) {
-      if (seenPaths.has(enrichedFile.path) || hiddenPaths.has(enrichedFile.path)) continue;
+    for (const [key, enrichedFile] of enrichedFilesByPath) {
+      const parsed = splitEnrichmentFileKey(key);
+      if (parsed.cwd !== targetCwd) continue;
+      if (seenPaths.has(enrichedFile.path) || hiddenPaths.has(key)) continue;
       files.push(enrichedFile);
     }
     return {
@@ -200,6 +205,19 @@ function applyWorkingTreeFileEnrichment(
 
 function shouldEnrichWorkingTreeFile(file: PanelChangedFile): boolean {
   return file.hasUnstagedChanges && (file.status === "untracked" || file.status === "deleted");
+}
+
+function enrichmentFileKey(cwd: string, path: string): string {
+  return `${cwd}${ENRICHMENT_KEY_SEPARATOR}${path}`;
+}
+
+function splitEnrichmentFileKey(key: string): { readonly cwd: string; readonly path: string } {
+  const separatorIndex = key.indexOf(ENRICHMENT_KEY_SEPARATOR);
+  if (separatorIndex < 0) return { cwd: "", path: key };
+  return {
+    cwd: key.slice(0, separatorIndex),
+    path: key.slice(separatorIndex + ENRICHMENT_KEY_SEPARATOR.length),
+  };
 }
 
 function isActionForced(event: ReactMouseEvent): boolean {
@@ -1125,10 +1143,11 @@ export function SourceControlPanel({
     () =>
       applyWorkingTreeFileEnrichment(
         snapshot?.changeGroups ?? [],
+        cwd,
         enrichedWorkingTreeFilesByPath,
         hiddenWorkingTreePaths,
       ),
-    [enrichedWorkingTreeFilesByPath, hiddenWorkingTreePaths, snapshot?.changeGroups],
+    [cwd, enrichedWorkingTreeFilesByPath, hiddenWorkingTreePaths, snapshot?.changeGroups],
   );
   const changedFiles = useMemo(
     () => mergeChangeGroups(displayedChangeGroups),
@@ -1139,7 +1158,13 @@ export function SourceControlPanel({
       (snapshot?.worktreeChangeSets ?? [])
         .map((changeSet) => {
           const id = worktreeChangeSetId(changeSet);
-          const files = mergeChangeGroups(changeSet.changeGroups);
+          const changeGroups = applyWorkingTreeFileEnrichment(
+            changeSet.changeGroups,
+            changeSet.worktreePath,
+            enrichedWorkingTreeFilesByPath,
+            hiddenWorkingTreePaths,
+          );
+          const files = mergeChangeGroups(changeGroups);
           return {
             id,
             label: changeSet.branchName,
@@ -1147,7 +1172,7 @@ export function SourceControlPanel({
             branchName: changeSet.branchName,
             worktreePath: changeSet.worktreePath,
             current: false,
-            changeGroups: changeSet.changeGroups,
+            changeGroups,
             files,
             selectedPaths:
               selectedWorktreeChangePaths.get(id) ?? new Set(files.map((file) => file.path)),
@@ -1155,7 +1180,12 @@ export function SourceControlPanel({
           };
         })
         .filter((changeSet) => changeSet.files.length > 0),
-    [selectedWorktreeChangePaths, snapshot?.worktreeChangeSets],
+    [
+      enrichedWorkingTreeFilesByPath,
+      hiddenWorkingTreePaths,
+      selectedWorktreeChangePaths,
+      snapshot?.worktreeChangeSets,
+    ],
   );
   const compareBaseRefs = useMemo(() => compareBaseRefNames(snapshot), [snapshot]);
   const deferredCompareBaseQuery = useDeferredValue(compareBaseQuery);
@@ -1228,14 +1258,14 @@ export function SourceControlPanel({
   }, []);
 
   const applyWorkingTreeFileEnrichmentResult = useCallback(
-    (result: VcsPanelWorkingTreeFileEnrichmentResult) => {
+    (targetCwd: string, result: VcsPanelWorkingTreeFileEnrichmentResult) => {
       setEnrichedWorkingTreeFilesByPath((current) => {
         const next = new Map(current);
         for (const hiddenPath of result.hiddenPaths) {
-          next.delete(hiddenPath);
+          next.delete(enrichmentFileKey(targetCwd, hiddenPath));
         }
         for (const file of result.files) {
-          next.set(file.path, file);
+          next.set(enrichmentFileKey(targetCwd, file.path), file);
         }
         enrichedWorkingTreeFilesRef.current = next;
         return next;
@@ -1243,7 +1273,7 @@ export function SourceControlPanel({
       setHiddenWorkingTreePaths((current) => {
         const next = new Set(current);
         for (const hiddenPath of result.hiddenPaths) {
-          next.add(hiddenPath);
+          next.add(enrichmentFileKey(targetCwd, hiddenPath));
         }
         hiddenWorkingTreePathsRef.current = next;
         return next;
@@ -1255,24 +1285,38 @@ export function SourceControlPanel({
   const flushWorkingTreeFileEnrichmentQueue = useCallback(() => {
     workingTreeEnrichmentTimerRef.current = null;
     if (!api) return;
-    const paths = [...pendingWorkingTreeEnrichmentPathsRef.current].filter(
-      (path) =>
-        !enrichedWorkingTreeFilesRef.current.has(path) &&
-        !hiddenWorkingTreePathsRef.current.has(path) &&
-        !inFlightWorkingTreeEnrichmentPathsRef.current.has(path),
+    const keys = [...pendingWorkingTreeEnrichmentPathsRef.current].filter(
+      (key) =>
+        !enrichedWorkingTreeFilesRef.current.has(key) &&
+        !hiddenWorkingTreePathsRef.current.has(key) &&
+        !inFlightWorkingTreeEnrichmentPathsRef.current.has(key),
     );
     pendingWorkingTreeEnrichmentPathsRef.current.clear();
-    if (paths.length === 0) return;
+    if (keys.length === 0) return;
 
-    for (const path of paths) {
-      inFlightWorkingTreeEnrichmentPathsRef.current.add(path);
+    const requestsByCwd = new Map<string, string[]>();
+    for (const key of keys) {
+      const parsed = splitEnrichmentFileKey(key);
+      if (!parsed.cwd || !parsed.path) continue;
+      const paths = requestsByCwd.get(parsed.cwd) ?? [];
+      paths.push(parsed.path);
+      requestsByCwd.set(parsed.cwd, paths);
+      inFlightWorkingTreeEnrichmentPathsRef.current.add(key);
     }
+    if (requestsByCwd.size === 0) return;
+
     const generation = workingTreeEnrichmentGenerationRef.current;
-    void api.vcs
-      .enrichWorkingTreeFiles({ cwd, paths })
-      .then((result) => {
+    void Promise.all(
+      [...requestsByCwd].map(async ([targetCwd, paths]) => ({
+        targetCwd,
+        result: await api.vcs.enrichWorkingTreeFiles({ cwd: targetCwd, paths }),
+      })),
+    )
+      .then((results) => {
         if (workingTreeEnrichmentGenerationRef.current !== generation) return;
-        applyWorkingTreeFileEnrichmentResult(result);
+        for (const { targetCwd, result } of results) {
+          applyWorkingTreeFileEnrichmentResult(targetCwd, result);
+        }
       })
       .catch((nextError: unknown) => {
         if (workingTreeEnrichmentGenerationRef.current === generation) {
@@ -1280,24 +1324,24 @@ export function SourceControlPanel({
         }
       })
       .finally(() => {
-        for (const path of paths) {
-          inFlightWorkingTreeEnrichmentPathsRef.current.delete(path);
+        for (const key of keys) {
+          inFlightWorkingTreeEnrichmentPathsRef.current.delete(key);
         }
       });
-  }, [api, applyWorkingTreeFileEnrichmentResult, cwd]);
+  }, [api, applyWorkingTreeFileEnrichmentResult]);
 
   const queueWorkingTreeFileEnrichment = useCallback(
-    (file: PanelChangedFile) => {
+    (file: PanelChangedFile, targetCwd: string) => {
       if (!api || !shouldEnrichWorkingTreeFile(file)) return;
-      const path = file.path;
+      const key = enrichmentFileKey(targetCwd, file.path);
       if (
-        enrichedWorkingTreeFilesRef.current.has(path) ||
-        hiddenWorkingTreePathsRef.current.has(path) ||
-        inFlightWorkingTreeEnrichmentPathsRef.current.has(path)
+        enrichedWorkingTreeFilesRef.current.has(key) ||
+        hiddenWorkingTreePathsRef.current.has(key) ||
+        inFlightWorkingTreeEnrichmentPathsRef.current.has(key)
       ) {
         return;
       }
-      pendingWorkingTreeEnrichmentPathsRef.current.add(path);
+      pendingWorkingTreeEnrichmentPathsRef.current.add(key);
       if (workingTreeEnrichmentTimerRef.current !== null) return;
       workingTreeEnrichmentTimerRef.current = window.setTimeout(
         flushWorkingTreeFileEnrichmentQueue,
@@ -3804,7 +3848,9 @@ export function SourceControlPanel({
                 <WorkingFileRow
                   key={file.path}
                   file={file}
-                  onRendered={changeSet.current ? queueWorkingTreeFileEnrichment : () => {}}
+                  onRendered={(renderedFile) =>
+                    queueWorkingTreeFileEnrichment(renderedFile, changeSet.cwd)
+                  }
                   renderFile={renderWorkingFile(changeSet)}
                 />
               ))}
