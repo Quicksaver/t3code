@@ -5,7 +5,9 @@ name: update-worktree
 
 $spawn-worktree
 
-Your task is to instruct the subagent in several steps, provide it instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions. **You do not validate any work yourself. You do not load any skill mentioned in the steps. Your only task is to orchestrate the subagent's work and ensure they report back with the requested information.**
+Your task is to instruct the subagent in several steps, provide it instructions one step at a time, and wait for the subagent to report back before providing the next step's instructions.
+
+**You do not validate any work yourself or load any skill mentioned in the steps.** Your only task is to orchestrate the subagent's work and ensure they report back with the requested information.
 
 **Step 1**: instruct subagent to fetch and merge `main` branch from `upstream` remote onto its current branch, preserving that branch's intentional customizations without blocking new upstream behavior.
 

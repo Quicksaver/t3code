@@ -9,7 +9,9 @@ $spawn-worktrees
 
 The goal is to update all active worktrees with the latest changes from `upstream/main`, while preserving any intentional customizations made in their own branches.
 
-To achieve this goal, your task is to instruct each subagent to use the $update-worktree skill. **You do not validate any work yourself. You do not load this skill yourself. Your only task is to orchestrate the subagents' work and ensure they report back with the requested information.**
+To achieve this goal, your task is to instruct each subagent to use the $update-worktree skill.
+
+**You do not validate any work yourself, or load this skill yourself.** Your only task is to orchestrate the subagents' work and ensure they report back with the requested information.
 
 This will likely be a long-running process, be patient and silent while you wait.
 
