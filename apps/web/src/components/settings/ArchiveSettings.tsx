@@ -20,7 +20,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
-import { useProjects } from "../../state/entities";
+import { useEnvironments } from "../../state/environments";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { readLocalApi } from "../../localApi";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -113,7 +113,7 @@ function ArchivedIconButton({
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useProjects();
+  const { environments } = useEnvironments();
   const { unarchiveThread, deleteThread } = useThreadActions();
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
@@ -126,8 +126,8 @@ export function ArchivedThreadsPanel() {
   });
   useRelativeTimeTick();
   const environmentIds = useMemo(
-    () => [...new Set(projects.map((project) => project.environmentId))],
-    [projects],
+    () => environments.map((environment) => environment.environmentId),
+    [environments],
   );
   const {
     snapshots: archivedSnapshots,
