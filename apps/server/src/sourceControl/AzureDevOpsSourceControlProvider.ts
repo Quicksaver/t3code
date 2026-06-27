@@ -179,6 +179,29 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const repository = azureRepositoryFromContext(input.context);
+      if (!repository) {
+        return Effect.succeed(null);
+      }
+      return azure
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          ...repository,
+          sha: input.sha,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "azure-devops",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       azure.createRepository(input).pipe(
         Effect.mapError((error) =>

@@ -193,6 +193,30 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const authorEmail = input.authorEmail?.trim();
+      if (!authorEmail) {
+        return Effect.succeed(null);
+      }
+
+      return gitlab
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          email: authorEmail,
+          providerBaseUrl: input.context?.provider.baseUrl ?? "https://gitlab.com",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "gitlab",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       gitlab.createRepository(input).pipe(
         Effect.mapError((error) =>

@@ -216,6 +216,12 @@ export class SourceControlProvider extends Context.Service<
       readonly context?: SourceControlProviderContext;
       readonly repository: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly sha: string;
+      readonly authorEmail?: string | null;
+    }) => Effect.Effect<string | null, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;

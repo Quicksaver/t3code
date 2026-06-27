@@ -122,6 +122,47 @@ it.effect("preserves Azure DevOps fallback project context when _git is absent",
   }),
 );
 
+it.effect("uses Azure DevOps commit author image URLs from the remote repository context", () =>
+  Effect.gen(function* () {
+    let avatarInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["getCommitAvatarUrl"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: (input) => {
+        avatarInput = input;
+        return Effect.succeed(
+          "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+        );
+      },
+    });
+
+    const avatarUrl = yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "azure-devops",
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+      sha: "abc123",
+    });
+
+    assert.strictEqual(
+      avatarUrl,
+      "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+    );
+    assert.deepStrictEqual(avatarInput, {
+      cwd: "/repo",
+      repository: "repo",
+      project: "project",
+      sha: "abc123",
+    });
+  }),
+);
+
 it.effect("adds change-request context while bounding Azure CLI causes", () =>
   Effect.gen(function* () {
     const cause = new AzureDevOpsCli.AzureDevOpsCommandFailedError({

@@ -79,6 +79,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
         detail: "repository clone URLs not stubbed",
       }),
     ),
+  getCommitAvatarUrl: () => Effect.succeed(null),
   createRepository: () =>
     Effect.fail(
       new SourceControlProviderError({
@@ -106,10 +107,11 @@ function makeTestLayer(
   providers: Partial<
     Record<SourceControlProviderKind, SourceControlProvider.SourceControlProvider["Service"]>
   > = {},
+  settings: Parameters<typeof ServerSettingsService.layerTest>[0] = {},
 ) {
   return SourceControlPanelServiceLayer.pipe(
     Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettingsService.layerTest(settings)),
     Layer.provide(
       Layer.succeed(GitWorkflowService, {
         status: (input) =>
@@ -302,6 +304,191 @@ describe("SourceControlPanelService", () => {
             calls.push(input);
             return success(input.args[0] === "rev-list" ? "0" : "");
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not fetch provider account avatar URLs by default", () => {
+    let avatarLookupCount = 0;
+
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        baseRef: "main",
+        kind: "history",
+        skip: 0,
+        limit: 10,
+      });
+
+      assert.equal(result.commits[0]?.authorAvatarUrl, null);
+      assert.equal(result.commits[1]?.authorAvatarUrl, null);
+      assert.equal(avatarLookupCount, 0);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.args[0]) {
+                case "rev-list":
+                  return success("2");
+                case "log":
+                  return success(
+                    [
+                      "a".repeat(40),
+                      "aaaaaaa",
+                      "Ada Lovelace",
+                      "ada@example.test",
+                      "2026-06-27T10:00:00+00:00",
+                      "Add source control avatars",
+                    ].join("\t") +
+                      "\n" +
+                      [
+                        "b".repeat(40),
+                        "bbbbbbb",
+                        "Grace Hopper",
+                        "grace@example.test",
+                        "2026-06-27T09:00:00+00:00",
+                        "Keep avatars distinct",
+                      ].join("\t"),
+                  );
+                case "remote":
+                  return success(
+                    [
+                      "origin\thttps://github.com/pingdotgg/t3code.git (fetch)",
+                      "origin\thttps://github.com/pingdotgg/t3code.git (push)",
+                    ].join("\n"),
+                  );
+                default:
+                  return success("");
+              }
+            }),
+          {},
+          {
+            github: SourceControlProvider.SourceControlProvider.of({
+              ...emptyProvider,
+              kind: "github",
+              getCommitAvatarUrl: () =>
+                Effect.sync(() => {
+                  avatarLookupCount += 1;
+                  return "https://avatars.githubusercontent.com/u/101?v=4";
+                }),
+            }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("uses opted-in provider account avatar URLs for commit authors", () => {
+    const avatarLookups: Array<{
+      readonly sha: string;
+      readonly authorEmail: string | null | undefined;
+      readonly remoteUrl: string | undefined;
+    }> = [];
+
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        baseRef: "main",
+        kind: "history",
+        skip: 0,
+        limit: 10,
+      });
+
+      const firstAvatar = result.commits[0]?.authorAvatarUrl;
+      const secondAvatar = result.commits[1]?.authorAvatarUrl;
+
+      if (typeof firstAvatar !== "string" || typeof secondAvatar !== "string") {
+        assert.fail("expected commit authors to have provider avatar URLs");
+      }
+      assert.equal(firstAvatar, "https://avatars.githubusercontent.com/u/101?v=4");
+      assert.equal(secondAvatar, "https://avatars.githubusercontent.com/u/202?v=4");
+      assert.notStrictEqual(firstAvatar, secondAvatar);
+      assert.deepStrictEqual(avatarLookups, [
+        {
+          sha: "a".repeat(40),
+          authorEmail: "ada@example.test",
+          remoteUrl: "https://github.com/pingdotgg/t3code.git",
+        },
+        {
+          sha: "b".repeat(40),
+          authorEmail: "grace@example.test",
+          remoteUrl: "https://github.com/pingdotgg/t3code.git",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.args[0]) {
+                case "rev-list":
+                  return success("2");
+                case "log":
+                  return success(
+                    [
+                      "a".repeat(40),
+                      "aaaaaaa",
+                      "Ada Lovelace",
+                      "ada@example.test",
+                      "2026-06-27T10:00:00+00:00",
+                      "Add source control avatars",
+                    ].join("\t") +
+                      "\n" +
+                      [
+                        "b".repeat(40),
+                        "bbbbbbb",
+                        "Grace Hopper",
+                        "grace@example.test",
+                        "2026-06-27T09:00:00+00:00",
+                        "Keep avatars distinct",
+                      ].join("\t"),
+                  );
+                case "remote":
+                  return success(
+                    [
+                      "origin\thttps://github.com/pingdotgg/t3code.git (fetch)",
+                      "origin\thttps://github.com/pingdotgg/t3code.git (push)",
+                    ].join("\n"),
+                  );
+                default:
+                  return success("");
+              }
+            }),
+          {},
+          {
+            github: SourceControlProvider.SourceControlProvider.of({
+              ...emptyProvider,
+              kind: "github",
+              getCommitAvatarUrl: (input) =>
+                Effect.sync(() => {
+                  avatarLookups.push({
+                    sha: input.sha,
+                    authorEmail: input.authorEmail,
+                    remoteUrl: input.context?.remoteUrl,
+                  });
+                  return input.sha.startsWith("a")
+                    ? "https://avatars.githubusercontent.com/u/101?v=4"
+                    : "https://avatars.githubusercontent.com/u/202?v=4";
+                }),
+            }),
+          },
+          {
+            sourceControl: {
+              providers: {
+                github: {
+                  showCommitAuthorAvatar: true,
+                },
+              },
+            },
+          },
         ),
       ),
     );

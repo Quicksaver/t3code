@@ -39,6 +39,7 @@ import {
   type VcsPanelWorktreeChangeSet,
   type VcsPanelWorkingTreeFileEnrichmentInput,
   type VcsPanelWorkingTreeFileEnrichmentResult,
+  type SourceControlProviderKind,
   type VcsPullResult,
   type VcsRef,
   type VcsStatusLocalResult,
@@ -67,6 +68,14 @@ const LOCAL_BRANCHES_WITHOUT_WORKTREE_PATH_ARGS = [
   "branch",
   "--format=%(refname:short)%09%(HEAD)%09%09%(committerdate:iso-strict)%09%(upstream:short)%09%(upstream:track)",
 ] as const;
+
+type ConfiguredSourceControlProviderKind = Exclude<SourceControlProviderKind, "unknown">;
+
+function isConfiguredSourceControlProviderKind(
+  kind: SourceControlProviderKind,
+): kind is ConfiguredSourceControlProviderKind {
+  return kind !== "unknown";
+}
 
 interface WorktreeBranchEntry {
   readonly branchName: string;
@@ -694,12 +703,6 @@ function compareBranchActivity(
   return activity !== 0 ? activity : left.name.localeCompare(right.name);
 }
 
-function avatarUrlForEmail(email: string | null | undefined): string | null {
-  const normalized = email?.trim().toLowerCase();
-  if (!normalized || !normalized.includes("@")) return null;
-  return null;
-}
-
 function parsePathLines(output: string): string[] {
   return output.split(/\r?\n/u).filter((line) => line.length > 0);
 }
@@ -729,7 +732,7 @@ function parseCommits(output: string): VcsPanelSnapshotResult["recentCommits"] {
         message,
         authorName: authorName ?? null,
         authorEmail: authorEmail ?? null,
-        authorAvatarUrl: avatarUrlForEmail(authorEmail),
+        authorAvatarUrl: null,
         authoredAt: authoredAt ?? null,
         headRefs: [],
         tags: [],
@@ -1118,20 +1121,106 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     );
   };
 
-  const withCommitDetails = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) =>
-    commitRefsBySha(cwd, commits).pipe(
-      Effect.flatMap((refsBySha) =>
-        Effect.forEach(
+  const commitAvatarProviderContexts = (cwd: string) => {
+    if (!sourceControlProviders) {
+      return Effect.succeed<ReadonlyArray<SourceControlProvider.SourceControlProviderContext>>([]);
+    }
+
+    return Effect.all({
+      settings: serverSettings.getSettings,
+      remotes: run("vcs.panel.commitAvatarRemotes", cwd, ["remote", "-v"]),
+    }).pipe(
+      Effect.map(({ settings, remotes }) =>
+        parseRemoteVerbose(remotes)
+          .map(providerContextForRemote)
+          .filter(
+            (context): context is SourceControlProvider.SourceControlProviderContext =>
+              context !== null,
+          )
+          .filter(
+            (context) =>
+              isConfiguredSourceControlProviderKind(context.provider.kind) &&
+              settings.sourceControl.providers[context.provider.kind]?.showCommitAuthorAvatar ===
+                true,
+          ),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
+  };
+
+  const providerAvatarUrlForCommit = (
+    cwd: string,
+    registry: SourceControlProviderRegistry["Service"],
+    contexts: ReadonlyArray<SourceControlProvider.SourceControlProviderContext>,
+    commit: VcsPanelSnapshotResult["recentCommits"][number],
+  ) =>
+    Effect.gen(function* () {
+      for (const context of contexts) {
+        const provider = yield* registry
+          .get(context.provider.kind)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (!provider) continue;
+        const avatarUrl = yield* provider
+          .getCommitAvatarUrl({
+            cwd,
+            context,
+            sha: commit.sha,
+            authorEmail: commit.authorEmail,
+          })
+          .pipe(Effect.orElseSucceed(() => null));
+        if (avatarUrl) return avatarUrl;
+      }
+      return null;
+    });
+
+  const withCommitAvatars = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) => {
+    if (commits.length === 0 || !sourceControlProviders) {
+      return Effect.succeed(commits);
+    }
+
+    const registry = sourceControlProviders;
+    return commitAvatarProviderContexts(cwd).pipe(
+      Effect.flatMap((contexts) => {
+        if (contexts.length === 0) {
+          return Effect.succeed(commits);
+        }
+
+        // Required and intended behavior: commit rows should show the source-control
+        // provider account avatar image when the provider exposes one. `null` is only
+        // the initials fallback path; do not replace this with generated avatars.
+        return Effect.forEach(
           commits,
           (commit) =>
-            commitFiles(cwd, commit.sha).pipe(
-              Effect.map((files) => ({
-                ...commit,
-                ...(refsBySha.get(commit.sha) ?? { headRefs: [], tags: [] }),
-                files,
-              })),
+            providerAvatarUrlForCommit(cwd, registry, contexts, commit).pipe(
+              Effect.map((authorAvatarUrl) =>
+                authorAvatarUrl ? { ...commit, authorAvatarUrl } : commit,
+              ),
             ),
-          { concurrency: 2 },
+          { concurrency: 4 },
+        );
+      }),
+      Effect.orElseSucceed(() => commits),
+    );
+  };
+
+  const withCommitDetails = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) =>
+    withCommitAvatars(cwd, commits).pipe(
+      Effect.flatMap((commitsWithAvatars) =>
+        commitRefsBySha(cwd, commitsWithAvatars).pipe(
+          Effect.flatMap((refsBySha) =>
+            Effect.forEach(
+              commitsWithAvatars,
+              (commit) =>
+                commitFiles(cwd, commit.sha).pipe(
+                  Effect.map((files) => ({
+                    ...commit,
+                    ...(refsBySha.get(commit.sha) ?? { headRefs: [], tags: [] }),
+                    files,
+                  })),
+                ),
+              { concurrency: 2 },
+            ),
+          ),
         ),
       ),
     );

@@ -222,6 +222,13 @@ export class GitHubCli extends Context.Service<
       readonly repository: string;
     }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
 
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly sha: string;
+      readonly hostname?: string;
+    }) => Effect.Effect<string | null, GitHubCliError>;
+
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -411,6 +418,22 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      ),
+    getCommitAvatarUrl: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "api",
+          ...(input.hostname !== undefined ? ["--hostname", input.hostname] : []),
+          `repos/${input.repository}/commits/${input.sha}`,
+          "--jq",
+          ".author.avatar_url // empty",
+        ],
+      }).pipe(
+        Effect.map((result) => {
+          const trimmed = result.stdout.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }),
       ),
     createRepository: (input) =>
       execute({

@@ -184,6 +184,71 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads GitLab-hosted avatar URLs through the official Avatar API", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              avatar_url: "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getCommitAvatarUrl({
+          cwd: "/repo",
+          email: "author@example.test",
+          providerBaseUrl: "https://gitlab.example.test",
+        });
+      });
+
+      assert.strictEqual(
+        result,
+        "https://gitlab.example.test/uploads/-/system/user/avatar/123/avatar.png",
+      );
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "--hostname", "gitlab.example.test", "avatar?email=author%40example.test"],
+        }),
+      );
+    }),
+  );
+
+  it.effect("passes through external GitLab Avatar API fallback URLs", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              avatar_url: "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getCommitAvatarUrl({
+          cwd: "/repo",
+          email: "author@example.test",
+          providerBaseUrl: "https://gitlab.example.test",
+        });
+      });
+
+      assert.strictEqual(
+        result,
+        "https://www.gravatar.com/avatar/e64c7d89f26bd1972efa854d13d7dd61",
+      );
+    }),
+  );
+
   it.effect("preserves structured process failures when normalizing CLI errors", () =>
     Effect.gen(function* () {
       const cause = {

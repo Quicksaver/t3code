@@ -52,6 +52,20 @@ function repositoryFromContext(
   }
 }
 
+function repositoryContextFromProviderContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): { readonly repository: string; readonly hostname?: string } | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const hostname = new URL(context.provider.baseUrl).host;
+    return hostname && hostname !== "github.com" ? { repository, hostname } : { repository };
+  } catch {
+    return { repository };
+  }
+}
+
 function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   const output = combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
@@ -235,6 +249,29 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const repository = repositoryContextFromProviderContext(input.context);
+      if (!repository) {
+        return Effect.succeed(null);
+      }
+      return github
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          ...repository,
+          sha: input.sha,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "github",
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       github.createRepository(input).pipe(
         Effect.mapError((error) =>
