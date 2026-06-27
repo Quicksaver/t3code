@@ -1818,6 +1818,58 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("keeps a non-main current default branch as the default compare ref", () =>
+    Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+
+      assert.equal(snapshot.defaultCompareRef, "develop");
+      assert.deepStrictEqual(
+        snapshot.localBranches.map((ref) => ({ name: ref.name, isDefault: ref.isDefault })),
+        [
+          { name: "develop", isDefault: true },
+          { name: "feature/source-control", isDefault: false },
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    [
+                      "develop\t*\t/repo\t2026-06-20T12:00:00.000Z\torigin/develop\t",
+                      "feature/source-control\t\t\t2026-06-19T12:00:00.000Z\t\t",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.statusPorcelain":
+                  return success("# branch.oid abc\n# branch.head develop");
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "develop",
+                isDefaultRef: true,
+                hasWorkingTreeChanges: false,
+              }),
+          },
+        ),
+      ),
+    ),
+  );
+
   it.effect("surfaces same-name remote forks only when the local branch is behind", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;

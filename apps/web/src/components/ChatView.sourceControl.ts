@@ -168,6 +168,8 @@ export function useSourceControlThreadMetadataRouting(
     setDraftThreadContext,
     updateThreadMetadata,
   } = input;
+  // Keep sequence values for the hook lifetime so a reopened thread key cannot reuse the
+  // request number of an older update that is still resolving.
   const metadataUpdateSequenceByThreadKeyRef = useRef<Record<string, number>>({});
   const [metadataErrorsByThreadKey, setMetadataErrorsByThreadKey] = useState<
     Record<string, string | null>
@@ -186,11 +188,6 @@ export function useSourceControlThreadMetadataRouting(
 
   useEffect(() => {
     setMetadataErrorsByThreadKey((existing) => retainThreadKeyRecord(existing, existingThreadKeys));
-    for (const threadKey of Object.keys(metadataUpdateSequenceByThreadKeyRef.current)) {
-      if (!existingThreadKeys.has(threadKey)) {
-        delete metadataUpdateSequenceByThreadKeyRef.current[threadKey];
-      }
-    }
   }, [existingThreadKeys]);
 
   const clearActiveSourceControlMetadataError = useCallback(() => {
