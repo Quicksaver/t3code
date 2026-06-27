@@ -1,3 +1,4 @@
+import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopEnvironmentBootstrap } from "@t3tools/contracts";
 import { getDesktopManagedEnvironmentBootstrap } from "./hostBootstrap";
 import * as Schema from "effect/Schema";
 
@@ -74,6 +75,14 @@ export interface PrimaryEnvironmentTarget {
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function getDesktopLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap | null {
+  // The primary (Windows-native) backend keeps the "primary" id. The
+  // plural list may include a second WSL entry; the primary-target
+  // resolver only cares about the primary, so just find it.
+  const bootstraps = window.desktopBridge?.getLocalEnvironmentBootstraps() ?? [];
+  return bootstraps.find((entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID) ?? null;
+}
 
 function parseTargetUrl(input: {
   readonly rawValue: string;
@@ -251,6 +260,38 @@ function resolveHostPrimaryTarget(): PrimaryEnvironmentTarget | null {
   };
 }
 
+function resolveDesktopPrimaryTarget(): PrimaryEnvironmentTarget | null {
+  const desktopBootstrap = getDesktopLocalEnvironmentBootstrap();
+  if (!desktopBootstrap) {
+    return null;
+  }
+  if (!desktopBootstrap.httpBaseUrl && !desktopBootstrap.wsBaseUrl) {
+    return null;
+  }
+  if (!desktopBootstrap.httpBaseUrl || !desktopBootstrap.wsBaseUrl) {
+    throw new DesktopEnvironmentBootstrapIncompleteError({
+      hasHttpBaseUrl: Boolean(desktopBootstrap.httpBaseUrl),
+      hasWsBaseUrl: Boolean(desktopBootstrap.wsBaseUrl),
+    });
+  }
+
+  return {
+    source: "desktop-managed",
+    target: {
+      httpBaseUrl: normalizeBaseUrl(
+        desktopBootstrap.httpBaseUrl,
+        "desktop-managed",
+        "http-base-url",
+      ),
+      wsBaseUrl: normalizeBaseUrl(
+        desktopBootstrap.wsBaseUrl,
+        "desktop-managed",
+        "websocket-base-url",
+      ),
+    },
+  };
+}
+
 export function resolvePrimaryEnvironmentHttpUrl(
   pathname: string,
   searchParams?: Record<string, string>,
@@ -272,6 +313,7 @@ export function resolvePrimaryEnvironmentHttpUrl(
 export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget {
   return (
     resolveHostPrimaryTarget() ??
+    resolveDesktopPrimaryTarget() ??
     resolveConfiguredPrimaryTarget() ??
     resolveWindowOriginPrimaryTarget()
   );

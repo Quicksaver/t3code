@@ -76,13 +76,16 @@ function installTestBrowser(url: string) {
 function installDesktopBootstrap() {
   const testWindow = installTestBrowser("http://localhost/");
   testWindow.desktopBridge = {
-    getLocalEnvironmentBootstrap: () => ({
-      label: "Local environment",
-      httpBaseUrl: "http://localhost:3773",
-      wsBaseUrl: "ws://localhost:3773",
-      bootstrapToken: "desktop-bootstrap-token",
-    }),
-  } as DesktopBridge;
+    getLocalEnvironmentBootstraps: () => [
+      {
+        id: "primary",
+        label: "Local environment",
+        httpBaseUrl: "http://localhost:3773",
+        wsBaseUrl: "ws://localhost:3773",
+        bootstrapToken: "desktop-bootstrap-token",
+      },
+    ],
+  } as unknown as DesktopBridge;
 }
 
 function sequence<A>(...values: ReadonlyArray<A>) {
@@ -145,7 +148,18 @@ describe("resolveInitialServerAuthGateState", () => {
       browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
     });
 
-    installDesktopBootstrap();
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
@@ -249,12 +263,15 @@ describe("resolveInitialServerAuthGateState", () => {
 
     const testWindow = installTestBrowser("http://127.0.0.1:5733/");
     testWindow.desktopBridge = {
-      getLocalEnvironmentBootstrap: () => ({
-        label: "Local environment",
-        httpBaseUrl: "http://127.0.0.1:3773",
-        wsBaseUrl: "ws://127.0.0.1:3773",
-      }),
-    } as DesktopBridge;
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://127.0.0.1:3773",
+          wsBaseUrl: "ws://127.0.0.1:3773",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState, resolvePrimaryEnvironmentHttpUrl } =
       await import("./environments/primary");
@@ -430,7 +447,18 @@ describe("resolveInitialServerAuthGateState", () => {
       browserSession: () => Effect.succeed(browserSession(["orchestration:read", "access:write"])),
     });
 
-    installDesktopBootstrap();
+    const testWindow = installTestBrowser("http://localhost/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
 
     const { resolveInitialServerAuthGateState } = await import("./environments/primary");
 
