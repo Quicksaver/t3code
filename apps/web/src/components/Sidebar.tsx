@@ -186,6 +186,8 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   filterProjectsForVscodeScope,
+  canUseRootThreadLifecycleActions,
+  canUseSelectedRootThreadLifecycleActions,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -554,6 +556,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const canArchiveThread = canUseRootThreadLifecycleActions(thread);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -893,7 +896,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               >
                 Confirm
               </button>
-            ) : !isThreadRunning ? (
+            ) : !isThreadRunning && canArchiveThread ? (
               appSettingsConfirmThreadArchive ? (
                 <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   <button
@@ -1915,11 +1918,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
+      const canDeleteSelection = canUseSelectedRootThreadLifecycleActions(
+        threadKeys,
+        sidebarThreadByKeyRef.current,
+      );
 
       const clicked = await api.contextMenu.show(
         [
           { id: "mark-unread", label: `Mark unread (${count})` },
-          { id: "delete", label: `Delete (${count})`, destructive: true },
+          ...(canDeleteSelection
+            ? [{ id: "delete", label: `Delete (${count})`, destructive: true } as const]
+            : []),
         ],
         position,
       );
@@ -2266,13 +2275,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const canDeleteThread = canUseRootThreadLifecycleActions(thread);
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+          ...(canDeleteThread
+            ? [{ id: "delete", label: "Delete", destructive: true, icon: "trash" } as const]
+            : []),
         ],
         position,
       );

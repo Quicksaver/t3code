@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   buildSidebarThreadRows,
+  canUseRootThreadLifecycleActions,
+  canUseSelectedRootThreadLifecycleActions,
   createThreadJumpHintVisibilityController,
   filterProjectsForVscodeScope,
   getSidebarThreadIdsToPrewarm,
@@ -389,6 +391,74 @@ function makeSidebarThread(
     ...overrides,
   } as SidebarThreadSummary;
 }
+
+describe("sidebar thread lifecycle guards", () => {
+  it("allows root lifecycle actions only for non-subagent threads", () => {
+    const root = makeSidebarThread({
+      id: ThreadId.make("root-thread"),
+      projectId: ProjectId.make("project"),
+    });
+    const runningChild = makeSidebarThread({
+      id: ThreadId.make("running-child"),
+      projectId: ProjectId.make("project"),
+      parentRelation: {
+        kind: "subagent",
+        parentThreadId: root.id,
+        status: "running",
+      },
+    });
+    const terminalChild = makeSidebarThread({
+      id: ThreadId.make("terminal-child"),
+      projectId: ProjectId.make("project"),
+      parentRelation: {
+        kind: "subagent",
+        parentThreadId: root.id,
+        status: "completed",
+      },
+    });
+
+    expect(canUseRootThreadLifecycleActions(root)).toBe(true);
+    expect(canUseRootThreadLifecycleActions(runningChild)).toBe(false);
+    expect(canUseRootThreadLifecycleActions(terminalChild)).toBe(false);
+    expect(canUseRootThreadLifecycleActions(null)).toBe(true);
+  });
+
+  it("fails closed for selected lifecycle actions with unresolved threads", () => {
+    const root = makeSidebarThread({
+      id: ThreadId.make("root-thread"),
+      projectId: ProjectId.make("project"),
+    });
+    const runningChild = makeSidebarThread({
+      id: ThreadId.make("running-child"),
+      projectId: ProjectId.make("project"),
+      parentRelation: {
+        kind: "subagent",
+        parentThreadId: root.id,
+        status: "running",
+      },
+    });
+    const threadByKey = new Map([
+      [`${localEnvironmentId}:${root.id}`, root],
+      [`${localEnvironmentId}:${runningChild.id}`, runningChild],
+    ]);
+
+    expect(
+      canUseSelectedRootThreadLifecycleActions([`${localEnvironmentId}:${root.id}`], threadByKey),
+    ).toBe(true);
+    expect(
+      canUseSelectedRootThreadLifecycleActions(
+        [`${localEnvironmentId}:${root.id}`, `${localEnvironmentId}:missing-thread`],
+        threadByKey,
+      ),
+    ).toBe(false);
+    expect(
+      canUseSelectedRootThreadLifecycleActions(
+        [`${localEnvironmentId}:${runningChild.id}`],
+        threadByKey,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("resolveVscodeInitialThreadRef", () => {
   it("selects the most recently visited thread within the current VS Code project", () => {

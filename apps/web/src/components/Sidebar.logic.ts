@@ -340,6 +340,22 @@ export function isRootSidebarThread<T extends SidebarThreadParentRelationInput>(
   return thread.parentRelation?.kind !== "subagent";
 }
 
+export function canUseRootThreadLifecycleActions<T extends SidebarThreadParentRelationInput>(
+  thread: T | null | undefined,
+): boolean {
+  return thread?.parentRelation?.kind !== "subagent";
+}
+
+export function canUseSelectedRootThreadLifecycleActions<T extends SidebarThreadParentRelationInput>(
+  threadKeys: readonly string[],
+  threadByKey: ReadonlyMap<string, T>,
+): boolean {
+  return threadKeys.every((threadKey) => {
+    const thread = threadByKey.get(threadKey);
+    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
+  });
+}
+
 export function isContextualSubagentSidebarThread<T extends SidebarThreadVisibilityInput>(
   thread: T,
   activeThreadId: string | null | undefined,
