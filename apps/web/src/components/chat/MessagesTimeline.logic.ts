@@ -113,6 +113,16 @@ export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
+export function shouldToggleWorkEntryRowFromKeyDown({
+  key,
+  targetIsCurrentTarget,
+}: {
+  key: string;
+  targetIsCurrentTarget: boolean;
+}): boolean {
+  return targetIsCurrentTarget && (key === "Enter" || key === " ");
+}
+
 export function resolveAssistantMessageCopyState({
   text,
   showCopyButton,

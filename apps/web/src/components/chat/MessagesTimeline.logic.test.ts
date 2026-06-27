@@ -12,6 +12,7 @@ import {
   hasRenderableCommandOutput,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldToggleWorkEntryRowFromKeyDown,
 } from "./MessagesTimeline.logic";
 
 let workLogEntrySequence = 0;
@@ -518,6 +519,21 @@ describe("activity detail expansion", () => {
     expect(
       filterChangedFilesWithoutInlineDiff(["src/index.ts"], ["apps/web/src/index.ts"]),
     ).toEqual([]);
+  });
+
+  it("only toggles expandable work rows from row-level keyboard events", () => {
+    expect(shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: true })).toBe(
+      true,
+    );
+    expect(shouldToggleWorkEntryRowFromKeyDown({ key: " ", targetIsCurrentTarget: true })).toBe(
+      true,
+    );
+    expect(
+      shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: false }),
+    ).toBe(false);
+    expect(
+      shouldToggleWorkEntryRowFromKeyDown({ key: "Escape", targetIsCurrentTarget: true }),
+    ).toBe(false);
   });
 });
 

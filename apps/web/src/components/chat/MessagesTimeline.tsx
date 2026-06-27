@@ -86,6 +86,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldToggleWorkEntryRowFromKeyDown,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   type TimelineLatestTurn,
@@ -1981,12 +1982,23 @@ function workEntryPreview(
     | "command"
     | "changedFiles"
     | "itemType"
+    | "patch"
     | "output"
+    | "requestKind"
     | "subagentPrompt"
     | "subagentChildren"
   >,
   workspaceRoot: string | undefined,
 ) {
+  const changedFilesPreview = workEntryChangedFilesPreview(workEntry, workspaceRoot);
+  if (
+    changedFilesPreview &&
+    (workEntry.itemType === "file_change" ||
+      workEntry.requestKind === "file-change" ||
+      Boolean(workEntry.patch))
+  ) {
+    return changedFilesPreview;
+  }
   if (workEntry.command) return workEntry.command;
   if ((workEntry.subagentChildren?.length ?? 0) > 0) return null;
   if (workEntry.itemType === "collab_agent_tool_call") {
@@ -1995,6 +2007,13 @@ function workEntryPreview(
   }
   if (workEntry.subagentPrompt) return workEntry.subagentPrompt;
   if (workEntry.detail) return workEntry.detail;
+  return changedFilesPreview;
+}
+
+function workEntryChangedFilesPreview(
+  workEntry: Pick<TimelineWorkEntry, "changedFiles">,
+  workspaceRoot: string | undefined,
+) {
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
@@ -2457,7 +2476,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const changedFilesPreview = workEntryChangedFilesPreview(workEntry, workspaceRoot);
+  const previewIsChangedFiles =
+    hasChangedFiles && preview !== null && preview === changedFilesPreview;
   const canExpand = hasExpandableWorkEntryDetails(workEntry, workspaceRoot);
   const toggleExpanded = useCallback(() => {
     if (!canExpand) {
@@ -2500,7 +2521,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         "aria-label": expanded ? `Collapse ${displayText}` : `Expand ${displayText}`,
         onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (
+            shouldToggleWorkEntryRowFromKeyDown({
+              key: e.key,
+              targetIsCurrentTarget: e.currentTarget === e.target,
+            })
+          ) {
             e.preventDefault();
             toggleExpanded();
           }

@@ -1338,9 +1338,11 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("apply_patch");
     expect(markup).toContain("apps/web/src/session-logic.ts");
-    expect(markup).toContain('aria-label="Expand Dynamic edit tool - apply_patch"');
+    expect(markup).not.toContain("Dynamic edit tool - apply_patch");
+    expect(markup).toContain(
+      'aria-label="Expand Dynamic edit tool - apps/web/src/session-logic.ts"',
+    );
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", async () => {
