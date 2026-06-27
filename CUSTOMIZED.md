@@ -207,10 +207,11 @@ Expected behavior:
 - Conversation rows show only the relative archived and created ages inline with the title by default. On row hover or keyboard focus, those age labels fade out and icon-only unarchive/delete actions appear as a right-side overlay with tooltips, matching the sidebar and source-control list-row action pattern.
 - Archived conversations can be deleted directly from the Archive panel without unarchiving first, and delete actions respect the shared `confirmThreadDelete` client setting.
 - Project group context menus expose `unarchive all` and `delete all` actions. While search is active, those bulk actions apply to the visible matching archived conversations; otherwise they apply to all archived conversations in the project. Delete confirmations respect `confirmThreadDelete`, unarchive bulk actions remain guarded, and partial failures surface as not-fully-completed toasts instead of implying every archived thread failed.
-- Archive grouping, search ranking, sort state, and project bulk-action concurrency live in `apps/web/src/components/settings/SettingsPanels.logic.ts` so the dense Archive panel behavior stays covered without growing the React component. Project groups expose and reuse collision-safe keys so project ids containing separator characters do not collapse expansion state or React row identity. Bulk actions stop scheduling new work after thrown failures, wait for active workers to settle, and report interrupted counts separately from visible failures.
+- Archive grouping, search ranking, sort state, and project bulk-action concurrency live in `apps/web/src/components/settings/SettingsPanels.logic.ts` so the dense Archive panel behavior stays covered without growing the React component. Project groups expose and reuse collision-safe keys so project ids containing separator characters do not collapse expansion state or React row identity. Bulk actions stop scheduling new work after thrown failures, wait for active workers to settle, and report interrupted counts separately from visible failures. Unexpected bulk-action exceptions still show incomplete-operation feedback, and the Archive panel refreshes archived threads after bulk unarchive/delete attempts even when the action runner throws.
 
 Primary files:
 
+- `apps/web/src/components/settings/ArchiveSettings.tsx`
 - `apps/web/src/components/settings/SettingsPanels.tsx`
 - `apps/web/src/components/settings/SettingsPanels.logic.ts`
 
