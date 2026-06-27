@@ -81,7 +81,6 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
-export { ArchivedThreadsPanel } from "./ArchiveSettings";
 
 const THEME_OPTIONS = [
   {

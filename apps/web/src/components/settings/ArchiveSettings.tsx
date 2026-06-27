@@ -180,13 +180,8 @@ export function ArchivedThreadsPanel() {
 
   const confirmArchivedAction = useCallback(async (message: string) => {
     const localApi = readLocalApi();
-    const confirmationResult = await settlePromise(() =>
-      localApi
-        ? localApi.dialogs.confirm(message)
-        : typeof window !== "undefined"
-          ? Promise.resolve(window.confirm(message))
-          : Promise.resolve(false),
-    );
+    if (!localApi) return true;
+    const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
     if (confirmationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(confirmationResult);
       toastManager.add(
@@ -221,7 +216,15 @@ export function ArchivedThreadsPanel() {
     (title: string, failures: ReadonlyArray<ArchivedProjectBulkFailure>, totalCount: number) => {
       const visibleFailures = failures.filter((failure) => !isAtomCommandInterrupted(failure));
       if (visibleFailures.length === 0) return;
-      const error = squashAtomCommandFailure(visibleFailures[0]!);
+      const failureMessages = [
+        ...new Set(
+          visibleFailures.map((failure) => {
+            const error = squashAtomCommandFailure(failure);
+            return error instanceof Error ? error.message : "An error occurred.";
+          }),
+        ),
+      ];
+      const shownFailureMessages = failureMessages.slice(0, 3);
       const interruptedCount = failures.length - visibleFailures.length;
       const successCount = totalCount - failures.length;
       toastManager.add(
@@ -232,23 +235,14 @@ export function ArchivedThreadsPanel() {
             `${successCount} succeeded, ${visibleFailures.length} failed${
               interruptedCount > 0 ? `, ${interruptedCount} interrupted` : ""
             }.`,
-            error instanceof Error ? error.message : "An error occurred.",
+            visibleFailures.length === 1
+              ? (shownFailureMessages[0] ?? "An error occurred.")
+              : `Failures: ${shownFailureMessages.join("; ")}${
+                  failureMessages.length > shownFailureMessages.length
+                    ? `; ${failureMessages.length - shownFailureMessages.length} more`
+                    : ""
+                }`,
           ].join(" "),
-        }),
-      );
-    },
-    [],
-  );
-
-  const showArchivedProjectMenuFailure = useCallback(
-    (result: AtomCommandResult<unknown, unknown>) => {
-      if (result._tag === "Success") return;
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Archived project action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
     },
@@ -301,6 +295,7 @@ export function ArchivedThreadsPanel() {
       scope: ArchivedProjectBulkScope,
     ) => {
       const scopeLabel = archivedProjectBulkScopeLabel(scope);
+      // Bulk unarchive always asks because there is no unarchive confirmation preference.
       const confirmed = await confirmArchivedAction(
         [
           `Unarchive ${scopeLabel} in "${projectName}"?`,
@@ -427,9 +422,9 @@ export function ArchivedThreadsPanel() {
           y: rect.bottom,
         }),
       );
-      showArchivedProjectMenuFailure(result);
+      showArchivedActionFailure("Archived project action failed", result);
     },
-    [handleArchivedProjectContextMenu, showArchivedProjectMenuFailure],
+    [handleArchivedProjectContextMenu, showArchivedActionFailure],
   );
 
   return (
@@ -497,7 +492,7 @@ export function ArchivedThreadsPanel() {
                           y: event.clientY,
                         }),
                       );
-                      showArchivedProjectMenuFailure(result);
+                      showArchivedActionFailure("Archived project action failed", result);
                     })();
                   }}
                 >
@@ -582,17 +577,7 @@ export function ArchivedThreadsPanel() {
                                 },
                               ),
                             );
-                            if (result._tag === "Failure") {
-                              const error = squashAtomCommandFailure(result);
-                              toastManager.add(
-                                stackedThreadToast({
-                                  type: "error",
-                                  title: "Archived thread action failed",
-                                  description:
-                                    error instanceof Error ? error.message : "An error occurred.",
-                                }),
-                              );
-                            }
+                            showArchivedActionFailure("Archived thread action failed", result);
                           })();
                         }}
                       >
@@ -605,6 +590,7 @@ export function ArchivedThreadsPanel() {
                         <div className="pointer-events-none truncate text-right font-mono text-[11px] text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-focus-within:opacity-0 group-focus-within:text-current">
                           {formatRelativeTimeLabel(thread.createdAt)}
                         </div>
+                        {/* Keeps row text columns aligned with the header action column. */}
                         <div aria-hidden="true" />
                         <div
                           className="pointer-events-none absolute top-1/2 right-1 z-10 flex -translate-y-1/2 items-center gap-1 rounded-md bg-accent/95 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
