@@ -781,6 +781,37 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect("does not render unstaged rename diff fallbacks as new untracked files", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const result = yield* service.readFileDiff({
+        cwd: "/repo",
+        path: "src/new.ts",
+        originalPath: "src/old.ts",
+        source: { kind: "working-tree", staged: false },
+      });
+
+      assert.equal(result.patch, "");
+      assert.isFalse(calls.some((call) => call.operation === "vcs.panel.readUntrackedFileDiff"));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            switch (input.operation) {
+              case "vcs.panel.readFileDiff.gitIndexPath":
+                return success("/tmp/t3-code-test-missing-index");
+              default:
+                return success("");
+            }
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("decodes quoted porcelain paths and keeps mixed unstaged rows in snapshots", () =>
     Effect.gen(function* () {
       const service = yield* SourceControlPanelService;

@@ -2063,7 +2063,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
             (env) => run("vcs.panel.readFileDiff", input.cwd, args, { env }),
           ).pipe(Effect.catch(() => run("vcs.panel.readFileDiff", input.cwd, args)))
         : yield* run("vcs.panel.readFileDiff", input.cwd, args);
-    if (!source.staged && patch.trim().length === 0) {
+    if (!source.staged && !input.originalPath && patch.trim().length === 0) {
       patch = yield* run(
         "vcs.panel.readUntrackedFileDiff",
         input.cwd,
