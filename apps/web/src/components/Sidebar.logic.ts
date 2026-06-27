@@ -346,10 +346,9 @@ export function canUseRootThreadLifecycleActions<T extends SidebarThreadParentRe
   return thread?.parentRelation?.kind !== "subagent";
 }
 
-export function canUseSelectedRootThreadLifecycleActions<T extends SidebarThreadParentRelationInput>(
-  threadKeys: readonly string[],
-  threadByKey: ReadonlyMap<string, T>,
-): boolean {
+export function canUseSelectedRootThreadLifecycleActions<
+  T extends SidebarThreadParentRelationInput,
+>(threadKeys: readonly string[], threadByKey: ReadonlyMap<string, T>): boolean {
   return threadKeys.every((threadKey) => {
     const thread = threadByKey.get(threadKey);
     return thread !== undefined && canUseRootThreadLifecycleActions(thread);
