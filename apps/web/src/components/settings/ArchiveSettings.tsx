@@ -437,8 +437,15 @@ export function ArchivedThreadsPanel() {
       if (!api) return;
       const clicked = await api.contextMenu.show(
         [
-          { id: "unarchive-all", label: "Unarchive all" },
-          { id: "delete-all", label: "Delete all", destructive: true },
+          {
+            id: "unarchive-all",
+            label: scope === "matching" ? "Unarchive matching" : "Unarchive all",
+          },
+          {
+            id: "delete-all",
+            label: scope === "matching" ? "Delete matching" : "Delete all",
+            destructive: true,
+          },
         ],
         position,
       );
