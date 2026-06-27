@@ -24,11 +24,11 @@ Local packages use the temporary publisher id `t3tools` when `VSCE_PUBLISHER` is
 
 ## Branch Maintenance Snapshot
 
-This split branch is synchronized through `upstream/main` `52b04b947e3604e426386be53e6d20c6a4366fef` (`fix(grok): Harden ACP resume with replay-idle load readiness (#3156)`) as of 2026-06-26. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
+This split branch is synchronized through `upstream/main` `6245c547c2d88e26434ac7b8e08213f2d9ef8577` (`Fix native composer lag with revision-gated updates (#3574)`) as of 2026-06-27. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
 
-After the 2026-06-26 upstream merge, `split/vscode-extension-work` is expected to be 15 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 108 files changed, 16273 insertions(+), and 670 deletions(-).
+After the 2026-06-27 upstream merge, `split/vscode-extension-work` is expected to be 17 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 108 files changed, 16023 insertions(+), and 422 deletions(-).
 
-The 2026-06-26 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's live-owner preview automation routing, browser viewport toolbar, Electron preview keyboard handling, and Grok ACP replay-idle load readiness were accepted as-is. No VS Code extension customization was retired by this merge, and there were no textual conflicts.
+The 2026-06-27 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's live-owner preview automation routing, browser viewport toolbar, Electron preview keyboard handling, Grok ACP replay-idle load readiness, web chat scroll anchoring, and native mobile composer revision-gated update handling were accepted as-is. No VS Code extension customization was retired by this merge. There were no textual conflicts; Git auto-merged the shared chat timeline test and lockfile changes.
 
 ## Desktop Backend Dependency
 
