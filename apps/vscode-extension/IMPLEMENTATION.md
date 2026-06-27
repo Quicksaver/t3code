@@ -24,17 +24,25 @@ Local packages use the temporary publisher id `t3tools` when `VSCE_PUBLISHER` is
 
 ## Branch Maintenance Snapshot
 
-This split branch is synchronized through `upstream/main` `6245c547c2d88e26434ac7b8e08213f2d9ef8577` (`Fix native composer lag with revision-gated updates (#3574)`) as of 2026-06-27. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
+This split branch is synchronized through `upstream/main` `a9b1190a11276927caf573d92c33c5346fc4c076` (`Desktop: parallel WSL + Windows backends with mode picker (#2751)`) as of 2026-06-27. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
 
-After the 2026-06-27 upstream merge, `split/vscode-extension-work` is expected to be 17 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 108 files changed, 16023 insertions(+), and 422 deletions(-).
+After the 2026-06-27 upstream merge is committed, `split/vscode-extension-work` is expected to be 19 commits ahead and 0 commits behind `upstream/main`. The staged branch diff against `upstream/main` is 109 files changed, 16154 insertions(+), and 437 deletions(-).
 
-The 2026-06-27 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's live-owner preview automation routing, browser viewport toolbar, Electron preview keyboard handling, Grok ACP replay-idle load readiness, web chat scroll anchoring, and native mobile composer revision-gated update handling were accepted as-is. No VS Code extension customization was retired by this merge. There were no textual conflicts; Git auto-merged the shared chat timeline test and lockfile changes.
+The 2026-06-27 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's preview-browser automation hardening, browser recording stability work, desktop backend pool, parallel WSL/Windows local backends, desktop mode picker, desktop-local connection catalog entries, and shared HTTP readiness helper were accepted as-is. No VS Code extension customization was retired by this merge.
+
+The 2026-06-27 conflict resolutions were:
+
+- `apps/desktop/src/backend/DesktopBackendManager.ts` keeps upstream's per-instance backend factory and shared `@t3tools/shared/httpReadiness` probe while preserving primary desktop backend advertisements for VS Code discovery. Advertisement handling is now an explicit `BackendInstanceSpec.advertiseDesktopBackend` opt-in used by the primary backend pool instance, so upstream WSL and other secondary desktop-local backend instances never enter the desktop-backend advertisement write, heartbeat, or removal path.
+- `apps/desktop/src/backend/DesktopBackendManager.test.ts` keeps upstream's `makeBackendInstance` test harness and re-adds advertisement diagnostic/removal coverage in that harness, including coverage that non-advertisable instances do not write desktop backend advertisements even when their config includes a T3 home.
+- `packages/contracts/src/ipc.ts`, `apps/vscode-extension/src/webview.ts`, and `packages/contracts/src/ipc.test.ts` keep upstream's required desktop-local backend `id` field on `DesktopEnvironmentBootstrap` while narrowing the VS Code host bridge to `T3HostLocalEnvironmentBootstrap`. The VS Code webview injects only `environmentId`, `label`, HTTP URL, WebSocket URL, and bearer token for direct primary registration instead of overloading the upstream desktop-local bootstrap shape.
+- `apps/web/src/environments/primary/hostBootstrap.ts`, `apps/web/src/environments/primary/target.ts`, `apps/web/src/environments/primary/auth.ts`, and `apps/web/src/connection/platform.ts` keep upstream's plural desktop-local bootstrap model while preserving the VS Code fast path that registers a complete host-injected primary connection without waiting for descriptor probing.
+- `apps/web/src/components/Sidebar.tsx` keeps upstream's desktop-local environment badges and secondary-status row while preserving VS Code project-chrome hiding and the project-header new-thread action.
 
 ## Desktop Backend Dependency
 
 The VS Code extension does not start or own a T3 backend. The desktop app is a hard dependency and is the single local command point for VS Code webviews, normal desktop renderer windows, browser clients connected to the desktop backend, and remote clients paired through desktop local connections.
 
-The desktop backend writes a short-lived local advertisement under `<T3 home>/desktop-backends/advertisements/<backend-id>.json` after its HTTP readiness check passes. The advertisement includes the loopback HTTP endpoint, heartbeat/expiry timestamps, and a protocol version. Writers update only their own file by atomic replace, refresh every 10 seconds, expire after 30 seconds, remove the file on normal stop, and clean stale files opportunistically after a 15 minute grace period.
+The primary/advertisable desktop backend writes a short-lived local advertisement under `<T3 home>/desktop-backends/advertisements/<backend-id>.json` after its HTTP readiness check passes. The advertisement includes the loopback HTTP endpoint, heartbeat/expiry timestamps, and a protocol version. Writers update only their own file by atomic replace, refresh every 10 seconds, expire after 30 seconds, remove the file on normal stop, and clean stale files opportunistically after a 15 minute grace period. Secondary desktop-local backends such as WSL do not write desktop-backend advertisements; they remain reachable through desktop IPC and desktop-local environment catalog state.
 
 The desktop process keeps the private startup desktop bootstrap token out of the advertisement and does not mint VS Code-specific advertised pairing tickets. The VS Code extension reads the advertisement, validates that the endpoint is loopback HTTP, waits briefly for `/.well-known/t3/environment`, and looks for a previously paired bearer token in VS Code `SecretStorage`. Stored bearer tokens are keyed by T3 home, loopback backend URL, and the resolved VS Code workspace folder identities. If the stored bearer token is still accepted by `/api/auth/session`, the extension reuses it and connects without asking the user to pair again. If no stored token exists, or the stored token is rejected, the extension prompts for a normal desktop pairing token, exchanges that one-time pairing token for a bearer session through `/api/auth/bootstrap/bearer`, stores only the resulting bearer token after workspace bootstrap succeeds, and injects that bearer token through `window.t3HostBridge`. Reconnects and stops abort in-flight readiness, bearer validation/exchange, and workspace-bootstrap work. Normal extension shutdown does not revoke the stored bearer token; desktop-side session revocation causes the next VS Code startup to delete the stale secret and prompt again. If no live desktop advertisement exists, the VS Code extension fails instead of starting a fallback backend and shows a fallback webview with a reconnect button; launching the desktop app remains a manual user action.
 
@@ -119,7 +127,7 @@ Relationship to live state:
 
 Implemented architecture:
 
-- The desktop backend writes desktop backend presence advertisements after readiness. Each advertisement includes a backend id, loopback HTTP endpoint, heartbeat/expiry timestamps, and a protocol version.
+- The primary/advertisable desktop backend writes desktop backend presence advertisements after readiness. Each advertisement includes a backend id, loopback HTTP endpoint, heartbeat/expiry timestamps, and a protocol version. WSL and other secondary desktop-local backend instances do not enter advertisement write, heartbeat, or removal handling.
 - Advertisement files live under `<T3 home>/desktop-backends/advertisements/<backend-id>.json`. Writers update only their own file by atomic replace, heartbeat it every 10 seconds, expire it after 30 seconds, best-effort remove it on backend stop, and opportunistically clean stale files after a 15 minute grace period.
 - The VS Code extension discovers the desktop backend from those advertisements, rejects non-loopback endpoints, validates a workspace-scoped stored bearer token from VS Code `SecretStorage`, prompts for a normal desktop pairing token only when no valid stored bearer exists, and renders the web app against the desktop backend.
 - Pairing tokens are still one-time bootstrap credentials handled by the normal desktop pairing flow. The VS Code extension never stores a pairing token; it stores only the exchanged bearer access token after `POST /api/vscode/workspace-bootstrap` succeeds.
@@ -141,7 +149,7 @@ Implemented:
 
 - `HostMcpAdvertisement` is a versioned shared contract in `packages/contracts`, with runtime advertisement helpers in `packages/shared/hostMcp`.
 - `@t3tools/shared/workspaceFolders` owns stable workspace folder identity keys, active-folder fallback, and workspace-root matching used by VS Code bootstrap, host-MCP discovery, and local-backend advertisement discovery.
-- The desktop backend writes and heartbeats `DesktopBackendAdvertisement` records after HTTP readiness succeeds. The VS Code extension reads those records before rendering a webview and shows a manual-start fallback with a reconnect button when no live desktop backend is available.
+- The primary desktop backend writes and heartbeats `DesktopBackendAdvertisement` records after HTTP readiness succeeds; secondary desktop-local backend instances do not advertise. The VS Code extension reads those records before rendering a webview and shows a manual-start fallback with a reconnect button when no live desktop backend is available.
 - The VS Code extension writes and heartbeats its per-instance host MCP advertisement after `VsCodeMcpBridge.ensureStarted()` succeeds. The advertised workspace folders come from the same `resolveBootstrapWorkspaceFolders(...)` output used for desktop connection scoping, with the same active workspace folder key selected by `resolveActiveWorkspaceFolder(...)`.
 - Provider startup receives the thread's project workspace root, scans live advertisements through the Effect-native host MCP discovery path, matches the target against advertised workspace folders, probes the first live match, and merges it with bootstrap-provided `hostMcpServers`.
 - Discovery diagnostics are emitted without changing fallback behavior, so duplicate names, missing sockets, failed probes, rejected probes, and unreadable advertisement state can be inspected while provider startup continues with the configured bootstrap MCP servers.
@@ -302,7 +310,7 @@ Implemented so far:
   - the extension keeps at least the 10 most recently used virtual workspace clones and never prunes the active checkout
 - Updated the web app to:
   - prefer `window.t3HostBridge.getLocalEnvironmentBootstrap()`
-  - fall back to `window.desktopBridge.getLocalEnvironmentBootstrap()`
+  - fall back to `window.desktopBridge.getLocalEnvironmentBootstraps()` and select the primary bootstrap by `PRIMARY_LOCAL_ENVIRONMENT_ID`
   - name React-side host-bootstrap helpers around desktop-managed primary environments while preserving host-named compatibility exports and the existing bridge method names
   - use hash history in VS Code webviews
   - identify VS Code webviews only through the explicit `window.__T3_IS_VSCODE_WEBVIEW` marker
@@ -346,7 +354,7 @@ Implemented so far:
 - Added desktop backend discovery for VS Code webviews:
   - versioned desktop backend advertisement contracts in `packages/contracts`
   - runtime advertisement helpers in `packages/shared/desktopBackendAdvertisement`
-  - desktop-side advertisement writes after backend readiness
+  - primary desktop-side advertisement writes after backend readiness, with secondary desktop-local backend instances excluded from advertisement handling
   - VS Code-side advertisement discovery, loopback validation, readiness polling, stored-bearer validation, manual pairing, and bearer-session exchange
   - bounded readiness response body reads so stalled desktop readiness JSON does not hang a reconnect attempt
   - sanitized workspace-bootstrap HTTP errors so internal server failures are logged locally without leaking details to the webview
@@ -825,7 +833,7 @@ Reasoning:
 Current behavior:
 
 - The desktop app generates and owns the private startup bootstrap token.
-- The desktop app writes a short-lived desktop backend advertisement with endpoint metadata after readiness.
+- The primary/advertisable desktop app backend writes a short-lived desktop backend advertisement with endpoint metadata after readiness; secondary desktop-local backends do not advertise.
 - The extension reads the advertisement, validates loopback transport, reuses a stored bearer token when it remains authenticated, and otherwise exchanges a user-provided pairing token for a bearer session.
 - The webview injects the bearer session through `window.t3HostBridge.getLocalEnvironmentBootstrap()`.
 
@@ -1049,10 +1057,8 @@ Relevant T3 references:
   - VS Code webviews likely need the same behavior.
 - `apps/web/src/environments/primary/target.ts:65`
   - The web app can use configured `VITE_HTTP_URL` / `VITE_WS_URL`.
-- `apps/web/src/environments/primary/target.ts:112`
-  - The web app can use `window.desktopBridge.getLocalEnvironmentBootstrap()` to get local backend URLs.
 - `apps/web/src/environments/primary/hostBootstrap.ts`
-  - The web app reads host bootstrap data from `window.t3HostBridge` first and falls back to `window.desktopBridge`.
+  - The web app reads host bootstrap data from `window.t3HostBridge` first for host-injected primary environments, or selects the primary entry from `window.desktopBridge.getLocalEnvironmentBootstraps()` in Electron desktop.
 - `apps/web/src/environments/primary/requestInit.ts`
   - Host bearer requests use `Authorization: Bearer ...` with `credentials: "omit"` and leave the public descriptor unauthenticated.
 - `apps/web/src/environments/runtime/service.ts`
@@ -1131,7 +1137,7 @@ The VS Code extension provides equivalent information:
 There are two viable bridge designs:
 
 1. Minimal compatibility shim:
-   - Have the VS Code webview inject a compatible `window.desktopBridge.getLocalEnvironmentBootstrap()` implementation.
+   - Have the VS Code webview inject a compatible desktop bridge implementation.
    - Fastest path, but semantically odd because the host is not Electron desktop.
 
 2. Preferred maintainable design:
@@ -1339,16 +1345,16 @@ Development mode uses the normal desktop app/backend dev commands.
 
 Introduce a host-neutral bridge.
 
-Suggested type:
+Implemented local environment bootstrap shape:
 
 ```ts
 interface T3HostBridge {
   getLocalEnvironmentBootstrap(): {
-    environmentId?: string;
+    environmentId: string;
     label: string;
-    httpBaseUrl: string | null;
-    wsBaseUrl: string | null;
-    bearerToken?: string;
+    httpBaseUrl: string;
+    wsBaseUrl: string;
+    bearerToken: string;
   } | null;
 }
 ```
@@ -1356,7 +1362,7 @@ interface T3HostBridge {
 Web app changes:
 
 - Read `window.t3HostBridge` first.
-- Fall back to `window.desktopBridge`.
+- Fall back to the primary entry from `window.desktopBridge.getLocalEnvironmentBootstraps()`.
 - Use hash history when running inside VS Code webview.
 - Add a small host-environment detector, e.g. `isVscodeWebview`.
 

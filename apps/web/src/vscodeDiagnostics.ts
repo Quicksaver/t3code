@@ -92,6 +92,15 @@ function formatUnknownError(error: unknown): string {
   return String(error);
 }
 
+function hasBootstrapToken(bootstrap: ReturnType<typeof getDesktopManagedEnvironmentBootstrap>) {
+  return (
+    bootstrap !== null &&
+    "bootstrapToken" in bootstrap &&
+    typeof bootstrap.bootstrapToken === "string" &&
+    bootstrap.bootstrapToken.length > 0
+  );
+}
+
 export function installVscodeDiagnostics(): void {
   window.__T3_VSCODE_DIAGNOSTICS__ = () => {
     const workspace = getHostVscodeWorkspaceBootstrap();
@@ -114,9 +123,7 @@ export function installVscodeDiagnostics(): void {
         wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
         hasBearerToken:
           typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
-        hasBootstrapToken:
-          typeof desktopManaged?.bootstrapToken === "string" &&
-          desktopManaged.bootstrapToken.length > 0,
+        hasBootstrapToken: hasBootstrapToken(desktopManaged),
         bootstrapProjects: workspace?.bootstrapProjects ?? [],
       },
       runtime: {
