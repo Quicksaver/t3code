@@ -2,12 +2,12 @@
 
 ## Branch Metadata
 
-- Last upstream merge: `upstream/main` at `52b04b947e3604e426386be53e6d20c6a4366fef` merged into `split/subagent-threading-work` from pre-merge branch HEAD `7952b897d9ec6636d372fe008e75bc2e852b850a`.
-- Post-merge branch diff against `upstream/main`: 26 branch-only commits, 0 upstream-only commits, 38 files changed, 5127 insertions, 257 deletions.
-- Remote tracking status after the merge: `split/subagent-threading-work` is 4 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
-- Conflict notes for the `52b04b947` merge: `apps/web/src/components/ChatView.tsx` conflicted where upstream routed normal interrupts through `buildThreadTurnInterruptInput(activeThread)` while this branch routed running subagent stops through `activeThread.latestTurn.turnId`. The resolution keeps upstream's helper for normal threads and preserves the branch-specific latest-turn target only for running subagent child threads. Other incoming changes merged cleanly and primarily affected preview automation ownership/readiness, browser viewport controls, desktop preview handling, Grok ACP replay-idle resume readiness, server MCP preview tooling, and related tests/contracts.
-- New fork customizations introduced by this merge: none. The only branch-owned code adjustment was the conflict resolution that keeps existing subagent stop targeting compatible with upstream's generalized interrupt helper.
-- Retired customizations made redundant by upstream: none identified. Upstream's preview automation and Grok ACP resume-readiness changes do not supersede the Codex subagent threading implementation.
+- Last upstream merge: `upstream/main` at `6245c547c2d88e26434ac7b8e08213f2d9ef8577` merged into `split/subagent-threading-work` from pre-merge branch HEAD `df5db29124a5983965ee2a0d7d9661c04aa5041d`.
+- Post-merge branch diff against `upstream/main`: 29 branch-only commits, 0 upstream-only commits, 40 files changed, 5251 insertions, 258 deletions.
+- Remote tracking status after the merge: `split/subagent-threading-work` is 3 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
+- Conflict notes for the `6245c547c` merge: no files stopped for manual conflict resolution. Git auto-merged `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, and `apps/web/src/components/chat/MessagesTimeline.test.tsx`; the resulting branch keeps upstream's sent-message anchor restoration, scroll-to-bottom/composer inset behavior, and disclosure-toggle scroll settling while preserving this branch's subagent parent blocks, child route controls, child stop targeting, and parent/child output isolation. Upstream also changed mobile chat feed anchoring/work-log disclosure behavior and iOS composer revision gating in files outside the branch's current Codex subagent ownership surface.
+- New fork customizations introduced by this merge: none. The branch-owned adaptation is limited to carrying the existing subagent UI and routing behavior through upstream's revised chat scroll anchoring model.
+- Retired customizations made redundant by upstream: none identified. Upstream's chat-scroll stabilization and native composer lag fixes do not provide Codex subagent lineage, child-thread projection, sidebar nesting, stop routing, or archive/delete descendant lifecycle semantics.
 
 ## Status
 
