@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   activeSidebarThreadPathKeys,
+  canUseRootThreadLifecycleActions,
   createThreadJumpHintVisibilityController,
   flattenSidebarThreadTree,
   getSidebarThreadIdsToPrewarm,
@@ -149,6 +150,25 @@ function makeSidebarThread(input: {
 }
 
 describe("subagent sidebar tree helpers", () => {
+  it("allows root lifecycle actions only for non-subagent threads", () => {
+    const root = makeSidebarThread({ id: "root-thread" });
+    const runningChild = makeSidebarThread({
+      id: "running-child",
+      parentThreadId: "root-thread",
+      status: "running",
+    });
+    const terminalChild = makeSidebarThread({
+      id: "terminal-child",
+      parentThreadId: "root-thread",
+      status: "completed",
+    });
+
+    expect(canUseRootThreadLifecycleActions(root)).toBe(true);
+    expect(canUseRootThreadLifecycleActions(runningChild)).toBe(false);
+    expect(canUseRootThreadLifecycleActions(terminalChild)).toBe(false);
+    expect(canUseRootThreadLifecycleActions(null)).toBe(true);
+  });
+
   it("keeps running descendants nested under hidden terminal ancestors", () => {
     const root = makeSidebarThread({ id: "root-thread" });
     const terminalChild = makeSidebarThread({

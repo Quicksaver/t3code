@@ -207,6 +207,12 @@ function subagentSidebarStatus(thread: SidebarThreadSummary) {
   return relation?.kind === "subagent" ? relation.status : null;
 }
 
+export function canUseRootThreadLifecycleActions(
+  thread: Pick<SidebarThreadSummary, "parentRelation"> | null | undefined,
+): boolean {
+  return thread?.parentRelation?.kind !== "subagent";
+}
+
 function subagentIsTerminalInSidebar(thread: SidebarThreadSummary): boolean {
   const status = subagentSidebarStatus(thread);
   return status !== null && status !== "running";

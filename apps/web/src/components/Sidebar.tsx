@@ -186,6 +186,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   activeSidebarThreadPathKeys,
+  canUseRootThreadLifecycleActions,
   flattenSidebarThreadTree,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -485,7 +486,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
-  const canArchiveThread = thread.parentRelation?.kind !== "subagent";
+  const canArchiveThread = canUseRootThreadLifecycleActions(thread);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -1866,9 +1867,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      const canDeleteSelection = threadKeys.every(
-        (threadKey) =>
-          sidebarThreadByKeyRef.current.get(threadKey)?.parentRelation?.kind !== "subagent",
+      const canDeleteSelection = threadKeys.every((threadKey) =>
+        canUseRootThreadLifecycleActions(sidebarThreadByKeyRef.current.get(threadKey)),
       );
 
       const clicked = await api.contextMenu.show(
@@ -2221,7 +2221,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadProject = memberProjectByScopedKey.get(
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
-      const isSubagentThread = thread.parentRelation?.kind === "subagent";
+      const canDeleteThread = canUseRootThreadLifecycleActions(thread);
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
       const clicked = await api.contextMenu.show(
@@ -2230,7 +2230,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
-          ...(!isSubagentThread
+          ...(canDeleteThread
             ? [{ id: "delete", label: "Delete", destructive: true, icon: "trash" } as const]
             : []),
         ],
