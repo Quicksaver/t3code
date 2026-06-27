@@ -25,6 +25,7 @@ import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -173,6 +174,10 @@ function makeTestLayer(input: {
         desktopServerExposureLayer,
         DesktopState.layer,
         electronMenuLayer,
+        Layer.succeed(ElectronProtocol.ElectronProtocol, {
+          registerDesktopProtocol: () => Effect.void,
+          setDesktopProtocolTargetOrigin: () => Effect.void,
+        } satisfies ElectronProtocol.ElectronProtocol["Service"]),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -269,6 +274,10 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopEnvironmentLayer,
           desktopServerExposureLayer,
           electronMenuLayer,
+          Layer.succeed(ElectronProtocol.ElectronProtocol, {
+            registerDesktopProtocol: () => Effect.void,
+            setDesktopProtocolTargetOrigin: () => Effect.void,
+          } satisfies ElectronProtocol.ElectronProtocol["Service"]),
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
             copyText: () => Effect.void,
