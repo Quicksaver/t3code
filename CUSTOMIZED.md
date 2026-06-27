@@ -5,7 +5,7 @@
 
 ## Upstream Baseline
 
-Generated after the bounded worktree pick refresh against local code-pick ref `8a0b7eba8` and `upstream/main` ref `6245c547c`. After the upstream merge and worktree pick refresh, the fork is 354 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 303 files with 48250 insertions and 1883 deletions.
+Generated after the bounded worktree pick refresh against local code-pick ref `8a0b7eba8` and `upstream/main` ref `6245c547c`. After the upstream merge and worktree pick refresh, the fork is 355 commits ahead and 0 commits behind `upstream/main`; the current fork diff against `upstream/main` touches 303 files with 48249 insertions and 1883 deletions.
 
 ## Latest Merge Impact
 

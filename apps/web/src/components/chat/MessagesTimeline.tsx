@@ -83,7 +83,6 @@ import {
   hasCommandWorkEntryDetails,
   hasFileChangeWorkEntryDetails,
   hasRenderableCommandOutput,
-  MAX_VISIBLE_WORK_LOG_ENTRIES,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
