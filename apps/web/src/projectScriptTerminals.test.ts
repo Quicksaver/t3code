@@ -383,9 +383,75 @@ describe("classifyProjectActionTerminalCandidates", () => {
     });
 
     expect(result.sessionsById.get("action-build")?.target.terminalId).toBe("action-build");
-    expect([...result.readyTerminalIds]).toEqual(["action-build"]);
-    expect([...result.probeTerminalIds]).toEqual(["action-build:2"]);
+    expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
+    expect(result.probeTerminalIds).toEqual(new Set(["action-build:2"]));
     expect(result.runningTerminalIdsForSelection).toEqual(["term-1", "missing"]);
+  });
+
+  it("classifies ready terminals before probeable terminals", () => {
+    const result = classifyProjectActionTerminalCandidates({
+      sessions: [
+        {
+          target: { terminalId: "action-build" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "bash",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "$ ",
+          },
+        },
+      ],
+      runningTerminalIds: ["action-build"],
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+    });
+
+    expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
+    expect(result.probeTerminalIds).toEqual(new Set());
+    expect(result.runningTerminalIdsForSelection).toEqual([]);
+  });
+
+  it("preserves selection candidates without reusable session state", () => {
+    const result = classifyProjectActionTerminalCandidates({
+      sessions: [
+        {
+          target: { terminalId: "detached" },
+          state: {
+            summary: null,
+            buffer: "",
+          },
+        },
+        {
+          target: { terminalId: "term-1" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "node",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "",
+          },
+        },
+      ],
+      runningTerminalIds: ["term-1", "missing", "term-1", "detached"],
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+    });
+
+    expect(result.readyTerminalIds).toEqual(new Set());
+    expect(result.probeTerminalIds).toEqual(new Set());
+    expect(result.runningTerminalIdsForSelection).toEqual([
+      "term-1",
+      "missing",
+      "term-1",
+      "detached",
+    ]);
   });
 
   it("does not classify sessions from another worktree as reusable or probeable", () => {

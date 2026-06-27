@@ -2607,12 +2607,8 @@ function ChatViewContent(props: ChatViewProps) {
       let isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
       let targetSession =
         projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
-      let canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
-        summary: targetSession?.state.summary ?? null,
-        buffer: targetSession?.state.buffer ?? "",
-        targetCwd,
-        targetWorktreePath,
-      });
+      let canWriteImmediately =
+        projectActionTerminalCandidates.readyTerminalIds.has(targetTerminalId);
       let waitAfterOpen = !canWriteImmediately;
       let openTerminalInput: TerminalOpenInput = {
         threadId: activeThreadId,

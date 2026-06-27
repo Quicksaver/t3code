@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import { subscribe } from "@t3tools/client-runtime/rpc";
+import type { KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -219,19 +220,24 @@ export function terminalSessionShouldProbeForProjectActionInput(input: {
   );
 }
 
-interface ProjectActionTerminalCandidateSession {
-  readonly target: {
-    readonly terminalId: string;
-  };
-  readonly state: {
-    readonly summary: Pick<
-      TerminalSummary,
-      "cwd" | "hasRunningSubprocess" | "label" | "status" | "worktreePath"
-    > | null;
-    readonly buffer: string;
+type ProjectActionTerminalCandidateSummary = Pick<
+  NonNullable<KnownTerminalSession["state"]["summary"]>,
+  "cwd" | "hasRunningSubprocess" | "label" | "status" | "worktreePath"
+>;
+
+export interface ProjectActionTerminalCandidateSession {
+  readonly target: Pick<KnownTerminalSession["target"], "terminalId">;
+  readonly state: Pick<KnownTerminalSession["state"], "buffer"> & {
+    readonly summary: ProjectActionTerminalCandidateSummary | null;
   };
 }
 
+/**
+ * Classifies a snapshot of known terminal sessions against the ordered running
+ * terminal IDs for the target cwd/worktree. The returned collections should be
+ * treated as read-only snapshots; runningTerminalIdsForSelection preserves
+ * input.runningTerminalIds ordering for terminals that still count as busy.
+ */
 export function classifyProjectActionTerminalCandidates(input: {
   readonly sessions: ReadonlyArray<ProjectActionTerminalCandidateSession>;
   readonly runningTerminalIds: ReadonlyArray<string>;
@@ -248,10 +254,12 @@ export function classifyProjectActionTerminalCandidates(input: {
   );
   const readyTerminalIds = new Set<string>();
   const probeTerminalIds = new Set<string>();
+  const runningTerminalIdsForSelection: string[] = [];
 
   for (const terminalId of input.runningTerminalIds) {
     const session = sessionsById.get(terminalId);
     if (!session) {
+      runningTerminalIdsForSelection.push(terminalId);
       continue;
     }
     if (
@@ -263,6 +271,7 @@ export function classifyProjectActionTerminalCandidates(input: {
       })
     ) {
       readyTerminalIds.add(terminalId);
+      // Ready terminals can be written to immediately, so they do not need a probe.
       continue;
     }
     if (
@@ -273,16 +282,16 @@ export function classifyProjectActionTerminalCandidates(input: {
       })
     ) {
       probeTerminalIds.add(terminalId);
+      continue;
     }
+    runningTerminalIdsForSelection.push(terminalId);
   }
 
   return {
     sessionsById,
     readyTerminalIds,
     probeTerminalIds,
-    runningTerminalIdsForSelection: input.runningTerminalIds.filter(
-      (terminalId) => !readyTerminalIds.has(terminalId) && !probeTerminalIds.has(terminalId),
-    ),
+    runningTerminalIdsForSelection,
   };
 }
 
