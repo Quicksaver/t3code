@@ -26,7 +26,7 @@ Local packages use the temporary publisher id `t3tools` when `VSCE_PUBLISHER` is
 
 This split branch is synchronized through `upstream/main` `a9b1190a11276927caf573d92c33c5346fc4c076` (`Desktop: parallel WSL + Windows backends with mode picker (#2751)`) as of 2026-06-27. The branch-specific implementation source of truth remains this file; root `CUSTOMIZED.md` is intentionally absent in this isolated branch.
 
-After the 2026-06-27 upstream merge is committed, `split/vscode-extension-work` is expected to be 19 commits ahead and 0 commits behind `upstream/main`. The staged branch diff against `upstream/main` is 109 files changed, 16154 insertions(+), and 437 deletions(-).
+After the 2026-06-27 upstream merge, Step 5 review fixes, and pending final documentation commit are committed, `split/vscode-extension-work` is expected to be 21 commits ahead and 0 commits behind `upstream/main`. The branch diff against `upstream/main` is 117 files changed, 16293 insertions(+), and 479 deletions(-).
 
 The 2026-06-27 merge preserved the VS Code extension architecture, desktop-backed webview bootstrap, workspace-folder identity sharing through `@t3tools/shared/workspaceFolders`, direct host-injected primary environment registration from `window.t3HostBridge.getLocalEnvironmentBootstrap()`, host MCP discovery diagnostics, release packaging, and focused extension/web/server coverage. Upstream's preview-browser automation hardening, browser recording stability work, desktop backend pool, parallel WSL/Windows local backends, desktop mode picker, desktop-local connection catalog entries, and shared HTTP readiness helper were accepted as-is. No VS Code extension customization was retired by this merge.
 
