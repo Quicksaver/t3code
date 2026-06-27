@@ -73,6 +73,7 @@ import {
   deriveMessagesTimelineRows,
   deriveToolWorkEntryHeading,
   deriveWorkEntryPreview,
+  hasExpandableWorkEntryDetails,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   type DerivedCommandWorkEntryDetails,
@@ -1754,11 +1755,11 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       ? null
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
+  const canExpand = useMemo(() => hasExpandableWorkEntryDetails(workEntry), [workEntry]);
   const details = useMemo(
-    () => deriveExpandableWorkEntryDetails(workEntry, workspaceRoot),
-    [workEntry, workspaceRoot],
+    () => (expanded ? deriveExpandableWorkEntryDetails(workEntry, workspaceRoot) : null),
+    [expanded, workEntry, workspaceRoot],
   );
-  const canExpand = details !== null;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -1883,7 +1884,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand ? (
+      {details ? (
         <div className="cursor-default" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
           <ToolEntryDetails details={details} />
         </div>

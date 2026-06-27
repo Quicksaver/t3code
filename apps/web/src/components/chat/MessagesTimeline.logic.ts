@@ -324,6 +324,27 @@ function buildGenericToolExpandedBody(
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
+function hasGenericToolExpandedBody(workEntry: WorkLogEntry): boolean {
+  if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
+    return true;
+  }
+  const raw = deriveRawCommand(workEntry);
+  return Boolean(
+    raw?.trim() ||
+    workEntry.command?.trim() ||
+    workEntry.detail?.trim() ||
+    (workEntry.changedFiles?.length ?? 0) > 0,
+  );
+}
+
+export function hasExpandableWorkEntryDetails(workEntry: WorkLogEntry): boolean {
+  return (
+    hasCommandWorkEntryDetails(workEntry) ||
+    hasFileChangeWorkEntryDetails(workEntry) ||
+    hasGenericToolExpandedBody(workEntry)
+  );
+}
+
 function deriveCommandWorkEntryDetails(workEntry: WorkLogEntry): DerivedCommandWorkEntryDetails {
   const command = workEntry.command ?? workEntry.rawCommand ?? null;
   const rawCommand =

@@ -13,6 +13,7 @@ import {
   filterChangedFilesWithoutInlineDiff,
   getRenderableCommandOutputLines,
   hasCommandWorkEntryDetails,
+  hasExpandableWorkEntryDetails,
   hasFileChangeWorkEntryDetails,
   hasRenderableCommandOutput,
   normalizeCompactToolLabel,
@@ -501,6 +502,18 @@ describe("activity detail expansion", () => {
         { dedupeRenderedCommandOutput: true },
       ),
     ).toBe("exit code 0");
+  });
+
+  it("checks command row expandability before deriving output details", () => {
+    const entry = buildWorkLogEntry({
+      itemType: "command_execution",
+      command: "vp test",
+      stdout: `${"passed\n".repeat(1000)}`,
+      detail: "passed",
+    });
+
+    expect(hasExpandableWorkEntryDetails(entry)).toBe(true);
+    expect(deriveExpandableWorkEntryDetails(entry, undefined)?.supplementalDetail).toBe("passed");
   });
 
   it("derives command details without React-local command stream decisions", () => {
