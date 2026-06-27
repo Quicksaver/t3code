@@ -2403,17 +2403,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           {project.environmentPresence === "remote-only" && (
             <Tooltip>
               <TooltipTrigger
-                  render={
-                    <span
-                      aria-label={
-                        project.allRemoteMembersAreDesktopLocal
-                          ? "Local sandbox project"
-                          : "Available in multiple environments"
-                      }
-                      className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
-                    />
-                  }
-                >
+                render={
+                  <span
+                    aria-label={
+                      project.allRemoteMembersAreDesktopLocal
+                        ? "Local sandbox project"
+                        : "Available in multiple environments"
+                    }
+                    className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-opacity duration-150 max-sm:right-7 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 max-sm:group-hover/project-header:opacity-100 max-sm:group-focus-within/project-header:opacity-100"
+                  />
+                }
+              >
                 {project.allRemoteMembersAreDesktopLocal ? (
                   <ContainerIcon className="size-3" />
                 ) : (

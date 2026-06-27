@@ -331,7 +331,8 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
     };
   }
 
-  const bootstrapCredential = getDesktopManagedBootstrapCredential() ?? getDesktopBootstrapCredential();
+  const bootstrapCredential =
+    getDesktopManagedBootstrapCredential() ?? getDesktopBootstrapCredential();
   const currentSession = await fetchSessionState();
   if (currentSession.authenticated) {
     return { status: "authenticated" };

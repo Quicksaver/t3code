@@ -63,7 +63,6 @@ describe("T3HostDisplayPreferencesSchema", () => {
   });
 });
 
-
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
 
