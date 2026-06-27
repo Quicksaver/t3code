@@ -2,16 +2,16 @@
 
 ## Current Status
 
-Branch maintenance snapshot for the current upstream merge resolution:
+Branch maintenance snapshot for the latest upstream merge resolution:
 
-- Generated from `upstream/main` `52b04b947e3604e426386be53e6d20c6a4366fef` with starting branch HEAD `ea9bf9bb15712bc2a581bfb650e0963a8f88229a`; the merge resolution is staged but uncommitted.
-- Shared refs at merge time: `origin/main` `8454550fad7b40b0571daf41e6462779d1742100`, local `main` `58602fcb860a40ca861e8a7389c7ee4bf2442499`.
-- Effective branch delta if committed as the current merge resolution: `33 ahead / 0 behind upstream/main`, `38 ahead / 308 behind origin/main`, `38 ahead / 310 behind local main`; fork diff size is `40 files changed, 11274 insertions(+), 293 deletions(-)` against the `upstream/main` tree.
-- Merge note: upstream commits `ffae5410e17d6344f0f542d3655dfb3c21f938ba`, `e9ed70c5b3f0a056d493a10e9fe62d17465f8fd9`, and `52b04b947e3604e426386be53e6d20c6a4366fef` brought live-owner preview automation streams, browser device toolbar and viewport resizing, preview-open readiness handling, and ACP/Grok resume load-readiness hardening. Conflicts in `apps/web/src/components/ChatView.logic.ts` and `apps/web/src/components/ChatView.logic.test.ts` were resolved additively by keeping upstream `buildThreadTurnInterruptInput` behavior and this branch's source-control metadata/error helpers (`clearThreadErrorRecord`, `retainThreadKeyRecord`, and `shouldApplySourceControlMetadataUpdateResult`). No Version Control panel customization was retired, and no new source-control fork customization was introduced by the merge.
+- Generated from `upstream/main` `6245c547c2d88e26434ac7b8e08213f2d9ef8577` with starting branch HEAD `b53331f8828eb18577768042f55a5b59a4aa3efb`; the merge created local merge commit `28f7aeadf2c890a06ebe9f0087a8811a8954fb0a8`.
+- Shared refs at merge time: `origin/main` `28a69ee8d8fb03eccd0e9bb2f72a4b8faf738847`, local `main` `1b76c7a6bb3999896a3d5ba9f10c01d14744173d`.
+- Effective branch delta after the merge: `47 ahead / 0 behind upstream/main`, `49 ahead / 344 behind origin/main`, `49 ahead / 346 behind local main`; fork diff size is `53 files changed, 14229 insertions(+), 309 deletions(-)` against the `upstream/main` tree.
+- Merge note: upstream commits `24abab789f7b9e8cb96d55c2fbbd05ff332e8c23` and `6245c547c2d88e26434ac7b8e08213f2d9ef8577` brought chat scroll anchoring stabilization after send plus native composer revision-gated updates to prevent stale mobile editor updates from causing lag. Git auto-merged `apps/web/src/components/ChatView.tsx` cleanly; there were no conflict markers or manual conflict resolutions. No Version Control panel customization was retired, no upstream implementation made this branch's panel work obsolete, and no new source-control fork customization was introduced by the merge.
 
 T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
 
-The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread so stale failures cannot overwrite a newer successful checkout.
+The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView` through `ChatView.sourceControl`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread so stale failures cannot overwrite a newer successful checkout.
 
 The panel is intentionally an overview and high-level workflow surface. It focuses on current work, branch sync state, remotes, stashes, selected-file commit/stash flows, and compact branch/commit inspection. It is not a full VS Code SCM replacement and does not implement hunk-level staging.
 
@@ -21,6 +21,7 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ChatView.sourceControl.ts`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
@@ -39,6 +40,7 @@ Right-panel integration is owned by:
 - `apps/web/src/rightPanelStore.ts`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ChatView.sourceControl.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 
 ## Layout

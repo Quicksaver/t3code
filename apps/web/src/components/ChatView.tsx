@@ -224,17 +224,15 @@ import {
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
-  clearThreadErrorRecord,
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
-  retainThreadKeyRecord,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
-  shouldApplySourceControlMetadataUpdateResult,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+import { useSourceControlThreadMetadataRouting } from "./ChatView.sourceControl";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
@@ -1108,15 +1106,12 @@ function ChatViewContent(props: ChatViewProps) {
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
-  const sourceControlMetadataUpdateSequenceByThreadKeyRef = useRef<Record<string, number>>({});
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
   const [localServerErrorsByThreadKey, setLocalServerErrorsByThreadKey] = useState<
     Record<string, string | null>
   >({});
-  const [sourceControlMetadataErrorsByThreadKey, setSourceControlMetadataErrorsByThreadKey] =
-    useState<Record<string, string | null>>({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
@@ -1252,16 +1247,6 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
-  const sourceControlMetadataError =
-    activeThreadKey === null
-      ? null
-      : (sourceControlMetadataErrorsByThreadKey[activeThreadKey] ?? null);
-  const threadError = isServerThread
-    ? (localServerError ?? sourceControlMetadataError ?? serverThread?.session?.lastError ?? null)
-    : localDraftError;
-  const isThreadErrorDismissible = isServerThread
-    ? localServerError != null || sourceControlMetadataError != null
-    : localDraftError !== null;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -1355,18 +1340,25 @@ function ChatViewContent(props: ChatViewProps) {
     () => openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey)),
     [existingThreadKeys, openTerminalThreadKeys],
   );
-  useEffect(() => {
-    setSourceControlMetadataErrorsByThreadKey((existing) =>
-      retainThreadKeyRecord(existing, existingThreadKeys),
-    );
-    for (const threadKey of Object.keys(
-      sourceControlMetadataUpdateSequenceByThreadKeyRef.current,
-    )) {
-      if (!existingThreadKeys.has(threadKey)) {
-        delete sourceControlMetadataUpdateSequenceByThreadKeyRef.current[threadKey];
-      }
-    }
-  }, [existingThreadKeys]);
+  const {
+    clearActiveSourceControlMetadataError,
+    handleSourceControlThreadRefChange,
+    sourceControlMetadataError,
+  } = useSourceControlThreadMetadataRouting({
+    activeThreadKey,
+    activeThreadRef,
+    draftId,
+    existingThreadKeys,
+    isServerThread,
+    setDraftThreadContext,
+    updateThreadMetadata,
+  });
+  const threadError = isServerThread
+    ? (localServerError ?? sourceControlMetadataError ?? serverThread?.session?.lastError ?? null)
+    : localDraftError;
+  const isThreadErrorDismissible = isServerThread
+    ? localServerError != null || sourceControlMetadataError != null
+    : localDraftError !== null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const sourcePlanThreadRef = useMemo(() => {
     const sourceThreadId = activeLatestTurn?.sourceProposedPlan?.threadId;
@@ -2823,66 +2815,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !sourceControlAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "source-control");
   }, [activeThreadRef, sourceControlAvailable]);
-  const handleSourceControlThreadRefChange = useCallback(
-    async (input: { readonly branch: string | null; readonly worktreePath: string | null }) => {
-      if (!activeThreadRef) return;
-      if (isServerThread) {
-        const { environmentId, threadId } = activeThreadRef;
-        const targetThreadKey = scopedThreadKey(activeThreadRef);
-        const requestSequence =
-          (sourceControlMetadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] ?? 0) + 1;
-        sourceControlMetadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] =
-          requestSequence;
-        const result = await updateThreadMetadata({
-          environmentId,
-          input: {
-            threadId,
-            branch: input.branch,
-            worktreePath: input.worktreePath,
-          },
-        });
-        if (
-          !shouldApplySourceControlMetadataUpdateResult({
-            currentSequence:
-              sourceControlMetadataUpdateSequenceByThreadKeyRef.current[targetThreadKey],
-            requestSequence,
-          })
-        ) {
-          return;
-        }
-        if (result._tag === "Success") {
-          setSourceControlMetadataErrorsByThreadKey((existing) => {
-            return clearThreadErrorRecord(existing, targetThreadKey);
-          });
-          return;
-        }
-        if (isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        setSourceControlMetadataErrorsByThreadKey((existing) => ({
-          ...existing,
-          [targetThreadKey]:
-            typeof error === "string"
-              ? error
-              : error instanceof Error
-                ? error.message
-                : "Failed to update thread source control.",
-        }));
-        return;
-      }
-      setDraftThreadContext(draftId ?? activeThreadRef, {
-        branch: input.branch,
-        worktreePath: input.worktreePath,
-      });
-    },
-    [activeThreadRef, draftId, isServerThread, setDraftThreadContext, updateThreadMetadata],
-  );
   const dismissThreadError = useCallback(() => {
     setThreadError(activeThreadId, null);
-    if (!isServerThread || activeThreadKey === null) return;
-    setSourceControlMetadataErrorsByThreadKey((existing) =>
-      clearThreadErrorRecord(existing, activeThreadKey),
-    );
-  }, [activeThreadId, activeThreadKey, isServerThread, setThreadError]);
+    clearActiveSourceControlMetadataError();
+  }, [activeThreadId, clearActiveSourceControlMetadataError, setThreadError]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
