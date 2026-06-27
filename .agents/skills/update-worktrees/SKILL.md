@@ -15,4 +15,7 @@ To achieve this goal, your task is to instruct each subagent to use the $update-
 
 This will likely be a long-running process, be patient and silent while you wait.
 
-When all subagents are finished, report back on everything the subagents have reported. They will likely report similar incoming changes, you can deduplicate in these cases, but be explicit about every incoming change and every customization made and impacted by each worktree.
+When all subagents are finished. report on:
+
+- everything the subagents have reported. They will likely report similar incoming changes, you can deduplicate in these cases, but be explicit about every incoming change and every customization made and impacted by each worktree.
+- new or altered features or behaviors introduced by the upstream merge.
