@@ -1,13 +1,14 @@
-import { type EnvironmentId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
+import type { UpdateThreadMetadataInput } from "@t3tools/client-runtime/operations";
+import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { DraftId } from "../composerDraftStore";
+import type { ComposerThreadTarget, DraftId } from "../composerDraftStore";
 import {
   clearThreadErrorRecord,
   retainThreadKeyRecord,
@@ -16,15 +17,11 @@ import {
 
 type UpdateThreadMetadata = (input: {
   readonly environmentId: EnvironmentId;
-  readonly input: {
-    readonly threadId: ThreadId;
-    readonly branch: string | null;
-    readonly worktreePath: string | null;
-  };
+  readonly input: UpdateThreadMetadataInput;
 }) => Promise<AtomCommandResult<unknown, unknown>>;
 
 type SetDraftThreadContext = (
-  target: DraftId | ScopedThreadRef,
+  target: ComposerThreadTarget,
   context: {
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
@@ -54,14 +51,101 @@ interface SourceControlThreadMetadataRouting {
   ) => Promise<void>;
 }
 
-function sourceControlMetadataErrorFromFailure(error: unknown): string {
+interface SourceControlServerMetadataUpdateInput {
+  readonly activeThreadRef: ScopedThreadRef;
+  readonly metadata: SourceControlThreadRefChange;
+  readonly requestSequence: number;
+  readonly getCurrentSequence: () => number | undefined;
+  readonly updateThreadMetadata: UpdateThreadMetadata;
+}
+
+type SourceControlServerMetadataUpdateResult =
+  | {
+      readonly _tag: "Success";
+    }
+  | {
+      readonly _tag: "Stale";
+    }
+  | {
+      readonly _tag: "Interrupted";
+    }
+  | {
+      readonly _tag: "Failure";
+      readonly message: string;
+    };
+
+export function sourceControlMetadataErrorFromFailure(error: unknown): string {
   if (typeof error === "string") {
     return error;
   }
   if (error instanceof Error) {
     return error.message;
   }
+  if (error && typeof error === "object") {
+    const message = "message" in error ? error.message : null;
+    const code = "code" in error ? error.code : null;
+    if (typeof message === "string" && message.length > 0) {
+      return typeof code === "string" && code.length > 0 ? `${message} (${code})` : message;
+    }
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") {
+        return serialized;
+      }
+    } catch {
+      return "Failed to update thread source control.";
+    }
+  }
   return "Failed to update thread source control.";
+}
+
+export function resolveSourceControlDraftMetadataTarget(input: {
+  readonly draftId: DraftId | null;
+  readonly activeThreadRef: ScopedThreadRef | null;
+}): ComposerThreadTarget | null {
+  return input.draftId ?? input.activeThreadRef;
+}
+
+export async function runSourceControlServerMetadataUpdate(
+  input: SourceControlServerMetadataUpdateInput,
+): Promise<SourceControlServerMetadataUpdateResult> {
+  const { activeThreadRef, getCurrentSequence, metadata, requestSequence, updateThreadMetadata } =
+    input;
+  let result: AtomCommandResult<unknown, unknown>;
+  try {
+    result = await updateThreadMetadata({
+      environmentId: activeThreadRef.environmentId,
+      input: {
+        threadId: activeThreadRef.threadId,
+        branch: metadata.branch,
+        worktreePath: metadata.worktreePath,
+      },
+    });
+  } catch (error) {
+    return {
+      _tag: "Failure",
+      message: sourceControlMetadataErrorFromFailure(error),
+    };
+  }
+
+  if (
+    !shouldApplySourceControlMetadataUpdateResult({
+      currentSequence: getCurrentSequence(),
+      requestSequence,
+    })
+  ) {
+    return { _tag: "Stale" };
+  }
+  if (result._tag === "Success") {
+    return { _tag: "Success" };
+  }
+  if (isAtomCommandInterrupted(result)) {
+    return { _tag: "Interrupted" };
+  }
+  return {
+    _tag: "Failure",
+    message: sourceControlMetadataErrorFromFailure(squashAtomCommandFailure(result)),
+  };
 }
 
 export function useSourceControlThreadMetadataRouting(
@@ -82,6 +166,15 @@ export function useSourceControlThreadMetadataRouting(
   >({});
   const sourceControlMetadataError =
     activeThreadKey === null ? null : (metadataErrorsByThreadKey[activeThreadKey] ?? null);
+  const activeThreadEnvironmentId = activeThreadRef?.environmentId ?? null;
+  const activeThreadId = activeThreadRef?.threadId ?? null;
+  const activeThreadMetadataRef = useMemo<ScopedThreadRef | null>(() => {
+    if (activeThreadEnvironmentId === null || activeThreadId === null) return null;
+    return {
+      environmentId: activeThreadEnvironmentId,
+      threadId: activeThreadId,
+    };
+  }, [activeThreadEnvironmentId, activeThreadId]);
 
   useEffect(() => {
     setMetadataErrorsByThreadKey((existing) => retainThreadKeyRecord(existing, existingThreadKeys));
@@ -93,6 +186,7 @@ export function useSourceControlThreadMetadataRouting(
   }, [existingThreadKeys]);
 
   const clearActiveSourceControlMetadataError = useCallback(() => {
+    // Draft metadata changes are local store updates and do not create dismissible metadata errors.
     if (!isServerThread || activeThreadKey === null) return;
     setMetadataErrorsByThreadKey((existing) => clearThreadErrorRecord(existing, activeThreadKey));
   }, [activeThreadKey, isServerThread]);
@@ -100,7 +194,10 @@ export function useSourceControlThreadMetadataRouting(
   const handleSourceControlThreadRefChange = useCallback(
     async (metadata: SourceControlThreadRefChange) => {
       if (!isServerThread) {
-        const target = draftId ?? activeThreadRef;
+        const target = resolveSourceControlDraftMetadataTarget({
+          activeThreadRef: activeThreadMetadataRef,
+          draftId,
+        });
         if (!target) return;
         setDraftThreadContext(target, {
           branch: metadata.branch,
@@ -109,40 +206,33 @@ export function useSourceControlThreadMetadataRouting(
         return;
       }
 
-      if (!activeThreadRef) return;
-      const targetThreadKey = scopedThreadKey(activeThreadRef);
+      if (!activeThreadMetadataRef) return;
+      const targetThreadKey = scopedThreadKey(activeThreadMetadataRef);
+      // This counter intentionally stays monotonic per live thread key: reusing values while an
+      // older async update is still pending would let stale results match the latest request.
       const requestSequence =
         (metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] ?? 0) + 1;
       metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey] = requestSequence;
-      const result = await updateThreadMetadata({
-        environmentId: activeThreadRef.environmentId,
-        input: {
-          threadId: activeThreadRef.threadId,
-          branch: metadata.branch,
-          worktreePath: metadata.worktreePath,
-        },
+      const result = await runSourceControlServerMetadataUpdate({
+        activeThreadRef: activeThreadMetadataRef,
+        getCurrentSequence: () => metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey],
+        metadata,
+        requestSequence,
+        updateThreadMetadata,
       });
-      if (
-        !shouldApplySourceControlMetadataUpdateResult({
-          currentSequence: metadataUpdateSequenceByThreadKeyRef.current[targetThreadKey],
-          requestSequence,
-        })
-      ) {
-        return;
-      }
       if (result._tag === "Success") {
         setMetadataErrorsByThreadKey((existing) =>
           clearThreadErrorRecord(existing, targetThreadKey),
         );
         return;
       }
-      if (isAtomCommandInterrupted(result)) return;
+      if (result._tag === "Stale" || result._tag === "Interrupted") return;
       setMetadataErrorsByThreadKey((existing) => ({
         ...existing,
-        [targetThreadKey]: sourceControlMetadataErrorFromFailure(squashAtomCommandFailure(result)),
+        [targetThreadKey]: result.message,
       }));
     },
-    [activeThreadRef, draftId, isServerThread, setDraftThreadContext, updateThreadMetadata],
+    [activeThreadMetadataRef, draftId, isServerThread, setDraftThreadContext, updateThreadMetadata],
   );
 
   return {

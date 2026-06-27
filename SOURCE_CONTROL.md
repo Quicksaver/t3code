@@ -21,7 +21,8 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
-- `apps/web/src/components/ChatView.sourceControl.ts`
+- `apps/web/src/components/ChatView.sourceControl.ts`, which exports
+  `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
