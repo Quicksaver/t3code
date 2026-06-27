@@ -88,6 +88,20 @@ describe("runSourceControlServerMetadataUpdate", () => {
     expect(result).toEqual({ _tag: "Stale" });
   });
 
+  it("drops stale thrown errors after a newer server-thread metadata request", async () => {
+    const result = await runSourceControlServerMetadataUpdate({
+      activeThreadRef,
+      getCurrentSequence: () => 2,
+      metadata,
+      requestSequence: 1,
+      updateThreadMetadata: async () => {
+        throw { code: "NETWORK", message: "old network failure" };
+      },
+    });
+
+    expect(result).toEqual({ _tag: "Stale" });
+  });
+
   it("converts thrown update errors into controlled metadata failures", async () => {
     const result = await runSourceControlServerMetadataUpdate({
       activeThreadRef,
