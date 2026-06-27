@@ -122,6 +122,14 @@ export async function runSourceControlServerMetadataUpdate(
       },
     });
   } catch (error) {
+    if (
+      !shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: getCurrentSequence(),
+        requestSequence,
+      })
+    ) {
+      return { _tag: "Stale" };
+    }
     return {
       _tag: "Failure",
       message: sourceControlMetadataErrorFromFailure(error),
