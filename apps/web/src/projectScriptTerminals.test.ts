@@ -27,6 +27,7 @@ import {
   projectActionTerminalReadinessFailureFromEvent,
   projectActionTerminalId,
   resolveProjectActionTerminalId,
+  runningTerminalIdsWithProjectActionReservations,
   terminalSessionIsReadyForProjectActionInput,
   terminalSessionShouldProbeForProjectActionInput,
   terminalOutputLooksReadyForInput,
@@ -335,7 +336,7 @@ describe("terminalSessionShouldProbeForProjectActionInput", () => {
 });
 
 describe("classifyProjectActionTerminalCandidates", () => {
-  it("keeps ready and probeable action terminals occupied for terminal selection", () => {
+  it("keeps ready and probeable action terminals out of busy terminal selection", () => {
     const result = classifyProjectActionTerminalCandidates({
       sessions: [
         {
@@ -386,19 +387,17 @@ describe("classifyProjectActionTerminalCandidates", () => {
     expect(result.sessionsById.get("action-build")?.target.terminalId).toBe("action-build");
     expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
     expect(result.probeTerminalIds).toEqual(new Set(["action-build:2"]));
-    expect(result.runningTerminalIdsForSelection).toEqual([
-      "action-build",
-      "action-build:2",
-      "term-1",
-      "missing",
-    ]);
+    expect(result.runningTerminalIdsForSelection).toEqual(["term-1", "missing"]);
     expect(
       resolveProjectActionTerminalId({
         scriptId: "build",
         terminalIds: ["action-build", "action-build:2"],
-        runningTerminalIds: result.runningTerminalIdsForSelection,
+        runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
+          runningTerminalIds: result.runningTerminalIdsForSelection,
+          reservedTerminalIds: ["action-build"],
+        }),
       }),
-    ).toBe("action-build:3");
+    ).toBe("action-build:2");
   });
 
   it("classifies ready terminals before probeable terminals", () => {
@@ -425,7 +424,7 @@ describe("classifyProjectActionTerminalCandidates", () => {
 
     expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
     expect(result.probeTerminalIds).toEqual(new Set());
-    expect(result.runningTerminalIdsForSelection).toEqual(["action-build"]);
+    expect(result.runningTerminalIdsForSelection).toEqual([]);
   });
 
   it("preserves selection candidates without reusable session state", () => {
@@ -492,6 +491,17 @@ describe("classifyProjectActionTerminalCandidates", () => {
     expect(result.readyTerminalIds.size).toBe(0);
     expect(result.probeTerminalIds.size).toBe(0);
     expect(result.runningTerminalIdsForSelection).toEqual(["action-build"]);
+  });
+});
+
+describe("runningTerminalIdsWithProjectActionReservations", () => {
+  it("adds active launch reservations without duplicating existing busy terminal ids", () => {
+    expect(
+      runningTerminalIdsWithProjectActionReservations({
+        runningTerminalIds: ["term-1", "action-build", "term-1"],
+        reservedTerminalIds: ["action-build", "action-build:2"],
+      }),
+    ).toEqual(["term-1", "action-build", "term-1", "action-build:2"]);
   });
 });
 

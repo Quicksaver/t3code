@@ -273,7 +273,6 @@ export function classifyProjectActionTerminalCandidates(input: {
     ) {
       readyTerminalIds.add(terminalId);
       // Ready terminals can be written to immediately, so they do not need a probe.
-      runningTerminalIdsForSelection.push(terminalId);
       continue;
     }
     if (
@@ -284,7 +283,6 @@ export function classifyProjectActionTerminalCandidates(input: {
       })
     ) {
       probeTerminalIds.add(terminalId);
-      runningTerminalIdsForSelection.push(terminalId);
       continue;
     }
     runningTerminalIdsForSelection.push(terminalId);
@@ -296,6 +294,20 @@ export function classifyProjectActionTerminalCandidates(input: {
     probeTerminalIds,
     runningTerminalIdsForSelection,
   };
+}
+
+export function runningTerminalIdsWithProjectActionReservations(input: {
+  readonly runningTerminalIds: ReadonlyArray<string>;
+  readonly reservedTerminalIds: Iterable<string>;
+}): ReadonlyArray<string> {
+  const next = [...input.runningTerminalIds];
+  const seen = new Set(next);
+  for (const terminalId of input.reservedTerminalIds) {
+    if (seen.has(terminalId)) continue;
+    seen.add(terminalId);
+    next.push(terminalId);
+  }
+  return next;
 }
 
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
