@@ -4,7 +4,7 @@
 
 T3 Code includes a Git-backed Version Control surface in the right panel. The panel is scoped to the active environment and repository cwd, uses server-owned Git operations, and reuses the existing VCS status, source-control provider, and WebSocket RPC infrastructure rather than shelling out from React.
 
-The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread so stale failures cannot overwrite a newer successful checkout.
+The panel does not require an existing provider session or started server thread. Draft/new conversations can open Version Control as soon as they have project context and a repository cwd. Thread metadata updates caused by branch switching or detached checkout are routed by `ChatView` through `ChatView.sourceControl`: server threads persist through `thread.meta.update`, while draft conversations update local draft thread context. Server-thread metadata failures surface in the chat error banner through source-control-specific per-thread state. Dismissal clears that local metadata error without pretending provider session errors are dismissible, and overlapping metadata updates are sequenced per thread so stale failures cannot overwrite a newer successful checkout.
 
 The panel is intentionally an overview and high-level workflow surface. It focuses on current work, branch sync state, remotes, stashes, selected-file commit/stash flows, and compact branch/commit inspection. It is not a full VS Code SCM replacement and does not implement hunk-level staging.
 
@@ -14,6 +14,7 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ChatView.sourceControl.ts`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
@@ -33,6 +34,7 @@ Right-panel integration is owned by:
 - `apps/web/src/rightPanelStore.ts`
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ChatView.sourceControl.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 
 The VS Code extension exposes the shared T3 Code panel through the `t3code.ui.enableSourceControlPanel` display setting. Browser and desktop hosts enable the panel by default; VS Code webviews hide it by default so it does not compete with VS Code's native Source Control view. The setting only controls visibility of the shared panel; it does not fork source-control behavior or change backend capabilities.
