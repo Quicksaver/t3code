@@ -467,63 +467,111 @@ describe("DesktopBackendManager", () => {
   );
 
   it.effect("removes the backend advertisement after closing the run scope", () =>
-    Effect.gen(function* () {
-      const t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-stop-order-"));
-      const closeObservedAdvertisement = yield* Deferred.make<void>();
-      const ready = yield* Deferred.make<void>();
-      const closed = yield* Deferred.make<void>();
+    Effect.scoped(
+      Effect.gen(function* () {
+        const t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-stop-order-"));
+        const closeObservedAdvertisement = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
 
-      const spawnerLayer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() =>
-          Effect.gen(function* () {
-            const scope = yield* Scope.Scope;
-            const close = Effect.sync(() => {
-              const readResult = readDesktopBackendAdvertisements({ t3Home });
-              assert.lengthOf(readResult.advertisements, 1);
-            }).pipe(
-              Effect.andThen(Deferred.succeed(closeObservedAdvertisement, void 0)),
-              Effect.andThen(Deferred.succeed(closed, void 0)),
-              Effect.asVoid,
-            );
-            yield* Scope.addFinalizer(scope, close);
-            return makeProcess({
-              exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-              kill: () => close,
-            });
-          }),
-        ),
-      );
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const close = Effect.sync(() => {
+                const readResult = readDesktopBackendAdvertisements({ t3Home });
+                assert.lengthOf(readResult.advertisements, 1);
+              }).pipe(
+                Effect.andThen(Deferred.succeed(closeObservedAdvertisement, void 0)),
+                Effect.andThen(Deferred.succeed(closed, void 0)),
+                Effect.asVoid,
+              );
+              yield* Scope.addFinalizer(scope, close);
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                kill: () => close,
+              });
+            }),
+          ),
+        );
 
-      const managerLayer = makeManagerLayer({
-        config: {
-          ...baseConfig,
-          bootstrap: {
-            ...baseConfig.bootstrap,
-            t3Home,
+        const instance = yield* makeTestInstance({
+          config: {
+            ...baseConfig,
+            bootstrap: {
+              ...baseConfig.bootstrap,
+              t3Home,
+            },
           },
-        },
-        spawnerLayer,
-        desktopWindow: {
-          handleBackendReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
-        },
-      });
+          spawnerLayer,
+          advertiseDesktopBackend: true,
+          onReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+        });
 
-      try {
-        yield* Effect.gen(function* () {
-          const manager = yield* DesktopBackendManager.DesktopBackendManager;
-          yield* manager.start;
+        try {
+          yield* instance.start;
           yield* Deferred.await(ready);
 
-          yield* manager.stop();
+          yield* instance.stop();
           yield* Deferred.await(closeObservedAdvertisement);
 
           assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
-        }).pipe(Effect.provide(managerLayer));
-      } finally {
-        NodeFS.rmSync(t3Home, { force: true, recursive: true });
-      }
-    }),
+        } finally {
+          NodeFS.rmSync(t3Home, { force: true, recursive: true });
+        }
+      }),
+    ),
+  );
+
+  it.effect("does not advertise non-advertisable backend instances", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const t3Home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-no-ad-"));
+        const ready = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              const close = Deferred.succeed(closed, void 0).pipe(Effect.asVoid);
+              yield* Scope.addFinalizer(scope, close);
+              return makeProcess({
+                exitCode: Deferred.await(closed).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                kill: () => close,
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          config: {
+            ...baseConfig,
+            bootstrap: {
+              ...baseConfig.bootstrap,
+              t3Home,
+            },
+          },
+          spawnerLayer,
+          advertiseDesktopBackend: false,
+          onReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+        });
+
+        try {
+          yield* instance.start;
+          yield* Deferred.await(ready);
+
+          assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
+
+          yield* instance.stop();
+          assert.lengthOf(readDesktopBackendAdvertisements({ t3Home }).advertisements, 0);
+        } finally {
+          NodeFS.rmSync(t3Home, { force: true, recursive: true });
+        }
+      }),
+    ),
   );
 
   it.effect("restarts an unexpectedly exited backend with the Effect clock", () =>

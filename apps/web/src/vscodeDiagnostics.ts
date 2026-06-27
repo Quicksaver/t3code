@@ -114,9 +114,6 @@ export function installVscodeDiagnostics(): void {
         wsBaseUrl: desktopManaged?.wsBaseUrl ?? null,
         hasBearerToken:
           typeof desktopManaged?.bearerToken === "string" && desktopManaged.bearerToken.length > 0,
-        hasBootstrapToken:
-          typeof desktopManaged?.bootstrapToken === "string" &&
-          desktopManaged.bootstrapToken.length > 0,
         bootstrapProjects: workspace?.bootstrapProjects ?? [],
       },
       runtime: {

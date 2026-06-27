@@ -58,6 +58,8 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 
+const backendManagerLogger = DesktopObservability.makeComponentLogger("desktop.backendManager");
+
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
 // After this many consecutive fatal preflight failures, stop the silent
@@ -443,7 +445,7 @@ function refreshDesktopBackendAdvertisement(
 ): Effect.Effect<void, never> {
   return refreshDesktopBackendAdvertisementStrict(handle, config).pipe(
     Effect.catch((error) =>
-      logBackendManagerWarning("failed to refresh desktop backend advertisement", {
+      backendManagerLogger.logWarning("failed to refresh desktop backend advertisement", {
         message: error instanceof Error ? error.message : String(error),
         cause: describeDesktopBackendAdvertisementFailure(error),
       }),
@@ -483,7 +485,7 @@ function removeDesktopBackendAdvertisementForRun(
         catch: toDesktopBackendAdvertisementError("remove", advertisement.t3Home),
       }).pipe(
         Effect.catch((error) =>
-          logBackendManagerWarning("failed to remove desktop backend advertisement", {
+          backendManagerLogger.logWarning("failed to remove desktop backend advertisement", {
             message: error instanceof Error ? error.message : String(error),
             cause: describeDesktopBackendAdvertisementFailure(error),
           }),
@@ -886,10 +888,12 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 refreshDesktopBackendAdvertisementStrict(handle, config.value).pipe(
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      logBackendManagerWarning("failed to refresh desktop backend advertisement", {
-                        message: error instanceof Error ? error.message : String(error),
-                        cause: describeDesktopBackendAdvertisementFailure(error),
-                      }).pipe(Effect.as(false)),
+                      backendManagerLogger
+                        .logWarning("failed to refresh desktop backend advertisement", {
+                          message: error instanceof Error ? error.message : String(error),
+                          cause: describeDesktopBackendAdvertisementFailure(error),
+                        })
+                        .pipe(Effect.as(false)),
                     onSuccess: () => Effect.succeed(true),
                   }),
                 ),
@@ -912,7 +916,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   ready: true,
                   active: Option.some({
                     ...activeRun,
-                    advertisement: Option.some(advertisement),
+                    advertisement,
                   }),
                 },
               ] as const;

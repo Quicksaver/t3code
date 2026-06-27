@@ -1,18 +1,14 @@
 import type {
-  DesktopEnvironmentBootstrap,
+  T3HostLocalEnvironmentBootstrap,
   T3HostVscodeWorkspaceBootstrap,
 } from "@t3tools/contracts";
 
-export function getDesktopManagedEnvironmentBootstrap(): DesktopEnvironmentBootstrap | null {
+export function getDesktopManagedEnvironmentBootstrap(): T3HostLocalEnvironmentBootstrap | null {
   if (typeof window === "undefined") {
     return null;
   }
 
-  return (
-    window.t3HostBridge?.getLocalEnvironmentBootstrap?.() ??
-    window.desktopBridge?.getLocalEnvironmentBootstrap?.() ??
-    null
-  );
+  return window.t3HostBridge?.getLocalEnvironmentBootstrap?.() ?? null;
 }
 
 // Legacy host-named aliases are retained for VS Code webview compatibility.
@@ -37,10 +33,7 @@ export function getDesktopManagedBearerToken(): string | null {
 export const getHostBearerToken = getDesktopManagedBearerToken;
 
 export function getDesktopManagedBootstrapCredential(): string | null {
-  const bootstrap = getDesktopManagedEnvironmentBootstrap();
-  return typeof bootstrap?.bootstrapToken === "string" && bootstrap.bootstrapToken.length > 0
-    ? bootstrap.bootstrapToken
-    : null;
+  return null;
 }
 
 export const getHostBootstrapCredential = getDesktopManagedBootstrapCredential;

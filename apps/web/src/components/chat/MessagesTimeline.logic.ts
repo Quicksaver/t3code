@@ -12,6 +12,7 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { createChangedFileDiffPathMatcher } from "../../lib/diffRendering";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+export const COMMAND_OUTPUT_TAIL_LINES = 40;
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);

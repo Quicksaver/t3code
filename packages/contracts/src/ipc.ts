@@ -393,7 +393,7 @@ export interface T3HostRequestMessage {
 export type T3HostBridgePostMessage = T3HostRequestMessage;
 
 export interface T3HostBridge {
-  getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getLocalEnvironmentBootstrap: () => T3HostLocalEnvironmentBootstrap | null;
   getVscodeWorkspaceBootstrap?: () => T3HostVscodeWorkspaceBootstrap | null;
   getDisplayPreferences?: () => T3HostDisplayPreferences | null;
   onDisplayPreferencesChanged?: (
@@ -402,7 +402,7 @@ export interface T3HostBridge {
   getHostAppearance?: () => T3HostAppearance | null;
   onHostAppearanceChanged?: (callback: (appearance: T3HostAppearance) => void) => () => void;
   onBackendConnectionChanged?: (
-    callback: (bootstrap: DesktopEnvironmentBootstrap) => void,
+    callback: (bootstrap: T3HostLocalEnvironmentBootstrap) => void,
   ) => () => void;
   getClientSettings?: () => Promise<ClientSettings | null>;
   setClientSettings?: (settings: ClientSettings) => Promise<void>;

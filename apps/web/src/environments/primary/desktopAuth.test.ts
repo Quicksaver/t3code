@@ -31,6 +31,7 @@ describe("desktop primary auth", () => {
     const getLocalEnvironmentBearerToken = vi.fn().mockResolvedValue("desktop-bearer-token");
     window.t3HostBridge = {
       getLocalEnvironmentBootstrap: () => ({
+        environmentId: "environment-vscode",
         label: "VS Code environment",
         httpBaseUrl: "http://127.0.0.1:3773",
         wsBaseUrl: "ws://127.0.0.1:3773",

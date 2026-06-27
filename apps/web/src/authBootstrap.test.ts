@@ -4,6 +4,7 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthSessionState,
   type DesktopBridge,
+  type EnvironmentId,
   type T3HostBridge,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -178,10 +179,10 @@ describe("resolveInitialServerAuthGateState", () => {
     const testWindow = installTestBrowser("http://localhost/");
     testWindow.t3HostBridge = {
       getLocalEnvironmentBootstrap: () => ({
+        environmentId: "environment-vscode" as EnvironmentId,
         label: "VS Code environment",
         httpBaseUrl: "http://localhost:3773",
         wsBaseUrl: "ws://localhost:3773",
-        bootstrapToken: "already-consumed-bootstrap-token",
         bearerToken: "host-bearer-token",
       }),
     };
@@ -195,7 +196,7 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.browserSession).toEqual([]);
   });
 
-  it("uses a t3 host bridge bootstrap credential when no host bearer token exists", async () => {
+  it("uses a desktop bridge bootstrap credential when no host bearer token exists", async () => {
     const nextSession = sequence(
       unauthenticatedSession(DESKTOP_AUTH),
       authenticatedSession(DESKTOP_AUTH),
@@ -206,12 +207,24 @@ describe("resolveInitialServerAuthGateState", () => {
     });
 
     const testWindow = installTestBrowser("http://localhost/");
+    testWindow.desktopBridge = {
+      getLocalEnvironmentBootstraps: () => [
+        {
+          id: "primary",
+          label: "Windows",
+          httpBaseUrl: "http://localhost:3773",
+          wsBaseUrl: "ws://localhost:3773",
+          bootstrapToken: "desktop-bootstrap-token",
+        },
+      ],
+    } as unknown as DesktopBridge;
     testWindow.t3HostBridge = {
       getLocalEnvironmentBootstrap: () => ({
+        environmentId: "environment-vscode" as EnvironmentId,
         label: "VS Code environment",
         httpBaseUrl: "http://localhost:3773",
         wsBaseUrl: "ws://localhost:3773",
-        bootstrapToken: "host-bootstrap-token",
+        bearerToken: "",
       }),
     };
 
@@ -220,7 +233,7 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "authenticated",
     });
-    expect(testApi.calls.browserSession).toEqual([{ credential: "host-bootstrap-token" }]);
+    expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
     expect(testApi.calls.session).toBe(2);
   });
 

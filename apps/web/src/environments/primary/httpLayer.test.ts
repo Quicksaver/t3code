@@ -72,6 +72,7 @@ describe.sequential("primary environment HTTP layer", () => {
         location: { origin: "vscode-webview://host" },
         t3HostBridge: {
           getLocalEnvironmentBootstrap: () => ({
+            environmentId: "environment-vscode",
             label: "VS Code environment",
             httpBaseUrl: "http://127.0.0.1:3773",
             wsBaseUrl: "ws://127.0.0.1:3773",
