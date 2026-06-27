@@ -180,7 +180,11 @@ export function ArchivedThreadsPanel() {
 
   const confirmArchivedAction = useCallback(async (message: string) => {
     const localApi = readLocalApi();
-    if (!localApi) return true;
+    if (!localApi) {
+      if (typeof window === "undefined") return false;
+      if (typeof window.confirm !== "function") return false;
+      return window.confirm(message);
+    }
     const confirmationResult = await settlePromise(() => localApi.dialogs.confirm(message));
     if (confirmationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(confirmationResult);
