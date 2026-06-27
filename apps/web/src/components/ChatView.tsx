@@ -1513,6 +1513,7 @@ function ChatViewContent(props: ChatViewProps) {
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
+  const terminalUiAvailable = terminalAvailable && activeEnvironmentConnectionPhase === "connected";
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
       return null;
@@ -2385,6 +2386,9 @@ function ChatViewContent(props: ChatViewProps) {
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef || !terminalEnabled) return;
     const nextOpen = !terminalUiState.terminalOpen;
+    if (nextOpen && !terminalUiAvailable) {
+      return;
+    }
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
       if (!activeThreadId || !activeProject) {
         return;
@@ -2424,13 +2428,19 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalOpen,
     storeEnsureTerminal,
     terminalEnabled,
+    terminalUiAvailable,
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
-      if (!terminalEnabled) return;
-      if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
+      if (
+        !terminalUiAvailable ||
+        !activeThreadRef ||
+        hasReachedSplitLimit ||
+        !activeThreadId ||
+        !activeProject
+      ) {
         return;
       }
       const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2470,12 +2480,11 @@ function ChatViewContent(props: ChatViewProps) {
       hasReachedSplitLimit,
       storeSplitTerminal,
       storeSplitTerminalVertical,
-      terminalEnabled,
+      terminalUiAvailable,
     ],
   );
   const createNewTerminal = useCallback(() => {
-    if (!terminalEnabled) return;
-    if (!activeThreadRef || !activeThreadId || !activeProject) {
+    if (!terminalUiAvailable || !activeThreadRef || !activeThreadId || !activeProject) {
       return;
     }
     const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
@@ -2508,7 +2517,7 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     gitCwd,
     storeNewTerminal,
-    terminalEnabled,
+    terminalUiAvailable,
   ]);
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -2554,8 +2563,7 @@ function ChatViewContent(props: ChatViewProps) {
         rememberAsLastInvoked?: boolean;
       },
     ) => {
-      if (!terminalEnabled) return;
-      if (!activeThreadId || !activeProject || !activeThread) return;
+      if (!activeThreadId || !activeProject || !activeThread || !terminalUiAvailable) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
@@ -2747,6 +2755,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalEnabled,
       requireProjectActionTerminalReady,
       terminalUiState.terminalIds,
+      terminalUiAvailable,
       waitForProjectActionTerminalReady,
       writeTerminal,
     ],
@@ -3015,8 +3024,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
-    if (!terminalEnabled) return;
-    if (!activeThreadRef || !activeThreadId || !activeProject) return;
+    if (!terminalUiAvailable || !activeThreadRef || !activeThreadId || !activeProject) return;
     const cwd = gitCwd ?? activeProject.workspaceRoot;
     const terminalId = nextTerminalId([...activeKnownTerminalIds, ...panelTerminalIds]);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
@@ -3043,12 +3051,13 @@ function ChatViewContent(props: ChatViewProps) {
     gitCwd,
     openTerminal,
     panelTerminalIds,
-    terminalEnabled,
+    terminalUiAvailable,
   ]);
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
       if (!terminalEnabled) return;
       if (
+        !terminalUiAvailable ||
         !activeThreadRef ||
         !activeThreadId ||
         !activeProject ||
@@ -3088,6 +3097,7 @@ function ChatViewContent(props: ChatViewProps) {
       openTerminal,
       panelTerminalIds,
       terminalEnabled,
+      terminalUiAvailable,
     ],
   );
   const splitPanelTerminalVertical = useCallback(() => {
@@ -3727,6 +3737,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "terminal.split") {
         event.preventDefault();
         event.stopPropagation();
+        if (!terminalUiAvailable) {
+          return;
+        }
         if (terminalFocusOwner === "right-panel") {
           splitPanelTerminal();
           return;
@@ -3741,6 +3754,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "terminal.splitVertical") {
         event.preventDefault();
         event.stopPropagation();
+        if (!terminalUiAvailable) {
+          return;
+        }
         if (terminalFocusOwner === "right-panel") {
           splitPanelTerminal("vertical");
           return;
@@ -3767,6 +3783,9 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "terminal.new") {
         event.preventDefault();
         event.stopPropagation();
+        if (!terminalUiAvailable) {
+          return;
+        }
         if (terminalFocusOwner === "right-panel") {
           addTerminalSurface();
           return;
@@ -3818,6 +3837,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     onToggleDiff,
+    terminalUiAvailable,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
@@ -4917,8 +4937,8 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={terminalAvailable}
-      terminalOpen={terminalAvailable && terminalUiState.terminalOpen}
+      terminalAvailable={terminalUiAvailable || terminalUiState.terminalOpen}
+      terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={activeProject !== null}
       rightPanelOpen={rightPanelOpen}
@@ -5055,7 +5075,8 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
             openInCwd={gitCwd}
-            activeProjectScripts={terminalEnabled ? activeProject?.scripts : undefined}
+            activeProjectScripts={activeProject?.scripts}
+            projectScriptsRunAvailable={terminalUiAvailable}
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -5327,7 +5348,7 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddSourceControl={addSourceControlSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
-          terminalAvailable={terminalAvailable}
+          terminalAvailable={terminalUiAvailable}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           sourceControlAvailable={sourceControlAvailable}
@@ -5357,7 +5378,7 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddSourceControl={addSourceControlSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
-            terminalAvailable={terminalAvailable}
+            terminalAvailable={terminalUiAvailable}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             sourceControlAvailable={sourceControlAvailable}

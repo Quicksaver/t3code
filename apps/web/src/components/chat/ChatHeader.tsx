@@ -29,6 +29,7 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
+  projectScriptsRunAvailable: boolean;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
@@ -77,6 +78,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   openInCwd,
   activeProjectScripts,
+  projectScriptsRunAvailable,
   preferredScriptId,
   keybindings,
   availableEditors,
@@ -139,6 +141,7 @@ export const ChatHeader = memo(function ChatHeader({
             scripts={activeProjectScripts}
             keybindings={keybindings}
             preferredScriptId={preferredScriptId}
+            runAvailable={projectScriptsRunAvailable}
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}

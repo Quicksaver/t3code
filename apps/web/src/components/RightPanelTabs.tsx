@@ -64,7 +64,7 @@ interface RightPanelTabsProps {
 
 const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: "Terminal is only available when a project is open and terminal support is enabled.",
+  terminal: "Terminals are only available when a project host is connected.",
   files: "Files are only available when a project is open.",
   diff: "Diff is only available for server threads in Git repositories.",
   sourceControl: "Version Control is only available when a project is open in a Git repository.",
