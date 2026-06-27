@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import {
+  classifyProjectActionTerminalCandidates,
   openTerminalAndWaitForInputReady,
   ProjectActionTerminalReadinessTimeoutError,
   projectActionTerminalReadinessFailureFromEvent,
@@ -329,6 +330,89 @@ describe("terminalSessionShouldProbeForProjectActionInput", () => {
         targetWorktreePath: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("classifyProjectActionTerminalCandidates", () => {
+  it("keeps ready and probeable action terminals out of busy terminal selection", () => {
+    const result = classifyProjectActionTerminalCandidates({
+      sessions: [
+        {
+          target: { terminalId: "action-build" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "bash",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "$ ",
+          },
+        },
+        {
+          target: { terminalId: "action-build:2" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "bash",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "",
+          },
+        },
+        {
+          target: { terminalId: "term-1" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "node",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "$ ",
+          },
+        },
+      ],
+      runningTerminalIds: ["action-build", "action-build:2", "term-1", "missing"],
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+    });
+
+    expect(result.sessionsById.get("action-build")?.target.terminalId).toBe("action-build");
+    expect([...result.readyTerminalIds]).toEqual(["action-build"]);
+    expect([...result.probeTerminalIds]).toEqual(["action-build:2"]);
+    expect(result.runningTerminalIdsForSelection).toEqual(["term-1", "missing"]);
+  });
+
+  it("does not classify sessions from another worktree as reusable or probeable", () => {
+    const result = classifyProjectActionTerminalCandidates({
+      sessions: [
+        {
+          target: { terminalId: "action-build" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "bash",
+              status: "running",
+              worktreePath: "/other-worktree",
+            },
+            buffer: "$ ",
+          },
+        },
+      ],
+      runningTerminalIds: ["action-build"],
+      targetCwd: "/repo",
+      targetWorktreePath: "/repo-worktree",
+    });
+
+    expect(result.readyTerminalIds.size).toBe(0);
+    expect(result.probeTerminalIds.size).toBe(0);
+    expect(result.runningTerminalIdsForSelection).toEqual(["action-build"]);
   });
 });
 

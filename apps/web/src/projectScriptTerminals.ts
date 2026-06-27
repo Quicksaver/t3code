@@ -219,6 +219,73 @@ export function terminalSessionShouldProbeForProjectActionInput(input: {
   );
 }
 
+interface ProjectActionTerminalCandidateSession {
+  readonly target: {
+    readonly terminalId: string;
+  };
+  readonly state: {
+    readonly summary: Pick<
+      TerminalSummary,
+      "cwd" | "hasRunningSubprocess" | "label" | "status" | "worktreePath"
+    > | null;
+    readonly buffer: string;
+  };
+}
+
+export function classifyProjectActionTerminalCandidates(input: {
+  readonly sessions: ReadonlyArray<ProjectActionTerminalCandidateSession>;
+  readonly runningTerminalIds: ReadonlyArray<string>;
+  readonly targetCwd: string;
+  readonly targetWorktreePath: string | null;
+}): {
+  readonly sessionsById: ReadonlyMap<string, ProjectActionTerminalCandidateSession>;
+  readonly readyTerminalIds: ReadonlySet<string>;
+  readonly probeTerminalIds: ReadonlySet<string>;
+  readonly runningTerminalIdsForSelection: ReadonlyArray<string>;
+} {
+  const sessionsById = new Map(
+    input.sessions.map((session) => [session.target.terminalId, session] as const),
+  );
+  const readyTerminalIds = new Set<string>();
+  const probeTerminalIds = new Set<string>();
+
+  for (const terminalId of input.runningTerminalIds) {
+    const session = sessionsById.get(terminalId);
+    if (!session) {
+      continue;
+    }
+    if (
+      terminalSessionIsReadyForProjectActionInput({
+        summary: session.state.summary,
+        buffer: session.state.buffer,
+        targetCwd: input.targetCwd,
+        targetWorktreePath: input.targetWorktreePath,
+      })
+    ) {
+      readyTerminalIds.add(terminalId);
+      continue;
+    }
+    if (
+      terminalSessionShouldProbeForProjectActionInput({
+        summary: session.state.summary,
+        targetCwd: input.targetCwd,
+        targetWorktreePath: input.targetWorktreePath,
+      })
+    ) {
+      probeTerminalIds.add(terminalId);
+    }
+  }
+
+  return {
+    sessionsById,
+    readyTerminalIds,
+    probeTerminalIds,
+    runningTerminalIdsForSelection: input.runningTerminalIds.filter(
+      (terminalId) => !readyTerminalIds.has(terminalId) && !probeTerminalIds.has(terminalId),
+    ),
+  };
+}
+
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {
   return {
     threadId: input.threadId,
