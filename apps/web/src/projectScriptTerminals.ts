@@ -68,6 +68,7 @@ export class ProjectActionTerminalAttachError extends Schema.TaggedErrorClass<Pr
     terminalId: Schema.String,
     cwd: Schema.String,
     detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -272,6 +273,7 @@ export function classifyProjectActionTerminalCandidates(input: {
     ) {
       readyTerminalIds.add(terminalId);
       // Ready terminals can be written to immediately, so they do not need a probe.
+      runningTerminalIdsForSelection.push(terminalId);
       continue;
     }
     if (
@@ -282,6 +284,7 @@ export function classifyProjectActionTerminalCandidates(input: {
       })
     ) {
       probeTerminalIds.add(terminalId);
+      runningTerminalIdsForSelection.push(terminalId);
       continue;
     }
     runningTerminalIdsForSelection.push(terminalId);
@@ -360,7 +363,8 @@ function projectActionTerminalAttachErrorFromCause(
     threadId: input.threadId,
     terminalId: input.terminalId,
     cwd: input.cwd,
-    detail: `Terminal attach failed before it was ready for input: ${Cause.pretty(cause)}`,
+    detail: "Terminal attach failed before it was ready for input.",
+    cause,
   });
 }
 

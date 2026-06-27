@@ -14,6 +14,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { subscribe, type RpcSession } from "@t3tools/client-runtime/rpc";
 import { assert, it as effectIt } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -334,7 +335,7 @@ describe("terminalSessionShouldProbeForProjectActionInput", () => {
 });
 
 describe("classifyProjectActionTerminalCandidates", () => {
-  it("keeps ready and probeable action terminals out of busy terminal selection", () => {
+  it("keeps ready and probeable action terminals occupied for terminal selection", () => {
     const result = classifyProjectActionTerminalCandidates({
       sessions: [
         {
@@ -385,7 +386,19 @@ describe("classifyProjectActionTerminalCandidates", () => {
     expect(result.sessionsById.get("action-build")?.target.terminalId).toBe("action-build");
     expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
     expect(result.probeTerminalIds).toEqual(new Set(["action-build:2"]));
-    expect(result.runningTerminalIdsForSelection).toEqual(["term-1", "missing"]);
+    expect(result.runningTerminalIdsForSelection).toEqual([
+      "action-build",
+      "action-build:2",
+      "term-1",
+      "missing",
+    ]);
+    expect(
+      resolveProjectActionTerminalId({
+        scriptId: "build",
+        terminalIds: ["action-build", "action-build:2"],
+        runningTerminalIds: result.runningTerminalIdsForSelection,
+      }),
+    ).toBe("action-build:3");
   });
 
   it("classifies ready terminals before probeable terminals", () => {
@@ -412,7 +425,7 @@ describe("classifyProjectActionTerminalCandidates", () => {
 
     expect(result.readyTerminalIds).toEqual(new Set(["action-build"]));
     expect(result.probeTerminalIds).toEqual(new Set());
-    expect(result.runningTerminalIdsForSelection).toEqual([]);
+    expect(result.runningTerminalIdsForSelection).toEqual(["action-build"]);
   });
 
   it("preserves selection candidates without reusable session state", () => {
@@ -793,7 +806,15 @@ describe("openTerminalAndWaitForInputReady", () => {
       }
       assert.strictEqual(thrownError.threadId, OPEN_INPUT.threadId);
       assert.strictEqual(thrownError.terminalId, OPEN_INPUT.terminalId);
-      assert.match(thrownError.detail, /attach transport unavailable/);
+      assert.strictEqual(
+        thrownError.detail,
+        "Terminal attach failed before it was ready for input.",
+      );
+      assert.notStrictEqual(thrownError.cause, undefined);
+      assert.match(
+        Cause.pretty(thrownError.cause as Cause.Cause<unknown>),
+        /attach transport unavailable/,
+      );
 
       subscribeMock.mockReturnValueOnce(Stream.fail(new Error("attach stream rejected")));
       const failedStreamError = yield* waitForProjectActionTerminalInputReadyStrict(
@@ -805,7 +826,15 @@ describe("openTerminalAndWaitForInputReady", () => {
       if (failedStreamError._tag !== "ProjectActionTerminalAttachError") {
         return yield* Effect.die(new Error("Expected a terminal attach error."));
       }
-      assert.match(failedStreamError.detail, /attach stream rejected/);
+      assert.strictEqual(
+        failedStreamError.detail,
+        "Terminal attach failed before it was ready for input.",
+      );
+      assert.notStrictEqual(failedStreamError.cause, undefined);
+      assert.match(
+        Cause.pretty(failedStreamError.cause as Cause.Cause<unknown>),
+        /attach stream rejected/,
+      );
     }),
   );
 });
