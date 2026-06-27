@@ -213,6 +213,16 @@ export function canUseRootThreadLifecycleActions(
   return thread?.parentRelation?.kind !== "subagent";
 }
 
+export function canUseSelectedRootThreadLifecycleActions(
+  threadKeys: readonly string[],
+  threadByKey: ReadonlyMap<string, Pick<SidebarThreadSummary, "parentRelation">>,
+): boolean {
+  return threadKeys.every((threadKey) => {
+    const thread = threadByKey.get(threadKey);
+    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
+  });
+}
+
 function subagentIsTerminalInSidebar(thread: SidebarThreadSummary): boolean {
   const status = subagentSidebarStatus(thread);
   return status !== null && status !== "running";

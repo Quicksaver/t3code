@@ -186,6 +186,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
   activeSidebarThreadPathKeys,
+  canUseSelectedRootThreadLifecycleActions,
   canUseRootThreadLifecycleActions,
   flattenSidebarThreadTree,
   getSidebarThreadIdsToPrewarm,
@@ -1867,8 +1868,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      const canDeleteSelection = threadKeys.every((threadKey) =>
-        canUseRootThreadLifecycleActions(sidebarThreadByKeyRef.current.get(threadKey)),
+      const canDeleteSelection = canUseSelectedRootThreadLifecycleActions(
+        threadKeys,
+        sidebarThreadByKeyRef.current,
       );
 
       const clicked = await api.contextMenu.show(

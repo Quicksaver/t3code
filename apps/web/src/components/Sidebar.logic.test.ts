@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   activeSidebarThreadPathKeys,
+  canUseSelectedRootThreadLifecycleActions,
   canUseRootThreadLifecycleActions,
   createThreadJumpHintVisibilityController,
   flattenSidebarThreadTree,
@@ -167,6 +168,32 @@ describe("subagent sidebar tree helpers", () => {
     expect(canUseRootThreadLifecycleActions(runningChild)).toBe(false);
     expect(canUseRootThreadLifecycleActions(terminalChild)).toBe(false);
     expect(canUseRootThreadLifecycleActions(null)).toBe(true);
+  });
+
+  it("fails closed for selected lifecycle actions with unresolved threads", () => {
+    const root = makeSidebarThread({ id: "root-thread" });
+    const runningChild = makeSidebarThread({
+      id: "running-child",
+      parentThreadId: "root-thread",
+      status: "running",
+    });
+    const threadByKey = new Map([
+      [sidebarThreadKey(root), root],
+      [sidebarThreadKey(runningChild), runningChild],
+    ]);
+
+    expect(canUseSelectedRootThreadLifecycleActions([sidebarThreadKey(root)], threadByKey)).toBe(
+      true,
+    );
+    expect(
+      canUseSelectedRootThreadLifecycleActions(
+        [sidebarThreadKey(root), "environment:missing-thread"],
+        threadByKey,
+      ),
+    ).toBe(false);
+    expect(
+      canUseSelectedRootThreadLifecycleActions([sidebarThreadKey(runningChild)], threadByKey),
+    ).toBe(false);
   });
 
   it("keeps running descendants nested under hidden terminal ancestors", () => {
