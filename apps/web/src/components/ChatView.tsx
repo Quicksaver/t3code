@@ -149,6 +149,7 @@ import {
 import {
   classifyProjectActionTerminalCandidates,
   resolveProjectActionTerminalId,
+  runningTerminalIdsWithProjectActionReservations,
   terminalSessionIsReadyForProjectActionInput,
 } from "~/projectScriptTerminals";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
@@ -1167,6 +1168,7 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
+  const projectActionTerminalLaunchReservationsRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -2491,13 +2493,17 @@ function ChatViewContent(props: ChatViewProps) {
         targetCwd,
         targetWorktreePath,
       });
+      const reservedProjectActionTerminalIds = projectActionTerminalLaunchReservationsRef.current;
       let targetTerminalId =
         options?.preferNewTerminal === true
-          ? nextTerminalId(activeKnownTerminalIds)
+          ? nextTerminalId([...activeKnownTerminalIds, ...reservedProjectActionTerminalIds])
           : resolveProjectActionTerminalId({
               scriptId: script.id,
               terminalIds: activeKnownTerminalIds,
-              runningTerminalIds: projectActionTerminalCandidates.runningTerminalIdsForSelection,
+              runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
+                runningTerminalIds: projectActionTerminalCandidates.runningTerminalIdsForSelection,
+                reservedTerminalIds: reservedProjectActionTerminalIds,
+              }),
             });
       let isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
       let isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
@@ -2516,91 +2522,113 @@ function ChatViewContent(props: ChatViewProps) {
           ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
           : {}),
       };
+      let reservedProjectActionTerminalId: string | null = null;
+      const reserveProjectActionTerminalId = (terminalId: string) => {
+        if (reservedProjectActionTerminalId === terminalId) return;
+        if (reservedProjectActionTerminalId !== null) {
+          reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
+        }
+        reservedProjectActionTerminalIds.add(terminalId);
+        reservedProjectActionTerminalId = terminalId;
+      };
 
-      if (
-        !canWriteImmediately &&
-        projectActionTerminalCandidates.probeTerminalIds.has(targetTerminalId)
-      ) {
-        const readyResult = await requireProjectActionTerminalReady({
-          environmentId,
-          input: openTerminalInput,
-        });
-        if (readyResult._tag === "Success") {
-          waitAfterOpen = true;
-        } else {
-          if (isAtomCommandInterrupted(readyResult)) {
-            return;
+      reserveProjectActionTerminalId(targetTerminalId);
+      try {
+        if (
+          !canWriteImmediately &&
+          projectActionTerminalCandidates.probeTerminalIds.has(targetTerminalId)
+        ) {
+          const readyResult = await requireProjectActionTerminalReady({
+            environmentId,
+            input: openTerminalInput,
+          });
+          if (readyResult._tag === "Success") {
+            waitAfterOpen = true;
+          } else {
+            if (isAtomCommandInterrupted(readyResult)) {
+              return;
+            }
+            targetTerminalId = resolveProjectActionTerminalId({
+              scriptId: script.id,
+              terminalIds: activeKnownTerminalIds,
+              runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
+                runningTerminalIds: runningTerminalIds.filter(
+                  (terminalId) => !projectActionTerminalCandidates.readyTerminalIds.has(terminalId),
+                ),
+                reservedTerminalIds: Array.from(reservedProjectActionTerminalIds).filter(
+                  (terminalId) => terminalId !== reservedProjectActionTerminalId,
+                ),
+              }),
+            });
+            reserveProjectActionTerminalId(targetTerminalId);
+            isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
+            isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
+            targetSession =
+              projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
+            canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+              summary: targetSession?.state.summary ?? null,
+              buffer: targetSession?.state.buffer ?? "",
+              targetCwd,
+              targetWorktreePath,
+            });
+            waitAfterOpen = !canWriteImmediately;
+            openTerminalInput = {
+              threadId: activeThreadId,
+              terminalId: targetTerminalId,
+              cwd: targetCwd,
+              ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
+              env: runtimeEnv,
+              ...(!isKnownServerTerminal
+                ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+                : {}),
+            };
           }
-          targetTerminalId = resolveProjectActionTerminalId({
-            scriptId: script.id,
-            terminalIds: activeKnownTerminalIds,
-            runningTerminalIds: runningTerminalIds.filter(
-              (terminalId) => !projectActionTerminalCandidates.readyTerminalIds.has(terminalId),
-            ),
+        }
+
+        if (!isVisibleTerminal) {
+          storeNewTerminal(activeThreadRef, targetTerminalId);
+        } else {
+          storeSetActiveTerminal(activeThreadRef, targetTerminalId);
+        }
+
+        const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+        if (openResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(openResult)) {
+            const error = squashAtomCommandFailure(openResult);
+            setThreadError(
+              activeThreadId,
+              error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+            );
+          }
+          return;
+        }
+
+        if (waitAfterOpen) {
+          await waitForProjectActionTerminalReady({
+            environmentId,
+            input: openTerminalInput,
           });
-          isKnownServerTerminal = activeServerOrderedTerminalIds.includes(targetTerminalId);
-          isVisibleTerminal = terminalUiState.terminalIds.includes(targetTerminalId);
-          targetSession =
-            projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
-          canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
-            summary: targetSession?.state.summary ?? null,
-            buffer: targetSession?.state.buffer ?? "",
-            targetCwd,
-            targetWorktreePath,
-          });
-          waitAfterOpen = !canWriteImmediately;
-          openTerminalInput = {
+        }
+
+        const writeResult = await writeTerminal({
+          environmentId,
+          input: {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
-            cwd: targetCwd,
-            ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
-            env: runtimeEnv,
-            ...(!isKnownServerTerminal
-              ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
-              : {}),
-          };
-        }
-      }
-
-      if (!isVisibleTerminal) {
-        storeNewTerminal(activeThreadRef, targetTerminalId);
-      } else {
-        storeSetActiveTerminal(activeThreadRef, targetTerminalId);
-      }
-
-      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
-      if (openResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(openResult)) {
-          const error = squashAtomCommandFailure(openResult);
+            data: `${script.command}\r`,
+          },
+        });
+        if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
+          const error = squashAtomCommandFailure(writeResult);
           setThreadError(
             activeThreadId,
             error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
           );
         }
-        return;
-      }
-
-      if (waitAfterOpen) {
-        await waitForProjectActionTerminalReady({
-          environmentId,
-          input: openTerminalInput,
-        });
-      }
-
-      const writeResult = await writeTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId: targetTerminalId,
-          data: `${script.command}\r`,
-        },
-      });
-      if (writeResult._tag === "Failure" && !isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+      } finally {
+        if (reservedProjectActionTerminalId !== null) {
+          reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
+        }
       }
     },
     [
