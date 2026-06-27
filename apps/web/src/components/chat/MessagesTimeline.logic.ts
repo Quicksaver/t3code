@@ -260,7 +260,54 @@ export function filterChangedFilesWithoutInlineDiff(
   );
 }
 
-function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
+export interface DerivedFileChangeDisplayFile {
+  path: string;
+  displayPath: string;
+}
+
+export function deriveFileChangeDisplayFiles(input: {
+  changedFiles: ReadonlyArray<string> | undefined;
+  inlineDiffPaths: ReadonlyArray<string>;
+  workspaceRoot: string | undefined;
+}): DerivedFileChangeDisplayFile[] {
+  return filterChangedFilesWithoutInlineDiff(input.changedFiles, input.inlineDiffPaths).map(
+    (filePath) => ({
+      path: filePath,
+      displayPath: formatWorkspaceRelativePath(filePath, input.workspaceRoot),
+    }),
+  );
+}
+
+export interface DerivedCommandOutputDisplay {
+  isTruncated: boolean;
+  visibleValue: string;
+  suffix: string;
+}
+
+export function deriveCommandOutputDisplay(input: {
+  value: string;
+  showFull: boolean;
+  maxVisibleLines?: number;
+}): DerivedCommandOutputDisplay {
+  const maxVisibleLines = input.maxVisibleLines ?? COMMAND_OUTPUT_TAIL_LINES;
+  const lines = getRenderableCommandOutputLines(input.value);
+  const isTruncated = lines.length > maxVisibleLines;
+  const visibleValue =
+    input.showFull || !isTruncated ? lines.join("\n") : lines.slice(-maxVisibleLines).join("\n");
+  const suffix = isTruncated
+    ? input.showFull
+      ? `${lines.length.toLocaleString()} lines`
+      : `last ${maxVisibleLines} of ${lines.length.toLocaleString()} lines`
+    : `${lines.length.toLocaleString()} line${lines.length === 1 ? "" : "s"}`;
+
+  return {
+    isTruncated,
+    visibleValue,
+    suffix,
+  };
+}
+
+export function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
   const normalizedChangedFile = changedFile.replace(/\\/gu, "/");
   const normalizedDiffPath = diffPath.replace(/\\/gu, "/");
   const normalizedChangedFileSuffix = normalizedChangedFile.replace(/^\/+/u, "");

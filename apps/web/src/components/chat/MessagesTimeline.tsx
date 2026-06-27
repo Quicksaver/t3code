@@ -77,12 +77,16 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   buildSupplementalToolDetailBody,
+  changedFileMatchesDiffPath,
   computeStableMessagesTimelineRows,
   filterChangedFilesWithoutInlineDiff,
   getRenderableCommandOutputLines,
   hasCommandWorkEntryDetails,
   hasFileChangeWorkEntryDetails,
   hasRenderableCommandOutput,
+  deriveCommandOutputDisplay,
+  deriveExpandableWorkEntryDetails,
+  deriveFileChangeDisplayFiles,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -2430,14 +2434,8 @@ function resolveInlineFileDiffDisplayPath(
   workspaceRoot: string | undefined,
 ): string {
   const rawPath = resolveFileDiffPath(fileDiff);
-  const normalizedRawPath = rawPath.replace(/\\/gu, "/");
   const matchedChangedFile = changedFiles?.find((filePath) => {
-    const normalizedChangedFile = filePath.replace(/\\/gu, "/");
-    return (
-      normalizedChangedFile === normalizedRawPath ||
-      normalizedChangedFile.endsWith(`/${normalizedRawPath}`) ||
-      normalizedRawPath.endsWith(`/${normalizedChangedFile.replace(/^\/+/u, "")}`)
-    );
+    return changedFileMatchesDiffPath(filePath, rawPath);
   });
 
   return formatWorkspaceRelativePath(matchedChangedFile ?? rawPath, workspaceRoot);
