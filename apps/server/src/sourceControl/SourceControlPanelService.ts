@@ -640,6 +640,7 @@ function parseWorktreeBranchPaths(output: string): Map<string, string> {
 function parseLocalBranches(
   output: string,
   worktreeBranchPaths: ReadonlyMap<string, string> = new Map(),
+  statusDefaultBranchName: string | null = null,
 ): VcsRef[] {
   const rows = output
     .split(/\r?\n/u)
@@ -667,6 +668,9 @@ function parseLocalBranches(
     })
     .filter((branch) => branch.name.length > 0);
   const defaultName =
+    (statusDefaultBranchName !== null
+      ? rows.find((branch) => branch.name === statusDefaultBranchName)?.name
+      : null) ??
     rows.find((branch) => branch.name === "main")?.name ??
     rows.find((branch) => branch.name === "master")?.name ??
     rows.find((branch) => !branch.current)?.name ??
@@ -1924,7 +1928,11 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
 
       const localBranches = yield* Effect.forEach(
-        parseLocalBranches(localBranchesOutput, parseWorktreeBranchPaths(worktreeListOutput)),
+        parseLocalBranches(
+          localBranchesOutput,
+          parseWorktreeBranchPaths(worktreeListOutput),
+          localStatus.isDefaultRef ? localStatus.refName : null,
+        ),
         branchWithExistingWorktreePath,
         { concurrency: "unbounded" },
       );
