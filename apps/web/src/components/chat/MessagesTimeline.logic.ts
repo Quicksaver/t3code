@@ -504,7 +504,7 @@ export function deriveCommandOutputDisplay(input: {
   };
 }
 
-function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
+export function changedFileMatchesDiffPath(changedFile: string, diffPath: string): boolean {
   const normalizedChangedFile = changedFile.replace(/\\/gu, "/");
   const normalizedDiffPath = diffPath.replace(/\\/gu, "/");
   const normalizedChangedFileSuffix = normalizedChangedFile.replace(/^\/+/u, "");
