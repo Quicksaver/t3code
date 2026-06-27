@@ -967,6 +967,14 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     });
 
+  const branchWithExistingWorktreePath = (branch: VcsRef) => {
+    if (!branch.worktreePath) return Effect.succeed(branch);
+    return fileSystem.exists(branch.worktreePath).pipe(
+      Effect.map((exists) => (exists ? branch : { ...branch, worktreePath: null })),
+      Effect.orElseSucceed(() => ({ ...branch, worktreePath: null })),
+    );
+  };
+
   const COMMIT_PAGE_SIZE = 10;
 
   const readWorkingTreeChangeGroups = (
@@ -1826,9 +1834,10 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         { concurrency: "unbounded" },
       );
 
-      const localBranches = parseLocalBranches(
-        localBranchesOutput,
-        parseWorktreeBranchPaths(worktreeListOutput),
+      const localBranches = yield* Effect.forEach(
+        parseLocalBranches(localBranchesOutput, parseWorktreeBranchPaths(worktreeListOutput)),
+        branchWithExistingWorktreePath,
+        { concurrency: "unbounded" },
       );
       const remotes = parseRemoteVerbose(remotesOutput);
       const remotesWithBranches = yield* Effect.forEach(

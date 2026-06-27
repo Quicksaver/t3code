@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -22,12 +23,7 @@ import * as SourceControlProvider from "./SourceControlProvider.ts";
 import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  GitVcsDriver,
-  type ExecuteGitInput,
-  type ExecuteGitResult,
-  type GitVcsDriverShape,
-} from "../vcs/GitVcsDriver.ts";
+import { GitVcsDriver, type ExecuteGitInput, type ExecuteGitResult } from "../vcs/GitVcsDriver.ts";
 
 const branchRef: VcsRef = {
   name: "feature/source-control",
@@ -164,7 +160,7 @@ function makeTestLayer(
     Layer.provide(
       Layer.succeed(GitVcsDriver, {
         execute,
-      } as unknown as GitVcsDriverShape),
+      } as unknown as GitVcsDriver["Service"]),
     ),
     Layer.provide(
       Layer.succeed(
@@ -1671,11 +1667,12 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
-  it.effect("attaches worktree paths from git worktree porcelain output", () =>
-    Effect.gen(function* () {
+  it.effect("attaches worktree paths from git worktree porcelain output", () => {
+    const worktreePath = process.cwd();
+    return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
-      const snapshot = yield* service.snapshot({ cwd: "/repo/worktrees/feature" });
+      const snapshot = yield* service.snapshot({ cwd: worktreePath });
 
       assert.deepStrictEqual(
         snapshot.localBranches.map((branch) => ({
@@ -1687,12 +1684,12 @@ describe("SourceControlPanelService", () => {
           {
             name: "feature/source-control",
             current: true,
-            worktreePath: "/repo/worktrees/feature",
+            worktreePath,
           },
           {
             name: "main",
             current: false,
-            worktreePath: "/repo",
+            worktreePath,
           },
         ],
       );
@@ -1712,11 +1709,11 @@ describe("SourceControlPanelService", () => {
                 case "vcs.panel.worktrees":
                   return success(
                     [
-                      "worktree /repo",
+                      `worktree ${worktreePath}`,
                       "HEAD abc",
                       "branch refs/heads/main",
                       "",
-                      "worktree /repo/worktrees/feature",
+                      `worktree ${worktreePath}`,
                       "HEAD def",
                       "branch refs/heads/feature/source-control",
                       "",
@@ -1743,14 +1740,96 @@ describe("SourceControlPanelService", () => {
           },
         ),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("includes dirty non-current worktrees as separate change sets", () =>
-    Effect.gen(function* () {
+  it.effect("drops missing branch worktree paths before building the panel snapshot", () => {
+    const missingWorktreePath = `${process.cwd()}/.missing-source-control-worktree-test`;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
       const service = yield* SourceControlPanelService;
 
-      const snapshot = yield* service.snapshot({ cwd: "/repo" });
+      assert.isFalse(yield* fileSystem.exists(missingWorktreePath));
+
+      const snapshot = yield* service.snapshot({ cwd: process.cwd() });
+
+      assert.deepStrictEqual(
+        snapshot.localBranches.map((branch) => ({
+          name: branch.name,
+          current: branch.current,
+          worktreePath: branch.worktreePath,
+        })),
+        [
+          {
+            name: "feature/source-control",
+            current: true,
+            worktreePath: null,
+          },
+          {
+            name: "main",
+            current: false,
+            worktreePath: null,
+          },
+        ],
+      );
+      assert.deepStrictEqual(snapshot.worktreeChangeSets, []);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(
+          (input) =>
+            Effect.sync(() => {
+              switch (input.operation) {
+                case "vcs.panel.localBranches":
+                  return success(
+                    [
+                      "main\t\t2026-06-20T12:00:00.000Z\torigin/main\t",
+                      "feature/source-control\t*\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t[ahead 1]",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.worktrees":
+                  return success(
+                    [
+                      `worktree ${missingWorktreePath}`,
+                      "HEAD abc",
+                      "branch refs/heads/main",
+                      "",
+                      `worktree ${missingWorktreePath}`,
+                      "HEAD def",
+                      "branch refs/heads/feature/source-control",
+                      "",
+                    ].join("\n"),
+                  );
+                case "vcs.panel.statusPorcelain":
+                  return success("# branch.oid abc\n# branch.head feature/source-control");
+                case "vcs.panel.remotes":
+                case "vcs.panel.stashes":
+                case "vcs.panel.stagedNumstat":
+                case "vcs.panel.unstagedNumstat":
+                  return success("");
+                default:
+                  return success("");
+              }
+            }),
+          {
+            localStatus: () =>
+              Effect.succeed({
+                ...localStatus,
+                refName: "feature/source-control",
+                hasWorkingTreeChanges: false,
+              }),
+          },
+        ),
+      ),
+    );
+  });
+
+  it.effect("includes dirty non-current worktrees as separate change sets", () => {
+    const rootPath = process.cwd();
+    const worktreePath = `${process.cwd()}/..`;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+
+      const snapshot = yield* service.snapshot({ cwd: rootPath });
 
       assert.deepStrictEqual(
         snapshot.worktreeChangeSets.map((changeSet) => ({
@@ -1769,7 +1848,7 @@ describe("SourceControlPanelService", () => {
         [
           {
             branchName: "feature/source-control",
-            worktreePath: "/repo/worktrees/feature",
+            worktreePath,
             files: [
               {
                 group: "staged",
@@ -1799,25 +1878,25 @@ describe("SourceControlPanelService", () => {
                 case "vcs.panel.localBranches":
                   return success(
                     [
-                      "main\t*\t/repo\t2026-06-20T12:00:00.000Z\torigin/main\t",
-                      "feature/source-control\t\t/repo/worktrees/feature\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t",
+                      `main\t*\t${rootPath}\t2026-06-20T12:00:00.000Z\torigin/main\t`,
+                      `feature/source-control\t\t${worktreePath}\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t`,
                     ].join("\n"),
                   );
                 case "vcs.panel.worktrees":
                   return success(
                     [
-                      "worktree /repo",
+                      `worktree ${rootPath}`,
                       "HEAD abc",
                       "branch refs/heads/main",
                       "",
-                      "worktree /repo/worktrees/feature",
+                      `worktree ${worktreePath}`,
                       "HEAD def",
                       "branch refs/heads/feature/source-control",
                       "",
                     ].join("\n"),
                   );
                 case "vcs.panel.statusPorcelain":
-                  if (input.cwd === "/repo/worktrees/feature") {
+                  if (input.cwd === worktreePath) {
                     return success(
                       [
                         "# branch.oid def",
@@ -1829,15 +1908,13 @@ describe("SourceControlPanelService", () => {
                   }
                   return success("# branch.oid abc\n# branch.head main");
                 case "vcs.panel.stagedNumstat":
-                  return input.cwd === "/repo/worktrees/feature"
+                  return input.cwd === worktreePath
                     ? success("2\t0\tsrc/staged.ts\0")
                     : success("");
                 case "vcs.panel.stagedNameStatus":
-                  return input.cwd === "/repo/worktrees/feature"
-                    ? success("A\0src/staged.ts\0")
-                    : success("");
+                  return input.cwd === worktreePath ? success("A\0src/staged.ts\0") : success("");
                 case "vcs.panel.unstagedNumstat":
-                  return input.cwd === "/repo/worktrees/feature"
+                  return input.cwd === worktreePath
                     ? success("3\t1\tsrc/unstaged.ts\0")
                     : success("");
                 case "vcs.panel.remotes":
@@ -1857,14 +1934,16 @@ describe("SourceControlPanelService", () => {
           },
         ),
       ),
-    ),
-  );
+    );
+  });
 
-  it.effect("falls back to branch-format worktree paths when worktree porcelain is empty", () =>
-    Effect.gen(function* () {
+  it.effect("falls back to branch-format worktree paths when worktree porcelain is empty", () => {
+    const rootPath = process.cwd();
+    const worktreePath = process.cwd();
+    return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
-      const snapshot = yield* service.snapshot({ cwd: "/repo/worktrees/feature" });
+      const snapshot = yield* service.snapshot({ cwd: worktreePath });
 
       assert.deepStrictEqual(
         snapshot.localBranches.map((branch) => ({
@@ -1876,12 +1955,12 @@ describe("SourceControlPanelService", () => {
           {
             name: "feature/source-control",
             current: true,
-            worktreePath: "/repo/worktrees/feature",
+            worktreePath,
           },
           {
             name: "main",
             current: false,
-            worktreePath: "/repo",
+            worktreePath: rootPath,
           },
         ],
       );
@@ -1895,8 +1974,8 @@ describe("SourceControlPanelService", () => {
                   assert.ok(input.args.join(" ").includes("%(worktreepath)"));
                   return success(
                     [
-                      "main\t\t/repo\t2026-06-20T12:00:00.000Z\torigin/main\t",
-                      "feature/source-control\t*\t/repo/worktrees/feature\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t[ahead 1]",
+                      `main\t\t${rootPath}\t2026-06-20T12:00:00.000Z\torigin/main\t`,
+                      `feature/source-control\t*\t${worktreePath}\t2026-06-21T12:00:00.000Z\torigin/feature/source-control\t[ahead 1]`,
                     ].join("\n"),
                   );
                 case "vcs.panel.worktrees":
@@ -1922,8 +2001,8 @@ describe("SourceControlPanelService", () => {
           },
         ),
       ),
-    ),
-  );
+    );
+  });
 
   it.effect("falls back when git branch does not support worktreepath formatting", () => {
     let localBranchesCalls = 0;

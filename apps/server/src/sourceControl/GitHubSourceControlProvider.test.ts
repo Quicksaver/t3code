@@ -70,7 +70,8 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
 
 it.effect("lists GitHub PRs against the requested remote repository context", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<GitHubCli.GitHubCliShape["listOpenPullRequests"]>[0] | null = null;
+    let listInput: Parameters<GitHubCli.GitHubCli["Service"]["listOpenPullRequests"]>[0] | null =
+      null;
     const provider = yield* makeProvider({
       listOpenPullRequests: (input) => {
         listInput = input;

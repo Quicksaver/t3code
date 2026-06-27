@@ -297,7 +297,6 @@ export class GitLabCli extends Context.Service<
     }) => Effect.Effect<void, GitLabCliError>;
   }
 >()("t3/sourceControl/GitLabCli") {}
-export type GitLabCliShape = GitLabCli["Service"];
 
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,

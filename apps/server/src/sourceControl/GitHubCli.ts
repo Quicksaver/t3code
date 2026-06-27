@@ -247,7 +247,6 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<void, GitHubCliError>;
   }
 >()("t3/sourceControl/GitHubCli") {}
-export type GitHubCliShape = GitHubCli["Service"];
 
 const RawGitHubRepositoryCloneUrlsSchema = Schema.Struct({
   nameWithOwner: TrimmedNonEmptyString,

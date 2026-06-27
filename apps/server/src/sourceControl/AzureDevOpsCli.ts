@@ -250,7 +250,6 @@ export class AzureDevOpsCli extends Context.Service<
     }) => Effect.Effect<void, AzureDevOpsCliError>;
   }
 >()("t3/sourceControl/AzureDevOpsCli") {}
-export type AzureDevOpsCliShape = AzureDevOpsCli["Service"];
 
 function normalizeChangeRequestId(reference: string): string {
   const trimmed = reference.trim().replace(/^#/, "");

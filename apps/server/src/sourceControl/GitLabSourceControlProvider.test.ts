@@ -123,7 +123,7 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
 
 it.effect("lists GitLab MRs against the requested remote repository context", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<GitLabCli.GitLabCliShape["listMergeRequests"]>[0] | null = null;
+    let listInput: Parameters<GitLabCli.GitLabCli["Service"]["listMergeRequests"]>[0] | null = null;
     const provider = yield* makeProvider({
       listMergeRequests: (input) => {
         listInput = input;

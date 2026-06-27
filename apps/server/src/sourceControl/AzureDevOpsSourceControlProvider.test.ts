@@ -48,8 +48,9 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
 
 it.effect("lists Azure DevOps PRs against the requested remote repository context", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["listPullRequests"]>[0] | null =
-      null;
+    let listInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["listPullRequests"]>[0]
+      | null = null;
     const provider = yield* makeProvider({
       listPullRequests: (input) => {
         listInput = input;
@@ -86,8 +87,9 @@ it.effect("lists Azure DevOps PRs against the requested remote repository contex
 
 it.effect("preserves Azure DevOps fallback project context when _git is absent", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<AzureDevOpsCli.AzureDevOpsCliShape["listPullRequests"]>[0] | null =
-      null;
+    let listInput:
+      | Parameters<AzureDevOpsCli.AzureDevOpsCli["Service"]["listPullRequests"]>[0]
+      | null = null;
     const provider = yield* makeProvider({
       listPullRequests: (input) => {
         listInput = input;
