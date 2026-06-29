@@ -659,14 +659,20 @@ const makeWsRpcLayer = ({
       const enrichOrchestrationEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
         Effect.forEach(events, enrichProjectEvent, { concurrency: 4 });
 
-      const streamThreadDetailEventsAfterSnapshot = (
-        threadId: ThreadId,
-        snapshotSequence: number,
-      ) =>
+      const bufferLiveStream = <A>(stream: Stream.Stream<A, never, never>) =>
+        Effect.gen(function* () {
+          const queue = yield* Queue.unbounded<A>();
+          yield* stream.pipe(
+            Stream.runForEach((item) => Queue.offer(queue, item).pipe(Effect.asVoid)),
+            Effect.forkScoped,
+          );
+          return Stream.fromQueue(queue);
+        });
+
+      const streamThreadDetailEvents = (threadId: ThreadId) =>
         orchestrationEngine.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>
-              event.sequence > snapshotSequence &&
               event.aggregateKind === "thread" &&
               event.aggregateId === threadId &&
               isThreadDetailEvent(event),
@@ -1179,13 +1185,8 @@ const makeWsRpcLayer = ({
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const liveEventQueue = yield* Queue.unbounded<{
-                readonly kind: "event";
-                readonly event: OrchestrationEvent;
-              }>();
-              yield* streamThreadDetailEventsAfterSnapshot(input.threadId, 0).pipe(
-                Stream.runForEach((item) => Queue.offer(liveEventQueue, item).pipe(Effect.asVoid)),
-                Effect.forkScoped,
+              const bufferedLiveStream = yield* bufferLiveStream(
+                streamThreadDetailEvents(input.threadId),
               );
 
               const [threadDetail, snapshotSequence] = yield* Effect.all([
@@ -1217,7 +1218,7 @@ const makeWsRpcLayer = ({
                 });
               }
 
-              const liveStream = Stream.fromQueue(liveEventQueue).pipe(
+              const liveStream = bufferedLiveStream.pipe(
                 Stream.filter((item) => item.event.sequence > snapshotSequence),
               );
 
