@@ -243,7 +243,10 @@ import {
   terminalThreadRefsToCloseWhenDisabled,
   waitForStartedServerThread,
 } from "./ChatView.logic";
-import { useSourceControlThreadMetadataRouting } from "./ChatView.sourceControl";
+import {
+  useSourceControlRightPanelSurfaceState,
+  useSourceControlThreadMetadataRouting,
+} from "./ChatView.sourceControl";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
@@ -2249,19 +2252,17 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitCwd },
         }),
   );
-  const sourceControlAvailable =
-    sourceControlPanelEnabled && activeThreadRef !== null && gitCwd !== null;
-  const visibleRightPanelSurfaces = useMemo(
-    () =>
-      sourceControlAvailable
-        ? rightPanelState.surfaces
-        : rightPanelState.surfaces.filter((surface) => surface.kind !== "source-control"),
-    [rightPanelState.surfaces, sourceControlAvailable],
-  );
-  const visibleActiveRightPanelSurface =
-    activeRightPanelSurface?.kind === "source-control" && !sourceControlAvailable
-      ? null
-      : activeRightPanelSurface;
+  const {
+    addSourceControlSurface,
+    sourceControlAvailable,
+    visibleActiveRightPanelSurface,
+    visibleRightPanelSurfaces,
+  } = useSourceControlRightPanelSurfaceState({
+    activeRightPanelSurface,
+    activeThreadRef,
+    gitCwd: sourceControlPanelEnabled ? gitCwd : null,
+    rightPanelSurfaces: rightPanelState.surfaces,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -2919,10 +2920,6 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
 
-  const addSourceControlSurface = useCallback(() => {
-    if (!activeThreadRef || !sourceControlAvailable) return;
-    useRightPanelStore.getState().open(activeThreadRef, "source-control");
-  }, [activeThreadRef, sourceControlAvailable]);
   const dismissThreadError = useCallback(() => {
     setThreadError(activeThreadId, null);
     clearActiveSourceControlMetadataError();

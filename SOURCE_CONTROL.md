@@ -14,8 +14,7 @@ Primary implementation files:
 - `apps/web/src/components/source-control/SourceControlPanel.logic.ts`
 - `apps/web/src/state/sourceControlPanel.ts`
 - `apps/web/src/components/ChatView.tsx`
-- `apps/web/src/components/ChatView.sourceControl.ts`, which exports
-  `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
+- `apps/web/src/components/ChatView.sourceControl.ts`, which exports source-control right-panel availability/surface helpers and `useSourceControlThreadMetadataRouting` for server and draft thread metadata routing
 - `apps/web/src/components/RightPanelTabs.tsx`
 - `apps/server/src/sourceControl/SourceControlPanelService.ts`
 - `apps/server/src/vcs/VcsStatusBroadcaster.ts`
@@ -29,6 +28,8 @@ Primary implementation files:
 ## Entry Points And Host Behavior
 
 Version Control is a singleton right-panel surface with kind `source-control`. Users open it from the existing right-panel surface picker; it is not duplicated into the main chat header, project sidebar, or conversation timeline. Availability is project/repository based: the surface is enabled when the host setting allows it, a thread or draft-thread ref exists for right-panel state, and the active project resolves to a repository cwd.
+
+`ChatView.sourceControl.ts` owns the source-control-specific right-panel availability, visible-surface filtering, and open-surface callback so upstream chat timeline and minimap changes in `ChatView.tsx` stay separate from Version Control panel glue.
 
 Right-panel integration is owned by:
 
