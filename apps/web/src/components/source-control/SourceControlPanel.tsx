@@ -1061,6 +1061,7 @@ export function SourceControlPanel({
   const expandedFileDiffsRef = useRef<ReadonlySet<string>>(new Set());
   const fileDiffRequestIdsRef = useRef(new Map<string, number>());
   const lastFocusRefreshAtRef = useRef(0);
+  const initialFetchCwdRef = useRef<string | null>(null);
   const lastVcsStatusRefreshRef = useRef<{
     readonly data: VcsStatusResult;
     readonly fingerprint: string;
@@ -2043,6 +2044,13 @@ export function SourceControlPanel({
     () => runAction("work-fetch", () => api?.vcs.fetchAllRemotes({ cwd }) ?? Promise.resolve()),
     [api, cwd, runAction],
   );
+
+  useEffect(() => {
+    if (!api) return;
+    if (initialFetchCwdRef.current === cwd) return;
+    initialFetchCwdRef.current = cwd;
+    void fetchActionableBranches();
+  }, [api, cwd, fetchActionableBranches]);
 
   useEffect(() => {
     if (!api) return;
