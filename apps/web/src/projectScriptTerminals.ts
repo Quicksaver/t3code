@@ -4,10 +4,13 @@ import type {
   TerminalAttachStreamEvent,
   TerminalOpenInput,
   TerminalSummary,
+  TerminalWriteInput,
 } from "@t3tools/contracts";
 import { WS_METHODS } from "@t3tools/contracts";
 import { subscribe } from "@t3tools/client-runtime/rpc";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import type { KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
+import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -19,6 +22,8 @@ import * as Stream from "effect/Stream";
 const ACTION_TERMINAL_ID_PREFIX = "action-";
 const ACTION_TERMINAL_FALLBACK_SEPARATOR = ":";
 const ACTION_TERMINAL_READY_TIMEOUT_MS = 4_000;
+const SCRIPT_TERMINAL_COLS = 120;
+const SCRIPT_TERMINAL_ROWS = 30;
 const MAX_TERMINAL_BUFFER_TAIL = 2_000;
 const PROMPT_LINE_MAX_LENGTH = 180;
 const ESCAPE_CHARACTER = String.fromCharCode(27);
@@ -308,6 +313,186 @@ export function runningTerminalIdsWithProjectActionReservations(input: {
     next.push(terminalId);
   }
   return next;
+}
+
+export type ProjectActionTerminalCommandResult = AtomCommandResult<unknown, unknown>;
+
+export type RunProjectScriptInTerminalResult =
+  | { readonly _tag: "Success" }
+  | { readonly _tag: "Interrupted" }
+  | {
+      readonly _tag: "Failure";
+      readonly result: Extract<ProjectActionTerminalCommandResult, { readonly _tag: "Failure" }>;
+    };
+
+function projectActionOpenInput(input: {
+  readonly threadId: TerminalOpenInput["threadId"];
+  readonly terminalId: string;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly env: NonNullable<TerminalOpenInput["env"]>;
+  readonly isKnownServerTerminal: boolean;
+}): TerminalOpenInput {
+  return {
+    threadId: input.threadId,
+    terminalId: input.terminalId,
+    cwd: input.cwd,
+    ...(input.worktreePath !== null ? { worktreePath: input.worktreePath } : {}),
+    env: input.env,
+    ...(!input.isKnownServerTerminal
+      ? { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS }
+      : {}),
+  };
+}
+
+export async function runProjectScriptInTerminal(input: {
+  readonly script: Pick<ProjectScript, "id" | "command">;
+  readonly threadId: TerminalOpenInput["threadId"];
+  readonly targetCwd: string;
+  readonly targetWorktreePath: string | null;
+  readonly runtimeEnv: NonNullable<TerminalOpenInput["env"]>;
+  readonly preferNewTerminal: boolean;
+  readonly knownTerminalIds: ReadonlyArray<string>;
+  readonly serverTerminalIds: ReadonlyArray<string>;
+  readonly visibleTerminalIds: ReadonlyArray<string>;
+  readonly runningTerminalIds: ReadonlyArray<string>;
+  readonly sessions: ReadonlyArray<ProjectActionTerminalCandidateSession>;
+  readonly reservedTerminalIds: Set<string>;
+  readonly isCommandInterrupted: (result: ProjectActionTerminalCommandResult) => boolean;
+  readonly showTerminal: (
+    terminalId: string,
+    state: { readonly isVisibleTerminal: boolean },
+  ) => void;
+  readonly openTerminal: (input: TerminalOpenInput) => Promise<ProjectActionTerminalCommandResult>;
+  readonly writeTerminal: (
+    input: TerminalWriteInput,
+  ) => Promise<ProjectActionTerminalCommandResult>;
+  readonly waitForInputReady: (
+    input: TerminalOpenInput,
+  ) => Promise<ProjectActionTerminalCommandResult>;
+  readonly requireInputReady: (
+    input: TerminalOpenInput,
+  ) => Promise<ProjectActionTerminalCommandResult>;
+}): Promise<RunProjectScriptInTerminalResult> {
+  const projectActionTerminalCandidates = classifyProjectActionTerminalCandidates({
+    sessions: input.sessions,
+    runningTerminalIds: input.runningTerminalIds,
+    targetCwd: input.targetCwd,
+    targetWorktreePath: input.targetWorktreePath,
+  });
+  const reservedProjectActionTerminalIds = input.reservedTerminalIds;
+  let targetTerminalId =
+    input.preferNewTerminal === true
+      ? nextTerminalId([...input.knownTerminalIds, ...reservedProjectActionTerminalIds])
+      : resolveProjectActionTerminalId({
+          scriptId: input.script.id,
+          terminalIds: input.knownTerminalIds,
+          runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
+            runningTerminalIds: projectActionTerminalCandidates.runningTerminalIdsForSelection,
+            reservedTerminalIds: reservedProjectActionTerminalIds,
+          }),
+        });
+  let isKnownServerTerminal = input.serverTerminalIds.includes(targetTerminalId);
+  let isVisibleTerminal = input.visibleTerminalIds.includes(targetTerminalId);
+  let targetSession = projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
+  let canWriteImmediately = projectActionTerminalCandidates.readyTerminalIds.has(targetTerminalId);
+  let waitAfterOpen = !canWriteImmediately;
+  let openTerminalInput = projectActionOpenInput({
+    threadId: input.threadId,
+    terminalId: targetTerminalId,
+    cwd: input.targetCwd,
+    worktreePath: input.targetWorktreePath,
+    env: input.runtimeEnv,
+    isKnownServerTerminal,
+  });
+  let reservedProjectActionTerminalId: string | null = null;
+  const reserveProjectActionTerminalId = (terminalId: string) => {
+    if (reservedProjectActionTerminalId === terminalId) return;
+    if (reservedProjectActionTerminalId !== null) {
+      reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
+    }
+    reservedProjectActionTerminalIds.add(terminalId);
+    reservedProjectActionTerminalId = terminalId;
+  };
+
+  reserveProjectActionTerminalId(targetTerminalId);
+  try {
+    if (
+      !canWriteImmediately &&
+      projectActionTerminalCandidates.probeTerminalIds.has(targetTerminalId)
+    ) {
+      const readyResult = await input.requireInputReady(openTerminalInput);
+      if (readyResult._tag === "Success") {
+        waitAfterOpen = true;
+      } else {
+        if (input.isCommandInterrupted(readyResult)) {
+          return { _tag: "Interrupted" };
+        }
+        targetTerminalId = resolveProjectActionTerminalId({
+          scriptId: input.script.id,
+          terminalIds: input.knownTerminalIds,
+          runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
+            runningTerminalIds: input.runningTerminalIds.filter(
+              (terminalId) => !projectActionTerminalCandidates.readyTerminalIds.has(terminalId),
+            ),
+            reservedTerminalIds: Array.from(reservedProjectActionTerminalIds).filter(
+              (terminalId) => terminalId !== reservedProjectActionTerminalId,
+            ),
+          }),
+        });
+        reserveProjectActionTerminalId(targetTerminalId);
+        isKnownServerTerminal = input.serverTerminalIds.includes(targetTerminalId);
+        isVisibleTerminal = input.visibleTerminalIds.includes(targetTerminalId);
+        targetSession = projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
+        canWriteImmediately = terminalSessionIsReadyForProjectActionInput({
+          summary: targetSession?.state.summary ?? null,
+          buffer: targetSession?.state.buffer ?? "",
+          targetCwd: input.targetCwd,
+          targetWorktreePath: input.targetWorktreePath,
+        });
+        waitAfterOpen = !canWriteImmediately;
+        openTerminalInput = projectActionOpenInput({
+          threadId: input.threadId,
+          terminalId: targetTerminalId,
+          cwd: input.targetCwd,
+          worktreePath: input.targetWorktreePath,
+          env: input.runtimeEnv,
+          isKnownServerTerminal,
+        });
+      }
+    }
+
+    input.showTerminal(targetTerminalId, { isVisibleTerminal });
+
+    const openResult = await input.openTerminal(openTerminalInput);
+    if (openResult._tag === "Failure") {
+      if (!input.isCommandInterrupted(openResult)) {
+        return { _tag: "Failure", result: openResult };
+      }
+      return { _tag: "Interrupted" };
+    }
+
+    if (waitAfterOpen) {
+      await input.waitForInputReady(openTerminalInput);
+    }
+
+    const writeResult = await input.writeTerminal({
+      threadId: input.threadId,
+      terminalId: targetTerminalId,
+      data: `${input.script.command}\r`,
+    });
+    if (writeResult._tag === "Failure") {
+      if (!input.isCommandInterrupted(writeResult)) {
+        return { _tag: "Failure", result: writeResult };
+      }
+      return { _tag: "Interrupted" };
+    }
+    return { _tag: "Success" };
+  } finally {
+    if (reservedProjectActionTerminalId !== null) {
+      reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
+    }
+  }
 }
 
 function terminalAttachInputFromOpenInput(input: TerminalOpenInput) {

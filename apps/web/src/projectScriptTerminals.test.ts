@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   classifyProjectActionTerminalCandidates,
@@ -27,6 +28,7 @@ import {
   projectActionTerminalReadinessFailureFromEvent,
   projectActionTerminalId,
   resolveProjectActionTerminalId,
+  runProjectScriptInTerminal,
   runningTerminalIdsWithProjectActionReservations,
   terminalSessionIsReadyForProjectActionInput,
   terminalSessionShouldProbeForProjectActionInput,
@@ -502,6 +504,151 @@ describe("runningTerminalIdsWithProjectActionReservations", () => {
         reservedTerminalIds: ["action-build", "action-build:2"],
       }),
     ).toEqual(["term-1", "action-build", "term-1", "action-build:2"]);
+  });
+});
+
+describe("runProjectScriptInTerminal", () => {
+  const runtimeEnv = { T3CODE_PROJECT_ROOT: "/repo" };
+  const script = { id: "build", command: "pnpm build" };
+
+  function createCommandSuccess() {
+    return AsyncResult.success(undefined);
+  }
+
+  it("reuses a ready action terminal and writes without an extra readiness wait", async () => {
+    const reservedTerminalIds = new Set<string>();
+    const showTerminal = vi.fn();
+    const openTerminal = vi.fn(async () => createCommandSuccess());
+    const writeTerminal = vi.fn(async () => createCommandSuccess());
+    const waitForInputReady = vi.fn(async () => createCommandSuccess());
+    const requireInputReady = vi.fn(async () => createCommandSuccess());
+
+    const result = await runProjectScriptInTerminal({
+      script,
+      threadId: "thread-1",
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+      runtimeEnv,
+      preferNewTerminal: false,
+      knownTerminalIds: ["action-build"],
+      serverTerminalIds: ["action-build"],
+      visibleTerminalIds: ["action-build"],
+      runningTerminalIds: ["action-build"],
+      sessions: [
+        {
+          target: { terminalId: "action-build" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: false,
+              label: "bash",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "$ ",
+          },
+        },
+      ],
+      reservedTerminalIds,
+      isCommandInterrupted: () => false,
+      showTerminal,
+      openTerminal,
+      writeTerminal,
+      waitForInputReady,
+      requireInputReady,
+    });
+
+    expect(result).toEqual({ _tag: "Success" });
+    expect(showTerminal).toHaveBeenCalledWith("action-build", { isVisibleTerminal: true });
+    expect(openTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+    });
+    expect(requireInputReady).not.toHaveBeenCalled();
+    expect(waitForInputReady).not.toHaveBeenCalled();
+    expect(writeTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      data: "pnpm build\r",
+    });
+    expect([...reservedTerminalIds]).toEqual([]);
+  });
+
+  it("falls back to another action terminal when a probed terminal is not ready", async () => {
+    const reservedTerminalIds = new Set<string>();
+    const showTerminal = vi.fn();
+    const openTerminal = vi.fn(async () => createCommandSuccess());
+    const writeTerminal = vi.fn(async () => createCommandSuccess());
+    const waitForInputReady = vi.fn(async () => createCommandSuccess());
+    const requireInputReady = vi.fn(async () => AsyncResult.failure(Cause.fail("not ready")));
+
+    const result = await runProjectScriptInTerminal({
+      script,
+      threadId: "thread-1",
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+      runtimeEnv,
+      preferNewTerminal: false,
+      knownTerminalIds: ["action-build"],
+      serverTerminalIds: ["action-build"],
+      visibleTerminalIds: ["action-build"],
+      runningTerminalIds: ["action-build"],
+      sessions: [
+        {
+          target: { terminalId: "action-build" },
+          state: {
+            summary: {
+              cwd: "/repo",
+              hasRunningSubprocess: true,
+              label: "bash",
+              status: "running",
+              worktreePath: null,
+            },
+            buffer: "still starting\n",
+          },
+        },
+      ],
+      reservedTerminalIds,
+      isCommandInterrupted: () => false,
+      showTerminal,
+      openTerminal,
+      writeTerminal,
+      waitForInputReady,
+      requireInputReady,
+    });
+
+    expect(result).toEqual({ _tag: "Success" });
+    expect(requireInputReady).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+    });
+    expect(showTerminal).toHaveBeenCalledWith("action-build:2", { isVisibleTerminal: false });
+    expect(openTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build:2",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(waitForInputReady).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build:2",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(writeTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build:2",
+      data: "pnpm build\r",
+    });
+    expect([...reservedTerminalIds]).toEqual([]);
   });
 });
 
