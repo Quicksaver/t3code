@@ -1,5 +1,7 @@
+import { type MessageId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  clearTimelineAnchorIfPositioningExhausted,
   clearPendingTimelineAnchorScrollRestore,
   isTimelineScrollKeyboardNavigationKey,
   scheduleTimelineManualNavigationListeners,
@@ -26,6 +28,8 @@ describe("timeline scroll controller", () => {
     const frames: FrameRequestCallback[] = [];
     const listeners = new Map<string, Set<EventListener>>();
     const onManualNavigation = vi.fn();
+    const onExhausted = vi.fn();
+    const onInstalled = vi.fn();
     let scrollNode: HTMLElement | null = null;
 
     const node = {
@@ -42,6 +46,8 @@ describe("timeline scroll controller", () => {
     const cleanup = scheduleTimelineManualNavigationListeners({
       getScrollNode: () => scrollNode,
       maxAttempts: 2,
+      onExhausted,
+      onInstalled,
       onManualNavigation,
       requestFrame: (callback) => {
         frames.push(callback);
@@ -57,6 +63,8 @@ describe("timeline scroll controller", () => {
 
     scrollNode = node;
     frames.shift()?.(0);
+    expect(onInstalled).toHaveBeenCalledOnce();
+    expect(onExhausted).not.toHaveBeenCalled();
     expect(listeners.get("wheel")?.size).toBe(1);
     expect(listeners.get("touchmove")?.size).toBe(1);
     expect(listeners.get("pointerdown")?.size).toBe(1);
@@ -70,6 +78,31 @@ describe("timeline scroll controller", () => {
     expect(listeners.get("touchmove")?.size).toBe(0);
     expect(listeners.get("pointerdown")?.size).toBe(0);
     expect(listeners.get("keydown")?.size).toBe(0);
+  });
+
+  it("reports exhausted manual navigation listener setup without installing listeners", () => {
+    const frames: FrameRequestCallback[] = [];
+    const onExhausted = vi.fn();
+    const onInstalled = vi.fn();
+
+    scheduleTimelineManualNavigationListeners({
+      getScrollNode: () => null,
+      maxAttempts: 1,
+      onExhausted,
+      onInstalled,
+      onManualNavigation: vi.fn(),
+      requestFrame: (callback) => {
+        frames.push(callback);
+        return frames.length;
+      },
+      cancelFrame: () => {},
+    });
+
+    frames.shift()?.(0);
+    expect(onExhausted).not.toHaveBeenCalled();
+    frames.shift()?.(0);
+    expect(onExhausted).toHaveBeenCalledOnce();
+    expect(onInstalled).not.toHaveBeenCalled();
   });
 
   it("clears pending anchor scroll restore state and cancels the queued frame", () => {
@@ -92,5 +125,30 @@ describe("timeline scroll controller", () => {
     expect(pendingAnchorScrollRestoreRef.current).toBeNull();
     expect(anchorScrollRestoreFrameRef.current).toBeNull();
     expect(cancelFrame).toHaveBeenCalledWith(7);
+  });
+
+  it("clears exhausted anchor positioning only for the active positioned anchor", () => {
+    const message1 = "message-1" as MessageId;
+    const message2 = "message-2" as MessageId;
+    const positionedTimelineAnchorRef = { current: message1 };
+    const settledTimelineAnchorRef = { current: message1 };
+
+    clearTimelineAnchorIfPositioningExhausted({
+      messageId: message2,
+      positionedTimelineAnchorRef,
+      settledTimelineAnchorRef,
+    });
+
+    expect(positionedTimelineAnchorRef.current).toBe(message1);
+    expect(settledTimelineAnchorRef.current).toBe(message1);
+
+    clearTimelineAnchorIfPositioningExhausted({
+      messageId: message1,
+      positionedTimelineAnchorRef,
+      settledTimelineAnchorRef,
+    });
+
+    expect(positionedTimelineAnchorRef.current).toBeNull();
+    expect(settledTimelineAnchorRef.current).toBeNull();
   });
 });

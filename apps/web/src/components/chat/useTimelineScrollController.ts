@@ -25,12 +25,16 @@ export function scheduleTimelineManualNavigationListeners({
   cancelFrame = cancelAnimationFrame,
   getScrollNode,
   maxAttempts = TIMELINE_SCROLL_LISTENER_SETUP_MAX_ATTEMPTS,
+  onExhausted,
+  onInstalled,
   onManualNavigation,
   requestFrame = requestAnimationFrame,
 }: {
   readonly cancelFrame?: (handle: number) => void;
   readonly getScrollNode: () => HTMLElement | null;
   readonly maxAttempts?: number;
+  readonly onExhausted?: () => void;
+  readonly onInstalled?: () => void;
   readonly onManualNavigation: () => void;
   readonly requestFrame?: (callback: FrameRequestCallback) => number;
 }): () => void {
@@ -75,6 +79,7 @@ export function scheduleTimelineManualNavigationListeners({
       passive: true,
     });
     scrollNode.addEventListener("keydown", handleKeyDown);
+    onInstalled?.();
     removeListeners = () => {
       scrollNode.removeEventListener("wheel", handleManualNavigation);
       scrollNode.removeEventListener("touchmove", handleManualNavigation);
@@ -94,6 +99,8 @@ export function scheduleTimelineManualNavigationListeners({
       if (!scrollNode) {
         if (remainingAttempts > 0) {
           scheduleSetup(remainingAttempts - 1);
+        } else {
+          onExhausted?.();
         }
         return;
       }
@@ -128,6 +135,22 @@ export function clearPendingTimelineAnchorScrollRestore({
     cancelFrame(anchorScrollRestoreFrameRef.current);
     anchorScrollRestoreFrameRef.current = null;
   }
+}
+
+export function clearTimelineAnchorIfPositioningExhausted({
+  messageId,
+  positionedTimelineAnchorRef,
+  settledTimelineAnchorRef,
+}: {
+  readonly messageId: MessageId;
+  readonly positionedTimelineAnchorRef: { current: MessageId | null };
+  readonly settledTimelineAnchorRef: { current: MessageId | null };
+}): void {
+  if (positionedTimelineAnchorRef.current !== messageId) {
+    return;
+  }
+  positionedTimelineAnchorRef.current = null;
+  settledTimelineAnchorRef.current = null;
 }
 
 export interface TimelineScrollController {
@@ -172,6 +195,9 @@ export function useTimelineScrollController({
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
   const anchorPositionFrameRefs = useRef<Set<number>>(new Set());
   const anchorPositionCleanupRef = useRef<(() => void) | null>(null);
+  const manualNavigationListenersInstalledRef = useRef(false);
+  const previousTimelineEntryCountRef = useRef(timelineEntries.length);
+  const [manualNavigationListenerRetryToken, setManualNavigationListenerRetryToken] = useState(0);
 
   const cleanupAnchorPositioning = useCallback(() => {
     for (const frame of anchorPositionFrameRefs.current) {
@@ -280,11 +306,33 @@ export function useTimelineScrollController({
 
   const hasTimelineEntries = timelineEntries.length > 0;
   useEffect(() => {
-    return scheduleTimelineManualNavigationListeners({
+    manualNavigationListenersInstalledRef.current = false;
+    const cleanup = scheduleTimelineManualNavigationListeners({
       getScrollNode: () => listRef.current?.getScrollableNode() ?? null,
+      onExhausted: () => {
+        manualNavigationListenersInstalledRef.current = false;
+      },
+      onInstalled: () => {
+        manualNavigationListenersInstalledRef.current = true;
+      },
       onManualNavigation: () => cancelForManualNavigationRef.current(),
     });
-  }, [activeThreadId, hasTimelineEntries, listRef]);
+    return () => {
+      manualNavigationListenersInstalledRef.current = false;
+      cleanup();
+    };
+  }, [activeThreadId, hasTimelineEntries, listRef, manualNavigationListenerRetryToken]);
+  useEffect(() => {
+    const previousTimelineEntryCount = previousTimelineEntryCountRef.current;
+    previousTimelineEntryCountRef.current = timelineEntries.length;
+    if (
+      previousTimelineEntryCount > 0 &&
+      timelineEntries.length > previousTimelineEntryCount &&
+      !manualNavigationListenersInstalledRef.current
+    ) {
+      setManualNavigationListenerRetryToken((token) => token + 1);
+    }
+  }, [timelineEntries.length]);
 
   const onAnchorReady = useCallback(
     (messageId: MessageId, anchorIndex: number) => {
@@ -307,6 +355,12 @@ export function useTimelineScrollController({
           if (!list) {
             if (remainingAttempts > 0) {
               positionAnchor(remainingAttempts - 1);
+            } else {
+              clearTimelineAnchorIfPositioningExhausted({
+                messageId,
+                positionedTimelineAnchorRef,
+                settledTimelineAnchorRef,
+              });
             }
             return;
           }
@@ -314,6 +368,12 @@ export function useTimelineScrollController({
           if (!scrollNode) {
             if (remainingAttempts > 0) {
               positionAnchor(remainingAttempts - 1);
+            } else {
+              clearTimelineAnchorIfPositioningExhausted({
+                messageId,
+                positionedTimelineAnchorRef,
+                settledTimelineAnchorRef,
+              });
             }
             return;
           }
