@@ -163,10 +163,99 @@ const MIN_SECTION_WEIGHT = 0.35;
 const COMMIT_PAGE_SIZE = 10;
 const WORKING_FILE_PREFETCH_MARGIN = 600;
 const ENRICHMENT_KEY_SEPARATOR = "\0";
+const PANEL_STATE_CACHE_LIMIT = 24;
 const commitDateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
   timeStyle: "short",
 });
+
+interface CachedSourceControlPanelState {
+  readonly snapshot: VcsPanelSnapshotResult | null;
+  readonly snapshotFingerprint: string | null;
+  readonly collapsed: ReadonlySet<SectionKey>;
+  readonly sectionWeights: Record<SectionKey, number>;
+  readonly expandedTree: ReadonlySet<string>;
+  readonly collapsedDefaultTree: ReadonlySet<string>;
+  readonly branchDetailsByRef: ReadonlyMap<string, VcsPanelBranchDetails>;
+  readonly compareBaseOverrides: ReadonlyMap<string, string>;
+  readonly stashDetailsByRef: ReadonlyMap<string, VcsPanelStashDetails>;
+  readonly expandedFileDiffs: ReadonlySet<string>;
+  readonly fileDiffsByKey: ReadonlyMap<string, FileDiffLoadState>;
+  readonly enrichedWorkingTreeFilesByPath: ReadonlyMap<string, VcsPanelFileChange>;
+  readonly hiddenWorkingTreePaths: ReadonlySet<string>;
+  readonly selectedChangePaths: ReadonlySet<string>;
+  readonly selectedWorktreeChangePaths: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+const sourceControlPanelStateCache = new Map<string, CachedSourceControlPanelState>();
+
+function sourceControlPanelStateCacheKey(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+}): string {
+  return `${input.environmentId}:${input.threadId}:${input.cwd}:${input.worktreePath ?? ""}`;
+}
+
+function cloneReadonlySet<T>(value: ReadonlySet<T>): ReadonlySet<T> {
+  return new Set(value);
+}
+
+function cloneStringSetMap(
+  value: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  return new Map([...value].map(([key, set]) => [key, new Set(set)]));
+}
+
+function cacheableFileDiffs(
+  value: ReadonlyMap<string, FileDiffLoadState>,
+): ReadonlyMap<string, FileDiffLoadState> {
+  return new Map([...value].filter(([, state]) => state.status !== "loading"));
+}
+
+function cacheableExpandedFileDiffs(
+  expanded: ReadonlySet<string>,
+  fileDiffsByKey: ReadonlyMap<string, FileDiffLoadState>,
+): ReadonlySet<string> {
+  return new Set([...expanded].filter((key) => fileDiffsByKey.has(key)));
+}
+
+function cloneCachedSourceControlPanelState(
+  value: CachedSourceControlPanelState,
+): CachedSourceControlPanelState {
+  const fileDiffsByKey = cacheableFileDiffs(value.fileDiffsByKey);
+  return {
+    snapshot: value.snapshot,
+    snapshotFingerprint: value.snapshotFingerprint,
+    collapsed: cloneReadonlySet(value.collapsed),
+    sectionWeights: { ...value.sectionWeights },
+    expandedTree: cloneReadonlySet(value.expandedTree),
+    collapsedDefaultTree: cloneReadonlySet(value.collapsedDefaultTree),
+    branchDetailsByRef: new Map(value.branchDetailsByRef),
+    compareBaseOverrides: new Map(value.compareBaseOverrides),
+    stashDetailsByRef: new Map(value.stashDetailsByRef),
+    expandedFileDiffs: cacheableExpandedFileDiffs(value.expandedFileDiffs, fileDiffsByKey),
+    fileDiffsByKey,
+    enrichedWorkingTreeFilesByPath: new Map(value.enrichedWorkingTreeFilesByPath),
+    hiddenWorkingTreePaths: cloneReadonlySet(value.hiddenWorkingTreePaths),
+    selectedChangePaths: cloneReadonlySet(value.selectedChangePaths),
+    selectedWorktreeChangePaths: cloneStringSetMap(value.selectedWorktreeChangePaths),
+  };
+}
+
+function writeCachedSourceControlPanelState(
+  key: string,
+  value: CachedSourceControlPanelState,
+): void {
+  sourceControlPanelStateCache.delete(key);
+  sourceControlPanelStateCache.set(key, cloneCachedSourceControlPanelState(value));
+  while (sourceControlPanelStateCache.size > PANEL_STATE_CACHE_LIMIT) {
+    const oldestKey = sourceControlPanelStateCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    sourceControlPanelStateCache.delete(oldestKey);
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Source control action failed.";
@@ -1054,11 +1143,24 @@ export function SourceControlPanel({
       input: { cwd },
     }),
   );
+  const panelStateCacheKey = useMemo(
+    () => sourceControlPanelStateCacheKey({ environmentId, threadId, cwd, worktreePath }),
+    [cwd, environmentId, threadId, worktreePath],
+  );
+  const cachedPanelState = useMemo(() => {
+    const cached = sourceControlPanelStateCache.get(panelStateCacheKey);
+    return cached ? cloneCachedSourceControlPanelState(cached) : null;
+  }, [panelStateCacheKey]);
+  const cachedSnapshot = cachedPanelState?.snapshot ?? null;
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const snapshotFingerprintRef = useRef<string | null>(null);
-  const snapshotRef = useRef<VcsPanelSnapshotResult | null>(null);
-  const expandedTreeRef = useRef<ReadonlySet<string>>(new Set());
-  const expandedFileDiffsRef = useRef<ReadonlySet<string>>(new Set());
+  const snapshotFingerprintRef = useRef<string | null>(
+    cachedPanelState?.snapshotFingerprint ?? null,
+  );
+  const snapshotRef = useRef<VcsPanelSnapshotResult | null>(cachedSnapshot);
+  const expandedTreeRef = useRef<ReadonlySet<string>>(cachedPanelState?.expandedTree ?? new Set());
+  const expandedFileDiffsRef = useRef<ReadonlySet<string>>(
+    cachedPanelState?.expandedFileDiffs ?? new Set(),
+  );
   const fileDiffRequestIdsRef = useRef(new Map<string, number>());
   const lastFocusRefreshAtRef = useRef(0);
   const initialFetchCwdRef = useRef<string | null>(null);
@@ -1066,52 +1168,75 @@ export function SourceControlPanel({
     readonly data: VcsStatusResult;
     readonly fingerprint: string;
   } | null>(null);
-  const previousChangedPathsRef = useRef<ReadonlySet<string>>(new Set());
+  const previousChangedPathsRef = useRef<ReadonlySet<string>>(
+    cachedSnapshot
+      ? new Set(mergeChangeGroups(cachedSnapshot.changeGroups).map((file) => file.path))
+      : new Set(),
+  );
   const previousWorktreeChangedPathsRef = useRef<ReadonlyMap<string, ReadonlySet<string>>>(
-    new Map(),
+    cachedSnapshot
+      ? new Map(
+          cachedSnapshot.worktreeChangeSets.map((changeSet) => [
+            worktreeChangeSetId(changeSet),
+            new Set(mergeChangeGroups(changeSet.changeGroups).map((file) => file.path)),
+          ]),
+        )
+      : new Map(),
   );
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
-  const enrichedWorkingTreeFilesRef = useRef<ReadonlyMap<string, VcsPanelFileChange>>(new Map());
-  const hiddenWorkingTreePathsRef = useRef<ReadonlySet<string>>(new Set());
+  const enrichedWorkingTreeFilesRef = useRef<ReadonlyMap<string, VcsPanelFileChange>>(
+    cachedPanelState?.enrichedWorkingTreeFilesByPath ?? new Map(),
+  );
+  const hiddenWorkingTreePathsRef = useRef<ReadonlySet<string>>(
+    cachedPanelState?.hiddenWorkingTreePaths ?? new Set(),
+  );
   const pendingWorkingTreeEnrichmentPathsRef = useRef<Set<string>>(new Set());
   const inFlightWorkingTreeEnrichmentPathsRef = useRef<Set<string>>(new Set());
   const workingTreeEnrichmentTimerRef = useRef<number | null>(null);
   const workingTreeEnrichmentGenerationRef = useRef(0);
-  const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(cachedSnapshot);
+  const [loading, setLoading] = useState(cachedSnapshot === null);
   const [runningActions, setRunningActions] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(() => new Set(["remotes"]));
-  const [sectionWeights, setSectionWeights] = useState(DEFAULT_SECTION_WEIGHTS);
-  const [expandedTree, setExpandedTree] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(
+    () => cachedPanelState?.collapsed ?? new Set(["remotes"]),
+  );
+  const [sectionWeights, setSectionWeights] = useState(
+    () => cachedPanelState?.sectionWeights ?? DEFAULT_SECTION_WEIGHTS,
+  );
+  const [expandedTree, setExpandedTree] = useState<ReadonlySet<string>>(
+    () => cachedPanelState?.expandedTree ?? new Set(),
+  );
   const [collapsedDefaultTree, setCollapsedDefaultTree] = useState<ReadonlySet<string>>(
-    () => new Set(),
+    () => cachedPanelState?.collapsedDefaultTree ?? new Set(),
   );
   const [branchDetailsByRef, setBranchDetailsByRef] = useState<
     ReadonlyMap<string, VcsPanelBranchDetails>
-  >(() => new Map());
+  >(() => cachedPanelState?.branchDetailsByRef ?? new Map());
   const [compareBaseOverrides, setCompareBaseOverrides] = useState<ReadonlyMap<string, string>>(
-    () => new Map(),
+    () => cachedPanelState?.compareBaseOverrides ?? new Map(),
   );
   const [loadingBranchDetails, setLoadingBranchDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [stashDetailsByRef, setStashDetailsByRef] = useState<
     ReadonlyMap<string, VcsPanelStashDetails>
-  >(() => new Map());
+  >(() => cachedPanelState?.stashDetailsByRef ?? new Map());
   const [loadingStashDetails, setLoadingStashDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [expandedFileDiffs, setExpandedFileDiffs] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandedFileDiffs, setExpandedFileDiffs] = useState<ReadonlySet<string>>(
+    () => cachedPanelState?.expandedFileDiffs ?? new Set(),
+  );
   const [fileDiffsByKey, setFileDiffsByKey] = useState<ReadonlyMap<string, FileDiffLoadState>>(
-    () => new Map(),
+    () => cachedPanelState?.fileDiffsByKey ?? new Map(),
   );
   const [enrichedWorkingTreeFilesByPath, setEnrichedWorkingTreeFilesByPath] = useState<
     ReadonlyMap<string, VcsPanelFileChange>
-  >(() => new Map());
+  >(() => cachedPanelState?.enrichedWorkingTreeFilesByPath ?? new Map());
   const [hiddenWorkingTreePaths, setHiddenWorkingTreePaths] = useState<ReadonlySet<string>>(
-    () => new Set(),
+    () => cachedPanelState?.hiddenWorkingTreePaths ?? new Set(),
   );
   const [addRemoteOpen, setAddRemoteOpen] = useState(false);
   const [commitDialogOpen, setCommitDialogOpen] = useState(false);
@@ -1136,11 +1261,11 @@ export function SourceControlPanel({
   const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [selectedChangePaths, setSelectedChangePaths] = useState<ReadonlySet<string>>(
-    () => new Set(),
+    () => cachedPanelState?.selectedChangePaths ?? new Set(),
   );
   const [selectedWorktreeChangePaths, setSelectedWorktreeChangePaths] = useState<
     ReadonlyMap<string, ReadonlySet<string>>
-  >(() => new Map());
+  >(() => cachedPanelState?.selectedWorktreeChangePaths ?? new Map());
   const displayedChangeGroups = useMemo(
     () =>
       applyWorkingTreeFileEnrichment(
@@ -1244,6 +1369,42 @@ export function SourceControlPanel({
     (actionKey: string) => runningActions.has(actionKey),
     [runningActions],
   );
+
+  useEffect(() => {
+    writeCachedSourceControlPanelState(panelStateCacheKey, {
+      snapshot,
+      snapshotFingerprint: snapshotFingerprintRef.current,
+      collapsed,
+      sectionWeights,
+      expandedTree,
+      collapsedDefaultTree,
+      branchDetailsByRef,
+      compareBaseOverrides,
+      stashDetailsByRef,
+      expandedFileDiffs,
+      fileDiffsByKey,
+      enrichedWorkingTreeFilesByPath,
+      hiddenWorkingTreePaths,
+      selectedChangePaths,
+      selectedWorktreeChangePaths,
+    });
+  }, [
+    branchDetailsByRef,
+    collapsed,
+    collapsedDefaultTree,
+    compareBaseOverrides,
+    enrichedWorkingTreeFilesByPath,
+    expandedFileDiffs,
+    expandedTree,
+    fileDiffsByKey,
+    hiddenWorkingTreePaths,
+    panelStateCacheKey,
+    sectionWeights,
+    selectedChangePaths,
+    selectedWorktreeChangePaths,
+    snapshot,
+    stashDetailsByRef,
+  ]);
 
   const resetWorkingTreeFileEnrichment = useCallback(() => {
     workingTreeEnrichmentGenerationRef.current += 1;
