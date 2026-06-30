@@ -3328,6 +3328,13 @@ function ChatViewContent(props: ChatViewProps) {
     readonly userScrollGeneration: number;
   } | null>(null);
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
+  const clearPendingTimelineAnchorScrollRestore = useCallback(() => {
+    pendingAnchorScrollRestoreRef.current = null;
+    if (anchorScrollRestoreFrameRef.current !== null) {
+      cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
+      anchorScrollRestoreFrameRef.current = null;
+    }
+  }, []);
   const clearFailedTimelineAnchor = useCallback((threadKey: string, messageId: MessageId) => {
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
@@ -3340,14 +3347,14 @@ function ChatViewContent(props: ChatViewProps) {
     }
     activeTimelineAnchorIndexRef.current = null;
     if (pendingAnchorScrollRestoreRef.current?.messageId === messageId) {
-      pendingAnchorScrollRestoreRef.current = null;
+      clearPendingTimelineAnchorScrollRestore();
     }
     setTimelineAnchor((current) =>
       current.threadKey === threadKey && current.messageId === messageId
         ? { threadKey: current.threadKey, messageId: null }
         : current,
     );
-  }, []);
+  }, [clearPendingTimelineAnchorScrollRestore]);
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
@@ -3356,12 +3363,8 @@ function ChatViewContent(props: ChatViewProps) {
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
-    pendingAnchorScrollRestoreRef.current = null;
-    if (anchorScrollRestoreFrameRef.current !== null) {
-      cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
-      anchorScrollRestoreFrameRef.current = null;
-    }
-  }, []);
+    clearPendingTimelineAnchorScrollRestore();
+  }, [clearPendingTimelineAnchorScrollRestore]);
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
   );
@@ -3427,15 +3430,11 @@ function ChatViewContent(props: ChatViewProps) {
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
-    pendingAnchorScrollRestoreRef.current = null;
-    if (anchorScrollRestoreFrameRef.current !== null) {
-      cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
-      anchorScrollRestoreFrameRef.current = null;
-    }
+    clearPendingTimelineAnchorScrollRestore();
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     void legendListRef.current?.scrollToEnd?.({ animated });
-  }, []);
+  }, [clearPendingTimelineAnchorScrollRestore]);
   useEffect(() => {
     let frame: number | null = null;
     let removeListeners: (() => void) | null = null;
@@ -3503,7 +3502,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, timelineEntries.length]);
+  }, [activeThread?.id, timelineEntries.length > 0]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -3701,6 +3700,7 @@ function ChatViewContent(props: ChatViewProps) {
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
+    clearPendingTimelineAnchorScrollRestore();
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     if (planSidebarOpenOnNextThreadRef.current) {
@@ -3711,7 +3711,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
     planSidebarDismissedForTurnRef.current = null;
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThread?.id, clearPendingTimelineAnchorScrollRestore]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -4278,6 +4278,7 @@ function ChatViewContent(props: ChatViewProps) {
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     pendingTimelineAnchorRef.current = messageIdForSend;
     activeTimelineAnchorIndexRef.current = null;
+    clearPendingTimelineAnchorScrollRestore();
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     const timelineAnchorThreadKey = scopedThreadKey(
@@ -4719,6 +4720,7 @@ function ChatViewContent(props: ChatViewProps) {
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       pendingTimelineAnchorRef.current = messageIdForSend;
       activeTimelineAnchorIndexRef.current = null;
+      clearPendingTimelineAnchorScrollRestore();
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
       const timelineAnchorThreadKey = scopedThreadKey(
@@ -4821,6 +4823,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeProposedPlan,
       beginLocalDispatch,
       clearFailedTimelineAnchor,
+      clearPendingTimelineAnchorScrollRestore,
       isConnecting,
       isSendBusy,
       isServerThread,
