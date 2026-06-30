@@ -315,6 +315,15 @@ export function runningTerminalIdsWithProjectActionReservations(input: {
   return next;
 }
 
+export function releaseProjectActionTerminalReservationsSeenRunning(input: {
+  readonly runningTerminalIds: Iterable<string>;
+  readonly reservedTerminalIds: Set<string>;
+}): void {
+  for (const terminalId of input.runningTerminalIds) {
+    input.reservedTerminalIds.delete(terminalId);
+  }
+}
+
 export type ProjectActionTerminalCommandResult = AtomCommandResult<unknown, unknown>;
 
 export type RunProjectScriptInTerminalResult =
@@ -406,6 +415,7 @@ export async function runProjectScriptInTerminal(input: {
     isKnownServerTerminal,
   });
   let reservedProjectActionTerminalId: string | null = null;
+  let keepReservationAfterWrite = false;
   const reserveProjectActionTerminalId = (terminalId: string) => {
     if (reservedProjectActionTerminalId === terminalId) return;
     if (reservedProjectActionTerminalId !== null) {
@@ -493,9 +503,10 @@ export async function runProjectScriptInTerminal(input: {
       }
       return { _tag: "Interrupted" };
     }
+    keepReservationAfterWrite = true;
     return { _tag: "Success" };
   } finally {
-    if (reservedProjectActionTerminalId !== null) {
+    if (reservedProjectActionTerminalId !== null && !keepReservationAfterWrite) {
       reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
     }
   }
