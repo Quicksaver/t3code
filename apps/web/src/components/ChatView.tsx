@@ -316,6 +316,7 @@ const TIMELINE_SCROLL_NAVIGATION_KEYS = new Set([
   "Spacebar",
   " ",
 ]);
+const TIMELINE_SCROLL_LISTENER_SETUP_MAX_ATTEMPTS = 12;
 
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -3432,10 +3433,22 @@ function ChatViewContent(props: ChatViewProps) {
     void legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
   useEffect(() => {
+    let frame: number | null = null;
     let removeListeners: (() => void) | null = null;
-    const frame = requestAnimationFrame(() => {
+    let cancelled = false;
+
+    const scheduleSetup = (remainingAttempts: number) => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (cancelled || removeListeners !== null) {
+          return;
+        }
+
       const scrollNode = legendListRef.current?.getScrollableNode();
       if (!scrollNode) {
+        if (remainingAttempts > 0) {
+          scheduleSetup(remainingAttempts - 1);
+        }
         return;
       }
       const handleManualNavigation = () => {
@@ -3473,13 +3486,20 @@ function ChatViewContent(props: ChatViewProps) {
           capture: true,
         });
       };
-    });
+      });
+    };
+
+    scheduleSetup(TIMELINE_SCROLL_LISTENER_SETUP_MAX_ATTEMPTS);
 
     return () => {
-      cancelAnimationFrame(frame);
+      cancelled = true;
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+        frame = null;
+      }
       removeListeners?.();
     };
-  }, [activeThread?.id]);
+  }, [activeThread?.id, timelineEntries.length]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
