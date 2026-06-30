@@ -3341,12 +3341,22 @@ function ChatViewContent(props: ChatViewProps) {
     readonly userScrollGeneration: number;
   } | null>(null);
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
+  const manualNavigationListenersInstalledRef = useRef(false);
+  const previousTimelineEntryCountRef = useRef(timelineEntries.length);
+  const [manualNavigationListenerRetryToken, setManualNavigationListenerRetryToken] = useState(0);
   const clearPendingTimelineAnchorScrollRestore = useCallback(() => {
     pendingAnchorScrollRestoreRef.current = null;
     if (anchorScrollRestoreFrameRef.current !== null) {
       cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
       anchorScrollRestoreFrameRef.current = null;
     }
+  }, []);
+  const clearTimelineAnchorIfPositioningExhausted = useCallback((messageId: MessageId) => {
+    if (positionedTimelineAnchorRef.current !== messageId) {
+      return;
+    }
+    positionedTimelineAnchorRef.current = null;
+    settledTimelineAnchorRef.current = null;
   }, []);
   const clearFailedTimelineAnchor = useCallback(
     (threadKey: string, messageId: MessageId) => {
@@ -3458,6 +3468,7 @@ function ChatViewContent(props: ChatViewProps) {
     let frame: number | null = null;
     let removeListeners: (() => void) | null = null;
     let cancelled = false;
+    manualNavigationListenersInstalledRef.current = false;
 
     const scheduleSetup = (remainingAttempts: number) => {
       frame = requestAnimationFrame(() => {
@@ -3470,6 +3481,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (!scrollNode) {
           if (remainingAttempts > 0) {
             scheduleSetup(remainingAttempts - 1);
+          } else {
+            manualNavigationListenersInstalledRef.current = false;
           }
           return;
         }
@@ -3508,6 +3521,7 @@ function ChatViewContent(props: ChatViewProps) {
             capture: true,
           });
         };
+        manualNavigationListenersInstalledRef.current = true;
       });
     };
 
@@ -3515,13 +3529,26 @@ function ChatViewContent(props: ChatViewProps) {
 
     return () => {
       cancelled = true;
+      manualNavigationListenersInstalledRef.current = false;
       if (frame !== null) {
         cancelAnimationFrame(frame);
         frame = null;
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, timelineEntries.length > 0]);
+  }, [activeThread?.id, timelineEntries.length > 0, manualNavigationListenerRetryToken]);
+
+  useEffect(() => {
+    const previousTimelineEntryCount = previousTimelineEntryCountRef.current;
+    previousTimelineEntryCountRef.current = timelineEntries.length;
+    if (
+      previousTimelineEntryCount > 0 &&
+      timelineEntries.length > previousTimelineEntryCount &&
+      !manualNavigationListenersInstalledRef.current
+    ) {
+      setManualNavigationListenerRetryToken((token) => token + 1);
+    }
+  }, [timelineEntries.length]);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (pendingTimelineAnchorRef.current === messageId) {
@@ -3542,6 +3569,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (!list) {
           if (remainingAttempts > 0) {
             positionAnchor(remainingAttempts - 1);
+          } else {
+            clearTimelineAnchorIfPositioningExhausted(messageId);
           }
           return;
         }
@@ -3549,6 +3578,8 @@ function ChatViewContent(props: ChatViewProps) {
         if (!scrollNode) {
           if (remainingAttempts > 0) {
             positionAnchor(remainingAttempts - 1);
+          } else {
+            clearTimelineAnchorIfPositioningExhausted(messageId);
           }
           return;
         }
@@ -3578,7 +3609,7 @@ function ChatViewContent(props: ChatViewProps) {
       });
     };
     requestAnimationFrame(() => positionAnchor(12));
-  }, []);
+  }, [clearTimelineAnchorIfPositioningExhausted]);
   const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
     if (settledTimelineAnchorRef.current !== messageId) {
       return;
