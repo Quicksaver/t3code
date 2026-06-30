@@ -3357,6 +3357,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
     positionedTimelineAnchorRef.current = null;
     settledTimelineAnchorRef.current = null;
+    activeTimelineAnchorIndexRef.current = null;
+    timelineScrollModeRef.current = "following-end";
   }, []);
   const clearFailedTimelineAnchor = useCallback(
     (threadKey: string, messageId: MessageId) => {
