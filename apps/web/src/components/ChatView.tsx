@@ -309,6 +309,16 @@ const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
+const TIMELINE_SCROLL_NAVIGATION_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  "Spacebar",
+  " ",
+]);
 
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -336,6 +346,45 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
   return true;
+}
+
+function shouldTreatKeyAsTimelineScrollNavigation(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented || event.isComposing) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  if (!TIMELINE_SCROLL_NAVIGATION_KEYS.has(event.key)) return false;
+
+  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
+  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
+  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
+
+  return true;
+}
+
+function isPointerInNativeScrollbarGutter(scrollNode: HTMLElement, event: PointerEvent): boolean {
+  const verticalScrollbarWidth = scrollNode.offsetWidth - scrollNode.clientWidth;
+  const horizontalScrollbarHeight = scrollNode.offsetHeight - scrollNode.clientHeight;
+  if (verticalScrollbarWidth <= 0 && horizontalScrollbarHeight <= 0) {
+    return false;
+  }
+
+  const rect = scrollNode.getBoundingClientRect();
+  const isRtl = getComputedStyle(scrollNode).direction === "rtl";
+  const verticalScrollbarStart = isRtl ? rect.left : rect.right - verticalScrollbarWidth;
+  const verticalScrollbarEnd = isRtl ? rect.left + verticalScrollbarWidth : rect.right;
+  const isInVerticalScrollbar =
+    verticalScrollbarWidth > 0 &&
+    event.clientX >= verticalScrollbarStart &&
+    event.clientX <= verticalScrollbarEnd &&
+    event.clientY >= rect.top &&
+    event.clientY <= rect.bottom;
+  const isInHorizontalScrollbar =
+    horizontalScrollbarHeight > 0 &&
+    event.clientX >= rect.left &&
+    event.clientX <= rect.right &&
+    event.clientY >= rect.bottom - horizontalScrollbarHeight &&
+    event.clientY <= rect.bottom;
+
+  return isInVerticalScrollbar || isInHorizontalScrollbar;
 }
 
 function formatOutgoingPrompt(params: {
@@ -3504,15 +3553,37 @@ function ChatViewContent(props: ChatViewProps) {
       const handleManualNavigation = () => {
         cancelTimelineLiveFollowForUserNavigationRef.current();
       };
+      const handleKeyboardNavigation = (event: KeyboardEvent) => {
+        if (shouldTreatKeyAsTimelineScrollNavigation(event)) {
+          handleManualNavigation();
+        }
+      };
+      const handleScrollbarPointerNavigation = (event: PointerEvent) => {
+        if (isPointerInNativeScrollbarGutter(scrollNode, event)) {
+          handleManualNavigation();
+        }
+      };
       scrollNode.addEventListener("wheel", handleManualNavigation, {
         passive: true,
       });
       scrollNode.addEventListener("touchmove", handleManualNavigation, {
         passive: true,
       });
+      scrollNode.addEventListener("keydown", handleKeyboardNavigation, {
+        capture: true,
+      });
+      scrollNode.addEventListener("pointerdown", handleScrollbarPointerNavigation, {
+        capture: true,
+      });
       removeListeners = () => {
         scrollNode.removeEventListener("wheel", handleManualNavigation);
         scrollNode.removeEventListener("touchmove", handleManualNavigation);
+        scrollNode.removeEventListener("keydown", handleKeyboardNavigation, {
+          capture: true,
+        });
+        scrollNode.removeEventListener("pointerdown", handleScrollbarPointerNavigation, {
+          capture: true,
+        });
       };
     });
 
