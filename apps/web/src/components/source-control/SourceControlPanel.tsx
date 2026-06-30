@@ -113,6 +113,7 @@ import {
   mergeChangeGroups,
   type PanelChangedFile,
   type PanelFileDiffLoadState,
+  stashIdentityKey,
   vcsPanelSnapshotFingerprint,
 } from "./SourceControlPanel.logic";
 
@@ -178,7 +179,7 @@ interface CachedSourceControlPanelState {
   readonly collapsedDefaultTree: ReadonlySet<string>;
   readonly branchDetailsByRef: ReadonlyMap<string, VcsPanelBranchDetails>;
   readonly compareBaseOverrides: ReadonlyMap<string, string>;
-  readonly stashDetailsByRef: ReadonlyMap<string, VcsPanelStashDetails>;
+  readonly stashDetailsByKey: ReadonlyMap<string, VcsPanelStashDetails>;
   readonly expandedFileDiffs: ReadonlySet<string>;
   readonly fileDiffsByKey: ReadonlyMap<string, FileDiffLoadState>;
   readonly enrichedWorkingTreeFilesByPath: ReadonlyMap<string, VcsPanelFileChange>;
@@ -234,7 +235,7 @@ function cloneCachedSourceControlPanelState(
     collapsedDefaultTree: cloneReadonlySet(value.collapsedDefaultTree),
     branchDetailsByRef: new Map(value.branchDetailsByRef),
     compareBaseOverrides: new Map(value.compareBaseOverrides),
-    stashDetailsByRef: new Map(value.stashDetailsByRef),
+    stashDetailsByKey: new Map(value.stashDetailsByKey),
     expandedFileDiffs: cacheableExpandedFileDiffs(value.expandedFileDiffs, fileDiffsByKey),
     fileDiffsByKey,
     enrichedWorkingTreeFilesByPath: new Map(value.enrichedWorkingTreeFilesByPath),
@@ -441,13 +442,18 @@ function expandedBranchesForSnapshot(
   return [...localBranches, ...expandedLocalBranches, ...remoteBranches, ...forkBranches];
 }
 
-function expandedStashRefsForSnapshot(
+type ExpandedStashRequest = {
+  readonly stashRef: string;
+  readonly detailsKey: string;
+};
+
+function expandedStashesForSnapshot(
   snapshot: VcsPanelSnapshotResult,
   expanded: ReadonlySet<string>,
-): string[] {
+): ExpandedStashRequest[] {
   return snapshot.stashes
-    .filter((stash) => expanded.has(treeKey("stash", stash.refName)))
-    .map((stash) => stash.refName);
+    .filter((stash) => expanded.has(treeKey("stash", stashIdentityKey(stash))))
+    .map((stash) => ({ stashRef: stash.refName, detailsKey: stashIdentityKey(stash) }));
 }
 
 function StatLabels({
@@ -1169,8 +1175,8 @@ export function SourceControlPanel({
   const branchDetailsByRefRef = useRef<ReadonlyMap<string, VcsPanelBranchDetails>>(
     cachedPanelState?.branchDetailsByRef ?? new Map(),
   );
-  const stashDetailsByRefRef = useRef<ReadonlyMap<string, VcsPanelStashDetails>>(
-    cachedPanelState?.stashDetailsByRef ?? new Map(),
+  const stashDetailsByKeyRef = useRef<ReadonlyMap<string, VcsPanelStashDetails>>(
+    cachedPanelState?.stashDetailsByKey ?? new Map(),
   );
   const expandedTreeRef = useRef<ReadonlySet<string>>(cachedPanelState?.expandedTree ?? new Set());
   const expandedFileDiffsRef = useRef<ReadonlySet<string>>(
@@ -1235,9 +1241,9 @@ export function SourceControlPanel({
   const [loadingBranchDetails, setLoadingBranchDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [stashDetailsByRef, setStashDetailsByRef] = useState<
+  const [stashDetailsByKey, setStashDetailsByKey] = useState<
     ReadonlyMap<string, VcsPanelStashDetails>
-  >(() => cachedPanelState?.stashDetailsByRef ?? new Map());
+  >(() => cachedPanelState?.stashDetailsByKey ?? new Map());
   const [loadingStashDetails, setLoadingStashDetails] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1390,8 +1396,8 @@ export function SourceControlPanel({
   }, [branchDetailsByRef]);
 
   useEffect(() => {
-    stashDetailsByRefRef.current = stashDetailsByRef;
-  }, [stashDetailsByRef]);
+    stashDetailsByKeyRef.current = stashDetailsByKey;
+  }, [stashDetailsByKey]);
 
   useEffect(() => {
     writeCachedSourceControlPanelState(panelStateCacheKey, {
@@ -1403,7 +1409,7 @@ export function SourceControlPanel({
       collapsedDefaultTree,
       branchDetailsByRef,
       compareBaseOverrides,
-      stashDetailsByRef,
+      stashDetailsByKey,
       expandedFileDiffs,
       fileDiffsByKey,
       enrichedWorkingTreeFilesByPath,
@@ -1426,7 +1432,7 @@ export function SourceControlPanel({
     selectedChangePaths,
     selectedWorktreeChangePaths,
     snapshot,
-    stashDetailsByRef,
+    stashDetailsByKey,
   ]);
 
   const resetWorkingTreeFileEnrichment = useCallback(() => {
@@ -1766,36 +1772,38 @@ export function SourceControlPanel({
       options: { readonly reloadAll?: boolean } = {},
     ) => {
       if (!api) return;
-      const expandedStashRefs = expandedStashRefsForSnapshot(nextSnapshot, expandedTreeRef.current);
-      const stashRefs = options.reloadAll
-        ? expandedStashRefs
-        : expandedStashRefs.filter((stashRef) => !stashDetailsByRefRef.current.has(stashRef));
-      if (stashRefs.length === 0) return;
+      const expandedStashes = expandedStashesForSnapshot(nextSnapshot, expandedTreeRef.current);
+      const stashRequests = options.reloadAll
+        ? expandedStashes
+        : expandedStashes.filter((stash) => !stashDetailsByKeyRef.current.has(stash.detailsKey));
+      if (stashRequests.length === 0) return;
 
       setLoadingStashDetails((current) => {
         const next = new Set(current);
-        for (const stashRef of stashRefs) {
-          next.add(stashRef);
+        for (const stash of stashRequests) {
+          next.add(stash.detailsKey);
         }
         return next;
       });
       try {
         const details = await Promise.all(
-          stashRefs.map((stashRef) => api.vcs.stashDetails({ cwd, stashRef })),
+          stashRequests.map((stash) => api.vcs.stashDetails({ cwd, stashRef: stash.stashRef })),
         );
-        setStashDetailsByRef((current) => {
+        setStashDetailsByKey((current) => {
           const next = new Map(current);
-          for (const detail of details) {
-            next.set(detail.refName, detail);
+          for (const [index, detail] of details.entries()) {
+            const request = stashRequests[index];
+            if (!request) continue;
+            next.set(request.detailsKey, detail);
           }
-          stashDetailsByRefRef.current = next;
+          stashDetailsByKeyRef.current = next;
           return next;
         });
       } finally {
         setLoadingStashDetails((current) => {
           const next = new Set(current);
-          for (const stashRef of stashRefs) {
-            next.delete(stashRef);
+          for (const stash of stashRequests) {
+            next.delete(stash.detailsKey);
           }
           return next;
         });
@@ -2680,18 +2688,19 @@ export function SourceControlPanel({
   );
 
   const loadStashDetails = useCallback(
-    async (stashRef: string) => {
-      if (!api || stashDetailsByRef.has(stashRef)) return;
+    async (stash: VcsPanelStash) => {
+      const detailsKey = stashIdentityKey(stash);
+      if (!api || stashDetailsByKey.has(detailsKey)) return;
       setLoadingStashDetails((current) => {
         const next = new Set(current);
-        next.add(stashRef);
+        next.add(detailsKey);
         return next;
       });
       try {
-        const details = await api.vcs.stashDetails({ cwd, stashRef });
-        setStashDetailsByRef((current) => {
+        const details = await api.vcs.stashDetails({ cwd, stashRef: stash.refName });
+        setStashDetailsByKey((current) => {
           const next = new Map(current);
-          next.set(details.refName, details);
+          next.set(detailsKey, details);
           return next;
         });
       } catch (nextError) {
@@ -2699,19 +2708,19 @@ export function SourceControlPanel({
       } finally {
         setLoadingStashDetails((current) => {
           const next = new Set(current);
-          next.delete(stashRef);
+          next.delete(detailsKey);
           return next;
         });
       }
     },
-    [api, cwd, stashDetailsByRef],
+    [api, cwd, stashDetailsByKey],
   );
 
   const toggleStashTree = useCallback(
-    (key: string, stashRef: string) => {
+    (key: string, stash: VcsPanelStash) => {
       const expanding = !expandedTree.has(key);
       toggleTree(key);
-      if (expanding) void loadStashDetails(stashRef);
+      if (expanding) void loadStashDetails(stash);
     },
     [expandedTree, loadStashDetails, toggleTree],
   );
@@ -3785,10 +3794,11 @@ export function SourceControlPanel({
   };
 
   const stashRow = (stash: VcsPanelStash) => {
-    const key = treeKey("stash", stash.refName);
+    const stashKey = stashIdentityKey(stash);
+    const key = treeKey("stash", stashKey);
     const expanded = expandedTree.has(key);
-    const details = stashDetailsByRef.get(stash.refName);
-    const loadingDetails = loadingStashDetails.has(stash.refName);
+    const details = stashDetailsByKey.get(stashKey);
+    const loadingDetails = loadingStashDetails.has(stashKey);
     const applyKey = `stash-apply:${stash.refName}`;
     const popKey = `stash-pop:${stash.refName}`;
     const dropKey = `stash-drop:${stash.refName}`;
@@ -3813,16 +3823,16 @@ export function SourceControlPanel({
         );
       })();
     return (
-      <div key={stash.refName} className="space-y-0.5">
+      <div key={stashKey} className="space-y-0.5">
         <div
           role="button"
           tabIndex={0}
           className="group relative flex h-7 min-w-0 items-center justify-between gap-1.5 rounded px-1.5 text-xs hover:bg-accent/60"
-          onClick={() => toggleStashTree(key, stash.refName)}
+          onClick={() => toggleStashTree(key, stash)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
             event.preventDefault();
-            toggleStashTree(key, stash.refName);
+            toggleStashTree(key, stash);
           }}
           onContextMenu={(event) =>
             openContextMenu(
@@ -4226,7 +4236,7 @@ export function SourceControlPanel({
     }),
     ...snapshot.stashes.map((stash) => ({
       kind: "stash" as const,
-      key: `stash:${stash.refName}`,
+      key: `stash:${stashIdentityKey(stash)}`,
       stash,
       attention: "dirty" as const,
       activity: stashActivityTimestamp(stash),

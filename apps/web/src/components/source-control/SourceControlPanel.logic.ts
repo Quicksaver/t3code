@@ -4,6 +4,7 @@ import type {
   VcsPanelBranchDetails,
   VcsPanelChangeGroup,
   VcsPanelFileChange,
+  VcsPanelStash,
   VcsPanelSnapshotResult,
   VcsRef,
 } from "@t3tools/contracts";
@@ -27,6 +28,10 @@ export interface PanelChangedFile extends VcsPanelFileChange {
 
 export function vcsPanelSnapshotFingerprint(cwd: string, snapshot: VcsPanelSnapshotResult): string {
   return `${cwd}\0${JSON.stringify(snapshot)}`;
+}
+
+export function stashIdentityKey(stash: VcsPanelStash): string {
+  return stash.sha ? `sha:${stash.sha}` : `ref:${stash.refName}`;
 }
 
 export function beginPanelFileDiffLoad(

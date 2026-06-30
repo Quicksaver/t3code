@@ -185,7 +185,7 @@ Commit rows expand to their changed files. Hover/focus-only commit actions inclu
 
 ## Stashes
 
-Stashes are listed as `Actionable` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results.
+Stashes are listed as `Actionable` tree rows. Each stash shows its message, ref, branch context when available, and relative date. Expanding a stash loads and shows the stash's changed files using the same compact file-change row model used by commits and compare results. Restored stash expansion and cached stash details are keyed by the stash commit hash when Git reports one, falling back to the positional ref only when no hash is available, so `stash@{n}` renumbering after stash create/drop operations does not show details for the wrong stash.
 
 Stash row actions appear on hover/focus and include:
 
