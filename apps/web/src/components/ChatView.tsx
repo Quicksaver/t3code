@@ -3348,26 +3348,29 @@ function ChatViewContent(props: ChatViewProps) {
       anchorScrollRestoreFrameRef.current = null;
     }
   }, []);
-  const clearFailedTimelineAnchor = useCallback((threadKey: string, messageId: MessageId) => {
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = null;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      positionedTimelineAnchorRef.current = null;
-    }
-    if (settledTimelineAnchorRef.current === messageId) {
-      settledTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = null;
-    if (pendingAnchorScrollRestoreRef.current?.messageId === messageId) {
-      clearPendingTimelineAnchorScrollRestore();
-    }
-    setTimelineAnchor((current) =>
-      current.threadKey === threadKey && current.messageId === messageId
-        ? { threadKey: current.threadKey, messageId: null }
-        : current,
-    );
-  }, [clearPendingTimelineAnchorScrollRestore]);
+  const clearFailedTimelineAnchor = useCallback(
+    (threadKey: string, messageId: MessageId) => {
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      pendingTimelineAnchorRef.current = null;
+      if (positionedTimelineAnchorRef.current === messageId) {
+        positionedTimelineAnchorRef.current = null;
+      }
+      if (settledTimelineAnchorRef.current === messageId) {
+        settledTimelineAnchorRef.current = null;
+      }
+      activeTimelineAnchorIndexRef.current = null;
+      if (pendingAnchorScrollRestoreRef.current?.messageId === messageId) {
+        clearPendingTimelineAnchorScrollRestore();
+      }
+      setTimelineAnchor((current) =>
+        current.threadKey === threadKey && current.messageId === messageId
+          ? { threadKey: current.threadKey, messageId: null }
+          : current,
+      );
+    },
+    [clearPendingTimelineAnchorScrollRestore],
+  );
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
@@ -3435,19 +3438,22 @@ function ChatViewContent(props: ChatViewProps) {
 
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    clearPendingTimelineAnchorScrollRestore();
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    void legendListRef.current?.scrollToEnd?.({ animated });
-  }, [clearPendingTimelineAnchorScrollRestore]);
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      pendingTimelineAnchorRef.current = null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      clearPendingTimelineAnchorScrollRestore();
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      void legendListRef.current?.scrollToEnd?.({ animated });
+    },
+    [clearPendingTimelineAnchorScrollRestore],
+  );
   useEffect(() => {
     let frame: number | null = null;
     let removeListeners: (() => void) | null = null;
