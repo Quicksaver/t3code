@@ -3419,7 +3419,14 @@ function ChatViewContent(props: ChatViewProps) {
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     pendingTimelineAnchorRef.current = null;
+    positionedTimelineAnchorRef.current = null;
+    settledTimelineAnchorRef.current = null;
     activeTimelineAnchorIndexRef.current = null;
+    pendingAnchorScrollRestoreRef.current = null;
+    if (anchorScrollRestoreFrameRef.current !== null) {
+      cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
+      anchorScrollRestoreFrameRef.current = null;
+    }
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     void legendListRef.current?.scrollToEnd?.({ animated });
