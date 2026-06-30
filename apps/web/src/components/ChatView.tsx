@@ -150,7 +150,6 @@ import {
 import { runProjectScriptInTerminal } from "~/projectScriptTerminals";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { useHostDisplayPreferences } from "../hostDisplayPreferences";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -1122,7 +1121,6 @@ function ChatViewContent(props: ChatViewProps) {
   const sourceControlPanelEnabled = hostDisplayPreferences.enableSourceControlPanel;
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
-  const hostDisplayPreferences = useHostDisplayPreferences();
   const threadConversationMaxWidthPx = isVscodeWebview
     ? hostDisplayPreferences.threadConversationMaxWidthPx
     : undefined;
