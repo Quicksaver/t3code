@@ -3393,6 +3393,26 @@ function ChatViewContent(props: ChatViewProps) {
     readonly userScrollGeneration: number;
   } | null>(null);
   const anchorScrollRestoreFrameRef = useRef<number | null>(null);
+  const clearFailedTimelineAnchor = useCallback((threadKey: string, messageId: MessageId) => {
+    timelineScrollModeRef.current = "following-end";
+    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+    pendingTimelineAnchorRef.current = null;
+    if (positionedTimelineAnchorRef.current === messageId) {
+      positionedTimelineAnchorRef.current = null;
+    }
+    if (settledTimelineAnchorRef.current === messageId) {
+      settledTimelineAnchorRef.current = null;
+    }
+    activeTimelineAnchorIndexRef.current = null;
+    if (pendingAnchorScrollRestoreRef.current?.messageId === messageId) {
+      pendingAnchorScrollRestoreRef.current = null;
+    }
+    setTimelineAnchor((current) =>
+      current.threadKey === threadKey && current.messageId === messageId
+        ? { threadKey: current.threadKey, messageId: null }
+        : current,
+    );
+  }, []);
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
@@ -3490,13 +3510,9 @@ function ChatViewContent(props: ChatViewProps) {
       scrollNode.addEventListener("touchmove", handleManualNavigation, {
         passive: true,
       });
-      scrollNode.addEventListener("pointerdown", handleManualNavigation, {
-        passive: true,
-      });
       removeListeners = () => {
         scrollNode.removeEventListener("wheel", handleManualNavigation);
         scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("pointerdown", handleManualNavigation);
       };
     });
 
@@ -3529,6 +3545,12 @@ function ChatViewContent(props: ChatViewProps) {
           return;
         }
         const scrollNode = list.getScrollableNode();
+        if (!scrollNode) {
+          if (remainingAttempts > 0) {
+            positionAnchor(remainingAttempts - 1);
+          }
+          return;
+        }
         let finished = false;
         const finishAnimatedPositioning = () => {
           if (finished) {
@@ -4275,8 +4297,11 @@ function ChatViewContent(props: ChatViewProps) {
     activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
+    const timelineAnchorThreadKey = scopedThreadKey(
+      scopeThreadRef(activeThread.environmentId, threadIdForSend),
+    );
     setTimelineAnchor({
-      threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+      threadKey: timelineAnchorThreadKey,
       messageId: messageIdForSend,
     });
     setOptimisticUserMessages((existing) => [
@@ -4428,6 +4453,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     if (failure !== null) {
+      clearFailedTimelineAnchor(timelineAnchorThreadKey, messageIdForSend);
       if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -4712,8 +4738,11 @@ function ChatViewContent(props: ChatViewProps) {
       activeTimelineAnchorIndexRef.current = null;
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
+      const timelineAnchorThreadKey = scopedThreadKey(
+        scopeThreadRef(activeThread.environmentId, threadIdForSend),
+      );
       setTimelineAnchor({
-        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
+        threadKey: timelineAnchorThreadKey,
         messageId: messageIdForSend,
       });
 
@@ -4790,6 +4819,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
 
+      clearFailedTimelineAnchor(timelineAnchorThreadKey, messageIdForSend);
       setOptimisticUserMessages((existing) =>
         existing.filter((message) => message.id !== messageIdForSend),
       );
@@ -4807,6 +4837,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
+      clearFailedTimelineAnchor,
       isConnecting,
       isSendBusy,
       isServerThread,
