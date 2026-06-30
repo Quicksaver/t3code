@@ -441,6 +441,15 @@ function expandedBranchesForSnapshot(
   return [...localBranches, ...expandedLocalBranches, ...remoteBranches, ...forkBranches];
 }
 
+function expandedStashRefsForSnapshot(
+  snapshot: VcsPanelSnapshotResult,
+  expanded: ReadonlySet<string>,
+): string[] {
+  return snapshot.stashes
+    .filter((stash) => expanded.has(treeKey("stash", stash.refName)))
+    .map((stash) => stash.refName);
+}
+
 function StatLabels({
   insertions,
   deletions,
@@ -1157,6 +1166,12 @@ export function SourceControlPanel({
     cachedPanelState?.snapshotFingerprint ?? null,
   );
   const snapshotRef = useRef<VcsPanelSnapshotResult | null>(cachedSnapshot);
+  const branchDetailsByRefRef = useRef<ReadonlyMap<string, VcsPanelBranchDetails>>(
+    cachedPanelState?.branchDetailsByRef ?? new Map(),
+  );
+  const stashDetailsByRefRef = useRef<ReadonlyMap<string, VcsPanelStashDetails>>(
+    cachedPanelState?.stashDetailsByRef ?? new Map(),
+  );
   const expandedTreeRef = useRef<ReadonlySet<string>>(cachedPanelState?.expandedTree ?? new Set());
   const expandedFileDiffsRef = useRef<ReadonlySet<string>>(
     cachedPanelState?.expandedFileDiffs ?? new Set(),
@@ -1196,7 +1211,7 @@ export function SourceControlPanel({
   const workingTreeEnrichmentTimerRef = useRef<number | null>(null);
   const workingTreeEnrichmentGenerationRef = useRef(0);
   const [snapshot, setSnapshot] = useState<VcsPanelSnapshotResult | null>(cachedSnapshot);
-  const [loading, setLoading] = useState(cachedSnapshot === null);
+  const [loading, setLoading] = useState(true);
   const [runningActions, setRunningActions] = useState<ReadonlySet<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<ReadonlySet<SectionKey>>(
@@ -1369,6 +1384,14 @@ export function SourceControlPanel({
     (actionKey: string) => runningActions.has(actionKey),
     [runningActions],
   );
+
+  useEffect(() => {
+    branchDetailsByRefRef.current = branchDetailsByRef;
+  }, [branchDetailsByRef]);
+
+  useEffect(() => {
+    stashDetailsByRefRef.current = stashDetailsByRef;
+  }, [stashDetailsByRef]);
 
   useEffect(() => {
     writeCachedSourceControlPanelState(panelStateCacheKey, {
@@ -1666,6 +1689,121 @@ export function SourceControlPanel({
     [cwd, fileDiffKey, loadFileDiff],
   );
 
+  const hydrateExpandedBranchDetails = useCallback(
+    async (
+      nextSnapshot: VcsPanelSnapshotResult,
+      options: { readonly reloadAll?: boolean } = {},
+    ) => {
+      if (!api) return;
+      const expandedBranches = expandedBranchesForSnapshot(nextSnapshot, expandedTreeRef.current);
+      const branchRequests = options.reloadAll
+        ? expandedBranches
+        : expandedBranches.filter((request) => {
+            const existing = branchDetailsByRefRef.current.get(request.detailsKey);
+            if (!existing) return true;
+            return request.compareBaseRef ? existing.baseRef !== request.compareBaseRef : false;
+          });
+      const nextDetails = options.reloadAll
+        ? new Map(mapBranchDetails(nextSnapshot.branchDetails))
+        : new Map(branchDetailsByRefRef.current);
+
+      if (branchRequests.length === 0) {
+        if (options.reloadAll) {
+          branchDetailsByRefRef.current = nextDetails;
+          setBranchDetailsByRef(nextDetails);
+        }
+        return;
+      }
+
+      setLoadingBranchDetails((current) => {
+        const next = new Set(current);
+        for (const request of branchRequests) {
+          next.add(request.detailsKey);
+        }
+        return next;
+      });
+      try {
+        const details = await Promise.all(
+          branchRequests.map((request) =>
+            api.vcs.branchDetails({
+              cwd,
+              branch: request.branch,
+              defaultCompareRef: nextSnapshot.defaultCompareRef,
+              compareBaseRef:
+                request.compareBaseRef ??
+                compareBaseOverrides.get(request.detailsKey) ??
+                compareBaseOverrides.get(request.branch.name),
+            }),
+          ),
+        );
+        for (const [index, detail] of details.entries()) {
+          const request = branchRequests[index];
+          if (!request) continue;
+          nextDetails.set(request.detailsKey, detail);
+          if (request.detailsKey === request.branch.name) {
+            nextDetails.set(detail.fullRefName, detail);
+            nextDetails.set(detail.name, detail);
+          }
+        }
+        branchDetailsByRefRef.current = nextDetails;
+        setBranchDetailsByRef(nextDetails);
+      } finally {
+        setLoadingBranchDetails((current) => {
+          const next = new Set(current);
+          for (const request of branchRequests) {
+            next.delete(request.detailsKey);
+          }
+          return next;
+        });
+      }
+    },
+    [api, compareBaseOverrides, cwd],
+  );
+
+  const hydrateExpandedStashDetails = useCallback(
+    async (
+      nextSnapshot: VcsPanelSnapshotResult,
+      options: { readonly reloadAll?: boolean } = {},
+    ) => {
+      if (!api) return;
+      const expandedStashRefs = expandedStashRefsForSnapshot(nextSnapshot, expandedTreeRef.current);
+      const stashRefs = options.reloadAll
+        ? expandedStashRefs
+        : expandedStashRefs.filter((stashRef) => !stashDetailsByRefRef.current.has(stashRef));
+      if (stashRefs.length === 0) return;
+
+      setLoadingStashDetails((current) => {
+        const next = new Set(current);
+        for (const stashRef of stashRefs) {
+          next.add(stashRef);
+        }
+        return next;
+      });
+      try {
+        const details = await Promise.all(
+          stashRefs.map((stashRef) => api.vcs.stashDetails({ cwd, stashRef })),
+        );
+        setStashDetailsByRef((current) => {
+          const next = new Map(current);
+          for (const detail of details) {
+            next.set(detail.refName, detail);
+          }
+          stashDetailsByRefRef.current = next;
+          return next;
+        });
+      } finally {
+        setLoadingStashDetails((current) => {
+          const next = new Set(current);
+          for (const stashRef of stashRefs) {
+            next.delete(stashRef);
+          }
+          return next;
+        });
+      }
+    },
+    [api, cwd],
+  );
+
   const refresh = useCallback(async () => {
     if (!api) {
       setError("Version Control panel is unavailable for this connection runtime.");
@@ -1677,9 +1815,7 @@ export function SourceControlPanel({
       return;
     }
     refreshInFlightRef.current = true;
-    if (!snapshotRef.current) {
-      setLoading(true);
-    }
+    setLoading(true);
     try {
       do {
         refreshQueuedRef.current = false;
@@ -1688,6 +1824,8 @@ export function SourceControlPanel({
         const nextSnapshotFingerprint = vcsPanelSnapshotFingerprint(cwd, nextSnapshot);
         if (snapshotFingerprintRef.current === nextSnapshotFingerprint) {
           reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
+          await hydrateExpandedBranchDetails(nextSnapshot);
+          await hydrateExpandedStashDetails(nextSnapshot);
           continue;
         }
         snapshotFingerprintRef.current = nextSnapshotFingerprint;
@@ -1697,35 +1835,8 @@ export function SourceControlPanel({
         syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
         setSnapshot(nextSnapshot);
         reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-        const expandedBranches = expandedBranchesForSnapshot(nextSnapshot, expandedTreeRef.current);
-        const nextDetails = new Map(mapBranchDetails(nextSnapshot.branchDetails));
-        setLoadingBranchDetails((current) => (current.size === 0 ? current : new Set()));
-        if (expandedBranches.length > 0) {
-          setLoadingBranchDetails(new Set(expandedBranches.map((request) => request.detailsKey)));
-          const details = await Promise.all(
-            expandedBranches.map((request) =>
-              api.vcs.branchDetails({
-                cwd,
-                branch: request.branch,
-                defaultCompareRef: nextSnapshot.defaultCompareRef,
-                compareBaseRef:
-                  request.compareBaseRef ??
-                  compareBaseOverrides.get(request.detailsKey) ??
-                  compareBaseOverrides.get(request.branch.name),
-              }),
-            ),
-          );
-          for (const [index, detail] of details.entries()) {
-            const request = expandedBranches[index];
-            if (!request) continue;
-            nextDetails.set(request.detailsKey, detail);
-            if (request.detailsKey === request.branch.name) {
-              nextDetails.set(detail.fullRefName, detail);
-              nextDetails.set(detail.name, detail);
-            }
-          }
-        }
-        setBranchDetailsByRef(nextDetails);
+        await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
+        await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
       } while (refreshQueuedRef.current);
     } catch (nextError) {
       if (isSourceControlPanelCommandInterrupted(nextError)) return;
@@ -1737,8 +1848,9 @@ export function SourceControlPanel({
     }
   }, [
     api,
-    compareBaseOverrides,
     cwd,
+    hydrateExpandedBranchDetails,
+    hydrateExpandedStashDetails,
     reloadExpandedWorkingTreeDiffs,
     resetWorkingTreeFileEnrichment,
     syncChangedPathSelection,
