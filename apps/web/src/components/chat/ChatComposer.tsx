@@ -85,6 +85,10 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import {
+  resolveThreadConversationMaxWidthStyle,
+  type ThreadConversationMaxWidthPx,
+} from "./threadConversationWidth";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -496,6 +500,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  threadConversationMaxWidthPx?: ThreadConversationMaxWidthPx;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -2046,6 +2051,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onSubmit={submitComposer}
       className="mx-auto w-full min-w-0 max-w-3xl"
       data-chat-composer-form="true"
+      style={resolveThreadConversationMaxWidthStyle(props.threadConversationMaxWidthPx)}
     >
       <div
         className={cn(

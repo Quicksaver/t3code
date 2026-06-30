@@ -8,6 +8,7 @@ import {
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import { normalizeThreadConversationMaxWidthStyleValue } from "./threadConversationWidth";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
@@ -54,12 +55,20 @@ export function resolveTimelineMinimapIndexFromPointer(input: {
   return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
 }
 
-export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number): boolean {
+export function resolveTimelineMinimapHasPersistentGutter(input: {
+  readonly viewportWidth: number;
+  readonly contentMaxWidthPx?: number | null | undefined;
+}): boolean {
+  const { viewportWidth } = input;
   if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
     return false;
   }
 
-  const contentWidth = Math.min(viewportWidth, TIMELINE_CONTENT_MAX_WIDTH);
+  const contentMaxWidthPx = normalizeThreadConversationMaxWidthStyleValue(input.contentMaxWidthPx);
+  const contentWidth =
+    contentMaxWidthPx === "none"
+      ? viewportWidth
+      : Math.min(viewportWidth, contentMaxWidthPx ?? TIMELINE_CONTENT_MAX_WIDTH);
   const sideGutter = Math.max(0, (viewportWidth - contentWidth) / 2);
   return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }

@@ -253,9 +253,71 @@ describe("MessagesTimeline", () => {
         pointerY: 999,
       }),
     ).toBe(100);
-    expect(resolveTimelineMinimapHasPersistentGutter(832)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(863)).toBe(false);
-    expect(resolveTimelineMinimapHasPersistentGutter(864)).toBe(true);
+    expect(resolveTimelineMinimapHasPersistentGutter({ viewportWidth: 832 })).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter({ viewportWidth: 863 })).toBe(false);
+    expect(resolveTimelineMinimapHasPersistentGutter({ viewportWidth: 864 })).toBe(true);
+    expect(
+      resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth: 1055,
+        contentMaxWidthPx: 960,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth: 1056,
+        contentMaxWidthPx: 960,
+      }),
+    ).toBe(true);
+    expect(
+      resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth: 1200,
+        contentMaxWidthPx: null,
+      }),
+    ).toBe(false);
+    expect(
+      resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth: 864,
+        contentMaxWidthPx: 0,
+      }),
+    ).toBe(true);
+    expect(
+      resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth: 864,
+        contentMaxWidthPx: Number.NaN,
+      }),
+    ).toBe(true);
+  });
+
+  it("applies host-provided conversation width to timeline rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          threadConversationMaxWidthPx={960}
+          timelineEntries={[buildUserTimelineEntry("Fixed width prompt.")]}
+        />,
+      ),
+    ).toContain('style="max-width:960px"');
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          threadConversationMaxWidthPx={null}
+          timelineEntries={[buildUserTimelineEntry("Uncapped prompt.")]}
+        />,
+      ),
+    ).toContain('style="max-width:none"');
+    expect(
+      renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          threadConversationMaxWidthPx={Number.NaN}
+          timelineEntries={[buildUserTimelineEntry("Invalid width prompt.")]}
+        />,
+      ),
+    ).not.toContain("max-width:");
   });
 
   it("anchors a sent attachment message using its measured height", async () => {

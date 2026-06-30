@@ -83,6 +83,10 @@ import {
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  resolveThreadConversationMaxWidthStyle,
+  type ThreadConversationMaxWidthPx,
+} from "./threadConversationWidth";
+import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
@@ -177,6 +181,7 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  threadConversationMaxWidthPx?: ThreadConversationMaxWidthPx;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
 }
@@ -210,6 +215,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  threadConversationMaxWidthPx,
   onIsAtEndChange,
   onManualNavigation,
 }: MessagesTimelineProps) {
@@ -389,7 +395,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
     const measure = () => {
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth,
+        contentMaxWidthPx: threadConversationMaxWidthPx,
+      });
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
@@ -404,7 +413,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement, rows.length, threadConversationMaxWidthPx]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -448,13 +457,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
+  const threadConversationMaxWidthStyle = useMemo(
+    () => resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx),
+    [threadConversationMaxWidthPx],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip"
+        data-timeline-root="true"
+        style={threadConversationMaxWidthStyle}
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
-    [],
+    [threadConversationMaxWidthStyle],
   );
 
   if (rows.length === 0 && !isWorking) {

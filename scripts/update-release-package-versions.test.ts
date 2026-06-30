@@ -73,6 +73,12 @@ const captureLogs = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   });
 
 it.layer(ScriptTestLayer)("update-release-package-versions", (it) => {
+  it.effect("keeps the VS Code extension manifest in release version updates", () =>
+    Effect.sync(() => {
+      assert.isTrue(releasePackageFiles.includes("apps/vscode-extension/package.json"));
+    }),
+  );
+
   it.effect("updates all release package versions under the provided root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
