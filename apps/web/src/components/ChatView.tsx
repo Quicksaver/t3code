@@ -3448,48 +3448,48 @@ function ChatViewContent(props: ChatViewProps) {
           return;
         }
 
-      const scrollNode = legendListRef.current?.getScrollableNode();
-      if (!scrollNode) {
-        if (remainingAttempts > 0) {
-          scheduleSetup(remainingAttempts - 1);
+        const scrollNode = legendListRef.current?.getScrollableNode();
+        if (!scrollNode) {
+          if (remainingAttempts > 0) {
+            scheduleSetup(remainingAttempts - 1);
+          }
+          return;
         }
-        return;
-      }
-      const handleManualNavigation = () => {
-        cancelTimelineLiveFollowForUserNavigationRef.current();
-      };
-      const handleKeyboardNavigation = (event: KeyboardEvent) => {
-        if (shouldTreatKeyAsTimelineScrollNavigation(event)) {
-          handleManualNavigation();
-        }
-      };
-      const handleScrollbarPointerNavigation = (event: PointerEvent) => {
-        if (isPointerInNativeScrollbarGutter(scrollNode, event)) {
-          handleManualNavigation();
-        }
-      };
-      scrollNode.addEventListener("wheel", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("touchmove", handleManualNavigation, {
-        passive: true,
-      });
-      scrollNode.addEventListener("keydown", handleKeyboardNavigation, {
-        capture: true,
-      });
-      scrollNode.addEventListener("pointerdown", handleScrollbarPointerNavigation, {
-        capture: true,
-      });
-      removeListeners = () => {
-        scrollNode.removeEventListener("wheel", handleManualNavigation);
-        scrollNode.removeEventListener("touchmove", handleManualNavigation);
-        scrollNode.removeEventListener("keydown", handleKeyboardNavigation, {
+        const handleManualNavigation = () => {
+          cancelTimelineLiveFollowForUserNavigationRef.current();
+        };
+        const handleKeyboardNavigation = (event: KeyboardEvent) => {
+          if (shouldTreatKeyAsTimelineScrollNavigation(event)) {
+            handleManualNavigation();
+          }
+        };
+        const handleScrollbarPointerNavigation = (event: PointerEvent) => {
+          if (isPointerInNativeScrollbarGutter(scrollNode, event)) {
+            handleManualNavigation();
+          }
+        };
+        scrollNode.addEventListener("wheel", handleManualNavigation, {
+          passive: true,
+        });
+        scrollNode.addEventListener("touchmove", handleManualNavigation, {
+          passive: true,
+        });
+        scrollNode.addEventListener("keydown", handleKeyboardNavigation, {
           capture: true,
         });
-        scrollNode.removeEventListener("pointerdown", handleScrollbarPointerNavigation, {
+        scrollNode.addEventListener("pointerdown", handleScrollbarPointerNavigation, {
           capture: true,
         });
-      };
+        removeListeners = () => {
+          scrollNode.removeEventListener("wheel", handleManualNavigation);
+          scrollNode.removeEventListener("touchmove", handleManualNavigation);
+          scrollNode.removeEventListener("keydown", handleKeyboardNavigation, {
+            capture: true,
+          });
+          scrollNode.removeEventListener("pointerdown", handleScrollbarPointerNavigation, {
+            capture: true,
+          });
+        };
       });
     };
 
