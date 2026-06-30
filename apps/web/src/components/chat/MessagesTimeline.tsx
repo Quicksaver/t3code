@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
@@ -38,7 +39,6 @@ import {
   formatTerminalSubagentStatusDuration,
   LiveSubagentDuration,
   subagentStatusToneClass,
-  type SubagentThreadStatus,
 } from "../../subagentDisplay";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
@@ -75,11 +75,23 @@ import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  deriveSubagentWorkEntryButtonModels,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveSubagentBlockDisplayState,
+  resolveSubagentDisplayParts,
+  resolveTimelineIsAtEnd,
+  resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHeightStyle,
+  resolveTimelineMinimapIndexFromPointer,
+  resolveTimelineMinimapTopPercent,
+  subagentRelationTerminalSnapshotForBlock,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
+  TIMELINE_MINIMAP_MIN_ITEMS,
+  type TimelineSubagentRelationSnapshot,
+  type TimelineTerminalSubagentSnapshot,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -178,10 +190,11 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   anchorMessageId: MessageId | null;
-  onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
+  onAnchorReady: (messageId: MessageId, anchorIndex: number, anchorEndIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
+  onManualNavigation: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -214,9 +227,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
   onIsAtEndChange,
+  onManualNavigation,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
+  const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
     setExpandedTurnIds((existing) => {
@@ -318,13 +333,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const handleAnchorReady = useCallback(
     (info: { anchorIndex: number | undefined }) => {
       if (anchorMessageId !== null && info.anchorIndex !== undefined) {
-        onAnchorReady(anchorMessageId, info.anchorIndex);
+        onAnchorReady(
+          anchorMessageId,
+          info.anchorIndex,
+          resolveTimelineAnchorEndIndex(rows, info.anchorIndex),
+        );
       }
     },
-    [anchorMessageId, onAnchorReady],
+    [anchorMessageId, onAnchorReady, rows],
   );
   const handleAnchorSizeChanged = useCallback(
     (size: number) => {
@@ -345,10 +369,62 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
-    if (state) {
-      onIsAtEndChange(state.isAtEnd);
+    const isAtEnd = resolveTimelineIsAtEnd(state);
+    if (isAtEnd !== undefined) {
+      onIsAtEndChange(isAtEnd);
     }
-  }, [listRef, onIsAtEndChange]);
+    if (!state || minimapItems.length === 0) {
+      return;
+    }
+
+    const scrollTop = state.scroll ?? 0;
+    const scrollBottom = scrollTop + (state.scrollLength ?? 0);
+
+    for (const item of minimapItems) {
+      const strip = minimapStripMap.get(item.id);
+      if (!strip) {
+        continue;
+      }
+
+      const rowTop = resolveTimelineRowTop(state, item.rowIndex);
+      const rowHeight = resolveTimelineRowHeight(state, item.rowIndex);
+      const inView =
+        rowTop !== null &&
+        rowTop < scrollBottom &&
+        rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
+
+      strip.dataset.inView = inView ? "true" : "false";
+    }
+  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(handleScroll);
+    return () => cancelAnimationFrame(frame);
+  }, [handleScroll, rows.length]);
+
+  useEffect(() => {
+    if (!timelineViewportElement) {
+      return;
+    }
+
+    const measure = () => {
+      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      setMinimapHasPersistentGutter((current) =>
+        current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
+      );
+    };
+
+    const frame = requestAnimationFrame(measure);
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(timelineViewportElement);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [timelineViewportElement]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -414,25 +490,53 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <LegendList<MessagesTimelineRow>
-          ref={listRef}
-          data={rows}
-          keyExtractor={keyExtractor}
-          getItemType={getItemType}
-          renderItem={renderItem}
-          estimatedItemSize={90}
-          initialScrollAtEnd
-          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-          contentInsetEndAdjustment={contentInsetEndAdjustment}
-          maintainVisibleContentPosition={{
-            data: true,
-            size: false,
-          }}
-          onScroll={handleScroll}
-          className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5"
-          ListHeaderComponent={TIMELINE_LIST_HEADER}
-          ListFooterComponent={TIMELINE_LIST_FOOTER}
-        />
+        <div ref={setTimelineViewportElement} className="relative h-full min-h-0">
+          <LegendList<MessagesTimelineRow>
+            ref={listRef}
+            data={rows}
+            keyExtractor={keyExtractor}
+            getItemType={getItemType}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={contentInsetEndAdjustment}
+            maintainScrollAtEnd={
+              anchoredEndSpace
+                ? false
+                : {
+                    animated: false,
+                    on: {
+                      dataChange: true,
+                      itemLayout: true,
+                      layout: true,
+                    },
+                  }
+            }
+            maintainVisibleContentPosition={{
+              data: true,
+              size: false,
+            }}
+            onScroll={handleScroll}
+            className="scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5"
+            ListHeaderComponent={TIMELINE_LIST_HEADER}
+            ListFooterComponent={TIMELINE_LIST_FOOTER}
+          />
+          <TimelineMinimap
+            items={minimapItems}
+            bottomInset={contentInsetEndAdjustment}
+            hasPersistentGutter={minimapHasPersistentGutter}
+            stripMap={minimapStripMap}
+            onSelect={(item) => {
+              onManualNavigation();
+              void listRef.current?.scrollToIndex({
+                index: item.rowIndex,
+                animated: true,
+                viewOffset: 24,
+              });
+            }}
+          />
+        </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -444,6 +548,261 @@ function keyExtractor(item: MessagesTimelineRow) {
 
 function getItemType(item: MessagesTimelineRow) {
   return item.kind === "message" ? `message:${item.message.role}` : item.kind;
+}
+
+interface TimelineMinimapItem {
+  id: string;
+  rowIndex: number;
+  userText: string | null;
+  assistantText: string | null;
+}
+
+interface TimelinePositionState {
+  readonly contentLength?: number;
+  readonly scroll?: number;
+  readonly scrollLength?: number;
+  readonly positionAtIndex?: (index: number) => number | undefined;
+  readonly sizeAtIndex?: (index: number) => number | undefined;
+}
+
+function deriveTimelineMinimapItems(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): TimelineMinimapItem[] {
+  const items: TimelineMinimapItem[] = [];
+  let currentItem: TimelineMinimapItem | null = null;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind !== "message") {
+      continue;
+    }
+    if (row.message.role === "user") {
+      currentItem = {
+        id: row.id,
+        rowIndex: index,
+        userText: compactMinimapPreview(row.message.text),
+        assistantText: null,
+      };
+      items.push(currentItem);
+      continue;
+    }
+    if (row.message.role === "assistant" && currentItem) {
+      currentItem.assistantText = compactMinimapPreview(row.message.text);
+    }
+  }
+  return items;
+}
+
+function resolveTimelineAnchorEndIndex(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  anchorIndex: number,
+) {
+  const boundedAnchorIndex = Math.max(0, Math.min(anchorIndex, rows.length - 1));
+  for (let index = boundedAnchorIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind === "message" && row.message.role === "user") {
+      return index - 1;
+    }
+  }
+  return rows.length - 1;
+}
+
+function compactMinimapPreview(text: string | null | undefined) {
+  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+  return compact.length > 0 ? compact : null;
+}
+
+function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
+  const top = state.positionAtIndex?.(rowIndex);
+  return typeof top === "number" && Number.isFinite(top) ? top : null;
+}
+
+function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number) {
+  const height = state.sizeAtIndex?.(rowIndex);
+  return typeof height === "number" && Number.isFinite(height) ? height : null;
+}
+
+function TimelineMinimap({
+  bottomInset,
+  hasPersistentGutter,
+  items,
+  stripMap,
+  onSelect,
+}: {
+  bottomInset: number;
+  hasPersistentGutter: boolean;
+  items: ReadonlyArray<TimelineMinimapItem>;
+  stripMap: Map<string, HTMLSpanElement>;
+  onSelect: (item: TimelineMinimapItem) => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  const resolvedActiveIndex =
+    activeIndex !== null && activeIndex < items.length ? activeIndex : null;
+  const activeItem = resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null);
+  const activeTopPercent =
+    resolvedActiveIndex === null
+      ? 0
+      : resolveTimelineMinimapTopPercent(resolvedActiveIndex, items.length);
+  const activeTooltipTranslate =
+    resolvedActiveIndex === null
+      ? "-50%"
+      : resolvedActiveIndex === 0
+        ? "0%"
+        : resolvedActiveIndex === items.length - 1
+          ? "-100%"
+          : "-50%";
+
+  const resolveActiveIndexFromPointer = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      return resolveTimelineMinimapIndexFromPointer({
+        itemCount: items.length,
+        railTop: rect.top,
+        railHeight: rect.height,
+        pointerY: event.clientY,
+      });
+    },
+    [items.length],
+  );
+
+  const updateActiveIndexFromPointer = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const nextIndex = resolveActiveIndexFromPointer(event);
+      setActiveIndex(nextIndex);
+    },
+    [resolveActiveIndexFromPointer],
+  );
+
+  const moveActiveIndex = useCallback(
+    (delta: number) => {
+      setActiveIndex((current) => {
+        const base = current ?? 0;
+        return Math.max(0, Math.min(items.length - 1, base + delta));
+      });
+    },
+    [items.length],
+  );
+
+  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) {
+    return null;
+  }
+
+  const safeBottomInset = Math.max(0, Math.ceil(bottomInset));
+
+  return (
+    <div
+      className={cn(
+        "group/minimap pointer-events-auto absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        hasPersistentGutter
+          ? "opacity-100"
+          : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
+      )}
+      data-testid="timeline-minimap"
+      data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
+      style={{ bottom: safeBottomInset }}
+    >
+      <div className="relative h-full w-full select-none">
+        <button
+          aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
+          className="pointer-events-auto absolute top-1/2 left-3 w-10 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          onBlur={() => setActiveIndex(null)}
+          onClick={(event) => {
+            const nextIndex = resolveActiveIndexFromPointer(event);
+            const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
+            if (nextItem) {
+              onSelect(nextItem);
+            }
+            event.currentTarget.blur();
+          }}
+          onFocus={() => setActiveIndex((current) => current ?? 0)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              moveActiveIndex(1);
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              moveActiveIndex(-1);
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              setActiveIndex(0);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              setActiveIndex(items.length - 1);
+            } else if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              if (activeItem) {
+                onSelect(activeItem);
+              }
+            }
+          }}
+          onMouseLeave={() => setActiveIndex(null)}
+          onMouseMove={updateActiveIndexFromPointer}
+          onMouseDown={(event) => {
+            event.preventDefault();
+          }}
+          style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
+          type="button"
+        >
+          <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
+          {items.map((item, index) => {
+            const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
+            const activeDistance =
+              resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+            return (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
+                  activeDistance === 0
+                    ? "w-6 bg-muted-foreground/75"
+                    : activeDistance === 1
+                      ? "w-4"
+                      : activeDistance === 2
+                        ? "w-2.5"
+                        : "w-2",
+                )}
+                data-minimap-strip
+                key={item.id}
+                ref={(node) => {
+                  if (node) {
+                    stripMap.set(item.id, node);
+                  } else {
+                    stripMap.delete(item.id);
+                  }
+                }}
+                style={{ top }}
+              />
+            );
+          })}
+          {activeItem ? (
+            <span
+              className="pointer-events-none absolute left-8 w-80 rounded-xl border border-border/70 bg-popover/95 p-3 text-left text-popover-foreground shadow-xl shadow-black/25 backdrop-blur"
+              style={{
+                top: `${activeTopPercent}%`,
+                transform: `translateY(${activeTooltipTranslate})`,
+              }}
+            >
+              <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                {activeItem.userText ?? "User message"}
+              </span>
+              {activeItem.assistantText ? (
+                <span
+                  className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 3,
+                  }}
+                >
+                  {activeItem.assistantText}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1580,38 +1939,6 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
-function normalizedSubagentText(value: string | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
-}
-
-function resolveSubagentDisplayParts(
-  workEntry: Pick<TimelineWorkEntry, "output" | "subagentPrompt">,
-): {
-  prompt: string | null;
-  output: string | null;
-} {
-  const prompt = workEntry.subagentPrompt?.trim() ?? "";
-  const output = workEntry.output?.trim() ?? "";
-  if (!prompt) {
-    return { prompt: null, output: output || null };
-  }
-  if (!output) {
-    return { prompt, output: null };
-  }
-
-  const normalizedPrompt = normalizedSubagentText(prompt).toLowerCase();
-  const normalizedOutput = normalizedSubagentText(output).toLowerCase();
-  const redundantPrompt =
-    normalizedPrompt === normalizedOutput ||
-    normalizedPrompt.startsWith(normalizedOutput) ||
-    normalizedOutput.startsWith(normalizedPrompt);
-
-  return {
-    prompt: redundantPrompt ? null : prompt,
-    output,
-  };
-}
-
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
@@ -1783,46 +2110,19 @@ const SubagentWorkEntryRows = memo(function SubagentWorkEntryRows({
 }) {
   return (
     <div className="space-y-1 py-0.5">
-      {workEntry.subagentChildren?.map((child) => (
+      {deriveSubagentWorkEntryButtonModels(workEntry).map((child) => (
         <SubagentWorkEntryButton
-          key={`${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`}
-          parentCreatedAt={workEntry.createdAt}
+          key={child.key}
+          parentCreatedAt={child.parentCreatedAt}
           threadId={child.threadId}
-          {...(workEntry.turnId ? { parentTurnId: workEntry.turnId } : {})}
+          {...(child.parentTurnId ? { parentTurnId: child.parentTurnId } : {})}
           {...(child.parentItemId ? { parentItemId: child.parentItemId } : {})}
-          {...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)
-            ? { titleSeed: child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail }
-            : {})}
+          {...(child.titleSeed ? { titleSeed: child.titleSeed } : {})}
         />
       ))}
     </div>
   );
 });
-
-export function subagentRelationMatchesBlock(input: {
-  parentItemId?: string | null;
-  parentTurnId?: TurnId | null;
-  relationParentItemId?: string | null;
-  relationParentTurnId?: TurnId | null;
-}): boolean {
-  const parentItemId = input.parentItemId ?? null;
-  const relationParentItemId = input.relationParentItemId ?? null;
-  const parentTurnId = input.parentTurnId ?? null;
-  const relationParentTurnId = input.relationParentTurnId ?? null;
-  const turnIdsConflict =
-    parentTurnId && relationParentTurnId && parentTurnId !== relationParentTurnId;
-
-  if (parentItemId && relationParentItemId) {
-    if (parentItemId !== relationParentItemId) {
-      return false;
-    }
-    // Provider item ids can repeat across turns, so a known turn mismatch must
-    // keep a stale relation from claiming a newer work-log block.
-    return !turnIdsConflict;
-  }
-
-  return !turnIdsConflict;
-}
 
 const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   parentCreatedAt: string;
@@ -1836,62 +2136,35 @@ const SubagentWorkEntryButton = memo(function SubagentWorkEntryButton(props: {
   const childShell = useThreadShell(scopeThreadRef(ctx.activeThreadEnvironmentId, props.threadId));
   const relation =
     childShell?.parentRelation?.kind === "subagent" ? childShell.parentRelation : null;
+  const relationSnapshot: TimelineSubagentRelationSnapshot | null = relation
+    ? {
+        status: relation.status,
+        startedAt: relation.startedAt,
+        completedAt: relation.completedAt,
+        parentItemId: relation.parentItemId ?? null,
+        parentTurnId: relation.parentTurnId ?? null,
+      }
+    : null;
   const rawTitle = childShell?.title?.trim();
-  const title = rawTitle && rawTitle !== "Subagent" ? rawTitle : null;
+  const titleSeed = props.titleSeed?.trim() || null;
+  const title = rawTitle && rawTitle !== "Subagent" ? rawTitle : titleSeed;
   const displayTitle = title ? `Subagent - ${title}` : "Subagent";
-  const terminalSnapshotRef = useRef<{
-    status: Exclude<SubagentThreadStatus, "running">;
-    startedAt: string;
-    completedAt: string | null;
-  } | null>(null);
-  const relationParentItemId = relation?.parentItemId ?? null;
-  const relationParentTurnId = relation?.parentTurnId ?? null;
-  const relationMatchesThisBlock = subagentRelationMatchesBlock({
+  const terminalSnapshotRef = useRef<TimelineTerminalSubagentSnapshot | null>(null);
+  const terminalSnapshot = subagentRelationTerminalSnapshotForBlock({
     parentItemId: props.parentItemId ?? null,
     parentTurnId: props.parentTurnId ?? null,
-    relationParentItemId,
-    relationParentTurnId,
+    relation: relationSnapshot,
   });
-  if (relation && relationMatchesThisBlock && relation.status !== "running") {
-    terminalSnapshotRef.current = {
-      status: relation.status,
-      startedAt: relation.startedAt,
-      completedAt: relation.completedAt,
-    };
+  if (terminalSnapshot) {
+    terminalSnapshotRef.current = terminalSnapshot;
   }
-  const parentCreatedAfterRelationCompleted = Boolean(
-    props.parentItemId &&
-    relation &&
-    relation.status !== "running" &&
-    relation.completedAt &&
-    Date.parse(props.parentCreatedAt) > Date.parse(relation.completedAt),
-  );
-  const displayState =
-    relation && relationMatchesThisBlock
-      ? {
-          status: relation.status,
-          startedAt: relation.startedAt,
-          completedAt: relation.completedAt,
-        }
-      : parentCreatedAfterRelationCompleted
-        ? {
-            status: "running" as const,
-            startedAt: props.parentCreatedAt,
-            completedAt: null,
-          }
-        : terminalSnapshotRef.current
-          ? terminalSnapshotRef.current
-          : relation?.status === "running"
-            ? {
-                status: "completed" as const,
-                startedAt: props.parentCreatedAt,
-                completedAt: null,
-              }
-            : {
-                status: relation?.status ?? null,
-                startedAt: relation?.startedAt ?? props.parentCreatedAt,
-                completedAt: relation?.completedAt ?? null,
-              };
+  const displayState = resolveSubagentBlockDisplayState({
+    parentCreatedAt: props.parentCreatedAt,
+    parentItemId: props.parentItemId ?? null,
+    parentTurnId: props.parentTurnId ?? null,
+    relation: relationSnapshot,
+    terminalSnapshot: terminalSnapshotRef.current,
+  });
   const status = displayState.status;
   const startedAt = displayState.startedAt;
   const completedAt = displayState.completedAt;

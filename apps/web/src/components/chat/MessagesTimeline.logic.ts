@@ -7,9 +7,263 @@ import {
   type WorkLogEntry,
 } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
+import {
+  type MessageId,
+  type OrchestrationLatestTurn,
+  type OrchestrationThreadParentRelation,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
+export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
+export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
+export const TIMELINE_CONTENT_MAX_WIDTH = 768;
+export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
+
+export interface TimelineEndState {
+  readonly isAtEnd?: boolean;
+  readonly isNearEnd?: boolean;
+}
+
+export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boolean | undefined {
+  return state?.isAtEnd ?? state?.isNearEnd;
+}
+
+export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
+  const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
+  return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
+}
+
+export function resolveTimelineMinimapTopPercent(index: number, itemCount: number): number {
+  if (itemCount <= 1) {
+    return 0;
+  }
+  return (Math.max(0, Math.min(index, itemCount - 1)) / (itemCount - 1)) * 100;
+}
+
+export function resolveTimelineMinimapIndexFromPointer(input: {
+  readonly itemCount: number;
+  readonly railTop: number;
+  readonly railHeight: number;
+  readonly pointerY: number;
+}): number | null {
+  if (input.itemCount <= 0 || input.railHeight <= 0) {
+    return null;
+  }
+  if (input.itemCount === 1) {
+    return 0;
+  }
+
+  const progress = Math.max(0, Math.min(1, (input.pointerY - input.railTop) / input.railHeight));
+  return Math.max(0, Math.min(input.itemCount - 1, Math.round(progress * (input.itemCount - 1))));
+}
+
+export function resolveTimelineMinimapHasPersistentGutter(viewportWidth: number): boolean {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
+    return false;
+  }
+
+  const contentWidth = Math.min(viewportWidth, TIMELINE_CONTENT_MAX_WIDTH);
+  const sideGutter = Math.max(0, (viewportWidth - contentWidth) / 2);
+  return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
+}
+
+export function subagentRelationMatchesBlock(input: {
+  parentItemId?: string | null;
+  parentTurnId?: TurnId | null;
+  relationParentItemId?: string | null;
+  relationParentTurnId?: TurnId | null;
+}): boolean {
+  const parentItemId = input.parentItemId ?? null;
+  const relationParentItemId = input.relationParentItemId ?? null;
+  const parentTurnId = input.parentTurnId ?? null;
+  const relationParentTurnId = input.relationParentTurnId ?? null;
+  const turnIdsConflict =
+    parentTurnId && relationParentTurnId && parentTurnId !== relationParentTurnId;
+
+  if (parentItemId && relationParentItemId) {
+    if (parentItemId !== relationParentItemId) {
+      return false;
+    }
+    // Provider item ids can repeat across turns, so a known turn mismatch must
+    // keep a stale relation from claiming a newer work-log block.
+    return !turnIdsConflict;
+  }
+
+  return !turnIdsConflict;
+}
+
+export interface SubagentDisplayParts {
+  prompt: string | null;
+  output: string | null;
+}
+
+function normalizedSubagentText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+export function resolveSubagentDisplayParts(
+  workEntry: Pick<WorkLogEntry, "output" | "subagentPrompt">,
+): SubagentDisplayParts {
+  const prompt = workEntry.subagentPrompt?.trim() ?? "";
+  const output = workEntry.output?.trim() ?? "";
+  if (!prompt) {
+    return { prompt: null, output: output || null };
+  }
+  if (!output) {
+    return { prompt, output: null };
+  }
+
+  const normalizedPrompt = normalizedSubagentText(prompt).toLowerCase();
+  const normalizedOutput = normalizedSubagentText(output).toLowerCase();
+  const shorterLength = Math.min(normalizedPrompt.length, normalizedOutput.length);
+  const longerLength = Math.max(normalizedPrompt.length, normalizedOutput.length);
+  const prefixCanBeRedundant = shorterLength >= 12 && shorterLength / longerLength >= 0.5;
+  const redundantPrompt =
+    normalizedPrompt === normalizedOutput ||
+    (prefixCanBeRedundant &&
+      (normalizedPrompt.startsWith(normalizedOutput) ||
+        normalizedOutput.startsWith(normalizedPrompt)));
+
+  return {
+    prompt: redundantPrompt ? null : prompt,
+    output,
+  };
+}
+
+export interface SubagentWorkEntryButtonModel {
+  key: string;
+  parentCreatedAt: string;
+  threadId: ThreadId;
+  parentTurnId?: TurnId;
+  parentItemId?: string;
+  titleSeed?: string;
+}
+
+export function deriveSubagentWorkEntryButtonModels(
+  workEntry: Pick<
+    WorkLogEntry,
+    "id" | "createdAt" | "turnId" | "subagentChildren" | "subagentPrompt" | "detail"
+  >,
+): SubagentWorkEntryButtonModel[] {
+  return (workEntry.subagentChildren ?? []).map((child) => ({
+    key: `${workEntry.id}:subagent:${child.threadId}:${child.parentItemId ?? ""}`,
+    parentCreatedAt: workEntry.createdAt,
+    threadId: child.threadId,
+    ...(workEntry.turnId ? { parentTurnId: workEntry.turnId } : {}),
+    ...(child.parentItemId ? { parentItemId: child.parentItemId } : {}),
+    ...((child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail)
+      ? { titleSeed: child.titleSeed ?? workEntry.subagentPrompt ?? workEntry.detail }
+      : {}),
+  }));
+}
+
+type SubagentParentRelation = Extract<OrchestrationThreadParentRelation, { kind: "subagent" }>;
+
+export type TimelineSubagentStatus = SubagentParentRelation["status"];
+
+export interface TimelineSubagentRelationSnapshot {
+  status: TimelineSubagentStatus;
+  startedAt: string;
+  completedAt: string | null;
+  parentItemId: string | null;
+  parentTurnId: TurnId | null;
+}
+
+export interface TimelineTerminalSubagentSnapshot {
+  status: Exclude<TimelineSubagentStatus, "running">;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface TimelineSubagentDisplayState {
+  status: TimelineSubagentStatus | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export function subagentRelationTerminalSnapshotForBlock(input: {
+  parentItemId?: string | null;
+  parentTurnId?: TurnId | null;
+  relation: TimelineSubagentRelationSnapshot | null;
+}): TimelineTerminalSubagentSnapshot | null {
+  const relation = input.relation;
+  if (!relation || relation.status === "running") {
+    return null;
+  }
+  if (
+    !subagentRelationMatchesBlock({
+      parentItemId: input.parentItemId ?? null,
+      parentTurnId: input.parentTurnId ?? null,
+      relationParentItemId: relation.parentItemId,
+      relationParentTurnId: relation.parentTurnId,
+    })
+  ) {
+    return null;
+  }
+  return {
+    status: relation.status,
+    startedAt: relation.startedAt,
+    completedAt: relation.completedAt,
+  };
+}
+
+export function resolveSubagentBlockDisplayState(input: {
+  parentCreatedAt: string;
+  parentItemId?: string | null;
+  parentTurnId?: TurnId | null;
+  relation: TimelineSubagentRelationSnapshot | null;
+  terminalSnapshot: TimelineTerminalSubagentSnapshot | null;
+}): TimelineSubagentDisplayState {
+  const relation = input.relation;
+  const relationMatchesThisBlock =
+    relation !== null &&
+    subagentRelationMatchesBlock({
+      parentItemId: input.parentItemId ?? null,
+      parentTurnId: input.parentTurnId ?? null,
+      relationParentItemId: relation.parentItemId,
+      relationParentTurnId: relation.parentTurnId,
+    });
+
+  if (relation && relationMatchesThisBlock) {
+    return {
+      status: relation.status,
+      startedAt: relation.startedAt,
+      completedAt: relation.completedAt,
+    };
+  }
+
+  const parentCreatedAfterRelationCompleted = Boolean(
+    relation &&
+    relation.status !== "running" &&
+    relation.completedAt &&
+    Date.parse(input.parentCreatedAt) > Date.parse(relation.completedAt),
+  );
+  if (parentCreatedAfterRelationCompleted) {
+    return {
+      status: "running",
+      startedAt: input.parentCreatedAt,
+      completedAt: null,
+    };
+  }
+  if (input.terminalSnapshot) {
+    return input.terminalSnapshot;
+  }
+  if (relation?.status === "running") {
+    return {
+      status: null,
+      startedAt: input.parentCreatedAt,
+      completedAt: null,
+    };
+  }
+  return {
+    status: relation?.status ?? null,
+    startedAt: relation?.startedAt ?? input.parentCreatedAt,
+    completedAt: relation?.completedAt ?? null,
+  };
+}
 
 function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);

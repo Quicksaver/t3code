@@ -2,12 +2,14 @@
 
 ## Branch Metadata
 
-- Last upstream merge: `upstream/main` at `a9b1190a11276927caf573d92c33c5346fc4c076` merged into `split/subagent-threading-work` from pre-merge branch HEAD `75bc95a21b8d040760a5c9672fe8fdccd7e8aef7`.
-- Post-merge branch diff against `upstream/main`: 31 branch-only commits, 0 upstream-only commits, 40 files changed, 5251 insertions, 258 deletions.
-- Remote tracking status after the merge: `split/subagent-threading-work` is 3 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
-- Conflict notes for the `a9b1190a1` merge: no files stopped for manual conflict resolution. Git auto-merged `apps/web/src/components/Sidebar.tsx`; the resulting branch keeps upstream's desktop-local environment affordances, local sandbox project labeling, and secondary-backend connection status while preserving this branch's parent-relation sidebar nesting, active terminal subagent ancestor visibility, subagent archive/delete action gating, and child-thread route context. Upstream also changed preview-browser recording/automation surfaces, provider update notifications, desktop WSL/Windows backend selection, connection bootstrap plumbing, and shared HTTP readiness code outside the branch's current Codex subagent ownership surface.
-- New fork customizations introduced by this merge: none. The branch-owned adaptation is limited to carrying the existing subagent sidebar and routing behavior through upstream's revised desktop-local project/environment sidebar model.
-- Retired customizations made redundant by upstream: none identified. Upstream's preview automation stabilization and desktop WSL/Windows backend support do not provide Codex subagent lineage, child-thread projection, sidebar nesting, stop routing, or archive/delete descendant lifecycle semantics.
+- Latest upstream merge prepared: `upstream/main` at `2448212367b4348f39eaf5c2635eea6896218cba` applied into `split/subagent-threading-work` from pre-merge branch HEAD `63a7d2fd7c1dbff26c8e7d1416e051367969e571`. The merge is intentionally left uncommitted for coordinator review; `MERGE_HEAD` points at `2448212367b4348f39eaf5c2635eea6896218cba`.
+- Post-merge branch diff against `upstream/main`: 33 branch-only commits before the final merge commit, 0 upstream-only commits in the applied merge result, 43 files changed, 5845 insertions, 373 deletions. Because the merge is intentionally uncommitted, raw Git ancestry still reports `HEAD...upstream/main` as 33 ahead and 2 behind; the staged merge result applies both upstream-only commits.
+- Remote tracking status during the prepared merge: `split/subagent-threading-work` is 0 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
+- Conflict notes for the `244821236` merge: no files stopped for manual conflict resolution. Git auto-merged `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, and `apps/web/src/components/chat/MessagesTimeline.test.tsx`; the resulting branch keeps upstream's restored Legend List scroll anchoring, scroll-to-end affordance behavior, timeline minimap, composer overlay inset handling, and package version bumps while preserving this branch's subagent control bar, parent subagent reference blocks, child output isolation, child stop routing, sidebar nesting, and hidden child route behavior.
+- New fork customizations introduced by this merge: none. The branch-owned adaptation is limited to carrying the existing UI-aware Codex subagent behavior through upstream's revised chat timeline scroll/minimap implementation.
+- Retired customizations made redundant by upstream: none identified. Upstream's timeline minimap and scroll-affordance fixes do not provide Codex subagent lineage, child-thread projection, sidebar nesting, stop routing, parent activity rows, child output isolation, or archive/delete descendant lifecycle semantics.
+- Follow-up refactor after the `244821236` merge: subagent work-entry display-part resolution, child row model derivation, relation terminal snapshotting, and block display-state derivation now live in `apps/web/src/components/chat/MessagesTimeline.logic.ts`; `MessagesTimeline.tsx` keeps the React rendering, shell lookup, and navigation wiring.
+- Assessment follow-up after the timeline-logic refactor: review fixes tightened chat timeline anchor cleanup on send rollback, precise manual-scroll cancellation, generic child-title fallback, exact Legend List end-state handling, live-follow frame scheduling, anchored-turn end measurement, minimap visibility/state derivation, subagent reinvocation heuristics, stale running-relation display, and short-prompt/output deduplication.
 
 ## Status
 
@@ -125,6 +127,15 @@ The implementation and review fixes have been covered by focused automated tests
 - Web tests cover sidebar/thread state behavior, hidden terminal ancestor traversal, active terminal child path retention, subagent sibling ordering, duplicate parent subagent control-row removal, same-turn resumed child activity rows, child composer suppression, subagent stop control behavior, multi-select lifecycle gating for unresolved selected keys, and duration fallback labels.
 - Client-runtime tests cover shared idle retention for stream-backed thread state across short subscriber gaps.
 - Playwright checked Codex subagent behavior with marker prompts: before the prompt projection fix, the child view showed the output marker but not the initial prompt marker; after the fix, the child view showed the initial prompt marker followed by the output marker. Earlier Playwright coverage also checked that the parent showed exactly one compact subagent block, child output/actions did not leak into the parent, the child view was reachable from the parent block, the child view showed the child command/output, and the child view did not expose a prompt composer.
+
+The prepared `244821236` merge was validated with:
+
+- `pnpm --dir apps/web exec vp test run src/components/chat/MessagesTimeline.test.tsx src/components/chat/timelineScrollAnchoring.test.tsx`: 2 files passed, 34 tests passed.
+- `pnpm --dir apps/web exec vp test run src/components/ChatView.logic.test.ts src/components/Sidebar.logic.test.ts`: 2 files passed, 87 tests passed.
+- `pnpm --dir apps/server exec vp test run src/orchestration/Layers/ProviderRuntimeIngestion.test.ts src/orchestration/decider.delete.test.ts src/provider/Layers/CodexAdapter.test.ts src/orchestration/Layers/ProviderCommandReactor.test.ts`: 4 files passed, 108 tests passed.
+- `pnpm --dir apps/web exec tsc --noEmit --pretty false --project tsconfig.json`: passed.
+- `pnpm exec vp check`: passed; reported existing lint warnings only.
+- `pnpm exec vp run typecheck`: passed across 15 workspace tasks.
 
 Current completion gates for this repo remain:
 
