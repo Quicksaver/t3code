@@ -3550,66 +3550,69 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [timelineEntries.length]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      return;
-    }
-    positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
-    const positionAnchor = (remainingAttempts: number) => {
-      requestAnimationFrame(() => {
-        if (positionedTimelineAnchorRef.current !== messageId) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
-          } else {
-            clearTimelineAnchorIfPositioningExhausted(messageId);
-          }
-          return;
-        }
-        const scrollNode = list.getScrollableNode();
-        if (!scrollNode) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
-          } else {
-            clearTimelineAnchorIfPositioningExhausted(messageId);
-          }
-          return;
-        }
-        let finished = false;
-        const finishAnimatedPositioning = () => {
-          if (finished) {
-            return;
-          }
-          finished = true;
-          window.clearTimeout(fallbackTimer);
-          scrollNode.removeEventListener("scrollend", finishAnimatedPositioning);
+  const onTimelineAnchorReady = useCallback(
+    (messageId: MessageId, anchorIndex: number) => {
+      if (pendingTimelineAnchorRef.current === messageId) {
+        pendingTimelineAnchorRef.current = null;
+      }
+      activeTimelineAnchorIndexRef.current = anchorIndex;
+      if (positionedTimelineAnchorRef.current === messageId) {
+        return;
+      }
+      positionedTimelineAnchorRef.current = messageId;
+      settledTimelineAnchorRef.current = null;
+      const positionAnchor = (remainingAttempts: number) => {
+        requestAnimationFrame(() => {
           if (positionedTimelineAnchorRef.current !== messageId) {
             return;
           }
-          const scrollOffset = list.getState().scroll;
-          void list.scrollToOffset({ offset: scrollOffset, animated: false });
-          settledTimelineAnchorRef.current = messageId;
-        };
-        const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
-        scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
-        void list.scrollToIndex({
-          index: anchorIndex,
-          animated: true,
-          viewPosition: 0,
-          viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+          const list = legendListRef.current;
+          if (!list) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
+            } else {
+              clearTimelineAnchorIfPositioningExhausted(messageId);
+            }
+            return;
+          }
+          const scrollNode = list.getScrollableNode();
+          if (!scrollNode) {
+            if (remainingAttempts > 0) {
+              positionAnchor(remainingAttempts - 1);
+            } else {
+              clearTimelineAnchorIfPositioningExhausted(messageId);
+            }
+            return;
+          }
+          let finished = false;
+          const finishAnimatedPositioning = () => {
+            if (finished) {
+              return;
+            }
+            finished = true;
+            window.clearTimeout(fallbackTimer);
+            scrollNode.removeEventListener("scrollend", finishAnimatedPositioning);
+            if (positionedTimelineAnchorRef.current !== messageId) {
+              return;
+            }
+            const scrollOffset = list.getState().scroll;
+            void list.scrollToOffset({ offset: scrollOffset, animated: false });
+            settledTimelineAnchorRef.current = messageId;
+          };
+          const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
+          scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
+          void list.scrollToIndex({
+            index: anchorIndex,
+            animated: true,
+            viewPosition: 0,
+            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
+          });
         });
-      });
-    };
-    requestAnimationFrame(() => positionAnchor(12));
-  }, [clearTimelineAnchorIfPositioningExhausted]);
+      };
+      requestAnimationFrame(() => positionAnchor(12));
+    },
+    [clearTimelineAnchorIfPositioningExhausted],
+  );
   const onTimelineAnchorSizeChanged = useCallback((messageId: MessageId) => {
     if (settledTimelineAnchorRef.current !== messageId) {
       return;
