@@ -24,7 +24,10 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import {
   classifyProjectActionTerminalCandidates,
   openTerminalAndWaitForInputReady,
+  type ProjectActionTerminalReservations,
+  projectActionTerminalReservationIds,
   ProjectActionTerminalReadinessTimeoutError,
+  pruneExpiredProjectActionTerminalReservations,
   projectActionTerminalReadinessFailureFromEvent,
   projectActionTerminalId,
   releaseProjectActionTerminalReservationsSeenRunning,
@@ -132,6 +135,16 @@ describe("project action terminal ids", () => {
       resolveProjectActionTerminalId({
         scriptId: "build",
         terminalIds: ["action-build", "action-build:2"],
+        runningTerminalIds: ["action-build", "action-build:2"],
+      }),
+    ).toBe("action-build:3");
+  });
+
+  it("does not allocate a fallback id that is already reserved but not known yet", () => {
+    expect(
+      resolveProjectActionTerminalId({
+        scriptId: "build",
+        terminalIds: ["action-build"],
         runningTerminalIds: ["action-build", "action-build:2"],
       }),
     ).toBe("action-build:3");
@@ -508,6 +521,74 @@ describe("runningTerminalIdsWithProjectActionReservations", () => {
   });
 });
 
+describe("project action terminal reservation release", () => {
+  it("keeps launch reservations even when the terminal was already running", () => {
+    const reservedTerminalIds = new Map([
+      [
+        "action-build",
+        {
+          phase: "launching" as const,
+          expiresAtMs: Number.POSITIVE_INFINITY,
+        },
+      ],
+    ]);
+
+    releaseProjectActionTerminalReservationsSeenRunning({
+      runningTerminalIds: ["action-build"],
+      reservedTerminalIds,
+      nowMs: 100,
+    });
+
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build"]);
+  });
+
+  it("releases retained reservations after running-terminal state catches up", () => {
+    const reservedTerminalIds = new Map([
+      [
+        "action-build",
+        {
+          phase: "awaiting-running" as const,
+          expiresAtMs: 10_000,
+        },
+      ],
+      [
+        "action-build:2",
+        {
+          phase: "awaiting-running" as const,
+          expiresAtMs: 10_000,
+        },
+      ],
+    ]);
+
+    releaseProjectActionTerminalReservationsSeenRunning({
+      runningTerminalIds: ["action-build"],
+      reservedTerminalIds,
+      nowMs: 100,
+    });
+
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build:2"]);
+  });
+
+  it("expires retained reservations when fast commands never appear as running", () => {
+    const reservedTerminalIds = new Map([
+      [
+        "action-build",
+        {
+          phase: "awaiting-running" as const,
+          expiresAtMs: 100,
+        },
+      ],
+    ]);
+
+    pruneExpiredProjectActionTerminalReservations({
+      reservedTerminalIds,
+      nowMs: 101,
+    });
+
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual([]);
+  });
+});
+
 describe("runProjectScriptInTerminal", () => {
   const runtimeEnv = { T3CODE_PROJECT_ROOT: "/repo" };
   const script = { id: "build", command: "pnpm build" };
@@ -516,8 +597,12 @@ describe("runProjectScriptInTerminal", () => {
     return AsyncResult.success(undefined);
   }
 
+  function createReservations(): ProjectActionTerminalReservations {
+    return new Map();
+  }
+
   it("reuses a ready action terminal and waits after opening before writing", async () => {
-    const reservedTerminalIds = new Set<string>();
+    const reservedTerminalIds = createReservations();
     const showTerminal = vi.fn();
     const openTerminal = vi.fn(async () => createCommandSuccess());
     const writeTerminal = vi.fn(async () => createCommandSuccess());
@@ -585,11 +670,11 @@ describe("runProjectScriptInTerminal", () => {
     expect(waitForInputReady.mock.invocationCallOrder[0]).toBeLessThan(
       writeTerminal.mock.invocationCallOrder[0] ?? 0,
     );
-    expect([...reservedTerminalIds]).toEqual(["action-build"]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build"]);
   });
 
   it("falls back to another action terminal when a probed terminal is not ready", async () => {
-    const reservedTerminalIds = new Set<string>();
+    const reservedTerminalIds = createReservations();
     const showTerminal = vi.fn();
     const openTerminal = vi.fn(async () => createCommandSuccess());
     const writeTerminal = vi.fn(async () => createCommandSuccess());
@@ -660,11 +745,11 @@ describe("runProjectScriptInTerminal", () => {
       terminalId: "action-build:2",
       data: "pnpm build\r",
     });
-    expect([...reservedTerminalIds]).toEqual(["action-build:2"]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build:2"]);
   });
 
   it("keeps a successful write reserved until running-terminal state catches up", async () => {
-    const reservedTerminalIds = new Set<string>();
+    const reservedTerminalIds = createReservations();
     const showTerminal = vi.fn();
     const openTerminal = vi.fn(async () => createCommandSuccess());
     const writeTerminal = vi.fn(async () => createCommandSuccess());
@@ -693,7 +778,7 @@ describe("runProjectScriptInTerminal", () => {
     });
 
     expect(firstResult).toEqual({ _tag: "Success" });
-    expect([...reservedTerminalIds]).toEqual(["action-build"]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build"]);
 
     const secondResult = await runProjectScriptInTerminal({
       script,
@@ -725,18 +810,60 @@ describe("runProjectScriptInTerminal", () => {
       cols: 120,
       rows: 30,
     });
-    expect([...reservedTerminalIds]).toEqual(["action-build", "action-build:2"]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual([
+      "action-build",
+      "action-build:2",
+    ]);
+
+    const thirdResult = await runProjectScriptInTerminal({
+      script,
+      threadId: "thread-1",
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+      runtimeEnv,
+      preferNewTerminal: false,
+      knownTerminalIds: ["action-build"],
+      serverTerminalIds: [],
+      visibleTerminalIds: [],
+      runningTerminalIds: [],
+      sessions: [],
+      reservedTerminalIds,
+      isCommandInterrupted: () => false,
+      showTerminal,
+      openTerminal,
+      writeTerminal,
+      waitForInputReady,
+      requireInputReady,
+    });
+
+    expect(thirdResult).toEqual({ _tag: "Success" });
+    expect(openTerminal).toHaveBeenLastCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build:3",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual([
+      "action-build",
+      "action-build:2",
+      "action-build:3",
+    ]);
 
     releaseProjectActionTerminalReservationsSeenRunning({
       runningTerminalIds: ["action-build"],
       reservedTerminalIds,
     });
 
-    expect([...reservedTerminalIds]).toEqual(["action-build:2"]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual([
+      "action-build:2",
+      "action-build:3",
+    ]);
   });
 
   it("does not write when waiting after open is interrupted", async () => {
-    const reservedTerminalIds = new Set<string>();
+    const reservedTerminalIds = createReservations();
     const interruptedResult = AsyncResult.failure(Cause.interrupt());
     const showTerminal = vi.fn();
     const openTerminal = vi.fn(async () => createCommandSuccess());
@@ -783,7 +910,7 @@ describe("runProjectScriptInTerminal", () => {
       rows: 30,
     });
     expect(writeTerminal).not.toHaveBeenCalled();
-    expect([...reservedTerminalIds]).toEqual([]);
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual([]);
   });
 });
 

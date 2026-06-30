@@ -147,6 +147,7 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import {
+  type ProjectActionTerminalReservations,
   releaseProjectActionTerminalReservationsSeenRunning,
   runProjectScriptInTerminal,
 } from "~/projectScriptTerminals";
@@ -1159,7 +1160,9 @@ function ChatViewContent(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
-  const projectActionTerminalLaunchReservationsRef = useRef(new Set<string>());
+  const projectActionTerminalLaunchReservationsByThreadRef = useRef(
+    new Map<string, ProjectActionTerminalReservations>(),
+  );
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   useLayoutEffect(() => {
@@ -1257,12 +1260,15 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
   });
-  useEffect(() => {
-    releaseProjectActionTerminalReservationsSeenRunning({
-      runningTerminalIds,
-      reservedTerminalIds: projectActionTerminalLaunchReservationsRef.current,
-    });
-  }, [runningTerminalIds]);
+  const projectActionTerminalReservationsForThread = useCallback((threadRef: ScopedThreadRef) => {
+    const threadKey = scopedThreadKey(threadRef);
+    let reservations = projectActionTerminalLaunchReservationsByThreadRef.current.get(threadKey);
+    if (!reservations) {
+      reservations = new Map();
+      projectActionTerminalLaunchReservationsByThreadRef.current.set(threadKey, reservations);
+    }
+    return reservations;
+  }, []);
   const activeThreadKnownSessionsRaw = useKnownTerminalSessions({
     environmentId: activeThread?.environmentId ?? null,
     threadId: activeThreadId,
@@ -1298,6 +1304,13 @@ function ChatViewContent(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  useEffect(() => {
+    if (!activeThreadRef) return;
+    releaseProjectActionTerminalReservationsSeenRunning({
+      runningTerminalIds,
+      reservedTerminalIds: projectActionTerminalReservationsForThread(activeThreadRef),
+    });
+  }, [activeThreadRef, projectActionTerminalReservationsForThread, runningTerminalIds]);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -2510,7 +2523,7 @@ function ChatViewContent(props: ChatViewProps) {
         visibleTerminalIds: terminalUiState.terminalIds,
         runningTerminalIds,
         sessions: activeThreadKnownSessions,
-        reservedTerminalIds: projectActionTerminalLaunchReservationsRef.current,
+        reservedTerminalIds: projectActionTerminalReservationsForThread(activeThreadRef),
         isCommandInterrupted: (result) => isAtomCommandInterrupted(result),
         showTerminal: (terminalId, state) => {
           if (!state.isVisibleTerminal) {
@@ -2549,6 +2562,7 @@ function ChatViewContent(props: ChatViewProps) {
       activeKnownTerminalIds,
       activeServerOrderedTerminalIds,
       runningTerminalIds,
+      projectActionTerminalReservationsForThread,
       requireProjectActionTerminalReady,
       terminalUiState.terminalIds,
       terminalUiAvailable,

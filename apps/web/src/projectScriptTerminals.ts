@@ -22,6 +22,7 @@ import * as Stream from "effect/Stream";
 const ACTION_TERMINAL_ID_PREFIX = "action-";
 const ACTION_TERMINAL_FALLBACK_SEPARATOR = ":";
 const ACTION_TERMINAL_READY_TIMEOUT_MS = 4_000;
+const ACTION_TERMINAL_POST_WRITE_RESERVATION_MS = 5_000;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 const MAX_TERMINAL_BUFFER_TAIL = 2_000;
@@ -128,7 +129,7 @@ export function resolveProjectActionTerminalId(input: {
     return idleActionTerminal;
   }
 
-  const takenTerminalIds = new Set(input.terminalIds);
+  const takenTerminalIds = new Set([...input.terminalIds, ...input.runningTerminalIds]);
   let suffix = 2;
   while (suffix < 10_000) {
     const candidate = projectActionTerminalId(input.scriptId, suffix);
@@ -315,12 +316,45 @@ export function runningTerminalIdsWithProjectActionReservations(input: {
   return next;
 }
 
+export type ProjectActionTerminalReservationPhase = "launching" | "awaiting-running";
+
+export interface ProjectActionTerminalReservation {
+  readonly phase: ProjectActionTerminalReservationPhase;
+  readonly expiresAtMs: number;
+}
+
+export type ProjectActionTerminalReservations = Map<string, ProjectActionTerminalReservation>;
+
+export function projectActionTerminalReservationIds(
+  reservedTerminalIds: ProjectActionTerminalReservations,
+): ReadonlyArray<string> {
+  return [...reservedTerminalIds.keys()];
+}
+
+export function pruneExpiredProjectActionTerminalReservations(input: {
+  readonly reservedTerminalIds: ProjectActionTerminalReservations;
+  readonly nowMs?: number;
+}): void {
+  const nowMs = input.nowMs ?? Date.now();
+  for (const [terminalId, reservation] of input.reservedTerminalIds) {
+    if (reservation.phase === "awaiting-running" && reservation.expiresAtMs <= nowMs) {
+      input.reservedTerminalIds.delete(terminalId);
+    }
+  }
+}
+
 export function releaseProjectActionTerminalReservationsSeenRunning(input: {
   readonly runningTerminalIds: Iterable<string>;
-  readonly reservedTerminalIds: Set<string>;
+  readonly reservedTerminalIds: ProjectActionTerminalReservations;
+  readonly nowMs?: number;
 }): void {
-  for (const terminalId of input.runningTerminalIds) {
-    input.reservedTerminalIds.delete(terminalId);
+  const runningTerminalIds = new Set(input.runningTerminalIds);
+  const nowMs = input.nowMs ?? Date.now();
+  for (const [terminalId, reservation] of input.reservedTerminalIds) {
+    if (reservation.phase !== "awaiting-running") continue;
+    if (runningTerminalIds.has(terminalId) || reservation.expiresAtMs <= nowMs) {
+      input.reservedTerminalIds.delete(terminalId);
+    }
   }
 }
 
@@ -366,7 +400,7 @@ export async function runProjectScriptInTerminal(input: {
   readonly visibleTerminalIds: ReadonlyArray<string>;
   readonly runningTerminalIds: ReadonlyArray<string>;
   readonly sessions: ReadonlyArray<ProjectActionTerminalCandidateSession>;
-  readonly reservedTerminalIds: Set<string>;
+  readonly reservedTerminalIds: ProjectActionTerminalReservations;
   readonly isCommandInterrupted: (result: ProjectActionTerminalCommandResult) => boolean;
   readonly showTerminal: (
     terminalId: string,
@@ -390,15 +424,23 @@ export async function runProjectScriptInTerminal(input: {
     targetWorktreePath: input.targetWorktreePath,
   });
   const reservedProjectActionTerminalIds = input.reservedTerminalIds;
+  pruneExpiredProjectActionTerminalReservations({
+    reservedTerminalIds: reservedProjectActionTerminalIds,
+  });
   let targetTerminalId =
     input.preferNewTerminal === true
-      ? nextTerminalId([...input.knownTerminalIds, ...reservedProjectActionTerminalIds])
+      ? nextTerminalId([
+          ...input.knownTerminalIds,
+          ...projectActionTerminalReservationIds(reservedProjectActionTerminalIds),
+        ])
       : resolveProjectActionTerminalId({
           scriptId: input.script.id,
           terminalIds: input.knownTerminalIds,
           runningTerminalIds: runningTerminalIdsWithProjectActionReservations({
             runningTerminalIds: projectActionTerminalCandidates.runningTerminalIdsForSelection,
-            reservedTerminalIds: reservedProjectActionTerminalIds,
+            reservedTerminalIds: projectActionTerminalReservationIds(
+              reservedProjectActionTerminalIds,
+            ),
           }),
         });
   let isKnownServerTerminal = input.serverTerminalIds.includes(targetTerminalId);
@@ -421,7 +463,10 @@ export async function runProjectScriptInTerminal(input: {
     if (reservedProjectActionTerminalId !== null) {
       reservedProjectActionTerminalIds.delete(reservedProjectActionTerminalId);
     }
-    reservedProjectActionTerminalIds.add(terminalId);
+    reservedProjectActionTerminalIds.set(terminalId, {
+      phase: "launching",
+      expiresAtMs: Number.POSITIVE_INFINITY,
+    });
     reservedProjectActionTerminalId = terminalId;
   };
 
@@ -445,9 +490,9 @@ export async function runProjectScriptInTerminal(input: {
             runningTerminalIds: input.runningTerminalIds.filter(
               (terminalId) => !projectActionTerminalCandidates.readyTerminalIds.has(terminalId),
             ),
-            reservedTerminalIds: Array.from(reservedProjectActionTerminalIds).filter(
-              (terminalId) => terminalId !== reservedProjectActionTerminalId,
-            ),
+            reservedTerminalIds: projectActionTerminalReservationIds(
+              reservedProjectActionTerminalIds,
+            ).filter((terminalId) => terminalId !== reservedProjectActionTerminalId),
           }),
         });
         reserveProjectActionTerminalId(targetTerminalId);
@@ -503,6 +548,10 @@ export async function runProjectScriptInTerminal(input: {
       }
       return { _tag: "Interrupted" };
     }
+    reservedProjectActionTerminalIds.set(targetTerminalId, {
+      phase: "awaiting-running",
+      expiresAtMs: Date.now() + ACTION_TERMINAL_POST_WRITE_RESERVATION_MS,
+    });
     keepReservationAfterWrite = true;
     return { _tag: "Success" };
   } finally {
