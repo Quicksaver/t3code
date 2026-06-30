@@ -396,7 +396,7 @@ export async function runProjectScriptInTerminal(input: {
   let isVisibleTerminal = input.visibleTerminalIds.includes(targetTerminalId);
   let targetSession = projectActionTerminalCandidates.sessionsById.get(targetTerminalId) ?? null;
   let canWriteImmediately = projectActionTerminalCandidates.readyTerminalIds.has(targetTerminalId);
-  let waitAfterOpen = !canWriteImmediately;
+  let waitAfterOpen = true;
   let openTerminalInput = projectActionOpenInput({
     threadId: input.threadId,
     terminalId: targetTerminalId,
@@ -450,7 +450,7 @@ export async function runProjectScriptInTerminal(input: {
           targetCwd: input.targetCwd,
           targetWorktreePath: input.targetWorktreePath,
         });
-        waitAfterOpen = !canWriteImmediately;
+        waitAfterOpen = true;
         openTerminalInput = projectActionOpenInput({
           threadId: input.threadId,
           terminalId: targetTerminalId,

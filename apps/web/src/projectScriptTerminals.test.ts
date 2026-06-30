@@ -515,7 +515,7 @@ describe("runProjectScriptInTerminal", () => {
     return AsyncResult.success(undefined);
   }
 
-  it("reuses a ready action terminal and writes without an extra readiness wait", async () => {
+  it("reuses a ready action terminal and waits after opening before writing", async () => {
     const reservedTerminalIds = new Set<string>();
     const showTerminal = vi.fn();
     const openTerminal = vi.fn(async () => createCommandSuccess());
@@ -567,12 +567,23 @@ describe("runProjectScriptInTerminal", () => {
       env: runtimeEnv,
     });
     expect(requireInputReady).not.toHaveBeenCalled();
-    expect(waitForInputReady).not.toHaveBeenCalled();
+    expect(waitForInputReady).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+    });
     expect(writeTerminal).toHaveBeenCalledWith({
       threadId: "thread-1",
       terminalId: "action-build",
       data: "pnpm build\r",
     });
+    expect(openTerminal.mock.invocationCallOrder[0]).toBeLessThan(
+      waitForInputReady.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(waitForInputReady.mock.invocationCallOrder[0]).toBeLessThan(
+      writeTerminal.mock.invocationCallOrder[0] ?? 0,
+    );
     expect([...reservedTerminalIds]).toEqual([]);
   });
 
