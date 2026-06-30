@@ -64,7 +64,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { isElectron } from "../env";
+import { isElectron, isVscodeWebview } from "../env";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -109,6 +109,7 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useHostDisplayPreferences } from "../hostDisplayPreferences";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteContext";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
@@ -1127,6 +1128,10 @@ function ChatViewContent(props: ChatViewProps) {
   const sourceControlPanelEnabled = hostDisplayPreferences.enableSourceControlPanel;
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
+  const hostDisplayPreferences = useHostDisplayPreferences();
+  const threadConversationMaxWidthPx = isVscodeWebview
+    ? hostDisplayPreferences.threadConversationMaxWidthPx
+    : undefined;
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -5457,6 +5462,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
                 contentInsetEndAdjustment={composerOverlayHeight}
+                threadConversationMaxWidthPx={threadConversationMaxWidthPx}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
               />
@@ -5490,7 +5496,11 @@ function ChatViewContent(props: ChatViewProps) {
               <ChatComposerOverlayBackground />
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
-                  <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  <ComposerBannerStack
+                    className="relative z-0"
+                    items={composerBannerItems}
+                    threadConversationMaxWidthPx={threadConversationMaxWidthPx}
+                  />
                   <div className="relative z-10">
                     <ChatComposer
                       composerRef={composerRef}
@@ -5562,6 +5572,7 @@ function ChatViewContent(props: ChatViewProps) {
                       scheduleComposerFocus={scheduleComposerFocus}
                       setThreadError={setThreadError}
                       onExpandImage={onExpandTimelineImage}
+                      threadConversationMaxWidthPx={threadConversationMaxWidthPx}
                     />
                   </div>
                 </div>
@@ -5594,6 +5605,7 @@ function ChatViewContent(props: ChatViewProps) {
                         : {})}
                       envLocked={envLocked}
                       onComposerFocusRequest={scheduleComposerFocus}
+                      threadConversationMaxWidthPx={threadConversationMaxWidthPx}
                       {...(canCheckoutPullRequestIntoThread
                         ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                         : {})}

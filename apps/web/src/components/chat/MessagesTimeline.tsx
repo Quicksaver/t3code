@@ -106,6 +106,10 @@ import {
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
 import {
+  resolveThreadConversationMaxWidthStyle,
+  type ThreadConversationMaxWidthPx,
+} from "./ThreadConversationWidth";
+import {
   extractTrailingElementContexts,
   type ParsedElementContextEntry,
 } from "~/lib/elementContext";
@@ -585,6 +589,7 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
+  threadConversationMaxWidthPx?: ThreadConversationMaxWidthPx;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
 }
@@ -645,6 +650,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onAnchorReady,
   onAnchorSizeChanged,
   contentInsetEndAdjustment,
+  threadConversationMaxWidthPx,
   onIsAtEndChange,
   onManualNavigation,
 }: MessagesTimelineProps) {
@@ -843,7 +849,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
     const measure = () => {
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
-      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
+      const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter({
+        viewportWidth,
+        contentMaxWidthPx: threadConversationMaxWidthPx,
+      });
       setMinimapHasPersistentGutter((current) =>
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
@@ -858,7 +867,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [timelineViewportElement, rows.length, threadConversationMaxWidthPx]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -902,16 +911,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
+  const threadConversationMaxWidthStyle = useMemo(
+    () => resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx),
+    [threadConversationMaxWidthPx],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
       <ThreadConversationWidthContainer
         className="w-full min-w-0 overflow-x-clip"
         data-timeline-root="true"
+        style={threadConversationMaxWidthStyle}
       >
         <TimelineRowContent row={item} />
       </ThreadConversationWidthContainer>
     ),
-    [],
+    [threadConversationMaxWidthStyle],
   );
 
   if (rows.length === 0 && !isWorking) {

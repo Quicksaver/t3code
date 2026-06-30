@@ -38,6 +38,10 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import {
+  resolveThreadConversationMaxWidthStyle,
+  type ThreadConversationMaxWidthPx,
+} from "./chat/ThreadConversationWidth";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -54,6 +58,7 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  threadConversationMaxWidthPx?: ThreadConversationMaxWidthPx;
 }
 
 interface MobileRunContextSelectorProps {
@@ -229,6 +234,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  threadConversationMaxWidthPx,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -278,7 +284,10 @@ export const BranchToolbar = memo(function BranchToolbar({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-none items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
+    <div
+      className="mx-auto flex w-full max-w-none items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3"
+      style={resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx)}
+    >
       {showMobileRunContextSelector ? (
         <MobileRunContextSelector
           envLocked={envLocked}

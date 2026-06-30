@@ -4,6 +4,10 @@ import { XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
+import {
+  resolveThreadConversationMaxWidthStyle,
+  type ThreadConversationMaxWidthPx,
+} from "./ThreadConversationWidth";
 
 const DISMISS_TRANSITION_MS = 220;
 const frontExitStyle = {
@@ -37,9 +41,14 @@ export interface ComposerBannerStackItem {
 interface ComposerBannerStackProps {
   readonly className?: string;
   readonly items: ReadonlyArray<ComposerBannerStackItem>;
+  readonly threadConversationMaxWidthPx?: ThreadConversationMaxWidthPx;
 }
 
-export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
+export function ComposerBannerStack({
+  className,
+  items,
+  threadConversationMaxWidthPx,
+}: ComposerBannerStackProps) {
   const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitingItemId =
@@ -82,7 +91,10 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   };
 
   return (
-    <div className={cn("group/banner-stack mx-auto mb-2 w-full max-w-none", className)}>
+    <div
+      className={cn("group/banner-stack mx-auto mb-2 w-full max-w-none", className)}
+      style={resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx)}
+    >
       <div
         className={cn(
           "relative",
