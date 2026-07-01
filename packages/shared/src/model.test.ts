@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@t3tools/contracts";
 
 import {
   buildProviderOptionSelectionsFromDescriptors,
@@ -10,6 +15,9 @@ import {
   getProviderOptionDescriptors,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  normalizeModelSlug,
+  resolveModelSlugForProvider,
+  resolveSelectableModel,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -57,6 +65,35 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
       currentValue: "1m",
     },
   ],
+});
+
+describe("model slug helpers", () => {
+  const claude = ProviderDriverKind.make("claudeAgent");
+
+  it("normalizes current Claude Sonnet aliases to Sonnet 5", () => {
+    expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-5");
+    expect(normalizeModelSlug("sonnet-5", claude)).toBe("claude-sonnet-5");
+    expect(normalizeModelSlug("claude-sonnet-5.0", claude)).toBe("claude-sonnet-5");
+    expect(normalizeModelSlug("sonnet-4.6", claude)).toBe("claude-sonnet-4-6");
+  });
+
+  it("resolves provider defaults for missing model slugs", () => {
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("codex"), undefined)).toBe(
+      DEFAULT_MODEL,
+    );
+    expect(resolveModelSlugForProvider(claude, undefined)).toBe("claude-sonnet-5");
+  });
+
+  it("resolves selectable models through labels and provider aliases", () => {
+    const options = [
+      { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    ];
+
+    expect(resolveSelectableModel(claude, "Claude Sonnet 5", options)).toBe("claude-sonnet-5");
+    expect(resolveSelectableModel(claude, "sonnet", options)).toBe("claude-sonnet-5");
+    expect(resolveSelectableModel(claude, "sonnet-4.6", options)).toBe("claude-sonnet-4-6");
+  });
 });
 
 describe("descriptor helpers", () => {
