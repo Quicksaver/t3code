@@ -530,10 +530,11 @@ export async function runProjectScriptInTerminal(input: {
     if (waitAfterOpen) {
       const readyResult = await input.waitForInputReady(openTerminalInput);
       if (readyResult._tag === "Failure") {
-        if (!input.isCommandInterrupted(readyResult)) {
-          return { _tag: "Failure", result: readyResult };
+        // Prompt readiness is advisory after opening; keep the action usable on timeouts,
+        // but never write into a terminal when the readiness wait was explicitly interrupted.
+        if (input.isCommandInterrupted(readyResult)) {
+          return { _tag: "Interrupted" };
         }
-        return { _tag: "Interrupted" };
       }
     }
 

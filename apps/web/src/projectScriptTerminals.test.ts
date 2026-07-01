@@ -862,6 +862,52 @@ describe("runProjectScriptInTerminal", () => {
     ]);
   });
 
+  it("writes after a non-interrupt post-open readiness failure", async () => {
+    const reservedTerminalIds = createReservations();
+    const showTerminal = vi.fn();
+    const openTerminal = vi.fn(async () => createCommandSuccess());
+    const writeTerminal = vi.fn(async () => createCommandSuccess());
+    const waitForInputReady = vi.fn(async () => AsyncResult.failure(Cause.fail("not ready")));
+    const requireInputReady = vi.fn(async () => createCommandSuccess());
+
+    const result = await runProjectScriptInTerminal({
+      script,
+      threadId: "thread-1",
+      targetCwd: "/repo",
+      targetWorktreePath: null,
+      runtimeEnv,
+      preferNewTerminal: false,
+      knownTerminalIds: ["action-build"],
+      serverTerminalIds: [],
+      visibleTerminalIds: [],
+      runningTerminalIds: [],
+      sessions: [],
+      reservedTerminalIds,
+      isCommandInterrupted: () => false,
+      showTerminal,
+      openTerminal,
+      writeTerminal,
+      waitForInputReady,
+      requireInputReady,
+    });
+
+    expect(result).toEqual({ _tag: "Success" });
+    expect(waitForInputReady).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      cwd: "/repo",
+      env: runtimeEnv,
+      cols: 120,
+      rows: 30,
+    });
+    expect(writeTerminal).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      terminalId: "action-build",
+      data: "pnpm build\r",
+    });
+    expect(projectActionTerminalReservationIds(reservedTerminalIds)).toEqual(["action-build"]);
+  });
+
   it("does not write when waiting after open is interrupted", async () => {
     const reservedTerminalIds = createReservations();
     const interruptedResult = AsyncResult.failure(Cause.interrupt());
