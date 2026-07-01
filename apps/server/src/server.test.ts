@@ -5587,7 +5587,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const threadId = ThreadId.make("thread-racy-subscribe");
       const messageId = MessageId.make("message-racy-first-user");
       const snapshotGate = yield* Deferred.make<void>();
-      const events = yield* Queue.unbounded<OrchestrationEvent>();
+      const publishEvent = yield* Deferred.make<(event: OrchestrationEvent) => void>();
       const thread = {
         id: threadId,
         projectId: defaultProjectId,
@@ -5640,7 +5640,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
           },
           orchestrationEngine: {
-            streamDomainEvents: Stream.fromQueue(events),
+            streamDomainEvents: Stream.callback<OrchestrationEvent>((queue) =>
+              Deferred.succeed(publishEvent, (event) => {
+                Queue.offerUnsafe(queue, event);
+              }),
+            ),
           },
         },
       });
@@ -5652,7 +5656,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             const fiber = yield* client[ORCHESTRATION_WS_METHODS.subscribeThread]({
               threadId,
             }).pipe(Stream.take(2), Stream.runCollect, Effect.forkScoped);
-            yield* Queue.offer(events, userMessageEvent);
+            (yield* Deferred.await(publishEvent))(userMessageEvent);
             yield* Deferred.succeed(snapshotGate, undefined);
             return Array.from(yield* Fiber.join(fiber));
           }),
@@ -5676,7 +5680,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const now = "2026-01-01T00:00:00.000Z";
       const projectId = ProjectId.make("project-racy-shell");
       const snapshotGate = yield* Deferred.make<void>();
-      const events = yield* Queue.unbounded<OrchestrationEvent>();
+      const publishEvent = yield* Deferred.make<(event: OrchestrationEvent) => void>();
       const project = {
         id: projectId,
         title: "Racy Shell Project",
@@ -5724,7 +5728,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
           },
           orchestrationEngine: {
-            streamDomainEvents: Stream.fromQueue(events),
+            streamDomainEvents: Stream.callback<OrchestrationEvent>((queue) =>
+              Deferred.succeed(publishEvent, (event) => {
+                Queue.offerUnsafe(queue, event);
+              }),
+            ),
           },
         },
       });
@@ -5738,7 +5746,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Stream.runCollect,
               Effect.forkScoped,
             );
-            yield* Queue.offer(events, projectCreatedEvent);
+            (yield* Deferred.await(publishEvent))(projectCreatedEvent);
             yield* Deferred.succeed(snapshotGate, undefined);
             return Array.from(yield* Fiber.join(fiber));
           }),
