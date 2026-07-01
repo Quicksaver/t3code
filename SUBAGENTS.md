@@ -2,12 +2,12 @@
 
 ## Branch Metadata
 
-- Latest upstream merge prepared: `upstream/main` at `2448212367b4348f39eaf5c2635eea6896218cba` applied into `split/subagent-threading-work` from pre-merge branch HEAD `63a7d2fd7c1dbff26c8e7d1416e051367969e571`. The merge is intentionally left uncommitted for coordinator review; `MERGE_HEAD` points at `2448212367b4348f39eaf5c2635eea6896218cba`.
-- Post-merge branch diff against `upstream/main`: 33 branch-only commits before the final merge commit, 0 upstream-only commits in the applied merge result, 43 files changed, 5845 insertions, 373 deletions. Because the merge is intentionally uncommitted, raw Git ancestry still reports `HEAD...upstream/main` as 33 ahead and 2 behind; the staged merge result applies both upstream-only commits.
-- Remote tracking status during the prepared merge: `split/subagent-threading-work` is 0 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
-- Conflict notes for the `244821236` merge: no files stopped for manual conflict resolution. Git auto-merged `apps/web/src/components/ChatView.tsx`, `apps/web/src/components/chat/MessagesTimeline.tsx`, and `apps/web/src/components/chat/MessagesTimeline.test.tsx`; the resulting branch keeps upstream's restored Legend List scroll anchoring, scroll-to-end affordance behavior, timeline minimap, composer overlay inset handling, and package version bumps while preserving this branch's subagent control bar, parent subagent reference blocks, child output isolation, child stop routing, sidebar nesting, and hidden child route behavior.
-- New fork customizations introduced by this merge: none. The branch-owned adaptation is limited to carrying the existing UI-aware Codex subagent behavior through upstream's revised chat timeline scroll/minimap implementation.
-- Retired customizations made redundant by upstream: none identified. Upstream's timeline minimap and scroll-affordance fixes do not provide Codex subagent lineage, child-thread projection, sidebar nesting, stop routing, parent activity rows, child output isolation, or archive/delete descendant lifecycle semantics.
+- Latest upstream merge completed: `upstream/main` at `7b9eef7ac29f9d4819c6411dfb1c5f04fef50264` merged into `split/subagent-threading-work` from pre-merge branch HEAD `089c9988476758ad9bec1d165bf0a696f3df7bc9`; merge commit `f66fbb20c0b6d942042f14ce9f90a7fab0238313`.
+- Post-merge branch diff against `upstream/main`: 35 branch-only commits including the final merge commit, 0 upstream-only commits, 43 files changed, 5845 insertions, 373 deletions.
+- Remote tracking status after the merge: `split/subagent-threading-work` is 5 commits ahead and 0 commits behind `origin/split/subagent-threading-work`; this branch continues to use `upstream/main` as the merge baseline.
+- Conflict notes for the `7b9eef7` merge: no files stopped for manual conflict resolution. Git auto-merged upstream changes in `apps/desktop/src/backend/DesktopBackendConfiguration.ts`, `apps/server/src/provider/Layers/ClaudeProvider.ts`, `apps/web/src/components/RightPanelTabs.tsx`, `apps/web/src/components/settings/ProviderModelsSection.tsx`, `apps/web/src/index.css`, `packages/contracts/src/model.ts`, and `packages/shared/src/model.test.ts`; the resulting branch keeps upstream's middle-click right-panel tab close behavior, WSL-only backend warm-up, Claude Sonnet 5 model defaults, and ultrathink frame border effect while preserving this branch's subagent control bar, parent subagent reference blocks, child output isolation, child stop routing, sidebar nesting, hidden child route behavior, and parent-conversation header action.
+- New fork customizations introduced by this merge: none. The branch-owned adaptation is limited to carrying the existing UI-aware Codex subagent behavior through upstream's revised provider model, right-panel, desktop backend, and global CSS changes.
+- Retired customizations made redundant by upstream: none identified. The incoming upstream work does not provide Codex subagent lineage, child-thread projection, sidebar nesting, stop routing, parent activity rows, child output isolation, parent header navigation, `parentRelation` preservation, or archive/delete descendant lifecycle semantics.
 - Follow-up refactor after the `244821236` merge: subagent work-entry display-part resolution, child row model derivation, relation terminal snapshotting, and block display-state derivation now live in `apps/web/src/components/chat/MessagesTimeline.logic.ts`; `MessagesTimeline.tsx` keeps the React rendering, shell lookup, and navigation wiring.
 - Assessment follow-up after the timeline-logic refactor: review fixes tightened chat timeline anchor cleanup on send rollback, precise manual-scroll cancellation, generic child-title fallback, exact Legend List end-state handling, live-follow frame scheduling, anchored-turn end measurement, minimap visibility/state derivation, subagent reinvocation heuristics, stale running-relation display, and short-prompt/output deduplication.
 
@@ -134,6 +134,16 @@ The prepared `244821236` merge was validated with:
 - `pnpm --dir apps/web exec vp test run src/components/ChatView.logic.test.ts src/components/Sidebar.logic.test.ts`: 2 files passed, 87 tests passed.
 - `pnpm --dir apps/server exec vp test run src/orchestration/Layers/ProviderRuntimeIngestion.test.ts src/orchestration/decider.delete.test.ts src/provider/Layers/CodexAdapter.test.ts src/orchestration/Layers/ProviderCommandReactor.test.ts`: 4 files passed, 108 tests passed.
 - `pnpm --dir apps/web exec tsc --noEmit --pretty false --project tsconfig.json`: passed.
+- `pnpm exec vp check`: passed; reported existing lint warnings only.
+- `pnpm exec vp run typecheck`: passed across 15 workspace tasks.
+
+The completed `7b9eef7` merge was validated with:
+
+- `pnpm --dir packages/shared exec vp test run src/model.test.ts`: 1 file passed, 4 tests passed.
+- `pnpm --dir apps/web exec vp test run src/components/chat/MessagesTimeline.test.tsx src/components/Sidebar.logic.test.ts src/components/ChatView.logic.test.ts`: 3 files passed, 114 tests passed.
+- `pnpm --dir packages/contracts exec vp test run src/provider.test.ts`: 1 file passed, 13 tests passed.
+- `pnpm --dir apps/web exec vp test run src/modelSelection.test.ts src/components/chat/composerProviderState.test.tsx`: 2 files passed, 19 tests passed.
+- `pnpm --dir apps/server exec vp test run src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderRegistry.test.ts src/orchestration/Layers/ProviderCommandReactor.test.ts`: 3 files passed, 129 tests passed.
 - `pnpm exec vp check`: passed; reported existing lint warnings only.
 - `pnpm exec vp run typecheck`: passed across 15 workspace tasks.
 
