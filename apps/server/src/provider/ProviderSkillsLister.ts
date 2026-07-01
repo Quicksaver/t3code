@@ -29,23 +29,17 @@ import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import {
-  WorkspacePaths,
-  WorkspaceRootCreateFailedError,
-  WorkspaceRootNotDirectoryError,
-  WorkspaceRootNotExistsError,
-  WorkspaceRootStatFailedError,
-} from "../workspace/WorkspacePaths.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
 const PROVIDER_SKILLS_CACHE_CAPACITY = 64;
 const PROVIDER_SKILLS_CACHE_TTL = Duration.seconds(1);
 const PROVIDER_SKILLS_MAX_CONCURRENCY = 4;
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
-const isWorkspaceRootNotExistsError = Schema.is(WorkspaceRootNotExistsError);
-const isWorkspaceRootNotDirectoryError = Schema.is(WorkspaceRootNotDirectoryError);
-const isWorkspaceRootCreateFailedError = Schema.is(WorkspaceRootCreateFailedError);
-const isWorkspaceRootStatFailedError = Schema.is(WorkspaceRootStatFailedError);
+const isWorkspaceRootNotExistsError = Schema.is(WorkspacePaths.WorkspaceRootNotExistsError);
+const isWorkspaceRootNotDirectoryError = Schema.is(WorkspacePaths.WorkspaceRootNotDirectoryError);
+const isWorkspaceRootCreateFailedError = Schema.is(WorkspacePaths.WorkspaceRootCreateFailedError);
+const isWorkspaceRootStatFailedError = Schema.is(WorkspacePaths.WorkspaceRootStatFailedError);
 const isCodexShadowHomePathConflictError = Schema.is(CodexShadowHomePathConflictError);
 const isCodexShadowHomeEntryConflictError = Schema.is(CodexShadowHomeEntryConflictError);
 const isCodexShadowHomePrivateEntrySymlinkError = Schema.is(
@@ -206,7 +200,7 @@ function parseRequestKey(key: string): ProviderSkillsListInput {
 export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const serverSettings = yield* ServerSettingsService;
-  const workspacePaths = yield* WorkspacePaths;
+  const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
