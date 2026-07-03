@@ -86,6 +86,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
+import { resolveThreadConversationMaxWidthStyle } from "./chat/threadConversationWidth";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -5139,7 +5140,10 @@ function ChatViewContent(props: ChatViewProps) {
                 aria-hidden="true"
                 className="chat-composer-horizontal-inset pointer-events-none absolute inset-x-0 top-1.5 bottom-0 z-0 sm:top-2"
               >
-                <div className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]">
+                <div
+                  className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]"
+                  style={resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx)}
+                >
                   <div className="chat-composer-shared-blur absolute -inset-8" />
                 </div>
               </div>
