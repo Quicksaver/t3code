@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 
 export type ThreadConversationMaxWidthPx = number | null | undefined;
 
+const NO_THREAD_CONVERSATION_MAX_WIDTH_STYLE: CSSProperties = { maxWidth: "none" };
+
 export function normalizeThreadConversationMaxWidthStyleValue(
   maxWidthPx: ThreadConversationMaxWidthPx,
 ): number | "none" | undefined {
@@ -21,7 +23,8 @@ export function resolveThreadConversationMaxWidthStyle(
   if (normalizedMaxWidth === undefined) {
     return undefined;
   }
-  return {
-    maxWidth: normalizedMaxWidth === "none" ? "none" : `${normalizedMaxWidth}px`,
-  };
+  if (normalizedMaxWidth === "none") {
+    return NO_THREAD_CONVERSATION_MAX_WIDTH_STYLE;
+  }
+  return { maxWidth: `${normalizedMaxWidth}px` };
 }

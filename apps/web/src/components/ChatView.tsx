@@ -1054,6 +1054,10 @@ function ChatViewContent(props: ChatViewProps) {
   const threadConversationMaxWidthPx = isVscodeWebview
     ? hostDisplayPreferences.threadConversationMaxWidthPx
     : undefined;
+  const threadConversationMaxWidthStyle = useMemo(
+    () => resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx),
+    [threadConversationMaxWidthPx],
+  );
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
@@ -5142,7 +5146,7 @@ function ChatViewContent(props: ChatViewProps) {
               >
                 <div
                   className="relative mx-auto h-full w-full max-w-3xl overflow-clip rounded-t-[20px]"
-                  style={resolveThreadConversationMaxWidthStyle(threadConversationMaxWidthPx)}
+                  style={threadConversationMaxWidthStyle}
                 >
                   <div className="chat-composer-shared-blur absolute -inset-8" />
                 </div>
