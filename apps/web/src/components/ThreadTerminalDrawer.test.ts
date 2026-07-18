@@ -3,8 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
+  terminalSelectionActionItems,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
+import { deriveProjectHostControlAvailability } from "../projectHostControls";
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
@@ -71,5 +73,20 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 0)).toBe(true);
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
+  });
+
+  it("keeps selection copy available on an existing disconnected terminal", () => {
+    const availability = deriveProjectHostControlAvailability({
+      hasActiveProject: true,
+      environmentConnectionPhase: "reconnecting",
+      terminalDrawerOpen: true,
+    });
+
+    expect(availability).toMatchObject({
+      terminalControlsAvailable: false,
+      terminalDrawerToggleAvailable: true,
+      projectActionsRunAvailable: false,
+    });
+    expect(terminalSelectionActionItems()).toContainEqual({ id: "copy", label: "Copy" });
   });
 });

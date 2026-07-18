@@ -3,8 +3,8 @@
 ## Upstream Merge Snapshot
 
 - Generated from `upstream/main` at `1735e27d9` and merge result `8f3089b44`.
-- Ahead/behind after this documentation update: `53/0` relative to `upstream/main`.
-- Branch diff size: `16 files changed, 2,855 insertions(+), 100 deletions(-)`.
+- Ahead/behind after this documentation update: `54/0` relative to `upstream/main`.
+- Branch diff size: `18 files changed, 2,881 insertions(+), 107 deletions(-)`.
 
 ## Latest Upstream Compatibility Notes
 
@@ -28,6 +28,7 @@ Expected behavior:
 - POSIX subprocess detection is conservative when full process-tree inspection fails: a shell child is treated as busy rather than idle so commands are not injected into a terminal that may still have a hidden descendant process.
 - Terminal UI controls should be unavailable whenever no active project exists or the active project host is disconnected. Existing open terminal surfaces may remain closable after disconnect, but opening, splitting, and project-action runs require a connected host. Keep this gating centralized through `deriveProjectHostControlAvailability(...)` so terminal drawer toggles, right-panel terminal creation, and project-action runs expose the same connected-host rules and unavailable reasons.
 - Unavailable primary project-action run controls should remain tooltip-triggerable, using `aria-disabled` plus a guarded click handler rather than native `disabled`, so disconnected-host reasons stay inspectable while script execution remains blocked.
+- Existing terminal selection actions remain local surface operations after disconnect: selection copy stays available while terminal creation and project-action runs remain host-gated.
 
 Primary files:
 

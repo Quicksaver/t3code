@@ -269,6 +269,13 @@ export function shouldHandleTerminalSelectionMouseUp(
   return selectionGestureActive && button === 0;
 }
 
+export function terminalSelectionActionItems() {
+  return [
+    { id: "add-to-chat", label: "Add to chat" },
+    { id: "copy", label: "Copy" },
+  ] as const;
+}
+
 interface TerminalViewportProps {
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
@@ -474,13 +481,7 @@ export function TerminalViewport({
       const requestId = ++selectionActionRequestIdRef.current;
       selectionActionMenuOpenRef.current = true;
       const clicked = await localApi.contextMenu
-        .show(
-          [
-            { id: "add-to-chat", label: "Add to chat" },
-            { id: "copy", label: "Copy" },
-          ],
-          nextAction.position,
-        )
+        .show(terminalSelectionActionItems(), nextAction.position)
         .finally(() => {
           selectionActionMenuOpenRef.current = false;
         });
