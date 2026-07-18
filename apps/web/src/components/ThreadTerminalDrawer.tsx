@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  type ContextMenuItem,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -269,11 +270,23 @@ export function shouldHandleTerminalSelectionMouseUp(
   return selectionGestureActive && button === 0;
 }
 
-export function terminalSelectionActionItems() {
-  return [
-    { id: "add-to-chat", label: "Add to chat" },
-    { id: "copy", label: "Copy" },
-  ] as const;
+type TerminalSelectionActionId = "add-to-chat" | "copy";
+
+const TERMINAL_SELECTION_ACTION_ITEMS = [
+  { id: "add-to-chat", label: "Add to chat" },
+  { id: "copy", label: "Copy" },
+] as const satisfies readonly ContextMenuItem<TerminalSelectionActionId>[];
+
+export async function selectTerminalSelectionAction(
+  contextMenu: {
+    show: (
+      items: readonly ContextMenuItem<TerminalSelectionActionId>[],
+      position?: { x: number; y: number },
+    ) => Promise<TerminalSelectionActionId | null>;
+  },
+  position: { x: number; y: number },
+): Promise<TerminalSelectionActionId | null> {
+  return contextMenu.show(TERMINAL_SELECTION_ACTION_ITEMS, position);
 }
 
 interface TerminalViewportProps {
@@ -480,11 +493,12 @@ export function TerminalViewport({
       }
       const requestId = ++selectionActionRequestIdRef.current;
       selectionActionMenuOpenRef.current = true;
-      const clicked = await localApi.contextMenu
-        .show(terminalSelectionActionItems(), nextAction.position)
-        .finally(() => {
-          selectionActionMenuOpenRef.current = false;
-        });
+      const clicked = await selectTerminalSelectionAction(
+        localApi.contextMenu,
+        nextAction.position,
+      ).finally(() => {
+        selectionActionMenuOpenRef.current = false;
+      });
       if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
         return;
       }

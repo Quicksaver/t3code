@@ -3,8 +3,8 @@
 ## Upstream Merge Snapshot
 
 - Generated from `upstream/main` at `1735e27d9` and merge result `8f3089b44`.
-- Ahead/behind after this documentation update: `54/0` relative to `upstream/main`.
-- Branch diff size: `18 files changed, 2,881 insertions(+), 107 deletions(-)`.
+- Ahead/behind after this documentation update: `55/0` relative to `upstream/main`.
+- Branch diff size: `18 files changed, 2,899 insertions(+), 112 deletions(-)`.
 
 ## Latest Upstream Compatibility Notes
 

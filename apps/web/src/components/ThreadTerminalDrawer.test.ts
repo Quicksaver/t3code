@@ -1,12 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   resolveTerminalSelectionActionPosition,
+  selectTerminalSelectionAction,
   shouldHandleTerminalSelectionMouseUp,
-  terminalSelectionActionItems,
   terminalSelectionActionDelayForClickCount,
 } from "./ThreadTerminalDrawer";
-import { deriveProjectHostControlAvailability } from "../projectHostControls";
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
@@ -74,19 +73,19 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
   });
+});
 
-  it("keeps selection copy available on an existing disconnected terminal", () => {
-    const availability = deriveProjectHostControlAvailability({
-      hasActiveProject: true,
-      environmentConnectionPhase: "reconnecting",
-      terminalDrawerOpen: true,
-    });
+describe("selectTerminalSelectionAction", () => {
+  it("offers copy through the terminal selection context menu", async () => {
+    const show = vi.fn(async () => "copy" as const);
 
-    expect(availability).toMatchObject({
-      terminalControlsAvailable: false,
-      terminalDrawerToggleAvailable: true,
-      projectActionsRunAvailable: false,
-    });
-    expect(terminalSelectionActionItems()).toContainEqual({ id: "copy", label: "Copy" });
+    await expect(selectTerminalSelectionAction({ show }, { x: 120, y: 240 })).resolves.toBe("copy");
+    expect(show).toHaveBeenCalledWith(
+      [
+        { id: "add-to-chat", label: "Add to chat" },
+        { id: "copy", label: "Copy" },
+      ],
+      { x: 120, y: 240 },
+    );
   });
 });
