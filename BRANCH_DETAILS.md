@@ -1,5 +1,17 @@
 # Terminal-backed Project Actions
 
+## Upstream Merge Snapshot
+
+- Generated from `upstream/main` at `1735e27d9` and merge result `8f3089b44`.
+- Ahead/behind after this documentation update: `53/0` relative to `upstream/main`.
+- Branch diff size: `16 files changed, 2,855 insertions(+), 100 deletions(-)`.
+
+## Latest Upstream Compatibility Notes
+
+- `apps/server/src/terminal/Manager.ts`: the merge was conflict-free; upstream AppImage environment cleanup remains in the terminal spawn path alongside the branch's conservative POSIX subprocess inspection.
+- `apps/web/src/components/ChatView.tsx`: the merge was conflict-free; upstream draft-hero, active-turn sending, and diff-panel behavior remains alongside the branch's extracted project-action terminal workflow.
+- No terminal-backed project action customization was retired or made redundant by this upstream merge.
+
 Terminal-backed project actions are reusable terminal workflows, not fire-and-forget terminal creation.
 
 Expected behavior:
