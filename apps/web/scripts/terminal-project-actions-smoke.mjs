@@ -33,15 +33,41 @@ async function resolveBrowserLaunchOptions() {
   return { channel: configuredChannel || "chrome" };
 }
 
-function redactPairingNavigationError(error, pairingUrl) {
-  const redactedUrl = new URL(pairingUrl);
-  redactedUrl.hash = "#token=<redacted>";
-  const message = error instanceof Error ? error.message : String(error);
-  return new Error(
-    message
-      .replaceAll(pairingUrl.href, redactedUrl.href)
-      .replaceAll(pairingUrl.hash, redactedUrl.hash),
-  );
+function redactPairingSecrets(value, pairingUrl) {
+  const token = new URLSearchParams(pairingUrl.hash.slice(1)).get("token");
+  if (!token) {
+    return String(value);
+  }
+
+  return String(value).replaceAll(token, "<redacted>");
+}
+
+function redactPairingError(error, pairingUrl, seen = new Set()) {
+  if (!(error instanceof Error)) {
+    return new Error(redactPairingSecrets(error, pairingUrl));
+  }
+  if (seen.has(error)) {
+    return error;
+  }
+  seen.add(error);
+
+  error.message = redactPairingSecrets(error.message, pairingUrl);
+  if (error.stack) {
+    error.stack = redactPairingSecrets(error.stack, pairingUrl);
+  }
+  if (error instanceof AggregateError) {
+    for (const nestedError of error.errors) {
+      redactPairingError(nestedError, pairingUrl, seen);
+    }
+  }
+  if (error.cause instanceof Error) {
+    redactPairingError(error.cause, pairingUrl, seen);
+  }
+  return error;
+}
+
+function appendCleanupError(pendingError, cleanupError, message) {
+  return pendingError ? new AggregateError([pendingError, cleanupError], message) : cleanupError;
 }
 
 function markerCount(value, marker) {
@@ -231,40 +257,39 @@ NodeAssert.equal(
 const projectPath = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), "t3code-terminal-action-smoke."),
 );
-const browser = await chromium.launch({
-  ...(await resolveBrowserLaunchOptions()),
-  headless: process.env.T3CODE_SMOKE_HEADFUL !== "1",
-});
-const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-const page = await context.newPage();
 const browserErrors = [];
-page.on("console", (message) => {
-  if (
-    message.type() === "error" &&
-    message.text() !==
-      "Failed to load resource: the server responded with a status of 404 (Not Found)"
-  ) {
-    browserErrors.push(`console: ${message.text()}`);
-  }
-});
-page.on("pageerror", (error) => browserErrors.push(`pageerror: ${error.message}`));
-page.on("response", (response) => {
-  const pathname = new URL(response.url()).pathname;
-  const expectedDraftThreadMiss =
-    response.status() === 404 && /^\/api\/orchestration\/threads\/[^/]+$/.test(pathname);
-  if (response.status() >= 400 && pathname !== "/favicon.ico" && !expectedDraftThreadMiss) {
-    browserErrors.push(`http ${response.status()}: ${pathname}`);
-  }
-});
-
+let browser;
+let context;
+let page;
 let result;
 let pendingError;
 try {
-  try {
-    await page.goto(pairUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  } catch (error) {
-    throw redactPairingNavigationError(error, pairUrl);
-  }
+  browser = await chromium.launch({
+    ...(await resolveBrowserLaunchOptions()),
+    headless: process.env.T3CODE_SMOKE_HEADFUL !== "1",
+  });
+  context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  page = await context.newPage();
+  page.on("console", (message) => {
+    if (
+      message.type() === "error" &&
+      message.text() !==
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ) {
+      browserErrors.push(`console: ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => browserErrors.push(`pageerror: ${error.message}`));
+  page.on("response", (response) => {
+    const pathname = new URL(response.url()).pathname;
+    const expectedDraftThreadMiss =
+      response.status() === 404 && /^\/api\/orchestration\/threads\/[^/]+$/.test(pathname);
+    if (response.status() >= 400 && pathname !== "/favicon.ico" && !expectedDraftThreadMiss) {
+      browserErrors.push(`http ${response.status()}: ${pathname}`);
+    }
+  });
+
+  await page.goto(pairUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForURL((url) => url.pathname !== "/pair", { timeout: 30_000 });
   result = await runScenario(page, context, projectPath, browserErrors);
 
@@ -275,44 +300,71 @@ try {
   );
   NodeAssert.deepEqual(unexpectedErrors, []);
 } catch (error) {
-  const screenshotPath = process.env.T3CODE_SMOKE_SCREENSHOT?.trim();
-  if (screenshotPath) {
-    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+  if (page) {
+    const screenshotPath = process.env.T3CODE_SMOKE_SCREENSHOT?.trim();
+    if (screenshotPath) {
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+    }
+    const terminalSnapshot = await page
+      .locator(".xterm-rows")
+      .innerText()
+      .catch(() => "<terminal unavailable>");
+    const visibleText = await page
+      .locator("body")
+      .innerText()
+      .catch(() => "<page unavailable>");
+    console.error(
+      JSON.stringify(
+        {
+          status: "failed",
+          terminalSnapshot: redactPairingSecrets(terminalSnapshot, pairUrl).slice(-2_000),
+          visibleText: redactPairingSecrets(
+            visibleText.replaceAll(/\s+/g, " ").trim(),
+            pairUrl,
+          ).slice(-2_000),
+          browserErrors: browserErrors.map((message) => redactPairingSecrets(message, pairUrl)),
+        },
+        null,
+        2,
+      ),
+    );
   }
-  const terminalSnapshot = await page
-    .locator(".xterm-rows")
-    .innerText()
-    .catch(() => "<terminal unavailable>");
-  const visibleText = await page
-    .locator("body")
-    .innerText()
-    .catch(() => "<page unavailable>");
-  console.error(
-    JSON.stringify(
-      {
-        status: "failed",
-        terminalSnapshot: terminalSnapshot.slice(-2_000),
-        visibleText: visibleText.replaceAll(/\s+/g, " ").trim().slice(-2_000),
-        browserErrors,
-      },
-      null,
-      2,
-    ),
-  );
-  pendingError = error;
+  pendingError = redactPairingError(error, pairUrl);
 } finally {
-  try {
-    await removeDisposableProject(page, context, projectPath);
-  } catch (error) {
-    pendingError = pendingError
-      ? new AggregateError([pendingError, error], "Smoke scenario and project cleanup failed.")
-      : error;
+  if (page && context) {
+    try {
+      await removeDisposableProject(page, context, projectPath);
+    } catch (error) {
+      pendingError = appendCleanupError(
+        pendingError,
+        redactPairingError(error, pairUrl),
+        "Smoke scenario and project cleanup failed.",
+      );
+    }
   }
-  await browser.close();
-  await NodeFSP.rm(projectPath, { recursive: true, force: true });
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (error) {
+      pendingError = appendCleanupError(
+        pendingError,
+        redactPairingError(error, pairUrl),
+        "Smoke scenario and browser cleanup failed.",
+      );
+    }
+  }
+  try {
+    await NodeFSP.rm(projectPath, { recursive: true, force: true });
+  } catch (error) {
+    pendingError = appendCleanupError(
+      pendingError,
+      redactPairingError(error, pairUrl),
+      "Smoke scenario and workspace cleanup failed.",
+    );
+  }
 }
 
 if (pendingError) {
-  throw pendingError;
+  throw redactPairingError(pendingError, pairUrl);
 }
 console.log(JSON.stringify({ status: "passed", ...result }, null, 2));
