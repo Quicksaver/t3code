@@ -33,6 +33,17 @@ async function resolveBrowserLaunchOptions() {
   return { channel: configuredChannel || "chrome" };
 }
 
+function redactPairingNavigationError(error, pairingUrl) {
+  const redactedUrl = new URL(pairingUrl);
+  redactedUrl.hash = "#token=<redacted>";
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    message
+      .replaceAll(pairingUrl.href, redactedUrl.href)
+      .replaceAll(pairingUrl.hash, redactedUrl.hash),
+  );
+}
+
 function markerCount(value, marker) {
   return value.split(marker).length - 1;
 }
@@ -73,6 +84,46 @@ async function addProjectAction(page) {
     .fill("printf 'T3_ACTION_%s\\n' 'SMOKE_START'; sleep 2; printf 'T3_ACTION_%s\\n' 'SMOKE_DONE'");
   await dialog.getByRole("button", { name: "Save action" }).click();
   await page.getByRole("button", { name: ACTION_RUN_LABEL }).waitFor({ state: "visible" });
+}
+
+async function removeDisposableProject(page, context, projectPath) {
+  if (page.isClosed()) {
+    return;
+  }
+
+  await context.setOffline(false);
+  const projectName = NodePath.basename(projectPath);
+  const projectButton = page
+    .locator('[data-sidebar="menu-button"]')
+    .filter({ hasText: projectName })
+    .first();
+  const projectExists = await projectButton
+    .waitFor({ state: "visible", timeout: 2_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!projectExists) {
+    return;
+  }
+
+  const runButton = page.getByRole("button", { name: ACTION_RUN_LABEL });
+  if ((await runButton.count()) > 0) {
+    await page.waitForFunction(
+      (label) => {
+        const button = document.querySelector(`button[aria-label="${label}"]`);
+        return button !== null && button.getAttribute("aria-disabled") !== "true";
+      },
+      ACTION_RUN_LABEL,
+      { timeout: 20_000 },
+    );
+  }
+
+  await projectButton.click({ button: "right" });
+  const removeButton = page.getByRole("button", { name: "Remove", exact: true });
+  await removeButton.waitFor({ state: "visible" });
+  const confirmation = page.waitForEvent("dialog");
+  await removeButton.click();
+  await (await confirmation).accept();
+  await projectButton.waitFor({ state: "detached", timeout: 20_000 });
 }
 
 async function showProjectActionTooltip(page, runButton) {
@@ -206,10 +257,16 @@ page.on("response", (response) => {
   }
 });
 
+let result;
+let pendingError;
 try {
-  await page.goto(pairUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  try {
+    await page.goto(pairUrl.href, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  } catch (error) {
+    throw redactPairingNavigationError(error, pairUrl);
+  }
   await page.waitForURL((url) => url.pathname !== "/pair", { timeout: 30_000 });
-  const result = await runScenario(page, context, projectPath, browserErrors);
+  result = await runScenario(page, context, projectPath, browserErrors);
 
   // Network errors after setOffline(true) are expected; everything before the host disconnect
   // should remain clean.
@@ -217,7 +274,6 @@ try {
     (message) => !message.includes("WebSocket") && !message.includes("ERR_INTERNET_DISCONNECTED"),
   );
   NodeAssert.deepEqual(unexpectedErrors, []);
-  console.log(JSON.stringify({ status: "passed", ...result }, null, 2));
 } catch (error) {
   const screenshotPath = process.env.T3CODE_SMOKE_SCREENSHOT?.trim();
   if (screenshotPath) {
@@ -243,8 +299,20 @@ try {
       2,
     ),
   );
-  throw error;
+  pendingError = error;
 } finally {
+  try {
+    await removeDisposableProject(page, context, projectPath);
+  } catch (error) {
+    pendingError = pendingError
+      ? new AggregateError([pendingError, error], "Smoke scenario and project cleanup failed.")
+      : error;
+  }
   await browser.close();
   await NodeFSP.rm(projectPath, { recursive: true, force: true });
 }
+
+if (pendingError) {
+  throw pendingError;
+}
+console.log(JSON.stringify({ status: "passed", ...result }, null, 2));
