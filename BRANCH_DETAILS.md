@@ -37,12 +37,25 @@ Relevant tests live in:
 - `apps/web/src/components/ProjectScriptsControl.test.tsx`
 - `apps/server/src/terminal/Manager.test.ts`
 - `packages/shared/src/terminalLabels.test.ts`
+- `apps/web/scripts/terminal-project-actions-smoke.mjs`
 
 Useful focused command:
 
 ```sh
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/projectScriptTerminals.test.ts)
 ```
+
+After starting an isolated app on this worktree's fixed ports with the shared `WORKTREES.md`
+procedure, run the integrated browser scenario with the one-time pairing URL printed by the server:
+
+```sh
+T3CODE_PAIR_URL='<pairing-url>' pnpm --filter @t3tools/web smoke-test:terminal-project-actions
+```
+
+The scenario creates and removes its own disposable project, configures an action through the UI,
+and covers first-terminal readiness, stable idle reuse, busy fallback allocation, and disconnected-host
+run-control messaging. Set `T3CODE_BROWSER_EXECUTABLE` when Chrome is not discoverable through the
+default Playwright `chrome` channel.
 
 ## Development Ports
 
