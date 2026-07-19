@@ -3,11 +3,13 @@
 ## Conflict Guidance
 
 - `apps/server/src/terminal/Manager.ts`: preserve AppImage environment cleanup in the terminal spawn path alongside conservative POSIX subprocess inspection.
-- `apps/web/src/components/ChatView.tsx`: preserve draft-hero, active-turn sending, and diff-panel behavior alongside the extracted project-action terminal workflow.
+- `apps/web/src/components/ChatView.tsx`: preserve draft-hero, active-turn sending, and diff-panel behavior while routing project actions through the reusable terminal workflow.
+- `apps/web/scripts/terminal-project-actions-smoke.mjs`: preserve the real isolated-app coverage for first-terminal readiness, idle reuse, busy fallback allocation, and disconnected-host run controls when project, action, terminal, or connection UI changes.
+- `apps/web/package.json`: preserve the `smoke-test:terminal-project-actions` command and its web-local `playwright-core` dependency so the branch-specific browser scenario remains independently runnable.
 
 Terminal-backed project actions are reusable terminal workflows, not fire-and-forget terminal creation.
 
-Expected behavior:
+Current behavior:
 
 - Running a project action should reuse a stable terminal for that action when possible instead of opening a new terminal instance on every click.
 - If action-specific reuse is not available, terminal-backed actions should still prefer a shared action terminal group so repeated runs do not leave many stale terminal instances behind.
@@ -35,6 +37,8 @@ Relevant tests live in:
 
 - `apps/web/src/projectScriptTerminals.test.ts`
 - `apps/web/src/components/ProjectScriptsControl.test.tsx`
+- `apps/web/src/components/ThreadTerminalDrawer.test.ts`
+- `apps/web/src/projectHostControls.test.ts`
 - `apps/server/src/terminal/Manager.test.ts`
 - `packages/shared/src/terminalLabels.test.ts`
 - `apps/web/scripts/terminal-project-actions-smoke.mjs`
@@ -45,17 +49,20 @@ Useful focused command:
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/projectScriptTerminals.test.ts)
 ```
 
-After starting an isolated app on this worktree's fixed ports with the shared `WORKTREES.md`
-procedure, run the integrated browser scenario with the one-time pairing URL printed by the server:
+Use the shared `WORKTREES.md` procedure to start an isolated app on this worktree's fixed ports,
+then run the integrated browser scenario with the one-time pairing URL printed by the server:
 
 ```sh
 T3CODE_PAIR_URL='<pairing-url>' pnpm --filter @t3tools/web smoke-test:terminal-project-actions
 ```
 
 The scenario creates and removes its own disposable project, configures an action through the UI,
-and covers first-terminal readiness, stable idle reuse, busy fallback allocation, and disconnected-host
-run-control messaging. Set `T3CODE_BROWSER_EXECUTABLE` when Chrome is not discoverable through the
-default Playwright `chrome` channel.
+verifies two completed runs in the same stable terminal, and allocates a numbered fallback while that
+terminal is busy: `Action: terminal reuse smoke (2)`. It switches the browser offline to verify
+`aria-disabled`, the disconnected-host tooltip, and the guarded click path. It also rejects unexpected
+browser errors before the deliberate disconnect. Set `T3CODE_BROWSER_CHANNEL` to use another installed
+channel or `T3CODE_BROWSER_EXECUTABLE` to provide an explicit browser path; the default channel is
+`chrome`.
 
 ## Development Ports
 
