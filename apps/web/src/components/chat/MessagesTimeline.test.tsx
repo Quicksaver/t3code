@@ -434,6 +434,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-user-message-collapsible="false"');
+    expect(markup).toContain("rounded-2xl bg-accent p-3");
   });
 
   it("renders local skill references as chips in user message bubbles", async () => {
