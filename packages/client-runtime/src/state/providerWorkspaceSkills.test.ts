@@ -9,9 +9,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   formatProviderWorkspaceSkillsError,
+  prepareProviderWorkspaceSkillsTarget,
   providerWorkspaceSkillsTargetKey,
   resolveNextProviderWorkspaceSkillsSnapshot,
   resolveProviderWorkspaceSkills,
+  resolveProviderWorkspaceSkillsQuery,
 } from "./providerWorkspaceSkills.ts";
 
 function skill(name: string): ServerProviderSkill {
@@ -43,6 +45,41 @@ describe("providerWorkspaceSkillsTargetKey", () => {
         enabled: true,
       }),
     ).toBeNull();
+  });
+});
+
+describe("prepareProviderWorkspaceSkillsTarget", () => {
+  it("centralizes lazy and connection-aware query preparation", () => {
+    const unavailable = prepareProviderWorkspaceSkillsTarget({
+      environmentId: EnvironmentId.make("local"),
+      instanceId: ProviderInstanceId.make("codex"),
+      cwd: "  /repo/worktree  ",
+      enabled: true,
+      connectionAvailable: false,
+      fallbackSkills: [],
+    });
+
+    expect(unavailable).toEqual({
+      targetKey: "local:codex:/repo/worktree",
+      key: "local:codex:/repo/worktree",
+      unavailable: true,
+      queryTarget: null,
+    });
+
+    expect(
+      prepareProviderWorkspaceSkillsTarget({
+        environmentId: EnvironmentId.make("local"),
+        instanceId: ProviderInstanceId.make("codex"),
+        cwd: "/repo/worktree",
+        enabled: false,
+        fallbackSkills: [],
+      }),
+    ).toEqual({
+      targetKey: "local:codex:/repo/worktree",
+      key: null,
+      unavailable: false,
+      queryTarget: null,
+    });
   });
 });
 
@@ -269,6 +306,43 @@ describe("resolveNextProviderWorkspaceSkillsSnapshot", () => {
         current,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveProviderWorkspaceSkillsQuery", () => {
+  it("centralizes snapshot and visible-state resolution for client adapters", () => {
+    const loadedSkills = [skill("repo-local")];
+    const target = prepareProviderWorkspaceSkillsTarget({
+      environmentId: EnvironmentId.make("local"),
+      instanceId: ProviderInstanceId.make("codex"),
+      cwd: "/repo",
+      enabled: true,
+      fallbackSkills: [skill("provider-fallback")],
+    });
+
+    expect(
+      resolveProviderWorkspaceSkillsQuery({
+        target,
+        query: {
+          data: { skills: loadedSkills },
+          error: null,
+          errorCause: null,
+          isPending: false,
+        },
+        fallbackSkills: [skill("provider-fallback")],
+        current: null,
+      }),
+    ).toEqual({
+      snapshot: {
+        key: "local:codex:/repo",
+        skills: loadedSkills,
+      },
+      state: {
+        skills: loadedSkills,
+        isPending: false,
+        error: null,
+      },
+    });
   });
 });
 

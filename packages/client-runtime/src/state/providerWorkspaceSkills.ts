@@ -3,6 +3,8 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerProviderSkill,
+  type ServerProviderSkillsListInput,
+  type ServerProviderSkillsListResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -20,6 +22,28 @@ export interface ProviderWorkspaceSkillsState {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly isPending: boolean;
   readonly error: string | null;
+}
+
+export interface PreparedProviderWorkspaceSkillsTarget {
+  readonly targetKey: string | null;
+  readonly key: string | null;
+  readonly unavailable: boolean;
+  readonly queryTarget: {
+    readonly environmentId: EnvironmentId;
+    readonly input: ServerProviderSkillsListInput;
+  } | null;
+}
+
+export interface ProviderWorkspaceSkillsQueryView {
+  readonly data: ServerProviderSkillsListResult | null;
+  readonly error: string | null;
+  readonly errorCause: Cause.Cause<unknown> | null;
+  readonly isPending: boolean;
+}
+
+export interface ProviderWorkspaceSkillsQueryResolution {
+  readonly snapshot: ProviderWorkspaceSkillsSnapshot | null;
+  readonly state: ProviderWorkspaceSkillsState;
 }
 
 export interface ProviderWorkspaceSkillsSnapshotInput {
@@ -60,6 +84,36 @@ export function providerWorkspaceSkillsTargetKey(
     return null;
   }
   return `${target.environmentId}:${target.instanceId}:${target.cwd.trim()}`;
+}
+
+export function prepareProviderWorkspaceSkillsTarget(
+  target: ProviderWorkspaceSkillsTarget,
+): PreparedProviderWorkspaceSkillsTarget {
+  const cwd = target.cwd?.trim() || null;
+  const targetKey = providerWorkspaceSkillsTargetKey({
+    environmentId: target.environmentId,
+    instanceId: target.instanceId,
+    cwd,
+    enabled: true,
+    connectionAvailable: target.connectionAvailable,
+  });
+  const key = target.enabled ? targetKey : null;
+  const unavailable = key !== null && target.connectionAvailable === false;
+  const queryTarget =
+    key !== null &&
+    !unavailable &&
+    target.environmentId !== null &&
+    target.instanceId !== null &&
+    cwd !== null
+      ? {
+          environmentId: target.environmentId,
+          input: {
+            instanceId: target.instanceId,
+            cwd,
+          },
+        }
+      : null;
+  return { targetKey, key, unavailable, queryTarget };
 }
 
 function providerSkillsListErrorDetail(error: unknown): {
@@ -137,5 +191,58 @@ export function resolveNextProviderWorkspaceSkillsSnapshot(input: {
   }
   if (input.error !== null) return null;
   if (input.skills === null) return input.isPending ? current : null;
-  return input.isPending ? current : { key: input.key, skills: input.skills };
+  if (input.isPending) return current;
+  return current?.skills === input.skills ? current : { key: input.key, skills: input.skills };
+}
+
+export function resolveProviderWorkspaceSkillsQuery(input: {
+  readonly target: PreparedProviderWorkspaceSkillsTarget;
+  readonly query: ProviderWorkspaceSkillsQueryView;
+  readonly fallbackSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly current: ProviderWorkspaceSkillsSnapshot | null;
+}): ProviderWorkspaceSkillsQueryResolution {
+  const querySkills = input.query.data?.skills ?? null;
+  const snapshot = resolveNextProviderWorkspaceSkillsSnapshot({
+    key: input.target.targetKey,
+    skills: querySkills,
+    isPending: input.query.isPending,
+    error: input.query.error,
+    inactive: input.target.key === null,
+    unavailable: input.target.unavailable,
+    current: input.current,
+  });
+
+  if (input.target.key === null) {
+    return {
+      snapshot,
+      state: {
+        skills: input.fallbackSkills,
+        isPending: false,
+        error: null,
+      },
+    };
+  }
+
+  return {
+    snapshot,
+    state: {
+      skills: resolveProviderWorkspaceSkills({
+        nextKey: input.target.key,
+        nextSkills: querySkills,
+        isPending: input.query.isPending,
+        error: input.query.error,
+        unavailable: input.target.unavailable,
+        currentKey: input.current?.key ?? null,
+        currentSkills: input.current?.skills ?? EMPTY_PROVIDER_WORKSPACE_SKILLS,
+        fallbackSkills: input.fallbackSkills,
+      }),
+      isPending: input.target.unavailable ? false : input.query.isPending,
+      error: input.target.unavailable
+        ? PROVIDER_WORKSPACE_SKILLS_UNAVAILABLE_MESSAGE
+        : formatProviderWorkspaceSkillsError({
+            error: input.query.error,
+            cause: input.query.errorCause,
+          }),
+    },
+  };
 }

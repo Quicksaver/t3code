@@ -191,8 +191,11 @@ export const listCodexProviderSkillsWithTimeout = Effect.fn("listCodexProviderSk
   },
 );
 
-function requestKey(input: ProviderSkillsListInput): string {
-  return JSON.stringify([input.instanceId, input.cwd]);
+export function providerSkillsRequestKey(input: ProviderSkillsListInput, path: Path.Path): string {
+  return JSON.stringify([
+    input.instanceId,
+    WorkspacePaths.normalizeWorkspaceRootPath(input.cwd, path),
+  ]);
 }
 
 function parseRequestKey(key: string): ProviderSkillsListInput {
@@ -320,6 +323,6 @@ export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(fu
   });
 
   return Effect.fn("ProviderSkillsLister.list")(function* (input: ProviderSkillsListInput) {
-    return yield* requests.get(requestKey(input));
+    return yield* requests.get(providerSkillsRequestKey(input, path));
   });
 });

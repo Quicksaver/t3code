@@ -1,10 +1,17 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
-import { makeBoundedRequestCache, optionalTrimmedNonEmptyString } from "./ProviderSkillsLister.ts";
+import {
+  makeBoundedRequestCache,
+  optionalTrimmedNonEmptyString,
+  providerSkillsRequestKey,
+} from "./ProviderSkillsLister.ts";
 
 describe("optionalTrimmedNonEmptyString", () => {
   it("returns a trimmed value for non-empty strings", () => {
@@ -95,5 +102,33 @@ describe("makeBoundedRequestCache", () => {
       expect(yield* requests.get("repo")).toBe("value:repo");
       expect(yield* Ref.get(calls)).toBe(2);
     }),
+  );
+});
+
+describe("providerSkillsRequestKey", () => {
+  it.effect("uses the normalized cwd for equivalent workspace requests", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("codex");
+      const absoluteCwd = path.resolve("workspace");
+
+      expect(
+        providerSkillsRequestKey(
+          {
+            instanceId,
+            cwd: "workspace/./",
+          },
+          path,
+        ),
+      ).toBe(
+        providerSkillsRequestKey(
+          {
+            instanceId,
+            cwd: absoluteCwd,
+          },
+          path,
+        ),
+      );
+    }).pipe(Effect.provide(NodePath.layer)),
   );
 });

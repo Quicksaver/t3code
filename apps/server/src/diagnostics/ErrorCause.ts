@@ -74,12 +74,5 @@ export function sanitizeErrorCause(cause: unknown): SanitizedErrorCause {
     return Object.keys(output).length > 0 ? output : { tag: "Object" };
   }
 
-  if (cause instanceof Error) {
-    const output: MutableSanitizedErrorCause = {};
-    addTextField(output, "name", cause.name);
-    addTextField(output, "message", cause.message);
-    return output;
-  }
-
   return { message: "Unknown error" };
 }
