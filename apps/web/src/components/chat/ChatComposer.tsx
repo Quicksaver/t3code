@@ -174,8 +174,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
-  resolveProviderDriverKindForInstanceSelection,
-  resolveSelectableProviderInstanceEntry,
+  resolveProviderInstanceSelection,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -748,38 +747,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
-  const threadProvider =
-    activeThread?.session?.providerInstanceId ??
-    activeThreadModelSelection?.instanceId ??
-    activeProjectDefaultModelSelection?.instanceId ??
-    null;
-  const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
-
-  const unlockedSelectedProvider =
-    resolveProviderDriverKindForInstanceSelection(
-      providerInstanceEntries,
-      providerStatuses,
-      explicitSelectedInstanceId,
-    ) ??
-    providerInstanceEntries[0]?.driverKind ??
-    ProviderDriverKind.make("unconfigured");
-  const requestedDriverKind: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
-  const lockedContinuationGroupKey = useMemo((): string | null => {
-    if (!lockedProvider || !activeThread) return null;
-    const lockedInstanceId =
-      activeThread.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
-    if (!lockedInstanceId) return null;
-    return (
-      providerInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
-        ?.continuationGroupKey ?? null
-    );
-  }, [
-    activeThread,
-    activeThreadModelSelection?.instanceId,
-    lockedProvider,
-    providerInstanceEntries,
-  ]);
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
@@ -791,68 +758,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   //   4. First enabled entry matching the current driver kind.
   //   5. First enabled entry overall / default instance for the kind.
   //
-  const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
-    const candidates: Array<string | null | undefined> = [
-      composerDraft.activeProvider,
-      activeThread?.session?.providerInstanceId,
-      activeThreadModelSelection?.instanceId,
-      activeProjectDefaultModelSelection?.instanceId,
-    ];
-    for (const candidate of candidates) {
-      if (!candidate) continue;
-      const match = providerInstanceEntries.find(
-        (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
-      );
-      if (match) {
-        // When locked to a specific driver kind, ignore persisted instance
-        // ids from a different kind or continuation group.
-        if (lockedProvider && match.driverKind !== lockedProvider) continue;
-        if (
-          lockedContinuationGroupKey &&
-          match.continuationGroupKey !== lockedContinuationGroupKey
-        ) {
-          continue;
-        }
-        return match.instanceId;
-      }
-    }
-    const compatibleEntries = providerInstanceEntries.filter(
-      (entry) =>
-        (!lockedProvider || entry.driverKind === lockedProvider) &&
-        (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
-    );
-    const requestedDriverEntries = compatibleEntries.filter(
-      (entry) => entry.driverKind === requestedDriverKind,
-    );
-    return (
-      resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined)?.instanceId ??
-      resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)?.instanceId ??
-      NO_PROVIDER_MODEL_SELECTION.instanceId
-    );
+  const providerInstanceSelection = useMemo(() => {
+    return resolveProviderInstanceSelection({
+      entries: providerInstanceEntries,
+      preferredInstanceIds: [
+        composerDraft.activeProvider,
+        activeThread?.session?.providerInstanceId,
+        activeThreadModelSelection?.instanceId,
+        activeProjectDefaultModelSelection?.instanceId,
+      ],
+      lockedDriverKind: lockedProvider,
+      lockedInstanceId:
+        activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId ?? null,
+    });
   }, [
     activeProjectDefaultModelSelection?.instanceId,
     activeThread?.session?.providerInstanceId,
     activeThreadModelSelection?.instanceId,
     composerDraft.activeProvider,
-    lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
-    requestedDriverKind,
   ]);
+  const selectedProviderEntry = providerInstanceSelection.entry;
+  const selectedInstanceId =
+    selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
 
   // Resolve the active instance's snapshot by `instanceId` so a custom
   // instance gets its own slash commands, skills, and model list — not
   // the first snapshot for the same driver kind.
-  const selectedProviderEntry = useMemo(
-    () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
-    [providerInstanceEntries, selectedInstanceId],
-  );
   const noProviderAvailable = selectedProviderEntry === undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
   const selectedProvider: ProviderDriverKind =
-    selectedProviderEntry?.driverKind ?? requestedDriverKind;
+    selectedProviderEntry?.driverKind ?? providerInstanceSelection.requestedDriverKind;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -2676,7 +2615,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeInstanceId={selectedInstanceId}
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
-                    lockedContinuationGroupKey={lockedContinuationGroupKey}
+                    lockedContinuationGroupKey={
+                      providerInstanceSelection.lockedContinuationGroupKey
+                    }
                     instanceEntries={providerInstanceEntries}
                     keybindings={keybindings}
                     modelOptionsByInstance={modelOptionsByInstance}

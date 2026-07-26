@@ -160,7 +160,13 @@ import {
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
+import {
+  applyProviderInstanceSettings,
+  deriveProviderInstanceEntries,
+  NO_PROVIDER_MODEL_SELECTION,
+  resolveProviderInstanceSelection,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -2365,7 +2371,39 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const activeProviderFallbackSkills = activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
+  const timelineProviderInstanceEntries = useMemo(
+    () =>
+      sortProviderInstanceEntries(
+        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+      ),
+    [providerStatuses, settings],
+  );
+  const timelineProviderStatus = useMemo(
+    () =>
+      resolveProviderInstanceSelection({
+        entries: timelineProviderInstanceEntries,
+        preferredInstanceIds: [
+          selectedProviderByThreadId,
+          activeThread?.session?.providerInstanceId,
+          activeThread?.modelSelection.instanceId,
+          activeProject?.defaultModelSelection?.instanceId,
+        ],
+        lockedDriverKind: lockedProvider,
+        lockedInstanceId:
+          activeThread?.session?.providerInstanceId ??
+          activeThread?.modelSelection.instanceId ??
+          null,
+      }).entry?.snapshot ?? null,
+    [
+      activeProject?.defaultModelSelection?.instanceId,
+      activeThread?.modelSelection.instanceId,
+      activeThread?.session?.providerInstanceId,
+      lockedProvider,
+      selectedProviderByThreadId,
+      timelineProviderInstanceEntries,
+    ],
+  );
+  const timelineProviderFallbackSkills = timelineProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
   const timelineSkillReferenceCacheRef = useRef(new WeakMap<object, boolean>());
   const timelineHasSkillReference = useMemo(
     () =>
@@ -2377,11 +2415,11 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
     environmentId,
-    instanceId: activeProviderStatus?.instanceId ?? null,
+    instanceId: timelineProviderStatus?.instanceId ?? null,
     cwd: providerSkillsCwd,
     enabled: timelineHasSkillReference,
     connectionAvailable: providerSkillsConnectionAvailable,
-    fallbackSkills: activeProviderFallbackSkills,
+    fallbackSkills: timelineProviderFallbackSkills,
   });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<

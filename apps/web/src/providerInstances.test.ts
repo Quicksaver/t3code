@@ -7,6 +7,7 @@ import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
+  resolveProviderInstanceSelection,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -239,6 +240,71 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
+  });
+});
+
+describe("resolveProviderInstanceSelection", () => {
+  it("falls back from a disabled preferred instance to the next selectable provider", () => {
+    const disabled = ProviderInstanceId.make("codex_personal");
+    const fallback = ProviderInstanceId.make("claudeAgent");
+    const entries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: disabled,
+          enabled: true,
+        }),
+        provider({
+          provider: ProviderDriverKind.make("claudeAgent"),
+          instanceId: fallback,
+        }),
+      ]),
+      {
+        providerInstances: {
+          [disabled]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+          },
+        },
+        providers: {
+          [ProviderDriverKind.make("claudeAgent")]: { enabled: true },
+        } as never,
+      },
+    );
+
+    expect(
+      resolveProviderInstanceSelection({
+        entries,
+        preferredInstanceIds: [disabled],
+        lockedDriverKind: null,
+        lockedInstanceId: null,
+      }).entry?.instanceId,
+    ).toBe(fallback);
+  });
+
+  it("falls back from an unavailable preferred instance within the requested driver", () => {
+    const unavailable = ProviderInstanceId.make("codex_personal");
+    const fallback = ProviderInstanceId.make("codex");
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: unavailable,
+        availability: "unavailable",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("codex"),
+        instanceId: fallback,
+      }),
+    ]);
+
+    expect(
+      resolveProviderInstanceSelection({
+        entries,
+        preferredInstanceIds: [unavailable],
+        lockedDriverKind: null,
+        lockedInstanceId: null,
+      }).entry?.instanceId,
+    ).toBe(fallback);
   });
 });
 
