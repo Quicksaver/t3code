@@ -95,7 +95,6 @@ export function prepareProviderWorkspaceSkillsTarget(
     instanceId: target.instanceId,
     cwd,
     enabled: true,
-    connectionAvailable: target.connectionAvailable,
   });
   const key = target.enabled ? targetKey : null;
   const unavailable = key !== null && target.connectionAvailable === false;
