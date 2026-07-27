@@ -64,8 +64,9 @@ Useful focused commands:
 
 - Web: `5735`
 - Server/WebSocket: `13775`
-- Upstream `scripts/dev-runner.ts` derives a different preferred offset from this worktree path.
-  Set `T3CODE_PORT_OFFSET=2` when starting the web stack so this branch keeps the reserved ports
-  above. Only proceed when the `[dev-runner]` startup line reports exactly `webPort=5735` and
-  `serverPort=13775`; if it selects replacements because either port is unavailable, stop and free
-  the reserved ports before retrying.
+- This branch's fixed port reservation overrides the general `AGENTS.md` instruction to accept
+  shifted worktree ports. Because `scripts/dev-runner.ts` derives a different preferred offset from
+  this worktree path, start the web stack with `T3CODE_PORT_OFFSET=2 vp run dev`. Only proceed when
+  the `[dev-runner]` startup line reports exactly `webPort=5735` and `serverPort=13775`; if it
+  selects replacements because either port is unavailable, stop and free the reserved ports before
+  retrying.
