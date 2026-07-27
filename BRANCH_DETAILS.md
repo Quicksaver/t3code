@@ -64,3 +64,7 @@ Useful focused commands:
 
 - Web: `5735`
 - Server/WebSocket: `13775`
+- Upstream `scripts/dev-runner.ts` derives a different preferred offset from this worktree path.
+  Set `T3CODE_PORT_OFFSET=2` when starting the web stack so this branch keeps the reserved ports
+  above. If either port is occupied or browser-blocked, use the actual replacement ports printed
+  by the `[dev-runner]` startup line.
