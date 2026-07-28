@@ -140,7 +140,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <div ref={listRef} className="dropdown-glass relative w-full overflow-hidden rounded-[20px]">
+      <div
+        ref={listRef}
+        className="dropdown-glass relative w-full overflow-hidden rounded-[20px] **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
+      >
         {props.errorText ? (
           <p className="border-b border-border/70 px-5 py-3 text-xs text-destructive" role="alert">
             {props.errorText}
