@@ -399,6 +399,35 @@ describe("deriveLockedProvider", () => {
       }),
     ).toBeNull();
   });
+
+  it("keeps the session instance authoritative and preserves a lock while providers load", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-opus-5",
+          },
+          session: {
+            ...readySession,
+            providerName: null,
+            providerInstanceId: ProviderInstanceId.make("codex_personal"),
+          },
+        }),
+        selectedProvider: null,
+        threadProvider: "claudeAgent",
+        providerInstances,
+      }),
+    ).toBe("codex");
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: null,
+        threadProvider: "codex",
+        providerInstances: [],
+      }),
+    ).toBe("codex");
+  });
 });
 
 describe("resolveSendEnvMode", () => {

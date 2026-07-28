@@ -394,6 +394,7 @@ export function deriveLockedProvider(input: {
   return deriveLockedProviderDriverKind({
     hasStarted: threadHasStarted(input.thread),
     sessionProviderName: input.thread?.session?.providerName ?? null,
+    sessionProviderInstanceId: input.thread?.session?.providerInstanceId ?? null,
     threadProvider: input.threadProvider,
     selectedProvider: input.selectedProvider,
     entries: input.providerInstances,

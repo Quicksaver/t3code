@@ -162,6 +162,7 @@ export function sortProviderInstanceSelectionEntries<
 export function deriveLockedProviderDriverKind(input: {
   readonly hasStarted: boolean;
   readonly sessionProviderName: string | null;
+  readonly sessionProviderInstanceId: string | null;
   readonly threadProvider: string | null;
   readonly selectedProvider: string | null;
   readonly entries: ReadonlyArray<
@@ -180,14 +181,28 @@ export function deriveLockedProviderDriverKind(input: {
       )?.driverKind ?? input.sessionProviderName
     );
   }
+  if (input.sessionProviderInstanceId) {
+    return (
+      input.entries.find(
+        (entry) =>
+          entry.instanceId === input.sessionProviderInstanceId ||
+          entry.driverKind === input.sessionProviderInstanceId,
+      )?.driverKind ??
+      (input.entries.length === 0 && isProviderDriverKind(input.sessionProviderInstanceId)
+        ? input.sessionProviderInstanceId
+        : null)
+    );
+  }
   if (input.threadProvider) {
-    const driverKind = input.entries.find(
-      (entry) =>
-        entry.instanceId === input.threadProvider || entry.driverKind === input.threadProvider,
-    )?.driverKind;
-    if (driverKind) {
-      return driverKind;
-    }
+    return (
+      input.entries.find(
+        (entry) =>
+          entry.instanceId === input.threadProvider || entry.driverKind === input.threadProvider,
+      )?.driverKind ??
+      (input.entries.length === 0 && isProviderDriverKind(input.threadProvider)
+        ? input.threadProvider
+        : null)
+    );
   }
   if (input.selectedProvider) {
     return (
@@ -195,7 +210,10 @@ export function deriveLockedProviderDriverKind(input: {
         (entry) =>
           entry.instanceId === input.selectedProvider ||
           entry.driverKind === input.selectedProvider,
-      )?.driverKind ?? null
+      )?.driverKind ??
+      (input.entries.length === 0 && isProviderDriverKind(input.selectedProvider)
+        ? input.selectedProvider
+        : null)
     );
   }
   return null;

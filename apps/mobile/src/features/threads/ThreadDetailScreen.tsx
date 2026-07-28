@@ -253,6 +253,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lockedProviderDriverKind = deriveLockedProviderDriverKind({
     hasStarted: providerSelectionLocked,
     sessionProviderName: props.selectedThread.session?.providerName ?? null,
+    sessionProviderInstanceId: props.selectedThread.session?.providerInstanceId ?? null,
     threadProvider: props.selectedThread.modelSelection.instanceId,
     selectedProvider: null,
     entries: providerInstanceEntries,
