@@ -212,6 +212,28 @@ describe("deriveLockedProviderDriverKind", () => {
     ).toBe("codex");
   });
 
+  it("retains the driver lock for a removed default instance", () => {
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: null,
+        sessionProviderInstanceId: null,
+        threadProvider: "codex",
+        selectedProvider: null,
+        entries: [
+          {
+            instanceId: ProviderInstanceId.make("codex_personal"),
+            driverKind: ProviderDriverKind.make("codex"),
+          },
+          {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driverKind: ProviderDriverKind.make("claudeAgent"),
+          },
+        ],
+      }),
+    ).toBe("codex");
+  });
+
   it("keeps driver names separate from instance ids and does not guess without entries", () => {
     const collisionEntries = [
       {
@@ -241,6 +263,21 @@ describe("deriveLockedProviderDriverKind", () => {
         threadProvider: "codex",
         selectedProvider: null,
         entries: [],
+      }),
+    ).toBeNull();
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: null,
+        sessionProviderInstanceId: "codex_personal",
+        threadProvider: null,
+        selectedProvider: null,
+        entries: [
+          {
+            instanceId: ProviderInstanceId.make("codex_work"),
+            driverKind: ProviderDriverKind.make("codex"),
+          },
+        ],
       }),
     ).toBeNull();
   });

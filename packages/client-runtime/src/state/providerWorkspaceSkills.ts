@@ -175,26 +175,34 @@ export function deriveLockedProviderDriverKind(input: {
   if (input.sessionProviderName && isProviderDriverKind(input.sessionProviderName)) {
     return input.sessionProviderName;
   }
+  const resolveInstanceDriverKind = (instanceId: string): ProviderDriverKind | null => {
+    const exactEntry = input.entries.find((entry) => entry.instanceId === instanceId);
+    if (exactEntry) {
+      return exactEntry.driverKind;
+    }
+
+    // A removed default instance still identifies its driver when another
+    // instance of that driver remains registered. Do not extend this fallback
+    // to arbitrary custom slugs or to an empty registry.
+    return (
+      input.entries.find((entry) => defaultInstanceIdForDriver(entry.driverKind) === instanceId)
+        ?.driverKind ?? null
+    );
+  };
   if (input.sessionProviderInstanceId) {
-    const driverKind = input.entries.find(
-      (entry) => entry.instanceId === input.sessionProviderInstanceId,
-    )?.driverKind;
+    const driverKind = resolveInstanceDriverKind(input.sessionProviderInstanceId);
     if (driverKind) {
       return driverKind;
     }
   }
   if (input.threadProvider) {
-    const driverKind = input.entries.find(
-      (entry) => entry.instanceId === input.threadProvider,
-    )?.driverKind;
+    const driverKind = resolveInstanceDriverKind(input.threadProvider);
     if (driverKind) {
       return driverKind;
     }
   }
   if (input.selectedProvider) {
-    return (
-      input.entries.find((entry) => entry.instanceId === input.selectedProvider)?.driverKind ?? null
-    );
+    return resolveInstanceDriverKind(input.selectedProvider);
   }
   return null;
 }

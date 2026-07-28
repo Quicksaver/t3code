@@ -428,6 +428,22 @@ describe("deriveLockedProvider", () => {
       }),
     ).toBeNull();
   });
+
+  it("keeps the driver lock when a persisted default instance was removed", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: null,
+        threadProvider: "codex",
+        providerInstances: [
+          {
+            instanceId: ProviderInstanceId.make("codex_personal"),
+            driverKind: ProviderDriverKind.make("codex"),
+          },
+        ],
+      }),
+    ).toBe("codex");
+  });
 });
 
 describe("resolveSendEnvMode", () => {
