@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   TurnId,
@@ -17,6 +18,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
@@ -361,6 +363,41 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  const providerInstances = [
+    {
+      instanceId: ProviderInstanceId.make("codex"),
+      driverKind: ProviderDriverKind.make("codex"),
+    },
+    {
+      instanceId: ProviderInstanceId.make("codex_personal"),
+      driverKind: ProviderDriverKind.make("codex"),
+    },
+  ];
+
+  it("locks a started custom instance to its driver kind", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread({ latestTurn: completedTurn }),
+        selectedProvider: null,
+        threadProvider: "codex_personal",
+        providerInstances,
+      }),
+    ).toBe("codex");
+  });
+
+  it("leaves an unstarted thread unlocked", () => {
+    expect(
+      deriveLockedProvider({
+        thread: makeThread(),
+        selectedProvider: "codex_personal",
+        threadProvider: "codex_personal",
+        providerInstances,
+      }),
+    ).toBeNull();
   });
 });
 

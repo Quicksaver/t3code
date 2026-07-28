@@ -1,5 +1,6 @@
 import {
   defaultInstanceIdForDriver,
+  isProviderDriverKind,
   ProviderDriverKind,
   ServerProviderSkillsListError,
   type EnvironmentId,
@@ -121,15 +122,83 @@ export function deriveProviderInstanceSelectionEntries(
   providers: ReadonlyArray<ServerProvider>,
   settings: Pick<ServerSettings, "providerInstances" | "providers">,
 ): ReadonlyArray<ServerProviderInstanceSelectionEntry> {
-  return providers.map((snapshot) => ({
-    instanceId: snapshot.instanceId,
-    driverKind: snapshot.driver,
-    continuationGroupKey: snapshot.continuation?.groupKey,
-    enabled: resolveProviderInstanceEnabledFromSettings(snapshot, settings),
-    isAvailable: snapshot.availability !== "unavailable",
-    status: snapshot.status,
-    snapshot,
-  }));
+  return sortProviderInstanceSelectionEntries(
+    providers.map((snapshot) => ({
+      instanceId: snapshot.instanceId,
+      driverKind: snapshot.driver,
+      continuationGroupKey: snapshot.continuation?.groupKey,
+      enabled: resolveProviderInstanceEnabledFromSettings(snapshot, settings),
+      isAvailable: snapshot.availability !== "unavailable",
+      status: snapshot.status,
+      snapshot,
+    })),
+  );
+}
+
+export function sortProviderInstanceSelectionEntries<
+  Entry extends Pick<ProviderInstanceSelectionEntry, "driverKind" | "instanceId">,
+>(entries: ReadonlyArray<Entry>): ReadonlyArray<Entry> {
+  const byKind = new Map<ProviderDriverKind, Entry[]>();
+  for (const entry of entries) {
+    const bucket = byKind.get(entry.driverKind);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      byKind.set(entry.driverKind, [entry]);
+    }
+  }
+
+  const sorted: Entry[] = [];
+  for (const bucket of byKind.values()) {
+    const defaultInstanceId = defaultInstanceIdForDriver(bucket[0]!.driverKind);
+    sorted.push(
+      ...bucket.filter((entry) => entry.instanceId === defaultInstanceId),
+      ...bucket.filter((entry) => entry.instanceId !== defaultInstanceId),
+    );
+  }
+  return sorted;
+}
+
+export function deriveLockedProviderDriverKind(input: {
+  readonly hasStarted: boolean;
+  readonly sessionProviderName: string | null;
+  readonly threadProvider: string | null;
+  readonly selectedProvider: string | null;
+  readonly entries: ReadonlyArray<
+    Pick<ProviderInstanceSelectionEntry, "driverKind" | "instanceId">
+  >;
+}): ProviderDriverKind | null {
+  if (!input.hasStarted) {
+    return null;
+  }
+  if (input.sessionProviderName && isProviderDriverKind(input.sessionProviderName)) {
+    return (
+      input.entries.find(
+        (entry) =>
+          entry.instanceId === input.sessionProviderName ||
+          entry.driverKind === input.sessionProviderName,
+      )?.driverKind ?? input.sessionProviderName
+    );
+  }
+  if (input.threadProvider) {
+    const driverKind = input.entries.find(
+      (entry) =>
+        entry.instanceId === input.threadProvider || entry.driverKind === input.threadProvider,
+    )?.driverKind;
+    if (driverKind) {
+      return driverKind;
+    }
+  }
+  if (input.selectedProvider) {
+    return (
+      input.entries.find(
+        (entry) =>
+          entry.instanceId === input.selectedProvider ||
+          entry.driverKind === input.selectedProvider,
+      )?.driverKind ?? null
+    );
+  }
+  return null;
 }
 
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceSelectionEntry): boolean =>

@@ -1,5 +1,6 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
+  deriveLockedProviderDriverKind,
   deriveProviderInstanceSelectionEntries,
   resolveProviderInstanceSelection,
 } from "@t3tools/client-runtime/state/provider-workspace-skills";
@@ -249,10 +250,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     props.selectedThread.session !== null ||
     props.selectedThread.latestTurn !== null ||
     selectedThreadFeed.some((entry) => entry.type === "message");
-  const lockedProviderDriverKind = providerSelectionLocked
-    ? (providerInstanceEntries.find((entry) => entry.instanceId === lockedProviderInstanceId)
-        ?.driverKind ?? null)
-    : null;
+  const lockedProviderDriverKind = deriveLockedProviderDriverKind({
+    hasStarted: providerSelectionLocked,
+    sessionProviderName: props.selectedThread.session?.providerName ?? null,
+    threadProvider: props.selectedThread.modelSelection.instanceId,
+    selectedProvider: null,
+    entries: providerInstanceEntries,
+  });
   const selectedProviderInstance = useMemo(
     () =>
       resolveProviderInstanceSelection({

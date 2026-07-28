@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveLockedProviderDriverKind,
   deriveProviderInstanceSelectionEntries,
   formatProviderWorkspaceSkillsError,
   prepareProviderWorkspaceSkillsTarget,
@@ -52,6 +53,44 @@ function provider(input: {
 }
 
 describe("resolveProviderInstanceSelection", () => {
+  it("sorts each driver with its default instance before custom fallbacks", () => {
+    const custom = ProviderInstanceId.make("codex_personal");
+    const defaultInstance = ProviderInstanceId.make("codex");
+    const entries = deriveProviderInstanceSelectionEntries(
+      [
+        provider({ instanceId: custom, driver: "codex" }),
+        provider({ instanceId: defaultInstance, driver: "codex" }),
+        provider({ instanceId: "claudeAgent" }),
+      ],
+      {
+        providerInstances: {
+          [custom]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+          },
+        },
+        providers: {
+          [ProviderDriverKind.make("codex")]: { enabled: true },
+          [ProviderDriverKind.make("claudeAgent")]: { enabled: true },
+        } as never,
+      },
+    );
+
+    expect(entries.map((entry) => entry.instanceId)).toEqual([
+      defaultInstance,
+      custom,
+      ProviderInstanceId.make("claudeAgent"),
+    ]);
+    expect(
+      resolveProviderInstanceSelection({
+        entries,
+        preferredInstanceIds: [ProviderInstanceId.make("missing")],
+        lockedDriverKind: null,
+        lockedInstanceId: null,
+      }).entry?.instanceId,
+    ).toBe(defaultInstance);
+  });
+
   it("applies settings and availability before choosing a deterministic fallback", () => {
     const disabled = ProviderInstanceId.make("codex_personal");
     const unavailable = ProviderInstanceId.make("codex");
@@ -88,6 +127,48 @@ describe("resolveProviderInstanceSelection", () => {
         lockedInstanceId: null,
       }).entry?.instanceId,
     ).toBe(fallback);
+  });
+});
+
+describe("deriveLockedProviderDriverKind", () => {
+  it("correlates default and custom instance ids to their driver kind", () => {
+    const entries = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driverKind: ProviderDriverKind.make("codex"),
+      },
+      {
+        instanceId: ProviderInstanceId.make("codex_personal"),
+        driverKind: ProviderDriverKind.make("codex"),
+      },
+    ];
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: null,
+        threadProvider: "codex",
+        selectedProvider: null,
+        entries,
+      }),
+    ).toBe("codex");
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: null,
+        threadProvider: "codex_personal",
+        selectedProvider: null,
+        entries,
+      }),
+    ).toBe("codex");
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: "codex",
+        threadProvider: "codex_personal",
+        selectedProvider: null,
+        entries,
+      }),
+    ).toBe("codex");
   });
 });
 

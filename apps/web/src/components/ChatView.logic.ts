@@ -1,15 +1,16 @@
 import {
   type EnvironmentId,
-  isProviderDriverKind,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { deriveLockedProviderDriverKind } from "@t3tools/client-runtime/state/provider-workspace-skills";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
@@ -378,39 +379,25 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+// Thread and composer values are instance routing keys, while session provider
+// names are driver kinds. Resolve both through the streamed instance registry
+// so custom instances lock to their implementing driver on every client.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providerInstances: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly driverKind: ProviderDriverKind;
+  }>;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
-    return null;
-  }
-  const sessionProvider = input.thread?.session?.providerName ?? null;
-  if (sessionProvider && isProviderDriverKind(sessionProvider)) {
-    return sessionProvider;
-  }
-  const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
-  const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
-  return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+  return deriveLockedProviderDriverKind({
+    hasStarted: threadHasStarted(input.thread),
+    sessionProviderName: input.thread?.session?.providerName ?? null,
+    threadProvider: input.threadProvider,
+    selectedProvider: input.selectedProvider,
+    entries: input.providerInstances,
+  });
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

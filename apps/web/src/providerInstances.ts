@@ -27,6 +27,7 @@ import {
 import {
   resolveProviderInstanceEnabledFromSettings,
   resolveProviderInstanceSelection as resolveSharedProviderInstanceSelection,
+  sortProviderInstanceSelectionEntries,
 } from "@t3tools/client-runtime/state/provider-workspace-skills";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
@@ -216,26 +217,7 @@ export function applyProviderInstanceSettings(
 export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  // Group by driver kind preserving first-appearance order, then emit
-  // default-first within each kind. Using a Map keeps the "first-seen"
-  // semantics for kinds whose default instance is absent (unusual but
-  // possible during the migration).
-  const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
-  for (const entry of entries) {
-    const bucket = byKind.get(entry.driverKind);
-    if (bucket) {
-      bucket.push(entry);
-    } else {
-      byKind.set(entry.driverKind, [entry]);
-    }
-  }
-  const sorted: ProviderInstanceEntry[] = [];
-  for (const bucket of byKind.values()) {
-    const defaults = bucket.filter((entry) => entry.isDefault);
-    const customs = bucket.filter((entry) => !entry.isDefault);
-    sorted.push(...defaults, ...customs);
-  }
-  return sorted;
+  return sortProviderInstanceSelectionEntries(entries);
 }
 
 /**
