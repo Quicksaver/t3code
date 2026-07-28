@@ -1,4 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  deriveProviderInstanceSelectionEntries,
+  resolveProviderInstanceSelection,
+} from "@t3tools/client-runtime/state/provider-workspace-skills";
 
 import type {
   EnvironmentId,
@@ -405,12 +409,29 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         option.selection.instanceId === selectedModel.instanceId &&
         option.selection.model === selectedModel.model,
     ) ?? null;
-  const selectedProviderFallbackSkills = useMemo(
+  const providerInstanceEntries = useMemo(
     () =>
-      selectedEnvironmentServerConfig?.providers.find(
-        (provider) => provider.instanceId === selectedModel?.instanceId,
-      )?.skills ?? [],
-    [selectedEnvironmentServerConfig, selectedModel?.instanceId],
+      selectedEnvironmentServerConfig === null
+        ? []
+        : deriveProviderInstanceSelectionEntries(
+            selectedEnvironmentServerConfig.providers,
+            selectedEnvironmentServerConfig.settings,
+          ),
+    [selectedEnvironmentServerConfig],
+  );
+  const selectedProviderInstance = useMemo(
+    () =>
+      resolveProviderInstanceSelection({
+        entries: providerInstanceEntries,
+        preferredInstanceIds: [selectedModel?.instanceId],
+        lockedDriverKind: null,
+        lockedInstanceId: null,
+      }).entry ?? null,
+    [providerInstanceEntries, selectedModel?.instanceId],
+  );
+  const selectedProviderFallbackSkills = useMemo(
+    () => selectedProviderInstance?.snapshot.skills ?? [],
+    [selectedProviderInstance],
   );
   const promptNeedsWorkspaceSkills = useMemo(
     () => promptHasNewTaskProviderSkillReference(prompt),
@@ -418,7 +439,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
   const selectedProviderSkills = useProviderWorkspaceSkills({
     environmentId: selectedProject?.environmentId ?? null,
-    instanceId: selectedModel?.instanceId ?? null,
+    instanceId: selectedProviderInstance?.instanceId ?? null,
     // A new-worktree draft has no target directory yet. Do not inspect the
     // selected base branch's checkout because its uncommitted skills may not
     // exist in the worktree that task creation will materialize.

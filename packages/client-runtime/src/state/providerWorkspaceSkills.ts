@@ -1,10 +1,15 @@
 import {
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
   ServerProviderSkillsListError,
   type EnvironmentId,
   type ProviderInstanceId,
+  type ServerProvider,
   type ServerProviderSkill,
   type ServerProviderSkillsListInput,
   type ServerProviderSkillsListResult,
+  type ServerProviderState,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -65,11 +70,143 @@ export interface ProviderWorkspaceSkillsSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
+export interface ProviderInstanceSelectionEntry {
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly continuationGroupKey?: string | undefined;
+  readonly enabled: boolean;
+  readonly isAvailable: boolean;
+  readonly status: ServerProviderState;
+}
+
+export interface ServerProviderInstanceSelectionEntry extends ProviderInstanceSelectionEntry {
+  readonly snapshot: ServerProvider;
+}
+
+export interface ProviderInstanceSelectionResolution<
+  Entry extends ProviderInstanceSelectionEntry = ProviderInstanceSelectionEntry,
+> {
+  readonly requestedDriverKind: ProviderDriverKind;
+  readonly lockedContinuationGroupKey: string | null;
+  readonly entry: Entry | undefined;
+}
+
 export const EMPTY_PROVIDER_WORKSPACE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 export const PROVIDER_WORKSPACE_SKILLS_UNAVAILABLE_MESSAGE =
   "Reconnect this environment to refresh workspace skills.";
 
 const isServerProviderSkillsListError = Schema.is(ServerProviderSkillsListError);
+
+export function resolveProviderInstanceEnabledFromSettings(
+  provider: Pick<ServerProvider, "driver" | "enabled" | "instanceId">,
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+): boolean {
+  const explicitInstance = settings.providerInstances?.[provider.instanceId];
+  if (explicitInstance) {
+    return explicitInstance.enabled ?? true;
+  }
+
+  const isDefault = provider.instanceId === defaultInstanceIdForDriver(provider.driver);
+  if (!isDefault) {
+    return false;
+  }
+
+  const legacyProviders = settings.providers as Readonly<
+    Record<string, { readonly enabled?: boolean } | undefined>
+  >;
+  return legacyProviders[provider.driver]?.enabled ?? provider.enabled;
+}
+
+export function deriveProviderInstanceSelectionEntries(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+): ReadonlyArray<ServerProviderInstanceSelectionEntry> {
+  return providers.map((snapshot) => ({
+    instanceId: snapshot.instanceId,
+    driverKind: snapshot.driver,
+    continuationGroupKey: snapshot.continuation?.groupKey,
+    enabled: resolveProviderInstanceEnabledFromSettings(snapshot, settings),
+    isAvailable: snapshot.availability !== "unavailable",
+    status: snapshot.status,
+    snapshot,
+  }));
+}
+
+const isSelectableProviderInstanceEntry = (entry: ProviderInstanceSelectionEntry): boolean =>
+  entry.enabled && entry.isAvailable;
+
+function resolveSelectableProviderInstanceEntry<Entry extends ProviderInstanceSelectionEntry>(
+  entries: ReadonlyArray<Entry>,
+  instanceId: ProviderInstanceId | undefined,
+): Entry | undefined {
+  if (instanceId !== undefined) {
+    const requested = entries.find((entry) => entry.instanceId === instanceId);
+    if (requested && isSelectableProviderInstanceEntry(requested)) {
+      return requested;
+    }
+  }
+  return (
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status === "ready") ??
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
+  );
+}
+
+/**
+ * Keep every client surface on the same provider instance when a persisted
+ * selection becomes disabled, unavailable, or incompatible with a live
+ * continuation lock.
+ */
+export function resolveProviderInstanceSelection<
+  Entry extends ProviderInstanceSelectionEntry,
+>(input: {
+  readonly entries: ReadonlyArray<Entry>;
+  readonly preferredInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
+  readonly lockedDriverKind: ProviderDriverKind | null;
+  readonly lockedInstanceId: ProviderInstanceId | null;
+}): ProviderInstanceSelectionResolution<Entry> {
+  const explicitInstanceId = input.preferredInstanceIds.find(
+    (instanceId): instanceId is ProviderInstanceId =>
+      instanceId !== null && instanceId !== undefined,
+  );
+  const requestedDriverKind =
+    input.lockedDriverKind ??
+    input.entries.find((entry) => entry.instanceId === explicitInstanceId)?.driverKind ??
+    input.entries[0]?.driverKind ??
+    ProviderDriverKind.make("unconfigured");
+  const lockedContinuationGroupKey =
+    input.lockedDriverKind && input.lockedInstanceId
+      ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
+          ?.continuationGroupKey ?? null)
+      : null;
+  const isCompatible = (entry: Entry): boolean =>
+    (!input.lockedDriverKind || entry.driverKind === input.lockedDriverKind) &&
+    (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey);
+
+  for (const instanceId of input.preferredInstanceIds) {
+    if (!instanceId) continue;
+    const entry = input.entries.find(
+      (candidate) =>
+        candidate.instanceId === instanceId &&
+        isSelectableProviderInstanceEntry(candidate) &&
+        isCompatible(candidate),
+    );
+    if (entry) {
+      return { requestedDriverKind, lockedContinuationGroupKey, entry };
+    }
+  }
+
+  const compatibleEntries = input.entries.filter(isCompatible);
+  const requestedDriverEntries = compatibleEntries.filter(
+    (entry) => entry.driverKind === requestedDriverKind,
+  );
+  return {
+    requestedDriverKind,
+    lockedContinuationGroupKey,
+    entry:
+      resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined) ??
+      resolveSelectableProviderInstanceEntry(compatibleEntries, undefined),
+  };
+}
 
 export function providerWorkspaceSkillsTargetKey(
   target: Omit<ProviderWorkspaceSkillsTarget, "fallbackSkills">,
@@ -212,10 +349,12 @@ export function resolveProviderWorkspaceSkillsQuery(input: {
   });
 
   if (input.target.key === null) {
+    const inactiveSkills =
+      snapshot !== null && snapshot.skills.length > 0 ? snapshot.skills : input.fallbackSkills;
     return {
       snapshot,
       state: {
-        skills: input.fallbackSkills,
+        skills: inactiveSkills,
         isPending: false,
         error: null,
       },

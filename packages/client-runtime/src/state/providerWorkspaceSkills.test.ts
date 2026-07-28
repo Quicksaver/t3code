@@ -1,17 +1,21 @@
 import {
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerProviderSkillsListError,
+  type ServerProvider,
   type ServerProviderSkill,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  deriveProviderInstanceSelectionEntries,
   formatProviderWorkspaceSkillsError,
   prepareProviderWorkspaceSkillsTarget,
   providerWorkspaceSkillsTargetKey,
   resolveNextProviderWorkspaceSkillsSnapshot,
+  resolveProviderInstanceSelection,
   resolveProviderWorkspaceSkills,
   resolveProviderWorkspaceSkillsQuery,
 } from "./providerWorkspaceSkills.ts";
@@ -23,6 +27,69 @@ function skill(name: string): ServerProviderSkill {
     enabled: true,
   };
 }
+
+function provider(input: {
+  instanceId: string;
+  driver?: string;
+  enabled?: boolean;
+  availability?: ServerProvider["availability"];
+  status?: ServerProvider["status"];
+}): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(input.instanceId),
+    driver: ProviderDriverKind.make(input.driver ?? input.instanceId),
+    enabled: input.enabled ?? true,
+    installed: true,
+    version: null,
+    status: input.status ?? "ready",
+    ...(input.availability ? { availability: input.availability } : {}),
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [skill(input.instanceId)],
+  };
+}
+
+describe("resolveProviderInstanceSelection", () => {
+  it("applies settings and availability before choosing a deterministic fallback", () => {
+    const disabled = ProviderInstanceId.make("codex_personal");
+    const unavailable = ProviderInstanceId.make("codex");
+    const fallback = ProviderInstanceId.make("claudeAgent");
+    const entries = deriveProviderInstanceSelectionEntries(
+      [
+        provider({ instanceId: disabled, driver: "codex" }),
+        provider({
+          instanceId: unavailable,
+          driver: "codex",
+          availability: "unavailable",
+        }),
+        provider({ instanceId: fallback }),
+      ],
+      {
+        providerInstances: {
+          [disabled]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+          },
+        },
+        providers: {
+          [ProviderDriverKind.make("codex")]: { enabled: true },
+          [ProviderDriverKind.make("claudeAgent")]: { enabled: true },
+        } as never,
+      },
+    );
+
+    expect(
+      resolveProviderInstanceSelection({
+        entries,
+        preferredInstanceIds: [disabled, unavailable],
+        lockedDriverKind: null,
+        lockedInstanceId: null,
+      }).entry?.instanceId,
+    ).toBe(fallback);
+  });
+});
 
 describe("providerWorkspaceSkillsTargetKey", () => {
   it("normalizes an enabled environment, provider, and cwd target", () => {
@@ -337,6 +404,42 @@ describe("resolveProviderWorkspaceSkillsQuery", () => {
         key: "local:codex:/repo",
         skills: loadedSkills,
       },
+      state: {
+        skills: loadedSkills,
+        isPending: false,
+        error: null,
+      },
+    });
+  });
+
+  it("shows a verified same-workspace snapshot while lazy lookup is inactive", () => {
+    const loadedSkills = [skill("repo-local")];
+    const target = prepareProviderWorkspaceSkillsTarget({
+      environmentId: EnvironmentId.make("local"),
+      instanceId: ProviderInstanceId.make("codex"),
+      cwd: "/repo",
+      enabled: false,
+      fallbackSkills: [skill("provider-fallback")],
+    });
+    const current = {
+      key: "local:codex:/repo",
+      skills: loadedSkills,
+    };
+
+    expect(
+      resolveProviderWorkspaceSkillsQuery({
+        target,
+        query: {
+          data: null,
+          error: null,
+          errorCause: null,
+          isPending: false,
+        },
+        fallbackSkills: [skill("provider-fallback")],
+        current,
+      }),
+    ).toEqual({
+      snapshot: current,
       state: {
         skills: loadedSkills,
         isPending: false,

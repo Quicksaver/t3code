@@ -1,4 +1,8 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  deriveProviderInstanceSelectionEntries,
+  resolveProviderInstanceSelection,
+} from "@t3tools/client-runtime/state/provider-workspace-skills";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -227,13 +231,50 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
-  const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const selectedProviderFallbackSkills = useMemo<ReadonlyArray<ServerProviderSkill>>(
+  const providerInstanceEntries = useMemo(
     () =>
-      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
-    [props.serverConfig, selectedInstanceId],
+      props.serverConfig === null
+        ? []
+        : deriveProviderInstanceSelectionEntries(
+            props.serverConfig.providers,
+            props.serverConfig.settings,
+          ),
+    [props.serverConfig],
+  );
+  const lockedProviderInstanceId =
+    props.selectedThread.session?.providerInstanceId ??
+    props.selectedThread.modelSelection.instanceId;
+  const providerSelectionLocked =
+    props.selectedThread.session !== null ||
+    props.selectedThread.latestTurn !== null ||
+    selectedThreadFeed.some((entry) => entry.type === "message");
+  const lockedProviderDriverKind = providerSelectionLocked
+    ? (providerInstanceEntries.find((entry) => entry.instanceId === lockedProviderInstanceId)
+        ?.driverKind ?? null)
+    : null;
+  const selectedProviderInstance = useMemo(
+    () =>
+      resolveProviderInstanceSelection({
+        entries: providerInstanceEntries,
+        preferredInstanceIds: [
+          props.selectedThread.session?.providerInstanceId,
+          props.selectedThread.modelSelection.instanceId,
+        ],
+        lockedDriverKind: lockedProviderDriverKind,
+        lockedInstanceId: lockedProviderInstanceId,
+      }).entry ?? null,
+    [
+      lockedProviderDriverKind,
+      lockedProviderInstanceId,
+      props.selectedThread.modelSelection.instanceId,
+      props.selectedThread.session?.providerInstanceId,
+      providerInstanceEntries,
+    ],
+  );
+  const selectedProviderFallbackSkills = useMemo<ReadonlyArray<ServerProviderSkill>>(
+    () => selectedProviderInstance?.snapshot.skills ?? [],
+    [selectedProviderInstance],
   );
   const handleWorkspaceSkillsLookupActiveChange = useCallback(
     (active: boolean) => {
@@ -262,7 +303,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const selectedProviderWorkspaceSkills = useProviderWorkspaceSkills({
     environmentId: props.environmentId,
-    instanceId: selectedInstanceId,
+    instanceId: selectedProviderInstance?.instanceId ?? null,
     cwd: props.threadCwd ?? props.projectWorkspaceRoot,
     enabled: providerWorkspaceSkillsLookupEnabled,
     connectionAvailable: props.connectionStateLabel === "connected",

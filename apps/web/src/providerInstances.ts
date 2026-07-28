@@ -24,6 +24,10 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import {
+  resolveProviderInstanceEnabledFromSettings,
+  resolveProviderInstanceSelection as resolveSharedProviderInstanceSelection,
+} from "@t3tools/client-runtime/state/provider-workspace-skills";
 
 import { formatProviderDriverKindLabel } from "./providerModels";
 
@@ -196,17 +200,8 @@ export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   settings: Pick<ServerSettings, "providerInstances" | "providers">,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  const legacyProviders = settings.providers as Readonly<
-    Record<string, { readonly enabled?: boolean } | undefined>
-  >;
-
   return entries.map((entry) => {
-    const explicitInstance = settings.providerInstances?.[entry.instanceId];
-    const enabled = explicitInstance
-      ? (explicitInstance.enabled ?? true)
-      : entry.isDefault
-        ? (legacyProviders[entry.driverKind]?.enabled ?? entry.enabled)
-        : false;
+    const enabled = resolveProviderInstanceEnabledFromSettings(entry.snapshot, settings);
     return enabled === entry.enabled ? entry : { ...entry, enabled };
   });
 }
@@ -332,48 +327,7 @@ export function resolveProviderInstanceSelection(input: {
   readonly lockedDriverKind: ProviderDriverKind | null;
   readonly lockedInstanceId: ProviderInstanceId | null;
 }): ProviderInstanceSelectionResolution {
-  const explicitInstanceId = input.preferredInstanceIds.find(
-    (instanceId): instanceId is ProviderInstanceId =>
-      instanceId !== null && instanceId !== undefined,
-  );
-  const requestedDriverKind =
-    input.lockedDriverKind ??
-    input.entries.find((entry) => entry.instanceId === explicitInstanceId)?.driverKind ??
-    input.entries[0]?.driverKind ??
-    ProviderDriverKind.make("unconfigured");
-  const lockedContinuationGroupKey =
-    input.lockedDriverKind && input.lockedInstanceId
-      ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
-          ?.continuationGroupKey ?? null)
-      : null;
-  const isCompatible = (entry: ProviderInstanceEntry): boolean =>
-    (!input.lockedDriverKind || entry.driverKind === input.lockedDriverKind) &&
-    (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey);
-
-  for (const instanceId of input.preferredInstanceIds) {
-    if (!instanceId) continue;
-    const entry = input.entries.find(
-      (candidate) =>
-        candidate.instanceId === instanceId &&
-        isSelectableProviderInstanceEntry(candidate) &&
-        isCompatible(candidate),
-    );
-    if (entry) {
-      return { requestedDriverKind, lockedContinuationGroupKey, entry };
-    }
-  }
-
-  const compatibleEntries = input.entries.filter(isCompatible);
-  const requestedDriverEntries = compatibleEntries.filter(
-    (entry) => entry.driverKind === requestedDriverKind,
-  );
-  return {
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    entry:
-      resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined) ??
-      resolveSelectableProviderInstanceEntry(compatibleEntries, undefined),
-  };
+  return resolveSharedProviderInstanceSelection(input);
 }
 
 /**
