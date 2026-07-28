@@ -174,7 +174,7 @@ describe("deriveLockedProviderDriverKind", () => {
     ).toBe("codex");
   });
 
-  it("prioritizes the session instance and retains a loading-time driver lock", () => {
+  it("prioritizes a known session instance and falls through stale routing values", () => {
     const entries = [
       {
         instanceId: ProviderInstanceId.make("codex_personal"),
@@ -199,12 +199,50 @@ describe("deriveLockedProviderDriverKind", () => {
       deriveLockedProviderDriverKind({
         hasStarted: true,
         sessionProviderName: null,
+        sessionProviderInstanceId: "removed_instance",
+        threadProvider: "codex",
+        selectedProvider: null,
+        entries: [
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            driverKind: ProviderDriverKind.make("codex"),
+          },
+        ],
+      }),
+    ).toBe("codex");
+  });
+
+  it("keeps driver names separate from instance ids and does not guess without entries", () => {
+    const collisionEntries = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driverKind: ProviderDriverKind.make("ollama"),
+      },
+      {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        driverKind: ProviderDriverKind.make("codex"),
+      },
+    ];
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: "codex",
         sessionProviderInstanceId: null,
+        threadProvider: null,
+        selectedProvider: null,
+        entries: collisionEntries,
+      }),
+    ).toBe("codex");
+    expect(
+      deriveLockedProviderDriverKind({
+        hasStarted: true,
+        sessionProviderName: null,
+        sessionProviderInstanceId: "codex_personal",
         threadProvider: "codex",
         selectedProvider: null,
         entries: [],
       }),
-    ).toBe("codex");
+    ).toBeNull();
   });
 });
 

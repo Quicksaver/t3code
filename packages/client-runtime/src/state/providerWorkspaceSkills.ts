@@ -173,47 +173,27 @@ export function deriveLockedProviderDriverKind(input: {
     return null;
   }
   if (input.sessionProviderName && isProviderDriverKind(input.sessionProviderName)) {
-    return (
-      input.entries.find(
-        (entry) =>
-          entry.instanceId === input.sessionProviderName ||
-          entry.driverKind === input.sessionProviderName,
-      )?.driverKind ?? input.sessionProviderName
-    );
+    return input.sessionProviderName;
   }
   if (input.sessionProviderInstanceId) {
-    return (
-      input.entries.find(
-        (entry) =>
-          entry.instanceId === input.sessionProviderInstanceId ||
-          entry.driverKind === input.sessionProviderInstanceId,
-      )?.driverKind ??
-      (input.entries.length === 0 && isProviderDriverKind(input.sessionProviderInstanceId)
-        ? input.sessionProviderInstanceId
-        : null)
-    );
+    const driverKind = input.entries.find(
+      (entry) => entry.instanceId === input.sessionProviderInstanceId,
+    )?.driverKind;
+    if (driverKind) {
+      return driverKind;
+    }
   }
   if (input.threadProvider) {
-    return (
-      input.entries.find(
-        (entry) =>
-          entry.instanceId === input.threadProvider || entry.driverKind === input.threadProvider,
-      )?.driverKind ??
-      (input.entries.length === 0 && isProviderDriverKind(input.threadProvider)
-        ? input.threadProvider
-        : null)
-    );
+    const driverKind = input.entries.find(
+      (entry) => entry.instanceId === input.threadProvider,
+    )?.driverKind;
+    if (driverKind) {
+      return driverKind;
+    }
   }
   if (input.selectedProvider) {
     return (
-      input.entries.find(
-        (entry) =>
-          entry.instanceId === input.selectedProvider ||
-          entry.driverKind === input.selectedProvider,
-      )?.driverKind ??
-      (input.entries.length === 0 && isProviderDriverKind(input.selectedProvider)
-        ? input.selectedProvider
-        : null)
+      input.entries.find((entry) => entry.instanceId === input.selectedProvider)?.driverKind ?? null
     );
   }
   return null;

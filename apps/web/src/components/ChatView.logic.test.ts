@@ -400,7 +400,7 @@ describe("deriveLockedProvider", () => {
     ).toBeNull();
   });
 
-  it("keeps the session instance authoritative and preserves a lock while providers load", () => {
+  it("keeps a known session instance authoritative and avoids guessing while providers load", () => {
     expect(
       deriveLockedProvider({
         thread: makeThread({
@@ -426,7 +426,7 @@ describe("deriveLockedProvider", () => {
         threadProvider: "codex",
         providerInstances: [],
       }),
-    ).toBe("codex");
+    ).toBeNull();
   });
 });
 
