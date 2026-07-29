@@ -12,11 +12,15 @@ export interface ProviderSkillsRpcHandler {
   ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>;
 }
 
+/**
+ * Connection-agnostic WebSocket seam for provider-skill requests.
+ *
+ * The route constructs one handler so the lister's bounded cache and
+ * concurrency limit are shared across connections.
+ */
 export const makeProviderSkillsRpcHandler = Effect.fn("makeProviderSkillsRpcHandler")(function* () {
   const listProviderSkills = yield* makeProviderSkillsLister();
   return {
-    list: Effect.fn("ProviderSkillsRpcHandler.list")(function* (input: ProviderSkillsListInput) {
-      return yield* listProviderSkills(input);
-    }),
+    list: listProviderSkills,
   } satisfies ProviderSkillsRpcHandler;
 });

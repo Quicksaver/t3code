@@ -86,6 +86,7 @@ import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
+import { makeServerProviderSnapshot } from "./provider/testUtils/serverProviderSnapshot.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -4449,7 +4450,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("routes websocket rpc server.listProviderSkills through the focused handler", () =>
+  it.effect("routes websocket rpc server.listProviderSkills missing-provider errors", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
@@ -4466,6 +4467,103 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ServerProviderSkillsListError");
       assert.equal(result.failure.message, "Provider instance 'codex' was not found.");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills success responses", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("claudeAgent");
+      const skill = {
+        name: "plan",
+        path: "/providers/claudeAgent/skills/plan/SKILL.md",
+        enabled: true,
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed([
+              makeServerProviderSnapshot({
+                instanceId,
+                driver: ProviderDriverKind.make("claudeAgent"),
+                skills: [skill],
+              }),
+            ]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: "/definitely/not/a/real/workspace/path",
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, { skills: [skill] });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.listProviderSkills rich errors", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const driver = ProviderDriverKind.make("codex");
+
+      yield* buildAppUnderTest({
+        layers: {
+          providerRegistry: {
+            getProviders: Effect.succeed([
+              makeServerProviderSnapshot({
+                instanceId,
+                driver,
+              }),
+            ]),
+          },
+          serverSettings: {
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: {
+                  driver,
+                  enabled: true,
+                  config: {},
+                },
+              },
+            }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const missingWorkspacePath = "/definitely/not/a/real/workspace/path";
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverListProviderSkills]({
+            instanceId,
+            cwd: `  ${missingWorkspacePath}  `,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ServerProviderSkillsListError");
+      assert.equal(result.failure.reason, "invalid-cwd");
+      assert.equal(result.failure.operation, "ProviderSkillsLister.normalizeCwd");
+      assert.equal(result.failure.instanceId, instanceId);
+      assert.equal(result.failure.cwd, missingWorkspacePath);
+      assert.equal(result.failure.message, `Invalid Codex skills cwd '${missingWorkspacePath}'.`);
+      assert.equal(
+        result.failure.detail,
+        `Workspace root does not exist: ${missingWorkspacePath}.`,
+      );
+      const failureCause = result.failure.cause;
+      assert.instanceOf(failureCause, Error);
+      assert.equal(failureCause.name, "WorkspaceRootNotExistsError");
+      assert.equal(failureCause.message, `Workspace root does not exist: ${missingWorkspacePath}`);
+      assert.deepEqual(Object.keys(failureCause), ["name"]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

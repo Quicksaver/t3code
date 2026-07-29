@@ -16,24 +16,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { makeProviderSkillsRpcHandler } from "./ProviderSkillsRpc.ts";
 import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
-
-const makeServerProviderSnapshot = (
-  input: Partial<ServerProvider> & {
-    readonly instanceId: ProviderInstanceId;
-    readonly driver: ProviderDriverKind;
-  },
-): ServerProvider => ({
-  enabled: true,
-  installed: true,
-  version: "1.0.0",
-  status: "ready",
-  auth: { status: "authenticated" },
-  checkedAt: "2026-04-11T00:00:00.000Z",
-  models: [],
-  slashCommands: [],
-  skills: [],
-  ...input,
-});
+import { makeServerProviderSnapshot } from "./testUtils/serverProviderSnapshot.ts";
 
 const makeHandler = (input?: {
   readonly providers?: ReadonlyArray<ServerProvider>;
@@ -53,7 +36,7 @@ const makeHandler = (input?: {
     ),
   );
 
-it.layer(NodeServices.layer)("provider skills rpc", (it) => {
+it.layer(NodeServices.layer)("provider skills RPC handler", (it) => {
   it.effect("reports a missing provider", () =>
     Effect.gen(function* () {
       const handler = yield* makeHandler();
@@ -97,7 +80,7 @@ it.layer(NodeServices.layer)("provider skills rpc", (it) => {
     }),
   );
 
-  it.effect("returns disabled Codex snapshot skills", () =>
+  it.effect("returns snapshot skills when the Codex provider is disabled", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
       const driver = ProviderDriverKind.make("codex");
@@ -170,20 +153,15 @@ it.layer(NodeServices.layer)("provider skills rpc", (it) => {
       assertTrue(result.failure._tag === "ServerProviderSkillsListError");
       assert.equal(result.failure.message, `Invalid Codex skills cwd '${missingWorkspacePath}'.`);
       assert.equal(result.failure.cwd, missingWorkspacePath);
-      assert.notInclude(result.failure.message, "Workspace root does not exist");
       assert.equal(
         result.failure.detail,
         `Workspace root does not exist: ${missingWorkspacePath}.`,
       );
-      assert.property(result.failure, "cause");
-      const failureCause = result.failure.cause;
-      assertTrue(
-        failureCause !== null &&
-          typeof failureCause === "object" &&
-          "message" in failureCause &&
-          typeof failureCause.message === "string",
-      );
-      assert.include(failureCause.message, "Workspace root does not exist");
+      assert.deepEqual(result.failure.cause, {
+        tag: "WorkspaceRootNotExistsError",
+        name: "WorkspaceRootNotExistsError",
+        message: `Workspace root does not exist: ${missingWorkspacePath}`,
+      });
     }),
   );
 
@@ -233,15 +211,11 @@ it.layer(NodeServices.layer)("provider skills rpc", (it) => {
       assert.equal(result.failure.message, "Failed to prepare Codex home for 'codex'.");
       assert.include(result.failure.detail ?? "", "Codex shadow home path");
       assert.include(result.failure.detail ?? "", sharedHomePath);
-      assert.property(result.failure, "cause");
-      const failureCause = result.failure.cause;
-      assertTrue(
-        failureCause !== null &&
-          typeof failureCause === "object" &&
-          "message" in failureCause &&
-          typeof failureCause.message === "string",
-      );
-      assert.include(failureCause.message, "Codex shadow home path");
+      assert.deepEqual(result.failure.cause, {
+        tag: "CodexShadowHomePathConflictError",
+        name: "CodexShadowHomePathConflictError",
+        message: `Codex shadow home path '${sharedHomePath}' must be different from the shared home path '${sharedHomePath}'.`,
+      });
     }),
   );
 });
