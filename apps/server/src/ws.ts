@@ -51,8 +51,6 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
-  ServerProviderSkillsListError,
-  type ServerProviderSkillsListResult,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -82,9 +80,9 @@ import {
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import {
-  makeProviderSkillsLister,
-  type ProviderSkillsListInput,
-} from "./provider/ProviderSkillsLister.ts";
+  makeProviderSkillsRpcHandler,
+  type ProviderSkillsRpcHandler,
+} from "./provider/ProviderSkillsRpc.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -416,9 +414,7 @@ function toAuthAccessStreamEvent(
 
 interface WsRpcLayerOptions {
   readonly currentSession: EnvironmentAuth.AuthenticatedSession;
-  readonly listProviderSkills: (
-    input: ProviderSkillsListInput,
-  ) => Effect.Effect<ServerProviderSkillsListResult, ServerProviderSkillsListError>;
+  readonly listProviderSkills: ProviderSkillsRpcHandler["list"];
   readonly previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"];
 }
 
@@ -2047,7 +2043,7 @@ const makeWsRpcLayer = ({
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const listProviderSkills = yield* makeProviderSkillsLister();
+    const providerSkillsRpc = yield* makeProviderSkillsRpcHandler();
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     return HttpRouter.add(
@@ -2071,7 +2067,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           Effect.provide(
             makeWsRpcLayer({
               currentSession: session,
-              listProviderSkills,
+              listProviderSkills: providerSkillsRpc.list,
               previewAutomationBroker,
             }).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
