@@ -22,6 +22,7 @@ Expected behavior:
 Primary files:
 
 - `apps/server/src/ws.ts`
+- `apps/server/src/auth/RpcAuthorization.ts`
 - `apps/server/src/provider/ProviderSkillsRpc.ts`
 - `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
@@ -40,6 +41,7 @@ Primary files:
 Relevant tests live in:
 
 - `apps/server/src/server.test.ts`
+- `apps/server/src/auth/RpcAuthorization.test.ts`
 - `apps/server/src/provider/ProviderSkillsRpc.test.ts`
 - `apps/server/src/provider/ProviderSkillsLister.test.ts`
 - `apps/server/src/provider/Layers/CodexProvider.test.ts`
