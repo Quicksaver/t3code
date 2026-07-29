@@ -5,7 +5,7 @@ Fix Codex repo-local skill discovery in the composer by resolving skills for the
 Expected behavior:
 
 - Repo-local Codex skills for the active workspace appear in the `$` skill picker.
-- The server exposes a workspace-aware `server.listProviderSkills` path and validates enabled Codex skill-listing requests against the requested cwd.
+- The server exposes a workspace-aware `server.listProviderSkills` path through a focused provider-skills RPC handler and validates enabled Codex skill-listing requests against the requested cwd.
 - The server routes skill listing through a bounded request lister that keys equivalent requests by normalized workspace root, coalesces concurrent requests for the same provider/cwd, limits cross-workspace concurrency, and applies a short TTL only to successful lookups so reconnects or repeated composer renders do not repeatedly spawn Codex app-server probes while transient failures remain immediately retryable.
 - The Codex provider requests `skills/list` with the current workspace cwd, times out hung app-server probes, and terminates the probe process when a timeout occurs.
 - Provider skill-list failures preserve structured reason, operation, provider instance, normalized cwd, and bounded cause diagnostics for missing providers, invalid cwd, settings failures, Codex home preparation, probe timeouts, and probe failures while keeping stable user-facing messages. Raw thrown values are not sent directly to clients; the server keeps a small plain diagnostic shape so file paths, process output, and unexpected objects do not expand the wire payload.
@@ -22,6 +22,7 @@ Expected behavior:
 Primary files:
 
 - `apps/server/src/ws.ts`
+- `apps/server/src/provider/ProviderSkillsRpc.ts`
 - `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
 - `apps/web/src/components/ChatView.tsx`
@@ -39,6 +40,7 @@ Primary files:
 Relevant tests live in:
 
 - `apps/server/src/server.test.ts`
+- `apps/server/src/provider/ProviderSkillsRpc.test.ts`
 - `apps/server/src/provider/ProviderSkillsLister.test.ts`
 - `apps/server/src/provider/Layers/CodexProvider.test.ts`
 - `apps/server/src/provider/Layers/CursorProvider.test.ts`
@@ -54,7 +56,7 @@ Relevant tests live in:
 Useful focused commands:
 
 ```sh
-(cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
+(cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsRpc.test.ts src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/lib/providerWorkspaceSkillsState.test.ts)
 (cd apps/mobile && pnpm exec vp test run --passWithNoTests src/features/threads/new-task-provider-skills.test.ts src/features/threads/thread-composer-skill-items.test.ts)
 (cd packages/client-runtime && pnpm exec vp test run --passWithNoTests src/state/providerWorkspaceSkills.test.ts)
