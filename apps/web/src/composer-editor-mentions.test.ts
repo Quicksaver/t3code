@@ -171,7 +171,9 @@ describe("splitPromptIntoComposerSegments", () => {
 describe("promptHasComposerSkillReference", () => {
   it("returns true only when the prompt contains a complete skill token", () => {
     expect(promptHasComposerSkillReference("Use $review-follow-up please")).toBe(true);
-    expect(promptHasComposerSkillReference("Use $review-follow-up")).toBe(false);
+    expect(promptHasComposerSkillReference("Use $review-follow-up")).toBe(true);
+    expect(promptHasComposerSkillReference("Use $review-follow-up?")).toBe(true);
+    expect(promptHasComposerSkillReference("Use $")).toBe(false);
     expect(promptHasComposerSkillReference("Read @AGENTS.md please")).toBe(false);
   });
 

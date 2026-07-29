@@ -16,7 +16,16 @@ import {
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import type { ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   ActivityIndicator,
   Image,
@@ -363,7 +372,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [composerSelection, props.draftMessage]);
   const workspaceSkillsLookupActive = composerTrigger?.kind === "skill";
   const { onWorkspaceSkillsLookupActiveChange } = props;
-  useEffect(() => {
+  useLayoutEffect(() => {
     onWorkspaceSkillsLookupActiveChange?.(workspaceSkillsLookupActive);
     return () => onWorkspaceSkillsLookupActiveChange?.(false);
   }, [onWorkspaceSkillsLookupActiveChange, workspaceSkillsLookupActive]);

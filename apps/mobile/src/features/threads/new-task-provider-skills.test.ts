@@ -7,7 +7,9 @@ import {
 
 describe("promptHasNewTaskProviderSkillReference", () => {
   it("loads workspace metadata only after a skill reference is complete", () => {
-    expect(promptHasNewTaskProviderSkillReference("Use $review-follow-up")).toBe(false);
+    expect(promptHasNewTaskProviderSkillReference("Use $")).toBe(false);
+    expect(promptHasNewTaskProviderSkillReference("Use $review-follow-up")).toBe(true);
+    expect(promptHasNewTaskProviderSkillReference("Use $review-follow-up?")).toBe(true);
     expect(promptHasNewTaskProviderSkillReference("Use $review-follow-up next")).toBe(true);
   });
 

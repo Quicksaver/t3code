@@ -34,7 +34,14 @@ describe("shouldLoadThreadProviderWorkspaceSkills", () => {
     expect(
       shouldLoadThreadProviderWorkspaceSkills({
         composerSkillMenuActive: false,
-        draftMessage: "Use $review-follow-up next",
+        draftMessage: "Use $review-follow-up",
+        feed: [],
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadThreadProviderWorkspaceSkills({
+        composerSkillMenuActive: false,
+        draftMessage: "Use $review-follow-up?",
         feed: [],
       }),
     ).toBe(true);
@@ -51,7 +58,7 @@ describe("shouldLoadThreadProviderWorkspaceSkills", () => {
     expect(
       shouldLoadThreadProviderWorkspaceSkills({
         composerSkillMenuActive: false,
-        draftMessage: "Use $review-follow-up",
+        draftMessage: "Use $",
         feed: [feedMessage("assistant", "Try $review-follow-up")],
       }),
     ).toBe(false);

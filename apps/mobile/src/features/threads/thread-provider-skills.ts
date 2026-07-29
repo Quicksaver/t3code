@@ -1,4 +1,3 @@
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { hasInlineSkillToken } from "@t3tools/shared/skillInlineTokens";
 
 interface ThreadProviderSkillFeedEntry {
@@ -18,7 +17,7 @@ export function shouldLoadThreadProviderWorkspaceSkills(input: {
     return true;
   }
 
-  if (collectComposerInlineTokens(input.draftMessage).some((token) => token.type === "skill")) {
+  if (hasInlineSkillToken(input.draftMessage)) {
     return true;
   }
 

@@ -28,9 +28,9 @@ import { listCodexProviderSkills } from "./Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "./Layers/codexLaunchArgs.ts";
 import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
-import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import * as ProviderRegistry from "./Services/ProviderRegistry.ts";
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 const CODEX_SKILL_LIST_TIMEOUT = Duration.seconds(15);
@@ -204,8 +204,8 @@ function parseRequestKey(key: string): ProviderSkillsListInput {
 }
 
 export const makeProviderSkillsLister = Effect.fn("makeProviderSkillsLister")(function* () {
-  const providerRegistry = yield* ProviderRegistry;
-  const serverSettings = yield* ServerSettingsService;
+  const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;

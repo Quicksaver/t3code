@@ -1,9 +1,9 @@
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { hasInlineSkillToken } from "@t3tools/shared/skillInlineTokens";
 
 export type NewTaskWorkspaceMode = "local" | "worktree";
 
 export function promptHasNewTaskProviderSkillReference(prompt: string): boolean {
-  return collectComposerInlineTokens(prompt).some((token) => token.type === "skill");
+  return hasInlineSkillToken(prompt);
 }
 
 /**

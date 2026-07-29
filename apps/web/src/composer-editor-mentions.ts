@@ -6,6 +6,7 @@ import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+import { hasInlineSkillToken } from "@t3tools/shared/skillInlineTokens";
 
 export type ComposerPromptSegment =
   | {
@@ -227,7 +228,5 @@ export function promptHasComposerSkillReference(prompt: string): boolean {
     return false;
   }
 
-  return forEachPromptTextSlice(prompt, (text) =>
-    collectComposerInlineTokens(text).some((match) => match.type === "skill"),
-  );
+  return forEachPromptTextSlice(prompt, hasInlineSkillToken);
 }
