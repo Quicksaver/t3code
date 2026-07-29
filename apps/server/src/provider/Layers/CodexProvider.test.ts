@@ -222,6 +222,30 @@ describe("listCodexProviderSkills", () => {
       expect(yield* waitForFileContent(fixture.exitLogPath)).toContain("SIGTERM");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("reports unauthenticated workspace skill probes as structured failures", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeMockAppServer();
+      const error = yield* listCodexProviderSkillsWithTimeout({
+        instanceId: ProviderInstanceId.make("codex"),
+        binaryPath: fixture.binaryPath,
+        cwd: fixture.cwd,
+        environment: {
+          ...process.env,
+          T3_CODEX_UNAUTHENTICATED: "1",
+        },
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ServerProviderSkillsListError",
+        reason: "probe-failed",
+        operation: "ProviderSkillsLister.listCodexProviderSkills",
+        instanceId: "codex",
+        cwd: fixture.cwd,
+        message: `Failed to list Codex skills (provider: 'codex', cwd: '${fixture.cwd}').`,
+      });
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 it("marks the most preferred available model as default", () => {

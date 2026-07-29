@@ -6,6 +6,7 @@ const cwdLogPath = process.env.T3_CODEX_CWD_LOG_PATH;
 const argsLogPath = process.env.T3_CODEX_ARGS_LOG_PATH;
 const exitLogPath = process.env.T3_CODEX_EXIT_LOG_PATH;
 const hangSkillsList = process.env.T3_CODEX_HANG_SKILLS_LIST === "1";
+const unauthenticated = process.env.T3_CODEX_UNAUTHENTICATED === "1";
 
 function appendLog(path: string | undefined, line: string): void {
   if (path) NodeFS.appendFileSync(path, `${line}\n`, "utf8");
@@ -48,10 +49,18 @@ process.stdin.on("data", (chunk) => {
         });
         break;
       case "account/read":
-        respond(id, {
-          account: { type: "chatgpt", email: "test@example.com", planType: "plus" },
-          requiresOpenaiAuth: false,
-        });
+        respond(
+          id,
+          unauthenticated
+            ? {
+                account: null,
+                requiresOpenaiAuth: true,
+              }
+            : {
+                account: { type: "chatgpt", email: "test@example.com", planType: "plus" },
+                requiresOpenaiAuth: false,
+              },
+        );
         break;
       case "skills/list":
         if (!hangSkillsList) {

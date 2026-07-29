@@ -38,6 +38,15 @@ const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnErro
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 
+class CodexProviderSkillsUnauthenticatedError extends Schema.TaggedErrorClass<CodexProviderSkillsUnauthenticatedError>()(
+  "CodexProviderSkillsUnauthenticatedError",
+  {},
+) {
+  override get message() {
+    return "Codex CLI is not authenticated.";
+  }
+}
+
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
@@ -349,7 +358,7 @@ export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(func
   yield* client.notify("initialized", undefined);
   const accountResponse = yield* client.request("account/read", {});
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
-    return [];
+    return yield* new CodexProviderSkillsUnauthenticatedError();
   }
 
   const response = yield* client.request("skills/list", {
