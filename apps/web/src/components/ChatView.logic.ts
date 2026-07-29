@@ -401,6 +401,20 @@ export function deriveLockedProvider(input: {
   });
 }
 
+export function timelineProviderInstancePreferenceOrder(input: {
+  readonly sessionProviderInstanceId: ProviderInstanceId | null | undefined;
+  readonly threadModelInstanceId: ProviderInstanceId | null | undefined;
+  readonly composerDraftInstanceId: ProviderInstanceId | null | undefined;
+  readonly projectDefaultInstanceId: ProviderInstanceId | null | undefined;
+}): ReadonlyArray<ProviderInstanceId | null | undefined> {
+  return [
+    input.sessionProviderInstanceId,
+    input.threadModelInstanceId,
+    input.composerDraftInstanceId,
+    input.projectDefaultInstanceId,
+  ];
+}
+
 export function getStartedThreadModelChangeBlockReason(input: {
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
   hasStartedSession: boolean;

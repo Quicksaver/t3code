@@ -282,6 +282,7 @@ import {
   revokeUserMessagePreviewUrls,
   startNewThreadForProject,
   timelineMessagesHaveCompleteSkillReference,
+  timelineProviderInstancePreferenceOrder,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -2418,12 +2419,12 @@ function ChatViewContent(props: ChatViewProps) {
     () =>
       resolveProviderInstanceSelection({
         entries: timelineProviderInstanceEntries,
-        preferredInstanceIds: [
-          selectedProviderByThreadId,
-          activeThread?.session?.providerInstanceId,
-          activeThread?.modelSelection.instanceId,
-          activeProject?.defaultModelSelection?.instanceId,
-        ],
+        preferredInstanceIds: timelineProviderInstancePreferenceOrder({
+          sessionProviderInstanceId: activeThread?.session?.providerInstanceId,
+          threadModelInstanceId: activeThread?.modelSelection.instanceId,
+          composerDraftInstanceId: selectedProviderByThreadId,
+          projectDefaultInstanceId: activeProject?.defaultModelSelection?.instanceId,
+        }),
         lockedDriverKind: lockedProvider,
         lockedInstanceId:
           activeThread?.session?.providerInstanceId ??

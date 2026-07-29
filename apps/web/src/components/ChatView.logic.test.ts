@@ -32,6 +32,7 @@ import {
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
   timelineMessagesHaveCompleteSkillReference,
+  timelineProviderInstancePreferenceOrder,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -443,6 +444,24 @@ describe("deriveLockedProvider", () => {
         ],
       }),
     ).toBe("codex");
+  });
+});
+
+describe("timelineProviderInstancePreferenceOrder", () => {
+  it("keeps the session and persisted thread ahead of the composer draft", () => {
+    const sessionInstanceId = ProviderInstanceId.make("codex_session");
+    const threadInstanceId = ProviderInstanceId.make("codex_thread");
+    const draftInstanceId = ProviderInstanceId.make("codex_draft");
+    const projectInstanceId = ProviderInstanceId.make("codex_project");
+
+    expect(
+      timelineProviderInstancePreferenceOrder({
+        sessionProviderInstanceId: sessionInstanceId,
+        threadModelInstanceId: threadInstanceId,
+        composerDraftInstanceId: draftInstanceId,
+        projectDefaultInstanceId: projectInstanceId,
+      }),
+    ).toEqual([sessionInstanceId, threadInstanceId, draftInstanceId, projectInstanceId]);
   });
 });
 
