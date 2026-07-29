@@ -134,6 +134,33 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
       }),
     );
 
+    it.effect("tolerates concurrent materialization of the same shadow home", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+
+        yield* writeTextFile(path.join(sharedHome, "config.toml"), 'model = "gpt-5-codex"\n');
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          }),
+        );
+
+        yield* Effect.all(
+          Array.from({ length: 8 }, () => materializeCodexShadowHome(layout)),
+          { concurrency: "unbounded" },
+        );
+
+        expect(yield* fileSystem.readLink(path.join(shadowHome, "config.toml"))).toBe(
+          path.join(sharedHome, "config.toml"),
+        );
+      }),
+    );
+
     it.effect("replaces Codex-created local MCP OAuth locks with the shared lock directory", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

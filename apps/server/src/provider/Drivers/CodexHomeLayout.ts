@@ -229,8 +229,8 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
 
   const createLink = input.fileSystem.symlink(target, link).pipe(
     Effect.catchTags({
-      PlatformError: (cause) =>
-        new CodexShadowHomeFileSystemError({
+      PlatformError: (cause) => {
+        const failure = new CodexShadowHomeFileSystemError({
           sharedHomePath: input.sharedHomePath,
           effectiveHomePath: input.effectiveHomePath,
           operation: "symlink",
@@ -238,7 +238,22 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
           targetPath: target,
           entryName: input.entryName,
           cause,
-        }),
+        });
+        if (cause.reason._tag !== "AlreadyExists") {
+          return failure;
+        }
+        return readLinkState({
+          ...input,
+          linkPath: link,
+        }).pipe(
+          Effect.flatMap((nextState) =>
+            nextState._tag === "Symlink" &&
+            path.resolve(path.dirname(link), nextState.target) === target
+              ? Effect.void
+              : failure,
+          ),
+        );
+      },
     }),
   );
 

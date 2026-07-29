@@ -121,10 +121,17 @@ describe("splitPromptIntoComposerSegments", () => {
     ]);
   });
 
-  it("does not convert an incomplete trailing skill token", () => {
+  it("converts complete skill tokens at punctuation and end-of-input", () => {
     expect(splitPromptIntoComposerSegments("Use $review-follow-up")).toEqual([
-      { type: "text", text: "Use $review-follow-up" },
+      { type: "text", text: "Use " },
+      { type: "skill", name: "review-follow-up" },
     ]);
+    expect(splitPromptIntoComposerSegments("Use $review-follow-up?")).toEqual([
+      { type: "text", text: "Use " },
+      { type: "skill", name: "review-follow-up" },
+      { type: "text", text: "?" },
+    ]);
+    expect(splitPromptIntoComposerSegments("Use $")).toEqual([{ type: "text", text: "Use $" }]);
   });
 
   it("keeps inline terminal context placeholders at their prompt positions", () => {
