@@ -65,7 +65,7 @@ import {
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
-import { compressImageForStash } from "../../lib/stashImageCompression";
+import { compressImageForStash, compressImageToByteLimit } from "../../lib/imageCompression";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
 import { resolveShortcutCommand } from "../../keybindings";
@@ -189,7 +189,8 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
-  resolveProviderInstanceSelection,
+  resolveProviderDriverKindForInstanceSelection,
+  resolveSelectableProviderInstanceEntry,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -207,7 +208,6 @@ import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 
-const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 
 const runtimeModeConfig: Record<
@@ -760,6 +760,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [providerStatuses, settings],
   );
+  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  const threadProvider =
+    activeThread?.session?.providerInstanceId ??
+    activeThreadModelSelection?.instanceId ??
+    activeProjectDefaultModelSelection?.instanceId ??
+    null;
+  const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
+
+  const unlockedSelectedProvider =
+    resolveProviderDriverKindForInstanceSelection(
+      providerInstanceEntries,
+      providerStatuses,
+      explicitSelectedInstanceId,
+    ) ??
+    providerInstanceEntries[0]?.driverKind ??
+    ProviderDriverKind.make("unconfigured");
+  const requestedDriverKind: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const lockedContinuationGroupKey = useMemo((): string | null => {
+    if (!lockedProvider || !activeThread) return null;
+    const lockedInstanceId =
+      activeThread.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
+    if (!lockedInstanceId) return null;
+    return (
+      providerInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
+        ?.continuationGroupKey ?? null
+    );
+  }, [
+    activeThread,
+    activeThreadModelSelection?.instanceId,
+    lockedProvider,
+    providerInstanceEntries,
+  ]);
 
   // Resolve which configured instance the composer is currently targeting.
   // Priority:
@@ -771,40 +803,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   //   4. First enabled entry matching the current driver kind.
   //   5. First enabled entry overall / default instance for the kind.
   //
-  const providerInstanceSelection = useMemo(() => {
-    return resolveProviderInstanceSelection({
-      entries: providerInstanceEntries,
-      preferredInstanceIds: [
-        composerDraft.activeProvider,
-        activeThread?.session?.providerInstanceId,
-        activeThreadModelSelection?.instanceId,
-        activeProjectDefaultModelSelection?.instanceId,
-      ],
-      lockedDriverKind: lockedProvider,
-      lockedInstanceId:
-        activeThread?.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId ?? null,
-    });
+  const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
+    const candidates: Array<string | null | undefined> = [
+      composerDraft.activeProvider,
+      activeThread?.session?.providerInstanceId,
+      activeThreadModelSelection?.instanceId,
+      activeProjectDefaultModelSelection?.instanceId,
+    ];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const match = providerInstanceEntries.find(
+        (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
+      );
+      if (match) {
+        // When locked to a specific driver kind, ignore persisted instance
+        // ids from a different kind or continuation group.
+        if (lockedProvider && match.driverKind !== lockedProvider) continue;
+        if (
+          lockedContinuationGroupKey &&
+          match.continuationGroupKey !== lockedContinuationGroupKey
+        ) {
+          continue;
+        }
+        return match.instanceId;
+      }
+    }
+    const compatibleEntries = providerInstanceEntries.filter(
+      (entry) =>
+        (!lockedProvider || entry.driverKind === lockedProvider) &&
+        (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
+    );
+    const requestedDriverEntries = compatibleEntries.filter(
+      (entry) => entry.driverKind === requestedDriverKind,
+    );
+    return (
+      resolveSelectableProviderInstanceEntry(requestedDriverEntries, undefined)?.instanceId ??
+      resolveSelectableProviderInstanceEntry(compatibleEntries, undefined)?.instanceId ??
+      NO_PROVIDER_MODEL_SELECTION.instanceId
+    );
   }, [
     activeProjectDefaultModelSelection?.instanceId,
     activeThread?.session?.providerInstanceId,
     activeThreadModelSelection?.instanceId,
     composerDraft.activeProvider,
+    lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
+    requestedDriverKind,
   ]);
-  const selectedProviderEntry = providerInstanceSelection.entry;
-  const selectedInstanceId =
-    selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
 
   // Resolve the active instance's snapshot by `instanceId` so a custom
   // instance gets its own slash commands, skills, and model list — not
   // the first snapshot for the same driver kind.
+  const selectedProviderEntry = useMemo(
+    () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
+    [providerInstanceEntries, selectedInstanceId],
+  );
   const noProviderAvailable = selectedProviderEntry === undefined;
   // The driver kind follows the instance that will actually run the turn,
   // which can differ from the persisted selection when that selection is
   // disabled.
   const selectedProvider: ProviderDriverKind =
-    selectedProviderEntry?.driverKind ?? providerInstanceSelection.requestedDriverKind;
+    selectedProviderEntry?.driverKind ?? requestedDriverKind;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -954,6 +1014,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * thread) can still be stashed while an earlier encode is running.
    */
   const stashInFlightRef = useRef<Set<string>>(new Set());
+  /**
+   * Count of pasted images still being compressed, per thread. Reserved
+   * against the attachment limit so concurrent pastes can't overshoot it,
+   * and checked by `submitComposer` so a send can't race an image into the
+   * next draft.
+   */
+  const pendingImageCompressionsRef = useRef<Map<ThreadId, number>>(new Map());
 
   // ------------------------------------------------------------------
   // Derived: composer send state
@@ -1784,12 +1851,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event?.preventDefault();
         return;
       }
+      // A send while a pasted image is still compressing would strand that
+      // image: the turn snapshot wouldn't include it, and it would surface
+      // in the *next* draft instead. Only oversized images hit this — small
+      // files clear the pending counter within a microtask.
+      if (activeThreadId && (pendingImageCompressionsRef.current.get(activeThreadId) ?? 0) > 0) {
+        event?.preventDefault();
+        toastManager.add({
+          type: "info",
+          title: "Still compressing a pasted image.",
+          description: "Send again once its thumbnail appears.",
+        });
+        return;
+      }
       onSend(event);
       if (shouldBlurMobileComposerOnSubmit()) {
         blurMobileComposerAfterSend();
       }
     },
     [
+      activeThreadId,
       blurMobileComposerAfterSend,
       isSendDisabled,
       noProviderAvailable,
@@ -2236,7 +2317,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: images
   // ------------------------------------------------------------------
-  const addComposerImages = (files: File[]) => {
+  const addComposerImages = async (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
     if (pendingUserInputs.length > 0) {
       toastManager.add({
@@ -2245,40 +2326,81 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       return;
     }
-    const nextImages: ComposerImageAttachment[] = [];
-    let nextImageCount = composerImagesRef.current.length;
+    // Captured before the awaits below: the user may switch threads while a
+    // large image is being compressed, and the attachments and errors belong
+    // to the thread the paste happened in.
+    const threadId = activeThreadId;
+
+    // Validation happens synchronously so concurrent pastes see each other:
+    // accepted files reserve their attachment slots (via the pending counter)
+    // before the first await, keeping the total under the limit.
+    const pendingCount = pendingImageCompressionsRef.current.get(threadId) ?? 0;
+    let reservedCount = composerImagesRef.current.length + pendingCount;
+    const acceptedFiles: File[] = [];
     let error: string | null = null;
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
         error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
         continue;
       }
-      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-        continue;
-      }
-      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      if (reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
         break;
       }
-      const previewUrl = URL.createObjectURL(file);
-      nextImages.push({
-        type: "image",
-        id: randomUUID(),
-        name: file.name || "image",
-        mimeType: file.type,
-        sizeBytes: file.size,
-        previewUrl,
-        file,
-      });
-      nextImageCount += 1;
+      acceptedFiles.push(file);
+      reservedCount += 1;
     }
-    if (nextImages.length === 1 && nextImages[0]) {
-      addComposerImage(nextImages[0]);
-    } else if (nextImages.length > 1) {
-      addComposerImagesToDraft(nextImages);
+    setThreadError(threadId, error);
+    if (acceptedFiles.length === 0) return;
+
+    pendingImageCompressionsRef.current.set(threadId, pendingCount + acceptedFiles.length);
+    try {
+      const nextImages: ComposerImageAttachment[] = [];
+      let compressionError: string | null = null;
+      for (const file of acceptedFiles) {
+        // Images over the wire cap are downscaled to fit rather than
+        // refused; files already within it pass through byte-for-byte.
+        const compressed = await compressImageToByteLimit(file, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+        if (!compressed.ok) {
+          compressionError =
+            compressed.reason === "unreadable"
+              ? `'${file.name}' could not be read as an image.`
+              : `'${file.name}' is too large to attach, even after compression.`;
+          continue;
+        }
+        const attachmentFile = compressed.file;
+        const previewUrl = URL.createObjectURL(attachmentFile);
+        nextImages.push({
+          type: "image",
+          id: randomUUID(),
+          name: attachmentFile.name || "image",
+          mimeType: attachmentFile.type,
+          sizeBytes: attachmentFile.size,
+          previewUrl,
+          file: attachmentFile,
+        });
+      }
+      if (nextImages.length === 1 && nextImages[0]) {
+        addComposerImage(nextImages[0]);
+      } else if (nextImages.length > 1) {
+        addComposerImagesToDraft(nextImages);
+      }
+      // Only failures are reported here. Success must not pass `null`: by
+      // now other work (a failed send, an overlapping paste) may have set a
+      // thread error this call knows nothing about, and clearing it would
+      // swallow that message.
+      if (compressionError !== null) {
+        setThreadError(threadId, compressionError);
+      }
+    } finally {
+      const remaining =
+        (pendingImageCompressionsRef.current.get(threadId) ?? 0) - acceptedFiles.length;
+      if (remaining > 0) {
+        pendingImageCompressionsRef.current.set(threadId, remaining);
+      } else {
+        pendingImageCompressionsRef.current.delete(threadId);
+      }
     }
-    setThreadError(activeThreadId, error);
   };
 
   const removeComposerImage = (imageId: string) => {
@@ -2294,7 +2416,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const imageFiles = files.filter((file) => file.type.startsWith("image/"));
     if (imageFiles.length === 0) return;
     event.preventDefault();
-    addComposerImages(imageFiles);
+    void addComposerImages(imageFiles);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -2328,7 +2450,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
     const files = Array.from(event.dataTransfer.files);
-    addComposerImages(files);
+    void addComposerImages(files);
     focusComposer();
   };
 
@@ -3045,9 +3167,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeInstanceId={selectedInstanceId}
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
-                    lockedContinuationGroupKey={
-                      providerInstanceSelection.lockedContinuationGroupKey
-                    }
+                    lockedContinuationGroupKey={lockedContinuationGroupKey}
                     instanceEntries={providerInstanceEntries}
                     keybindings={keybindings}
                     modelOptionsByInstance={modelOptionsByInstance}
