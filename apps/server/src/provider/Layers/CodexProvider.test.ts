@@ -13,6 +13,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   applyPreferredCodexDefaultModel,
+  isLegacyCodexModel,
   listCodexProviderSkills,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
@@ -62,6 +63,21 @@ const waitForFileContent = Effect.fn("waitForFileContent")(function* (filePath: 
     yield* Effect.promise(() => NodeTimersPromises.setTimeout(50));
   }
   return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
+});
+
+it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
+  assert.deepStrictEqual(
+    ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4"].map((model) => [
+      model,
+      isLegacyCodexModel(model),
+    ]),
+    [
+      ["gpt-5.6-luna", false],
+      ["gpt-5.6-terra", false],
+      ["gpt-5.6-sol", false],
+      ["gpt-5.4", true],
+    ],
+  );
 });
 
 it("maps current Codex model capability fields", () => {
