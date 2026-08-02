@@ -45,6 +45,7 @@ Relevant tests live in:
 - `apps/server/src/provider/ProviderSkillsRpc.test.ts`
 - `apps/server/src/provider/ProviderSkillsLister.test.ts`
 - `apps/server/src/provider/Layers/CodexProvider.test.ts`
+- `apps/server/src/provider/Layers/CodexProviderSkills.test.ts`
 - `apps/server/src/provider/Layers/CursorProvider.test.ts`
 - `apps/server/src/provider/Layers/GrokProvider.test.ts`
 - `apps/web/src/components/chat/MessagesTimeline.test.tsx`
@@ -58,7 +59,7 @@ Relevant tests live in:
 Useful focused commands:
 
 ```sh
-(cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsRpc.test.ts src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
+(cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsRpc.test.ts src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CodexProviderSkills.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/lib/providerWorkspaceSkillsState.test.ts)
 (cd apps/mobile && pnpm exec vp test run --passWithNoTests src/features/threads/new-task-provider-skills.test.ts src/features/threads/thread-composer-skill-items.test.ts)
 (cd packages/client-runtime && pnpm exec vp test run --passWithNoTests src/state/providerWorkspaceSkills.test.ts)
