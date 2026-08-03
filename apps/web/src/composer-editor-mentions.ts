@@ -125,15 +125,36 @@ function forEachMentionMatch(
   });
 }
 
-function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
+export interface SplitPromptIntoComposerSegmentsOptions {
+  /**
+   * Keep the skill token ending at this expanded prompt offset as editable
+   * text. The desktop composer uses this while the caret is at the end of an
+   * active `$` query so asynchronous skill metadata updates cannot turn the
+   * query into a chip before the user selects a result.
+   */
+  preserveSkillQueryAt?: number;
+}
+
+function splitPromptTextIntoComposerSegments(
+  text: string,
+  promptOffset: number,
+  options: SplitPromptIntoComposerSegmentsOptions,
+): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
     return segments;
   }
 
-  const tokenMatches = [...collectComposerInlineTokens(text)];
+  const shouldPreserveSkillQuery = (start: number, end: number) =>
+    options.preserveSkillQueryAt === promptOffset + end && start < end;
+  const tokenMatches = [...collectComposerInlineTokens(text)].filter(
+    (match) => match.type !== "skill" || !shouldPreserveSkillQuery(match.start, match.end),
+  );
   for (const skill of parseInlineSkillTokens(text)) {
     const end = skill.start + skill.rawText.length;
+    if (shouldPreserveSkillQuery(skill.start, end)) {
+      continue;
+    }
     if (
       tokenMatches.some(
         (match) => match.type === "skill" && match.start === skill.start && match.end === end,
@@ -217,6 +238,7 @@ export function selectionTouchesMentionBoundary(
 export function splitPromptIntoComposerSegments(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
+  options: SplitPromptIntoComposerSegmentsOptions = {},
 ): ComposerPromptSegment[] {
   if (!prompt) {
     return [];
@@ -226,7 +248,9 @@ export function splitPromptIntoComposerSegments(
   let terminalContextIndex = 0;
   forEachPromptSegmentSlice(prompt, (slice) => {
     if (slice.type === "text") {
-      segments.push(...splitPromptTextIntoComposerSegments(slice.text));
+      segments.push(
+        ...splitPromptTextIntoComposerSegments(slice.text, slice.promptOffset, options),
+      );
       return false;
     }
 

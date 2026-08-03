@@ -357,6 +357,21 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
   });
+
+  it("keeps the active skill query non-adjacent while filtering", () => {
+    const text = "run $r";
+
+    expect(
+      isCollapsedCursorAdjacentToInlineToken(text, text.length, "left", {
+        preserveSkillQueryAt: text.length,
+      }),
+    ).toBe(false);
+    expect(
+      isCollapsedCursorAdjacentToInlineToken(text, text.length, "right", {
+        preserveSkillQueryAt: text.length,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("parseStandaloneComposerSlashCommand", () => {

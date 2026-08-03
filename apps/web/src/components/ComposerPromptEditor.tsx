@@ -821,13 +821,14 @@ function $setComposerEditorPrompt(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft>,
   skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+  options: { preserveSkillQueryAt?: number } = {},
 ): void {
   const root = $getRoot();
   root.clear();
   const paragraph = $createParagraphNode();
   root.append(paragraph);
 
-  const segments = splitPromptIntoComposerSegments(prompt, terminalContexts);
+  const segments = splitPromptIntoComposerSegments(prompt, terminalContexts, options);
   for (const segment of segments) {
     if (segment.type === "mention") {
       paragraph.append($createComposerMentionNode(segment.path));
@@ -1605,7 +1606,12 @@ function ComposerPromptEditorInner({
       const shouldRewriteEditorState =
         previousSnapshot.value !== value || contextsChanged || skillsChanged;
       if (shouldRewriteEditorState) {
-        $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
+        const rewriteOptions = isFocused
+          ? {
+              preserveSkillQueryAt: expandCollapsedComposerCursor(value, normalizedCursor),
+            }
+          : {};
+        $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current, rewriteOptions);
       }
       if (shouldRewriteEditorState || isFocused) {
         $setSelectionAtComposerOffset(normalizedCursor);
@@ -1733,8 +1739,12 @@ function ComposerPromptEditorInner({
         terminalContextIds,
       };
       const cursorAdjacentToMention =
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
+        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left", {
+          preserveSkillQueryAt: nextExpandedCursor,
+        }) ||
+        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right", {
+          preserveSkillQueryAt: nextExpandedCursor,
+        });
       onChangeRef.current(
         nextValue,
         nextCursor,

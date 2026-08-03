@@ -196,8 +196,9 @@ export function isCollapsedCursorAdjacentToInlineToken(
   text: string,
   cursorInput: number,
   direction: "left" | "right",
+  options: { preserveSkillQueryAt?: number } = {},
 ): boolean {
-  const segments = splitPromptIntoComposerSegments(text);
+  const segments = splitPromptIntoComposerSegments(text, [], options);
   if (!segments.some(isInlineTokenSegment)) {
     return false;
   }

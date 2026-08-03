@@ -134,6 +134,27 @@ describe("splitPromptIntoComposerSegments", () => {
     expect(splitPromptIntoComposerSegments("Use $")).toEqual([{ type: "text", text: "Use $" }]);
   });
 
+  it("keeps the active trailing skill query editable while filtering", () => {
+    const prompt = "Use $r";
+
+    expect(
+      splitPromptIntoComposerSegments(prompt, [], {
+        preserveSkillQueryAt: prompt.length,
+      }),
+    ).toEqual([{ type: "text", text: prompt }]);
+  });
+
+  it("keeps an active skill query editable before its trailing delimiter", () => {
+    const prompt = "Use $review-follow-up please";
+    const queryEnd = "Use $review-follow-up".length;
+
+    expect(
+      splitPromptIntoComposerSegments(prompt, [], {
+        preserveSkillQueryAt: queryEnd,
+      }),
+    ).toEqual([{ type: "text", text: prompt }]);
+  });
+
   it("keeps inline terminal context placeholders at their prompt positions", () => {
     expect(
       splitPromptIntoComposerSegments(

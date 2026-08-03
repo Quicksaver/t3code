@@ -13,6 +13,7 @@ Expected behavior:
 - The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a bounded stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot. Client-side fallback skill changes do not refresh the workspace query or respawn Codex skill probes.
 - Web workspace-skill lookup follows the route environment's connection state. While disconnected, it does not start an RPC, retains only verified skills for the same environment/provider/cwd across lazy menu close/reopen cycles, otherwise falls back to provider snapshot skills with a non-pending reconnect error, and resumes the workspace refresh when the environment reconnects.
 - The composer loads workspace skills lazily: it starts workspace skill discovery when the `$` skill menu is active or the prompt already contains a complete `$skill` token at whitespace, punctuation, or end-of-input, rather than probing on every empty composer mount. Mobile promotes an active skill trigger to the parent lookup state before the menu paints. It preserves already loaded repo-local skills while refreshing the same workspace, falls back to provider snapshot skills when a settled workspace lookup returns no skills or errors, keeps structured lookup errors visible alongside those fallback skills on web and mobile, and clears stale repo-local skills during workspace switches or settled no-data states.
+- While the desktop composer caret is at the end of an active `$` query, the query remains editable text through workspace-skill refreshes and is excluded from inline-token cursor adjacency. This keeps the filtered picker open until the user selects a skill; selected and otherwise completed references still render as skill chips.
 - The conversation timeline renders sent user prompts against the same workspace-aware skill list as the composer, so repo-local `$skill-name` references display with the same skill chip treatment as user-level skills. Timeline lookup stays disabled until a sent user prompt contains a complete skill token, including one at the end of the message, so an empty draft does not probe Codex merely to decorate nonexistent messages.
 - Web composer and timeline skill lookup share the same provider-instance resolver, including settings-adjusted enabled state, availability, provider locks, continuation groups, and deterministic fallback. Timeline decoration prioritizes the active session and persisted thread model ahead of an unsaved composer draft selection, so changing the next-turn model cannot retarget already-sent skill references.
 - The shared client-runtime policy, including target preparation, snapshot transitions, fallback selection, and error formatting, drives both web and mobile adapters. Mobile follows the selected environment's connection state, retains only verified same-workspace skills while disconnected or across lazy lookup close/reopen cycles, shows loading and structured reconnect/error feedback, refreshes an already-open `$` menu when skills arrive, decorates complete skill references, and prevents stale successful results from surviving failed refreshes or workspace switches.
@@ -27,8 +28,11 @@ Primary files:
 - `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
 - `apps/web/src/components/ChatView.tsx`
+- `apps/web/src/components/ComposerPromptEditor.tsx`
 - `apps/web/src/components/chat/ChatComposer.tsx`
 - `apps/web/src/components/chat/MessagesTimeline.tsx`
+- `apps/web/src/composer-editor-mentions.ts`
+- `apps/web/src/composer-logic.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.ts`
 - `apps/web/src/providerInstances.ts`
 - `apps/mobile/src/state/providerWorkspaceSkillsState.ts`
@@ -49,6 +53,8 @@ Relevant tests live in:
 - `apps/server/src/provider/Layers/CursorProvider.test.ts`
 - `apps/server/src/provider/Layers/GrokProvider.test.ts`
 - `apps/web/src/components/chat/MessagesTimeline.test.tsx`
+- `apps/web/src/composer-editor-mentions.test.ts`
+- `apps/web/src/composer-logic.test.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.test.ts`
 - `apps/web/src/providerInstances.test.ts`
 - `apps/mobile/src/features/threads/new-task-provider-skills.test.ts`
