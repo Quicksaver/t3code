@@ -84,12 +84,37 @@ describe("listCodexProviderSkills", () => {
           scope: "repo",
           enabled: true,
         },
+        {
+          name: "coderabbit:code-review",
+          description: "Reviews code changes using CodeRabbit AI.",
+          path: "plugin://coderabbit@openai-curated-remote/skills/code-review",
+          scope: "plugin",
+          enabled: true,
+          displayName: "CodeRabbit Review",
+          shortDescription: "Run CodeRabbit against the current changes",
+        },
       ]);
       const args = yield* Schema.decodeUnknownEffect(CodexArgsLog)(
         (yield* waitForFileContent(fixture.argsLogPath)).trim(),
       );
       expect(args).toEqual(["app-server", "--enable", "workspace-skill-test"]);
       expect((yield* waitForFileContent(fixture.cwdLogPath)).trim()).toBe(fixture.cwd);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps workspace skills when installed plugin discovery is unavailable", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeMockAppServer();
+      const skills = yield* listCodexProviderSkills({
+        binaryPath: fixture.binaryPath,
+        cwd: fixture.cwd,
+        environment: {
+          ...process.env,
+          T3_CODEX_FAIL_PLUGIN_INSTALLED: "1",
+        },
+      }).pipe(Effect.scoped);
+
+      expect(skills.map((skill) => skill.name)).toEqual(["workspace-skill"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

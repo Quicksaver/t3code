@@ -297,6 +297,150 @@ function parseCodexSkillsListResponse(
   });
 }
 
+type InstalledCodexRemotePlugin = {
+  readonly marketplaceName: string;
+  readonly summary: CodexSchema.V2PluginInstalledResponse__PluginSummary & {
+    readonly remotePluginId: string;
+    readonly source: { readonly type: "remote" };
+  };
+};
+
+function installedCodexRemotePlugins(
+  response: CodexSchema.V2PluginInstalledResponse,
+): ReadonlyArray<InstalledCodexRemotePlugin> {
+  const plugins: InstalledCodexRemotePlugin[] = [];
+
+  for (const marketplace of response.marketplaces) {
+    for (const summary of marketplace.plugins) {
+      if (
+        summary.source.type !== "remote" ||
+        !summary.remotePluginId ||
+        !summary.installed ||
+        !summary.enabled ||
+        summary.availability === "DISABLED_BY_ADMIN"
+      ) {
+        continue;
+      }
+      plugins.push({
+        marketplaceName: marketplace.name,
+        summary: {
+          ...summary,
+          remotePluginId: summary.remotePluginId,
+          source: summary.source,
+        },
+      });
+    }
+  }
+
+  return plugins;
+}
+
+function parseCodexRemotePluginSkills(
+  installedPlugin: InstalledCodexRemotePlugin,
+  response: CodexSchema.V2PluginReadResponse,
+): ReadonlyArray<ServerProviderSkill> {
+  const plugin = response.plugin;
+  if (
+    !plugin.summary.installed ||
+    !plugin.summary.enabled ||
+    plugin.summary.availability === "DISABLED_BY_ADMIN"
+  ) {
+    return [];
+  }
+
+  return plugin.skills.map((skill) => {
+    const name = skill.name.startsWith(`${installedPlugin.summary.name}:`)
+      ? skill.name
+      : `${installedPlugin.summary.name}:${skill.name}`;
+    const parsedSkill: Types.Mutable<ServerProviderSkill> = {
+      name,
+      path:
+        skill.path ??
+        `plugin://${installedPlugin.summary.id}/skills/${encodeURIComponent(skill.name)}`,
+      scope: "plugin",
+      enabled: skill.enabled,
+    };
+    const description = skill.description.trim();
+    const displayName = skill.interface?.displayName?.trim();
+    const shortDescription = (skill.shortDescription ?? skill.interface?.shortDescription)?.trim();
+
+    if (description) {
+      parsedSkill.description = description;
+    }
+    if (displayName) {
+      parsedSkill.displayName = displayName;
+    }
+    if (shortDescription) {
+      parsedSkill.shortDescription = shortDescription;
+    }
+
+    return parsedSkill;
+  });
+}
+
+function mergeCodexProviderSkills(
+  workspaceSkills: ReadonlyArray<ServerProviderSkill>,
+  pluginSkills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  const skillsByName = new Map(workspaceSkills.map((skill) => [skill.name, skill]));
+  for (const skill of pluginSkills) {
+    if (!skillsByName.has(skill.name)) {
+      skillsByName.set(skill.name, skill);
+    }
+  }
+  return Array.from(skillsByName.values());
+}
+
+const requestCodexRemotePluginSkills = Effect.fn("requestCodexRemotePluginSkills")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  cwd: string,
+) {
+  const installedResult = yield* Effect.result(client.request("plugin/installed", { cwds: [cwd] }));
+  if (Result.isFailure(installedResult)) {
+    yield* Effect.logWarning("Failed to list installed Codex plugins while loading skills.");
+    return [];
+  }
+
+  const installedPlugins = installedCodexRemotePlugins(installedResult.success);
+  const pluginResults = yield* Effect.all(
+    installedPlugins.map((installedPlugin) =>
+      Effect.result(
+        client.request("plugin/read", {
+          // Despite the protocol field name, remote plugins are read by the
+          // opaque id returned from plugin/installed rather than by display name.
+          pluginName: installedPlugin.summary.remotePluginId,
+          remoteMarketplaceName: installedPlugin.marketplaceName,
+        }),
+      ).pipe(Effect.map((result) => ({ installedPlugin, result }))),
+    ),
+    { concurrency: 4 },
+  );
+
+  const skills: ServerProviderSkill[] = [];
+  for (const { installedPlugin, result } of pluginResults) {
+    if (Result.isFailure(result)) {
+      yield* Effect.logWarning("Failed to read installed Codex plugin skills.", {
+        pluginId: installedPlugin.summary.id,
+        marketplaceName: installedPlugin.marketplaceName,
+      });
+      continue;
+    }
+    skills.push(...parseCodexRemotePluginSkills(installedPlugin, result.success));
+  }
+  return skills;
+});
+
+const requestCodexProviderSkills = Effect.fn("requestCodexProviderSkills")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  cwd: string,
+) {
+  const [skillsResponse, pluginSkills] = yield* Effect.all(
+    [client.request("skills/list", { cwds: [cwd] }), requestCodexRemotePluginSkills(client, cwd)],
+    { concurrency: "unbounded" },
+  );
+  return mergeCodexProviderSkills(parseCodexSkillsListResponse(skillsResponse, cwd), pluginSkills);
+});
+
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
 ) {
@@ -367,10 +511,7 @@ export const listCodexProviderSkills = Effect.fn("listCodexProviderSkills")(func
     return yield* new CodexProviderSkillsUnauthenticatedError();
   }
 
-  const response = yield* client.request("skills/list", {
-    cwds: [input.cwd],
-  });
-  return parseCodexSkillsListResponse(response, input.cwd);
+  return yield* requestCodexProviderSkills(client, input.cwd);
 });
 
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
@@ -462,13 +603,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
-    [
-      client.request("skills/list", {
-        cwds: [input.cwd],
-      }),
-      requestAllCodexModels(client),
-    ],
+  const [skills, models] = yield* Effect.all(
+    [requestCodexProviderSkills(client, input.cwd), requestAllCodexModels(client)],
     { concurrency: "unbounded" },
   );
 
@@ -478,7 +614,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
     ),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills,
   } satisfies CodexAppServerProviderSnapshot;
 });
 

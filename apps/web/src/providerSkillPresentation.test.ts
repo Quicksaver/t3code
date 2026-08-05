@@ -34,6 +34,15 @@ describe("formatProviderSkillInstallSource", () => {
     ).toBe("App");
   });
 
+  it("marks remote plugin skill references as app installs", () => {
+    expect(
+      formatProviderSkillInstallSource({
+        path: "plugin://coderabbit@openai-curated-remote/skills/code-review",
+        scope: "plugin",
+      }),
+    ).toBe("App");
+  });
+
   it("maps standard scopes to user-facing labels", () => {
     expect(
       formatProviderSkillInstallSource({
