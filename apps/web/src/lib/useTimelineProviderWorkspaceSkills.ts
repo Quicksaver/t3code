@@ -65,10 +65,20 @@ export interface TimelineProviderWorkspaceSkillsInput {
   readonly messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>;
 }
 
-export function resolveTimelineProviderWorkspaceSkillsTarget(
-  input: TimelineProviderWorkspaceSkillsInput,
-  skillReferenceCache?: WeakMap<object, boolean>,
-): ProviderWorkspaceSkillsTarget {
+type TimelineProviderWorkspaceSkillsProviderInput = Pick<
+  TimelineProviderWorkspaceSkillsInput,
+  | "providerStatuses"
+  | "settings"
+  | "lockedProvider"
+  | "sessionProviderInstanceId"
+  | "threadModelInstanceId"
+  | "composerDraftInstanceId"
+  | "projectDefaultInstanceId"
+>;
+
+function resolveTimelineProviderWorkspaceSkillsProvider(
+  input: TimelineProviderWorkspaceSkillsProviderInput,
+): Pick<ProviderWorkspaceSkillsTarget, "instanceId" | "fallbackSkills"> {
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(input.providerStatuses),
@@ -84,34 +94,79 @@ export function resolveTimelineProviderWorkspaceSkillsTarget(
     }).entry?.snapshot ?? null;
 
   return {
-    environmentId: input.environmentId,
     instanceId: providerStatus?.instanceId ?? null,
+    fallbackSkills: providerStatus?.skills ?? EMPTY_PROVIDER_SKILLS,
+  };
+}
+
+export function resolveTimelineProviderWorkspaceSkillsTarget(
+  input: TimelineProviderWorkspaceSkillsInput,
+  skillReferenceCache?: WeakMap<object, boolean>,
+): ProviderWorkspaceSkillsTarget {
+  const provider = resolveTimelineProviderWorkspaceSkillsProvider(input);
+
+  return {
+    environmentId: input.environmentId,
+    instanceId: provider.instanceId,
     cwd: input.cwd,
     enabled: timelineMessagesHaveCompleteSkillReference(input.messages, skillReferenceCache),
     connectionAvailable: input.connectionAvailable,
-    fallbackSkills: providerStatus?.skills ?? EMPTY_PROVIDER_SKILLS,
+    fallbackSkills: provider.fallbackSkills,
   };
 }
 
 export function useTimelineProviderWorkspaceSkills(
   input: TimelineProviderWorkspaceSkillsInput,
 ): ProviderWorkspaceSkillsState {
+  const {
+    environmentId,
+    providerStatuses,
+    settings,
+    lockedProvider,
+    sessionProviderInstanceId,
+    threadModelInstanceId,
+    composerDraftInstanceId,
+    projectDefaultInstanceId,
+    cwd,
+    connectionAvailable,
+    messages,
+  } = input;
   const skillReferenceCacheRef = useRef(new WeakMap<object, boolean>());
-  const target = useMemo(
-    () => resolveTimelineProviderWorkspaceSkillsTarget(input, skillReferenceCacheRef.current),
+  const provider = useMemo(
+    () =>
+      resolveTimelineProviderWorkspaceSkillsProvider({
+        providerStatuses,
+        settings,
+        lockedProvider,
+        sessionProviderInstanceId,
+        threadModelInstanceId,
+        composerDraftInstanceId,
+        projectDefaultInstanceId,
+      }),
     [
-      input.composerDraftInstanceId,
-      input.connectionAvailable,
-      input.cwd,
-      input.environmentId,
-      input.lockedProvider,
-      input.messages,
-      input.projectDefaultInstanceId,
-      input.providerStatuses,
-      input.sessionProviderInstanceId,
-      input.settings,
-      input.threadModelInstanceId,
+      composerDraftInstanceId,
+      lockedProvider,
+      projectDefaultInstanceId,
+      providerStatuses,
+      sessionProviderInstanceId,
+      settings,
+      threadModelInstanceId,
     ],
+  );
+  const enabled = useMemo(
+    () => timelineMessagesHaveCompleteSkillReference(messages, skillReferenceCacheRef.current),
+    [messages],
+  );
+  const target = useMemo<ProviderWorkspaceSkillsTarget>(
+    () => ({
+      environmentId,
+      instanceId: provider.instanceId,
+      cwd,
+      enabled,
+      connectionAvailable,
+      fallbackSkills: provider.fallbackSkills,
+    }),
+    [connectionAvailable, cwd, enabled, environmentId, provider],
   );
 
   return useProviderWorkspaceSkills(target);
