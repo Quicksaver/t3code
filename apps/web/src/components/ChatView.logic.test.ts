@@ -32,8 +32,6 @@ import {
   startNewThreadForProject,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
-  timelineMessagesHaveCompleteSkillReference,
-  timelineProviderInstancePreferenceOrder,
 } from "./ChatView.logic";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -185,43 +183,6 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
-  });
-});
-
-describe("timelineMessagesHaveCompleteSkillReference", () => {
-  it("keeps empty drafts and unrelated messages from requesting workspace skills", () => {
-    expect(timelineMessagesHaveCompleteSkillReference([])).toBe(false);
-    expect(
-      timelineMessagesHaveCompleteSkillReference([
-        { role: "user", text: "Inspect @AGENTS.md" },
-        { role: "user", text: "$" },
-        { role: "user", text: "$123invalid" },
-        { role: "user", text: "echo $HOME/.codex" },
-        { role: "user", text: "use PHP $value;" },
-      ]),
-    ).toBe(false);
-  });
-
-  it("ignores complete skill references in assistant messages", () => {
-    expect(
-      timelineMessagesHaveCompleteSkillReference([
-        { role: "assistant", text: "Try $repo-skill next." },
-      ]),
-    ).toBe(false);
-  });
-
-  it("requests workspace skills when a sent user prompt contains a complete skill token", () => {
-    expect(
-      timelineMessagesHaveCompleteSkillReference([
-        { role: "user", text: "Use $repo-skill to inspect this." },
-      ]),
-    ).toBe(true);
-    expect(
-      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill" }]),
-    ).toBe(true);
-    expect(
-      timelineMessagesHaveCompleteSkillReference([{ role: "user", text: "Use $repo-skill?" }]),
-    ).toBe(true);
   });
 });
 
@@ -490,24 +451,6 @@ describe("deriveLockedProvider", () => {
         ],
       }),
     ).toBe("codex");
-  });
-});
-
-describe("timelineProviderInstancePreferenceOrder", () => {
-  it("keeps the session and persisted thread ahead of the composer draft", () => {
-    const sessionInstanceId = ProviderInstanceId.make("codex_session");
-    const threadInstanceId = ProviderInstanceId.make("codex_thread");
-    const draftInstanceId = ProviderInstanceId.make("codex_draft");
-    const projectInstanceId = ProviderInstanceId.make("codex_project");
-
-    expect(
-      timelineProviderInstancePreferenceOrder({
-        sessionProviderInstanceId: sessionInstanceId,
-        threadModelInstanceId: threadInstanceId,
-        composerDraftInstanceId: draftInstanceId,
-        projectDefaultInstanceId: projectInstanceId,
-      }),
-    ).toEqual([sessionInstanceId, threadInstanceId, draftInstanceId, projectInstanceId]);
   });
 });
 

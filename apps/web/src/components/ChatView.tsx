@@ -174,13 +174,7 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { useBrowserHistoryStore } from "~/browserHistoryStore";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  NO_PROVIDER_MODEL_SELECTION,
-  resolveProviderInstanceSelection,
-  sortProviderInstanceEntries,
-} from "../providerInstances";
+import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -190,7 +184,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import { useProviderWorkspaceSkills } from "../lib/providerWorkspaceSkillsState";
+import { useTimelineProviderWorkspaceSkills } from "../lib/useTimelineProviderWorkspaceSkills";
 import { preventRepeatedTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -309,8 +303,6 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   startNewThreadForProject,
-  timelineMessagesHaveCompleteSkillReference,
-  timelineProviderInstancePreferenceOrder,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 import type { ThreadSyncPhase } from "../threadSync";
@@ -346,7 +338,6 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
-const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
@@ -2585,55 +2576,18 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const timelineProviderInstanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
-      ),
-    [providerStatuses, settings],
-  );
-  const timelineProviderStatus = useMemo(
-    () =>
-      resolveProviderInstanceSelection({
-        entries: timelineProviderInstanceEntries,
-        preferredInstanceIds: timelineProviderInstancePreferenceOrder({
-          sessionProviderInstanceId: activeThread?.session?.providerInstanceId,
-          threadModelInstanceId: activeThread?.modelSelection.instanceId,
-          composerDraftInstanceId: selectedProviderByThreadId,
-          projectDefaultInstanceId: activeProject?.defaultModelSelection?.instanceId,
-        }),
-        lockedDriverKind: lockedProvider,
-        lockedInstanceId:
-          activeThread?.session?.providerInstanceId ??
-          activeThread?.modelSelection.instanceId ??
-          null,
-      }).entry?.snapshot ?? null,
-    [
-      activeProject?.defaultModelSelection?.instanceId,
-      activeThread?.modelSelection.instanceId,
-      activeThread?.session?.providerInstanceId,
-      lockedProvider,
-      selectedProviderByThreadId,
-      timelineProviderInstanceEntries,
-    ],
-  );
-  const timelineProviderFallbackSkills = timelineProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS;
-  const timelineSkillReferenceCacheRef = useRef(new WeakMap<object, boolean>());
-  const timelineHasSkillReference = useMemo(
-    () =>
-      timelineMessagesHaveCompleteSkillReference(
-        timelineMessages,
-        timelineSkillReferenceCacheRef.current,
-      ),
-    [timelineMessages],
-  );
-  const activeProviderWorkspaceSkills = useProviderWorkspaceSkills({
+  const activeProviderWorkspaceSkills = useTimelineProviderWorkspaceSkills({
     environmentId,
-    instanceId: timelineProviderStatus?.instanceId ?? null,
+    providerStatuses,
+    settings,
+    lockedProvider,
+    sessionProviderInstanceId: activeThread?.session?.providerInstanceId,
+    threadModelInstanceId: activeThread?.modelSelection.instanceId,
+    composerDraftInstanceId: selectedProviderByThreadId,
+    projectDefaultInstanceId: activeProject?.defaultModelSelection?.instanceId,
     cwd: providerSkillsCwd,
-    enabled: timelineHasSkillReference,
     connectionAvailable: providerSkillsConnectionAvailable,
-    fallbackSkills: timelineProviderFallbackSkills,
+    messages: timelineMessages,
   });
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<

@@ -22,7 +22,6 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import { hasInlineSkillToken } from "./chat/skillInlineTokens";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -217,20 +216,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
-export function timelineMessagesHaveCompleteSkillReference(
-  messages: ReadonlyArray<Pick<ChatMessage, "role" | "text">>,
-  cache?: WeakMap<object, boolean>,
-): boolean {
-  return messages.some((message) => {
-    if (message.role !== "user") return false;
-    const cached = cache?.get(message);
-    if (cached !== undefined) return cached;
-    const hasSkillReference = hasInlineSkillToken(message.text);
-    cache?.set(message, hasSkillReference);
-    return hasSkillReference;
-  });
-}
-
 export function resolveProviderSkillsCwd(input: {
   readonly gitCwd: string | null;
   readonly isLocalDraftThread: boolean;
@@ -410,20 +395,6 @@ export function deriveLockedProvider(input: {
     selectedProvider: input.selectedProvider,
     entries: input.providerInstances,
   });
-}
-
-export function timelineProviderInstancePreferenceOrder(input: {
-  readonly sessionProviderInstanceId: ProviderInstanceId | null | undefined;
-  readonly threadModelInstanceId: ProviderInstanceId | null | undefined;
-  readonly composerDraftInstanceId: ProviderInstanceId | null | undefined;
-  readonly projectDefaultInstanceId: ProviderInstanceId | null | undefined;
-}): ReadonlyArray<ProviderInstanceId | null | undefined> {
-  return [
-    input.sessionProviderInstanceId,
-    input.threadModelInstanceId,
-    input.composerDraftInstanceId,
-    input.projectDefaultInstanceId,
-  ];
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

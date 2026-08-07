@@ -35,6 +35,7 @@ Primary files:
 - `apps/web/src/composer-editor-mentions.ts`
 - `apps/web/src/composer-logic.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.ts`
+- `apps/web/src/lib/useTimelineProviderWorkspaceSkills.ts`
 - `apps/web/src/providerInstances.ts`
 - `apps/mobile/src/state/providerWorkspaceSkillsState.ts`
 - `apps/mobile/src/features/threads/new-task-provider-skills.ts`
@@ -57,6 +58,7 @@ Relevant tests live in:
 - `apps/web/src/composer-editor-mentions.test.ts`
 - `apps/web/src/composer-logic.test.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.test.ts`
+- `apps/web/src/lib/useTimelineProviderWorkspaceSkills.test.ts`
 - `apps/web/src/providerInstances.test.ts`
 - `apps/mobile/src/features/threads/new-task-provider-skills.test.ts`
 - `apps/mobile/src/features/threads/thread-composer-skill-items.test.ts`
