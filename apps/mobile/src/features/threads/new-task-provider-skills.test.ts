@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   promptHasNewTaskProviderSkillReference,
   resolveNewTaskProviderSkillsCwd,
+  shouldLoadNewTaskProviderWorkspaceSkills,
 } from "./new-task-provider-skills";
 
 describe("promptHasNewTaskProviderSkillReference", () => {
@@ -15,6 +16,26 @@ describe("promptHasNewTaskProviderSkillReference", () => {
 
   it("ignores non-skill composer tokens", () => {
     expect(promptHasNewTaskProviderSkillReference("Read @AGENTS.md next")).toBe(false);
+  });
+});
+
+describe("shouldLoadNewTaskProviderWorkspaceSkills", () => {
+  it("loads workspace skills while a partial skill query is active", () => {
+    expect(
+      shouldLoadNewTaskProviderWorkspaceSkills({
+        composerSkillMenuActive: true,
+        prompt: "Use $upd",
+      }),
+    ).toBe(true);
+  });
+
+  it("retains lazy loading for ordinary drafts", () => {
+    expect(
+      shouldLoadNewTaskProviderWorkspaceSkills({
+        composerSkillMenuActive: false,
+        prompt: "Explain this repository",
+      }),
+    ).toBe(false);
   });
 });
 

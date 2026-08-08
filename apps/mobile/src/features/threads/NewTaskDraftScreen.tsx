@@ -1,6 +1,6 @@
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, usePreventRemove } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Alert, InteractionManager, Platform, View, useColorScheme } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,11 +9,20 @@ import { useFontFamily } from "../../lib/useFontFamily";
 
 import { EnvironmentId } from "@t3tools/contracts";
 import {
+  detectComposerTrigger,
+  replaceTextRange,
+  type ComposerTrigger,
+} from "@t3tools/shared/composerTrigger";
+import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerEditorSelection,
+} from "../../components/ComposerEditor";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
@@ -25,6 +34,8 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ComposerSurface } from "./ThreadComposer";
+import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { buildComposerSkillItems } from "./thread-composer-skill-items";
 import { ThreadSettingsSheet, threadSettingsSummaryLabel } from "./ThreadSettingsSheet";
 import { useThreadSettingsSheetPresentation } from "./use-thread-settings-sheet-presentation";
 
@@ -100,6 +111,10 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [composerSelection, setComposerSelection] = useState(() => ({
+    start: flow.prompt.length,
+    end: flow.prompt.length,
+  }));
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: promptInputRef,
     isEditorFocused: isComposerFocused,
@@ -845,6 +860,78 @@ export function NewTaskDraftScreen(props: {
     );
   }
 
+  const isAndroid = Platform.OS === "android";
+  const isDarkMode = colorScheme === "dark";
+  // Android expansion follows native editor focus so relayout cannot race
+  // the touch gesture that opens the keyboard.
+  // The settings sheet dismisses the keyboard, so its flag keeps the Android
+  // draft composer expanded through the blur (mirrors ThreadComposer).
+  const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
+  useEffect(() => {
+    const promptEnd = flow.prompt.length;
+    setComposerSelection((selection) => {
+      const start = Math.min(selection.start, promptEnd);
+      const end = Math.min(selection.end, promptEnd);
+      return start === selection.start && end === selection.end ? selection : { start, end };
+    });
+  }, [flow.prompt.length]);
+  const composerSkillTrigger = useMemo<ComposerTrigger | null>(() => {
+    if (composerSelection.start !== composerSelection.end) {
+      return null;
+    }
+    const trigger = detectComposerTrigger(flow.prompt, composerSelection.end);
+    return trigger?.kind === "skill" ? trigger : null;
+  }, [composerSelection, flow.prompt]);
+  useLayoutEffect(() => {
+    flow.setComposerSkillMenuActive(composerSkillTrigger !== null);
+    return () => flow.setComposerSkillMenuActive(false);
+  }, [composerSkillTrigger, flow.setComposerSkillMenuActive]);
+  const composerSkillItems = useMemo(
+    () =>
+      composerSkillTrigger
+        ? buildComposerSkillItems(flow.selectedProviderSkills, composerSkillTrigger.query)
+        : [],
+    [composerSkillTrigger, flow.selectedProviderSkills],
+  );
+  const handleComposerSelectionChange = useCallback((selection: ComposerEditorSelection) => {
+    setComposerSelection(selection);
+  }, []);
+  const handleSkillSelect = useCallback(
+    (item: (typeof composerSkillItems)[number]) => {
+      if (!composerSkillTrigger) return;
+      const result = replaceTextRange(
+        flow.prompt,
+        composerSkillTrigger.rangeStart,
+        composerSkillTrigger.rangeEnd,
+        `$${item.skill.name} `,
+      );
+      setComposerSelection({ start: result.cursor, end: result.cursor });
+      flow.setPrompt(result.text);
+    },
+    [composerSkillItems, composerSkillTrigger, flow],
+  );
+  const skillPopover = composerSkillTrigger ? (
+    <ComposerCommandPopover
+      items={composerSkillItems}
+      triggerKind="skill"
+      isLoading={flow.selectedProviderSkillsIsPending}
+      error={flow.selectedProviderSkillsError}
+      onSelect={(item) => {
+        if (item.type === "skill") {
+          handleSkillSelect(item);
+        }
+      }}
+    />
+  ) : null;
+  const canStart =
+    Boolean(flow.selectedProject) &&
+    Boolean(flow.selectedModel) &&
+    flow.prompt.trim().length > 0 &&
+    isIncomingShareReady &&
+    !isImportingShare &&
+    !flow.submitting &&
+    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+
   if (!selectedProject) {
     return (
       <View className="flex-1 bg-sheet">
@@ -860,21 +947,6 @@ export function NewTaskDraftScreen(props: {
     );
   }
 
-  const isAndroid = Platform.OS === "android";
-  const isDarkMode = colorScheme === "dark";
-  // Android expansion follows native editor focus so relayout cannot race
-  // the touch gesture that opens the keyboard.
-  // The settings sheet dismisses the keyboard, so its flag keeps the Android
-  // draft composer expanded through the blur (mirrors ThreadComposer).
-  const isExpanded = !isAndroid || isComposerFocused || settingsSheetPresentation.isActive;
-  const canStart =
-    Boolean(flow.selectedProject) &&
-    Boolean(flow.selectedModel) &&
-    flow.prompt.trim().length > 0 &&
-    isIncomingShareReady &&
-    !isImportingShare &&
-    !flow.submitting &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
@@ -888,7 +960,9 @@ export function NewTaskDraftScreen(props: {
       scrollEnabled={isExpanded}
       value={flow.prompt}
       skills={flow.selectedProviderSkills}
+      selection={composerSelection}
       onChangeText={flow.setPrompt}
+      onSelectionChange={handleComposerSelectionChange}
       onFocus={() => setIsComposerFocused(true)}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
@@ -994,7 +1068,7 @@ export function NewTaskDraftScreen(props: {
           <View className="flex-1" />
 
           <View
-            className="px-4 pt-2"
+            className="relative px-4 pt-2"
             style={{
               paddingBottom: controlsBottomPadding,
               experimental_backgroundImage: isDarkMode
@@ -1002,6 +1076,9 @@ export function NewTaskDraftScreen(props: {
                 : "linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 40%, rgba(255,255,255,0.95) 100%)",
             }}
           >
+            {skillPopover ? (
+              <View className="absolute inset-x-4 bottom-full z-10 mb-2">{skillPopover}</View>
+            ) : null}
             <ComposerSurface
               isDarkMode={isDarkMode}
               style={
@@ -1067,7 +1144,12 @@ export function NewTaskDraftScreen(props: {
       <NativeStackScreenOptions options={{ title: selectedProject.title }} />
 
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-        <View className="min-h-0 flex-1 px-5 pt-2">{promptEditor}</View>
+        <View className="relative min-h-0 flex-1 px-5 pt-2">
+          {promptEditor}
+          {skillPopover ? (
+            <View className="absolute inset-x-5 bottom-2 z-10">{skillPopover}</View>
+          ) : null}
+        </View>
 
         <View className="border-t border-border" style={{ paddingBottom: controlsBottomPadding }}>
           {flow.attachments.length > 0 ? (

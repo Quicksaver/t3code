@@ -66,8 +66,8 @@ import { useProviderWorkspaceSkills } from "../../state/providerWorkspaceSkillsS
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
-  promptHasNewTaskProviderSkillReference,
   resolveNewTaskProviderSkillsCwd,
+  shouldLoadNewTaskProviderWorkspaceSkills,
 } from "./new-task-provider-skills";
 import {
   buildHomeProjectScopes,
@@ -153,6 +153,8 @@ type NewTaskFlowContextValue = {
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderSkills: ReadonlyArray<ServerProviderSkill>;
+  readonly selectedProviderSkillsIsPending: boolean;
+  readonly selectedProviderSkillsError: string | null;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
@@ -183,6 +185,7 @@ type NewTaskFlowContextValue = {
     value: ReadonlyArray<ProviderOptionSelection> | undefined,
   ) => void;
   readonly setExpandedProvider: (value: string | null) => void;
+  readonly setComposerSkillMenuActive: (value: boolean) => void;
 };
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
@@ -220,6 +223,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+  const [composerSkillMenuActive, setComposerSkillMenuActive] = useState(false);
   const [editingPendingTask, setEditingPendingTask] = useState<QueuedThreadMessage | null>(null);
   // Mirrors `editingPendingTask` synchronously so the unmount flush cannot act
   // on a task whose editing session already ended this render.
@@ -231,6 +235,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     setSubmitting(false);
     setBranchQuery("");
     setExpandedProvider(null);
+    setComposerSkillMenuActive(false);
     const editing = editingPendingTaskRef.current;
     editingPendingTaskRef.current = null;
     setEditingPendingTask(null);
@@ -445,10 +450,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedProviderInstance],
   );
   const promptNeedsWorkspaceSkills = useMemo(
-    () => promptHasNewTaskProviderSkillReference(prompt),
-    [prompt],
+    () =>
+      shouldLoadNewTaskProviderWorkspaceSkills({
+        composerSkillMenuActive,
+        prompt,
+      }),
+    [composerSkillMenuActive, prompt],
   );
-  const selectedProviderSkills = useProviderWorkspaceSkills({
+  const selectedProviderSkillsState = useProviderWorkspaceSkills({
     environmentId: selectedProject?.environmentId ?? null,
     instanceId: selectedProviderInstance?.instanceId ?? null,
     // A new-worktree draft has no target directory yet. Do not inspect the
@@ -462,7 +471,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     enabled: promptNeedsWorkspaceSkills,
     connectionAvailable: providerSkillsConnectionAvailable,
     fallbackSkills: selectedProviderFallbackSkills,
-  }).skills;
+  });
+  const selectedProviderSkills = selectedProviderSkillsState.skills;
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.
@@ -923,6 +933,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedModelOption,
       selectedProviderSkills,
+      selectedProviderSkillsIsPending: selectedProviderSkillsState.isPending,
+      selectedProviderSkillsError: selectedProviderSkillsState.error,
       providerGroups,
       filteredBranches,
       reset,
@@ -948,6 +960,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setInteractionMode,
       setSelectedModelOptions,
       setExpandedProvider,
+      setComposerSkillMenuActive,
     }),
     [
       attachments,
@@ -978,6 +991,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModelOption,
       selectedProjectDraftKey,
       selectedProviderSkills,
+      selectedProviderSkillsState.error,
+      selectedProviderSkillsState.isPending,
       setSelectedModelOptions,
       selectedProject,
       selectedProjectKey,

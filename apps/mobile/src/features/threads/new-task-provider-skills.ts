@@ -6,6 +6,13 @@ export function promptHasNewTaskProviderSkillReference(prompt: string): boolean 
   return hasInlineSkillToken(prompt);
 }
 
+export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
+  readonly composerSkillMenuActive: boolean;
+  readonly prompt: string;
+}): boolean {
+  return input.composerSkillMenuActive || promptHasNewTaskProviderSkillReference(input.prompt);
+}
+
 /**
  * Resolves the only workspace path whose skills are safe to expose before a
  * task exists. A future worktree has no materialized directory yet, so using a
