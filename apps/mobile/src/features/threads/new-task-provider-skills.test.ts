@@ -25,17 +25,17 @@ describe("shouldLoadNewTaskProviderWorkspaceSkills", () => {
     expect(
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive: true,
-        defaultWorkspaceModeSettled: true,
+        providerSkillsWorkspaceModeSettled: true,
         prompt: "Use $upd",
       }),
     ).toBe(true);
   });
 
-  it("waits for the default workspace mode before loading checkout skills", () => {
+  it("waits for the provider-skills workspace mode before loading checkout skills", () => {
     expect(
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive: true,
-        defaultWorkspaceModeSettled: false,
+        providerSkillsWorkspaceModeSettled: false,
         prompt: "Use $upd",
       }),
     ).toBe(false);
@@ -45,7 +45,7 @@ describe("shouldLoadNewTaskProviderWorkspaceSkills", () => {
     expect(
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive: false,
-        defaultWorkspaceModeSettled: true,
+        providerSkillsWorkspaceModeSettled: true,
         prompt: "Explain this repository",
       }),
     ).toBe(false);
@@ -70,13 +70,22 @@ describe("isNewTaskProviderSkillsWorkspaceModeSettled", () => {
       }),
     ).toBe(true);
   });
+
+  it("waits for the upstream default mode after the server configuration loads", () => {
+    expect(
+      isNewTaskProviderSkillsWorkspaceModeSettled({
+        defaultWorkspaceModeSettled: false,
+        serverConfigLoaded: true,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses the selected checkout only for local tasks", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
-        defaultWorkspaceModeSettled: true,
+        providerSkillsWorkspaceModeSettled: true,
         workspaceMode: "local",
         selectedWorktreePath: "/repo/worktrees/feature",
         projectWorkspaceRoot: "/repo",
@@ -87,7 +96,7 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses the project root when a local task has no alternate checkout", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
-        defaultWorkspaceModeSettled: true,
+        providerSkillsWorkspaceModeSettled: true,
         workspaceMode: "local",
         selectedWorktreePath: null,
         projectWorkspaceRoot: "/repo",
@@ -98,7 +107,7 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses provider fallback while a future worktree has no cwd", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
-        defaultWorkspaceModeSettled: true,
+        providerSkillsWorkspaceModeSettled: true,
         workspaceMode: "worktree",
         selectedWorktreePath: "/repo/worktrees/existing-feature",
         projectWorkspaceRoot: "/repo",
@@ -109,7 +118,7 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("does not retain checkout skills while the default mode is provisional", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
-        defaultWorkspaceModeSettled: false,
+        providerSkillsWorkspaceModeSettled: false,
         workspaceMode: "local",
         selectedWorktreePath: "/repo/worktrees/feature",
         projectWorkspaceRoot: "/repo",

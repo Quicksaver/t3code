@@ -494,7 +494,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive,
-        defaultWorkspaceModeSettled: providerSkillsWorkspaceModeSettled,
+        providerSkillsWorkspaceModeSettled,
         prompt,
       }),
     [composerSkillMenuActive, prompt, providerSkillsWorkspaceModeSettled],
@@ -506,7 +506,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // selected base branch's checkout because its uncommitted skills may not
     // exist in the worktree that task creation will materialize.
     cwd: resolveNewTaskProviderSkillsCwd({
-      defaultWorkspaceModeSettled: providerSkillsWorkspaceModeSettled,
+      providerSkillsWorkspaceModeSettled,
       workspaceMode,
       selectedWorktreePath,
       projectWorkspaceRoot: selectedProject?.workspaceRoot ?? null,

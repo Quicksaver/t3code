@@ -15,11 +15,11 @@ export function isNewTaskProviderSkillsWorkspaceModeSettled(input: {
 
 export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
   readonly composerSkillMenuActive: boolean;
-  readonly defaultWorkspaceModeSettled: boolean;
+  readonly providerSkillsWorkspaceModeSettled: boolean;
   readonly prompt: string;
 }): boolean {
   return (
-    input.defaultWorkspaceModeSettled &&
+    input.providerSkillsWorkspaceModeSettled &&
     (input.composerSkillMenuActive || promptHasNewTaskProviderSkillReference(input.prompt))
   );
 }
@@ -32,12 +32,12 @@ export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
  * the fallback until the task has a real cwd.
  */
 export function resolveNewTaskProviderSkillsCwd(input: {
-  readonly defaultWorkspaceModeSettled: boolean;
+  readonly providerSkillsWorkspaceModeSettled: boolean;
   readonly workspaceMode: NewTaskWorkspaceMode;
   readonly selectedWorktreePath: string | null;
   readonly projectWorkspaceRoot: string | null;
 }): string | null {
-  if (!input.defaultWorkspaceModeSettled || input.workspaceMode === "worktree") {
+  if (!input.providerSkillsWorkspaceModeSettled || input.workspaceMode === "worktree") {
     return null;
   }
 
