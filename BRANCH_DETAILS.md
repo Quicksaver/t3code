@@ -19,7 +19,7 @@ Expected behavior:
 - Web composer and timeline skill lookup share the same provider-instance resolver, including settings-adjusted enabled state, availability, provider locks, continuation groups, and deterministic fallback. Timeline decoration prioritizes the active session and persisted thread model ahead of an unsaved composer draft selection, so changing the next-turn model cannot retarget already-sent skill references.
 - The shared client-runtime policy, including target preparation, snapshot transitions, fallback selection, and error formatting, drives both web and mobile adapters. Mobile follows the selected environment's connection state, retains only verified same-workspace skills while disconnected or across lazy lookup close/reopen cycles, shows loading and structured reconnect/error feedback, refreshes an already-open `$` menu when skills arrive, decorates complete skill references, and prevents stale successful results from surviving failed refreshes or workspace switches.
 - Mobile thread detail keeps workspace lookup lazy: it activates only while the composer `$` menu is active, when the draft contains a complete skill token, or when a visible sent user prompt contains a complete skill reference.
-- New-task drafts expose the same filtered `$` picker as existing thread composers and request workspace skills lazily while that menu is active or after a complete `$skill` reference at whitespace, punctuation, or end-of-input. Local drafts resolve the selected checkout or project root, while future-worktree drafts deliberately have no cwd and use provider snapshots until the target directory exists.
+- New-task drafts expose the same filtered `$` picker as existing thread composers and request workspace skills lazily while that menu is active or after a complete `$skill` reference at whitespace, punctuation, or end-of-input. Workspace-aware lookup waits until the default workspace mode has settled, so a provisional local mode cannot expose checkout-only skills for a draft that resolves to a future worktree. Settled local drafts resolve the selected checkout or project root, while settled future-worktree drafts deliberately have no cwd and use provider snapshots until the target directory exists.
 
 Primary files:
 
@@ -38,6 +38,7 @@ Primary files:
 - `apps/web/src/lib/useTimelineProviderWorkspaceSkills.ts`
 - `apps/web/src/providerInstances.ts`
 - `apps/mobile/src/state/providerWorkspaceSkillsState.ts`
+- `apps/mobile/src/features/threads/new-task-flow-provider.tsx`
 - `apps/mobile/src/features/threads/NewTaskDraftScreen.tsx`
 - `apps/mobile/src/features/threads/new-task-provider-skills.ts`
 - `apps/mobile/src/features/threads/thread-composer-skill-items.ts`
