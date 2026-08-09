@@ -75,6 +75,7 @@ import { useProviderWorkspaceSkills } from "../../state/providerWorkspaceSkillsS
 import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { type VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  isNewTaskProviderSkillsWorkspaceModeSettled,
   resolveNewTaskProviderSkillsCwd,
   shouldLoadNewTaskProviderWorkspaceSkills,
 } from "./new-task-provider-skills";
@@ -406,6 +407,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
+  // Provider-skill lookup additionally needs the server's global default.
+  // Keep this separate so the upstream draft-settling behavior is unchanged.
+  const providerSkillsWorkspaceModeSettled = isNewTaskProviderSkillsWorkspaceModeSettled({
+    defaultWorkspaceModeSettled,
+    serverConfigLoaded: selectedEnvironmentServerConfig !== null,
+  });
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
   const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
@@ -487,10 +494,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive,
-        defaultWorkspaceModeSettled,
+        defaultWorkspaceModeSettled: providerSkillsWorkspaceModeSettled,
         prompt,
       }),
-    [composerSkillMenuActive, defaultWorkspaceModeSettled, prompt],
+    [composerSkillMenuActive, prompt, providerSkillsWorkspaceModeSettled],
   );
   const selectedProviderSkillsState = useProviderWorkspaceSkills({
     environmentId: selectedProject?.environmentId ?? null,
@@ -499,7 +506,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // selected base branch's checkout because its uncommitted skills may not
     // exist in the worktree that task creation will materialize.
     cwd: resolveNewTaskProviderSkillsCwd({
-      defaultWorkspaceModeSettled,
+      defaultWorkspaceModeSettled: providerSkillsWorkspaceModeSettled,
       workspaceMode,
       selectedWorktreePath,
       projectWorkspaceRoot: selectedProject?.workspaceRoot ?? null,

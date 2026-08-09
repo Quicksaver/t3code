@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isNewTaskProviderSkillsWorkspaceModeSettled,
   promptHasNewTaskProviderSkillReference,
   resolveNewTaskProviderSkillsCwd,
   shouldLoadNewTaskProviderWorkspaceSkills,
@@ -48,6 +49,26 @@ describe("shouldLoadNewTaskProviderWorkspaceSkills", () => {
         prompt: "Explain this repository",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isNewTaskProviderSkillsWorkspaceModeSettled", () => {
+  it("waits for the server configuration after the project file settles", () => {
+    expect(
+      isNewTaskProviderSkillsWorkspaceModeSettled({
+        defaultWorkspaceModeSettled: true,
+        serverConfigLoaded: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("settles after both workspace defaults are available", () => {
+    expect(
+      isNewTaskProviderSkillsWorkspaceModeSettled({
+        defaultWorkspaceModeSettled: true,
+        serverConfigLoaded: true,
+      }),
+    ).toBe(true);
   });
 });
 

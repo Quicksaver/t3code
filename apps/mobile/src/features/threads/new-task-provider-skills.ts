@@ -6,6 +6,13 @@ export function promptHasNewTaskProviderSkillReference(prompt: string): boolean 
   return hasInlineSkillToken(prompt);
 }
 
+export function isNewTaskProviderSkillsWorkspaceModeSettled(input: {
+  readonly defaultWorkspaceModeSettled: boolean;
+  readonly serverConfigLoaded: boolean;
+}): boolean {
+  return input.defaultWorkspaceModeSettled && input.serverConfigLoaded;
+}
+
 export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
   readonly composerSkillMenuActive: boolean;
   readonly defaultWorkspaceModeSettled: boolean;
