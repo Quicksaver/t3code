@@ -8,9 +8,13 @@ export function promptHasNewTaskProviderSkillReference(prompt: string): boolean 
 
 export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
   readonly composerSkillMenuActive: boolean;
+  readonly defaultWorkspaceModeSettled: boolean;
   readonly prompt: string;
 }): boolean {
-  return input.composerSkillMenuActive || promptHasNewTaskProviderSkillReference(input.prompt);
+  return (
+    input.defaultWorkspaceModeSettled &&
+    (input.composerSkillMenuActive || promptHasNewTaskProviderSkillReference(input.prompt))
+  );
 }
 
 /**
@@ -21,11 +25,12 @@ export function shouldLoadNewTaskProviderWorkspaceSkills(input: {
  * the fallback until the task has a real cwd.
  */
 export function resolveNewTaskProviderSkillsCwd(input: {
+  readonly defaultWorkspaceModeSettled: boolean;
   readonly workspaceMode: NewTaskWorkspaceMode;
   readonly selectedWorktreePath: string | null;
   readonly projectWorkspaceRoot: string | null;
 }): string | null {
-  if (input.workspaceMode === "worktree") {
+  if (!input.defaultWorkspaceModeSettled || input.workspaceMode === "worktree") {
     return null;
   }
 

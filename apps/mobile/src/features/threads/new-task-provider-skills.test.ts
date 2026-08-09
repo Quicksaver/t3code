@@ -24,15 +24,27 @@ describe("shouldLoadNewTaskProviderWorkspaceSkills", () => {
     expect(
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive: true,
+        defaultWorkspaceModeSettled: true,
         prompt: "Use $upd",
       }),
     ).toBe(true);
+  });
+
+  it("waits for the default workspace mode before loading checkout skills", () => {
+    expect(
+      shouldLoadNewTaskProviderWorkspaceSkills({
+        composerSkillMenuActive: true,
+        defaultWorkspaceModeSettled: false,
+        prompt: "Use $upd",
+      }),
+    ).toBe(false);
   });
 
   it("retains lazy loading for ordinary drafts", () => {
     expect(
       shouldLoadNewTaskProviderWorkspaceSkills({
         composerSkillMenuActive: false,
+        defaultWorkspaceModeSettled: true,
         prompt: "Explain this repository",
       }),
     ).toBe(false);
@@ -43,6 +55,7 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses the selected checkout only for local tasks", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
+        defaultWorkspaceModeSettled: true,
         workspaceMode: "local",
         selectedWorktreePath: "/repo/worktrees/feature",
         projectWorkspaceRoot: "/repo",
@@ -53,6 +66,7 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses the project root when a local task has no alternate checkout", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
+        defaultWorkspaceModeSettled: true,
         workspaceMode: "local",
         selectedWorktreePath: null,
         projectWorkspaceRoot: "/repo",
@@ -63,8 +77,20 @@ describe("resolveNewTaskProviderSkillsCwd", () => {
   it("uses provider fallback while a future worktree has no cwd", () => {
     expect(
       resolveNewTaskProviderSkillsCwd({
+        defaultWorkspaceModeSettled: true,
         workspaceMode: "worktree",
         selectedWorktreePath: "/repo/worktrees/existing-feature",
+        projectWorkspaceRoot: "/repo",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not retain checkout skills while the default mode is provisional", () => {
+    expect(
+      resolveNewTaskProviderSkillsCwd({
+        defaultWorkspaceModeSettled: false,
+        workspaceMode: "local",
+        selectedWorktreePath: "/repo/worktrees/feature",
         projectWorkspaceRoot: "/repo",
       }),
     ).toBeNull();
