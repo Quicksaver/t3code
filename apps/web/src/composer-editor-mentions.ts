@@ -6,7 +6,7 @@ import {
   collectComposerInlineTokens,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
-import { hasInlineSkillToken, parseInlineSkillTokens } from "@t3tools/shared/skillInlineTokens";
+import { hasInlineSkillToken } from "@t3tools/shared/skillInlineTokens";
 
 export type ComposerPromptSegment =
   | {
@@ -147,30 +147,9 @@ function splitPromptTextIntoComposerSegments(
 
   const shouldPreserveSkillQuery = (start: number, end: number) =>
     options.preserveSkillQueryAt === promptOffset + end && start < end;
-  const tokenMatches = [...collectComposerInlineTokens(text)].filter(
+  const tokenMatches = collectComposerInlineTokens(text, { skillBoundary: "complete" }).filter(
     (match) => match.type !== "skill" || !shouldPreserveSkillQuery(match.start, match.end),
   );
-  for (const skill of parseInlineSkillTokens(text)) {
-    const end = skill.start + skill.rawText.length;
-    if (shouldPreserveSkillQuery(skill.start, end)) {
-      continue;
-    }
-    if (
-      tokenMatches.some(
-        (match) => match.type === "skill" && match.start === skill.start && match.end === end,
-      )
-    ) {
-      continue;
-    }
-    tokenMatches.push({
-      type: "skill",
-      value: skill.name,
-      source: skill.rawText,
-      start: skill.start,
-      end,
-    });
-  }
-  tokenMatches.sort((left, right) => left.start - right.start);
   let cursor = 0;
   for (const match of tokenMatches) {
     if (match.start < cursor) {

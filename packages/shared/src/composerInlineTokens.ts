@@ -1,3 +1,5 @@
+import { parseInlineSkillTokens } from "./skillInlineTokens.ts";
+
 export type ComposerInlineToken =
   | {
       readonly type: "mention";
@@ -16,9 +18,13 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+  /**
+   * Whitespace keeps an active trailing query editable. Complete additionally
+   * accepts the punctuation and end-of-input boundaries used for sent skills.
+   */
+  readonly skillBoundary?: "whitespace" | "complete";
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -100,20 +106,15 @@ export function collectComposerInlineTokens(
 ): ReadonlyArray<ComposerInlineToken> {
   const matches = collectMentionTokens(text);
 
-  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const value = match[2] ?? "";
-    if (!value) {
-      continue;
-    }
-    const start = (match.index ?? 0) + prefix.length;
-    const end = start + fullMatch.length - prefix.length;
+  for (const skill of parseInlineSkillTokens(text, {
+    requireTrailingWhitespace: options.skillBoundary !== "complete",
+  })) {
+    const end = skill.start + skill.rawText.length;
     matches.push({
       type: "skill",
-      value,
-      source: text.slice(start, end),
-      start,
+      value: skill.name,
+      source: skill.rawText,
+      start: skill.start,
       end,
     });
   }

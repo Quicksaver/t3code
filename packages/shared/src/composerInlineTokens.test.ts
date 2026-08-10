@@ -36,6 +36,27 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
   });
 
+  it("can collect complete skills at punctuation and end-of-input", () => {
+    const text = "Use $ui, then $commit.";
+
+    expect(collectComposerInlineTokens(text, { skillBoundary: "complete" })).toEqual([
+      {
+        type: "skill",
+        value: "ui",
+        source: "$ui",
+        start: 4,
+        end: 7,
+      },
+      {
+        type: "skill",
+        value: "commit",
+        source: "$commit",
+        start: 14,
+        end: 21,
+      },
+    ]);
+  });
+
   it("keeps the delimiter after a token outside its source range", () => {
     const text = "Inspect [package.json](package.json) next";
 

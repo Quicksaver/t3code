@@ -7,7 +7,14 @@ export interface InlineSkillToken {
   readonly start: number;
 }
 
-export function parseInlineSkillTokens(text: string): ReadonlyArray<InlineSkillToken> {
+export interface ParseInlineSkillTokensOptions {
+  readonly requireTrailingWhitespace?: boolean;
+}
+
+export function parseInlineSkillTokens(
+  text: string,
+  options: ParseInlineSkillTokensOptions = {},
+): ReadonlyArray<InlineSkillToken> {
   const tokens: InlineSkillToken[] = [];
 
   // matchAll clones the global RegExp, so repeated calls do not share lastIndex state.
@@ -15,10 +22,15 @@ export function parseInlineSkillTokens(text: string): ReadonlyArray<InlineSkillT
     const prefix = match[1] ?? "";
     const name = match[2];
     if (!name) continue;
+    const start = (match.index ?? 0) + prefix.length;
+    const end = start + name.length + 1;
+    if (options.requireTrailingWhitespace && !/\s/.test(text[end] ?? "")) {
+      continue;
+    }
     tokens.push({
       name,
       rawText: `$${name}`,
-      start: (match.index ?? 0) + prefix.length,
+      start,
     });
   }
 

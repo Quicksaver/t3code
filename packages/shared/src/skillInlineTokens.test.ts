@@ -18,6 +18,20 @@ describe("parseInlineSkillTokens", () => {
     ]);
   });
 
+  it("can require whitespace before treating a skill reference as complete", () => {
+    expect(
+      parseInlineSkillTokens("Use $update-main? Then run $commit now", {
+        requireTrailingWhitespace: true,
+      }),
+    ).toEqual([
+      {
+        name: "commit",
+        rawText: "$commit",
+        start: 27,
+      },
+    ]);
+  });
+
   it("rejects code-variable continuations", () => {
     expect(parseInlineSkillTokens("echo $HOME/.codex or use PHP $value;")).toEqual([]);
     expect(hasInlineSkillToken("echo $HOME/.codex")).toBe(false);
