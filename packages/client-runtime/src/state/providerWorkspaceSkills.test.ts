@@ -128,6 +128,25 @@ describe("resolveProviderInstanceSelection", () => {
       }).entry?.instanceId,
     ).toBe(fallback);
   });
+
+  it("honors a legacy in-config disable while workspace skills resolve provider state", () => {
+    const instanceId = ProviderInstanceId.make("codex_personal");
+    const [entry] = deriveProviderInstanceSelectionEntries(
+      [provider({ instanceId, driver: "codex" })],
+      {
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            enabled: true,
+            config: { enabled: false },
+          },
+        },
+        providers: {} as never,
+      },
+    );
+
+    expect(entry?.enabled).toBe(false);
+  });
 });
 
 describe("deriveLockedProviderDriverKind", () => {

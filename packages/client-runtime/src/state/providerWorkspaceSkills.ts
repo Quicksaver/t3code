@@ -2,6 +2,7 @@ import {
   defaultInstanceIdForDriver,
   isProviderDriverKind,
   ProviderDriverKind,
+  resolveProviderInstanceEnabled,
   ServerProviderSkillsListError,
   type EnvironmentId,
   type ProviderInstanceId,
@@ -104,7 +105,7 @@ export function resolveProviderInstanceEnabledFromSettings(
 ): boolean {
   const explicitInstance = settings.providerInstances?.[provider.instanceId];
   if (explicitInstance) {
-    return explicitInstance.enabled ?? true;
+    return resolveProviderInstanceEnabled(explicitInstance);
   }
 
   const isDefault = provider.instanceId === defaultInstanceIdForDriver(provider.driver);
