@@ -184,6 +184,16 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
   );
 });
 
+const readLinkStateWithSymlinkRaceRetry = Effect.fn(
+  "CodexHomeLayout.readLinkStateWithSymlinkRaceRetry",
+)(function* (input: Parameters<typeof readLinkState>[0]) {
+  let state = yield* readLinkState(input);
+  for (let attempt = 0; state._tag === "NotSymlink" && attempt < 8; attempt += 1) {
+    state = yield* readLinkState(input);
+  }
+  return state;
+});
+
 const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
@@ -222,7 +232,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
   const path = yield* Path.Path;
   const target = path.join(input.sharedHomePath, input.entryName);
   const link = path.join(input.effectiveHomePath, input.entryName);
-  const state = yield* readLinkState({
+  const state = yield* readLinkStateWithSymlinkRaceRetry({
     ...input,
     linkPath: link,
   });
@@ -242,7 +252,7 @@ const ensureSymlink = Effect.fn("CodexHomeLayout.ensureSymlink")(function* (inpu
         if (cause.reason._tag !== "AlreadyExists") {
           return failure;
         }
-        return readLinkState({
+        return readLinkStateWithSymlinkRaceRetry({
           ...input,
           linkPath: link,
         }).pipe(

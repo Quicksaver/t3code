@@ -4749,7 +4749,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      const missingWorkspacePath = "/definitely/not/a/real/workspace/path";
+      const missingWorkspacePath = (yield* Path.Path).resolve(
+        "/definitely/not/a/real/workspace/path",
+      );
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[WS_METHODS.serverListProviderSkills]({
