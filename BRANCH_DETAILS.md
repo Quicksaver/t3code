@@ -49,8 +49,9 @@ Primary files:
 - `packages/contracts/src/server.ts`
 - `packages/client-runtime/src/state/server.ts`
 
-Relevant tests live in:
+Relevant tests and fixtures live in:
 
+- `apps/server/scripts/codex-skills-mock-app-server.ts`
 - `apps/server/src/server.test.ts`
 - `apps/server/src/auth/RpcAuthorization.test.ts`
 - `apps/server/src/provider/ProviderSkillsRpc.test.ts`
