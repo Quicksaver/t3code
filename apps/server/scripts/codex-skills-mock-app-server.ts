@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 const cwdLogPath = process.env.T3_CODEX_CWD_LOG_PATH;
 const argsLogPath = process.env.T3_CODEX_ARGS_LOG_PATH;
 const exitLogPath = process.env.T3_CODEX_EXIT_LOG_PATH;
+const pidLogPath = process.env.T3_CODEX_PID_LOG_PATH;
 const hangSkillsList = process.env.T3_CODEX_HANG_SKILLS_LIST === "1";
 const unauthenticated = process.env.T3_CODEX_UNAUTHENTICATED === "1";
 const failPluginInstalled = process.env.T3_CODEX_FAIL_PLUGIN_INSTALLED === "1";
@@ -20,6 +21,8 @@ function respond(id: number | string, result: unknown): void {
 function respondError(id: number | string, code: number, message: string): void {
   process.stdout.write(`${JSON.stringify({ id, error: { code, message } })}\n`);
 }
+
+appendLog(pidLogPath, String(process.pid));
 
 process.once("SIGTERM", () => {
   appendLog(exitLogPath, "SIGTERM");

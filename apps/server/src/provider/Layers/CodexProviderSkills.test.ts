@@ -2,6 +2,7 @@ import * as NodeOS from "node:os";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -31,12 +32,20 @@ const makeMockAppServer = Effect.fn("makeMockAppServer")(function* () {
     directory: NodeOS.tmpdir(),
     prefix: "codex-skills-provider-",
   });
-  const binaryPath = path.join(directory, "codex");
-  const command = [process.execPath, mockAppServerPath]
-    .map((argument) => JSON.stringify(argument))
-    .join(" ");
-  yield* fileSystem.writeFileString(binaryPath, `#!/bin/sh\nexec ${command} "$@"\n`);
-  yield* fileSystem.chmod(binaryPath, 0o755);
+  const isWindows = yield* isHostWindows;
+  const binaryPath = path.join(directory, isWindows ? "codex.cmd" : "codex");
+  if (isWindows) {
+    yield* fileSystem.writeFileString(
+      binaryPath,
+      ["@echo off", `"${process.execPath}" "${mockAppServerPath}" %*`, ""].join("\r\n"),
+    );
+  } else {
+    const command = [process.execPath, mockAppServerPath]
+      .map((argument) => JSON.stringify(argument))
+      .join(" ");
+    yield* fileSystem.writeFileString(binaryPath, `#!/bin/sh\nexec ${command} "$@"\n`);
+    yield* fileSystem.chmod(binaryPath, 0o755);
+  }
   const workspaceDirectory = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "codex-skills-workspace-",
@@ -47,6 +56,7 @@ const makeMockAppServer = Effect.fn("makeMockAppServer")(function* () {
     argsLogPath: path.join(directory, "args.log"),
     cwdLogPath: path.join(directory, "cwd.log"),
     exitLogPath: path.join(directory, "exit.log"),
+    pidLogPath: path.join(directory, "pid.log"),
   };
 });
 
@@ -58,6 +68,23 @@ const waitForFileContent = Effect.fn("waitForFileContent")(function* (filePath: 
     yield* Effect.promise(() => NodeTimersPromises.setTimeout(50));
   }
   return yield* Effect.die(`Timed out waiting for file content at ${filePath}`);
+});
+
+const waitForProcessExit = Effect.fn("waitForProcessExit")(function* (pid: number) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const running = yield* Effect.sync(() => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+        throw error;
+      }
+    });
+    if (!running) return;
+    yield* Effect.promise(() => NodeTimersPromises.setTimeout(50));
+  }
+  return yield* Effect.die(`Timed out waiting for process ${pid} to exit`);
 });
 
 describe("listCodexProviderSkills", () => {
@@ -129,17 +156,22 @@ describe("listCodexProviderSkills", () => {
           ...process.env,
           T3_CODEX_CWD_LOG_PATH: fixture.cwdLogPath,
           T3_CODEX_EXIT_LOG_PATH: fixture.exitLogPath,
+          T3_CODEX_PID_LOG_PATH: fixture.pidLogPath,
           T3_CODEX_HANG_SKILLS_LIST: "1",
         },
       }).pipe(Effect.forkChild);
 
       yield* waitForFileContent(fixture.cwdLogPath);
+      const pid = Number.parseInt((yield* waitForFileContent(fixture.pidLogPath)).trim(), 10);
       yield* TestClock.adjust("15 seconds");
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
       expect(error.message).toBe(
         `Timed out listing Codex skills after 15s (provider: 'codex', cwd: '${fixture.cwd}').`,
       );
-      expect(yield* waitForFileContent(fixture.exitLogPath)).toContain("SIGTERM");
+      yield* waitForProcessExit(pid);
+      if (!(yield* isHostWindows)) {
+        expect(yield* waitForFileContent(fixture.exitLogPath)).toContain("SIGTERM");
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

@@ -11,6 +11,7 @@ import { assertTrue } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -120,6 +121,8 @@ it.layer(NodeServices.layer)("provider skills RPC handler", (it) => {
 
   it.effect("validates an enabled Codex cwd", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const instanceId = ProviderInstanceId.make("codex");
       const driver = ProviderDriverKind.make("codex");
       const handler = yield* makeHandler({
@@ -140,7 +143,10 @@ it.layer(NodeServices.layer)("provider skills RPC handler", (it) => {
           },
         }),
       });
-      const missingWorkspacePath = "/definitely/not/a/real/workspace/path";
+      const tempDirectory = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-ws-provider-skills-missing-",
+      });
+      const missingWorkspacePath = path.join(tempDirectory, "missing-workspace");
       const requestedCwd = `  ${missingWorkspacePath}  `;
       const result = yield* handler
         .list({
