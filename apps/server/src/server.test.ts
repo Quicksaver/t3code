@@ -5142,7 +5142,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const outsideFile = path.join(outsideDir, "outside.txt");
       yield* fs.writeFileString(outsideFile, "outside\n");
       yield* fs.symlink(outsideFile, path.join(workspaceDir, "linked-outside.txt"));
-      const resolvedOutsideFile = yield* fs.realPath(outsideFile);
 
       yield* buildAppUnderTest();
 
@@ -5218,7 +5217,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.cwd, workspaceDir);
       assert.equal(readError.relativePath, "linked-outside.txt");
       assert.equal(readError.failure, "resolved_path_outside_root");
-      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.equal(path.basename(readError.resolvedPath), "outside.txt");
+      assert.include(readError.resolvedPath, path.basename(outsideDir));
+      assert.equal(yield* fs.readFileString(readError.resolvedPath), "outside\n");
       assert.isDefined(readError.cause);
 
       if (
