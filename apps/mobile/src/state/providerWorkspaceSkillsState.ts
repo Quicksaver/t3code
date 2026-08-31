@@ -39,5 +39,6 @@ export function useProviderWorkspaceSkills(
   useEffect(() => {
     previousWorkspaceSkillsRef.current = resolution.snapshot;
   }, [resolution.snapshot]);
-  return resolution.state;
+  const { skills, isPending, error } = resolution.state;
+  return useMemo(() => ({ skills, isPending, error }), [error, isPending, skills]);
 }
