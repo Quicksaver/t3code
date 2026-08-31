@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   deriveProviderInstanceSelectionEntries,
   resolveProviderInstanceSelection,
+  type ProviderWorkspaceSkillsState,
 } from "@t3tools/client-runtime/state/provider-workspace-skills";
 
 import type {
@@ -12,7 +13,6 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
-  ServerProviderSkill,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -173,9 +173,7 @@ type NewTaskFlowContextValue = {
   readonly selectedModel: ModelSelection | null;
   readonly selectedModelOption: ModelOption | null;
   readonly selectedProviderStatus: ServerProvider | null;
-  readonly selectedProviderSkills: ReadonlyArray<ServerProviderSkill>;
-  readonly selectedProviderSkillsIsPending: boolean;
-  readonly selectedProviderSkillsError: string | null;
+  readonly selectedProviderSkillsState: ProviderWorkspaceSkillsState;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
@@ -550,7 +548,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     connectionAvailable: providerSkillsConnectionAvailable,
     fallbackSkills: selectedProviderFallbackSkills,
   });
-  const selectedProviderSkills = selectedProviderSkillsState.skills;
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.
@@ -1145,9 +1142,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedModelOption,
       selectedProviderStatus,
-      selectedProviderSkills,
-      selectedProviderSkillsIsPending: selectedProviderSkillsState.isPending,
-      selectedProviderSkillsError: selectedProviderSkillsState.error,
+      selectedProviderSkillsState,
       providerGroups,
       filteredBranches,
       reset,
@@ -1211,7 +1206,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModelOption,
       selectedProjectDraftKey,
       selectedProviderStatus,
-      selectedProviderSkills,
+      selectedProviderSkillsState.skills,
       selectedProviderSkillsState.error,
       selectedProviderSkillsState.isPending,
       setSelectedModelOptions,

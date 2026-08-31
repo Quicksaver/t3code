@@ -257,9 +257,7 @@ export function NewTaskDraftScreen(props: {
         ? selectedProject?.workspaceRoot
         : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null,
     selectedProviderStatus: flow.selectedProviderStatus,
-    workspaceSkills: flow.selectedProviderSkills,
-    workspaceSkillsIsPending: flow.selectedProviderSkillsIsPending,
-    workspaceSkillsError: flow.selectedProviderSkillsError,
+    workspaceSkills: flow.selectedProviderSkillsState,
     hasThread: false,
     enabled: isComposerFocused && !isComposerInteractionLocked,
     onChangeDraftMessage: flow.setPrompt,
@@ -991,7 +989,7 @@ export function NewTaskDraftScreen(props: {
       multiline
       scrollEnabled
       value={flow.prompt}
-      skills={flow.selectedProviderSkills}
+      skills={flow.selectedProviderSkillsState.skills}
       selection={composerMenu.selection}
       onChangeText={flow.setPrompt}
       onSelectionChange={composerMenu.onSelectionChange}

@@ -4,10 +4,12 @@ import type {
   ServerProvider,
   ServerProviderSkill,
 } from "@t3tools/contracts";
+import type { ProviderWorkspaceSkillsState } from "@t3tools/client-runtime/state/provider-workspace-skills";
 import {
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
+  type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
@@ -21,6 +23,20 @@ export function composerSelectionAtEnd(draftMessage: string): ComposerEditorSele
   return { start: draftMessage.length, end: draftMessage.length };
 }
 
+export function resolveComposerWorkspaceSkillMenu(input: {
+  readonly trigger: ComposerTrigger | null;
+  readonly workspaceSkills: ProviderWorkspaceSkillsState | undefined;
+  readonly fallbackSkills: ReadonlyArray<ServerProviderSkill>;
+}) {
+  const lookupActive = input.trigger?.kind === "skill";
+  return {
+    skills: input.workspaceSkills?.skills ?? input.fallbackSkills,
+    lookupActive,
+    isLoading: lookupActive ? (input.workspaceSkills?.isPending ?? false) : false,
+    error: lookupActive ? (input.workspaceSkills?.error ?? null) : null,
+  };
+}
+
 /** Shared autocomplete for thread composers and unsent new-task drafts. */
 export function useComposerCommandMenu({
   draftMessage,
@@ -29,8 +45,6 @@ export function useComposerCommandMenu({
   projectCwd,
   selectedProviderStatus,
   workspaceSkills,
-  workspaceSkillsIsPending = false,
-  workspaceSkillsError = null,
   hasThread,
   enabled = true,
   onChangeDraftMessage,
@@ -42,9 +56,7 @@ export function useComposerCommandMenu({
   readonly environmentId: EnvironmentId | null;
   readonly projectCwd: string | null;
   readonly selectedProviderStatus: ServerProvider | null;
-  readonly workspaceSkills?: ReadonlyArray<ServerProviderSkill>;
-  readonly workspaceSkillsIsPending?: boolean;
-  readonly workspaceSkillsError?: string | null;
+  readonly workspaceSkills?: ProviderWorkspaceSkillsState;
   readonly hasThread: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -79,16 +91,20 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   }, [draftMessage, enabled, selection]);
-  const workspaceSkillsLookupActive = trigger?.kind === "skill";
-  useLayoutEffect(() => {
-    onWorkspaceSkillsLookupActiveChange?.(workspaceSkillsLookupActive);
-    return () => onWorkspaceSkillsLookupActiveChange?.(false);
-  }, [onWorkspaceSkillsLookupActiveChange, workspaceSkillsLookupActive]);
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
     query: trigger?.kind === "path" ? trigger.query : null,
   });
+  const workspaceSkillMenu = resolveComposerWorkspaceSkillMenu({
+    trigger,
+    workspaceSkills,
+    fallbackSkills: selectedProviderStatus?.skills ?? [],
+  });
+  useLayoutEffect(() => {
+    onWorkspaceSkillsLookupActiveChange?.(workspaceSkillMenu.lookupActive);
+    return () => onWorkspaceSkillsLookupActiveChange?.(false);
+  }, [onWorkspaceSkillsLookupActiveChange, workspaceSkillMenu.lookupActive]);
 
   const items = useMemo<ComposerCommandItem[]>(() => {
     if (!trigger) return [];
@@ -158,10 +174,7 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      return buildComposerSkillItems(
-        workspaceSkills ?? selectedProviderStatus?.skills ?? [],
-        trigger.query,
-      );
+      return buildComposerSkillItems(workspaceSkillMenu.skills, trigger.query);
     }
 
     if (trigger.kind === "path") {
@@ -185,7 +198,7 @@ export function useComposerCommandMenu({
     pathSearch.entries,
     selectedProviderStatus,
     trigger,
-    workspaceSkills,
+    workspaceSkillMenu.skills,
   ]);
 
   const onSelect = useCallback(
@@ -231,8 +244,8 @@ export function useComposerCommandMenu({
     onSelectionChange,
     trigger,
     items,
-    isLoading: trigger?.kind === "skill" ? workspaceSkillsIsPending : pathSearch.isPending,
-    error: trigger?.kind === "skill" ? workspaceSkillsError : null,
+    isLoading: trigger?.kind === "path" ? pathSearch.isPending : workspaceSkillMenu.isLoading,
+    error: workspaceSkillMenu.error,
     onSelect,
   };
 }

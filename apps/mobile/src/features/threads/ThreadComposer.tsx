@@ -6,8 +6,8 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
-  ServerProviderSkill,
 } from "@t3tools/contracts";
+import type { ProviderWorkspaceSkillsState } from "@t3tools/client-runtime/state/provider-workspace-skills";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import {
@@ -104,9 +104,7 @@ export interface ThreadComposerProps {
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly serverConfig: T3ServerConfig | null;
-  readonly workspaceSkills: ReadonlyArray<ServerProviderSkill>;
-  readonly workspaceSkillsIsPending: boolean;
-  readonly workspaceSkillsError: string | null;
+  readonly workspaceSkills: ProviderWorkspaceSkillsState;
   readonly queueCount: number;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -344,8 +342,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     projectCwd: props.projectCwd,
     selectedProviderStatus,
     workspaceSkills: props.workspaceSkills,
-    workspaceSkillsIsPending: props.workspaceSkillsIsPending,
-    workspaceSkillsError: props.workspaceSkillsError,
     hasThread: true,
     onChangeDraftMessage: props.onChangeDraftMessage,
     onUpdateInteractionMode: props.onUpdateInteractionMode,
@@ -624,7 +620,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 multiline
                 value={props.draftMessage}
                 readOnly={voiceInput.freezesEditor}
-                skills={props.workspaceSkills}
+                skills={props.workspaceSkills.skills}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}
