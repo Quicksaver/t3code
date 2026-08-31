@@ -13,7 +13,7 @@ Expected behavior:
 - Non-Codex or disabled providers keep returning provider snapshot skills instead of failing workspace skill search.
 - The client runtime keys provider-skill query state by environment, provider instance, and cwd, with a bounded stale window so reconnects refresh workspace-local skills without reusing another workspace's snapshot. Client-side fallback skill changes do not refresh the workspace query or respawn Codex skill probes.
 - Web workspace-skill lookup follows the route environment's connection state. While disconnected, it does not start an RPC, retains only verified skills for the same environment/provider/cwd across lazy menu close/reopen cycles, otherwise falls back to provider snapshot skills with a non-pending reconnect error, and resumes the workspace refresh when the environment reconnects.
-- The composer loads workspace skills lazily: it starts workspace skill discovery when the `$` skill menu is active or the prompt already contains a complete `$skill` token at whitespace, punctuation, or end-of-input, rather than probing on every empty composer mount. The upstream shared mobile command-menu hook accepts the workspace query result as one state value, promotes an active skill trigger to the parent lookup state before the menu paints, and keeps workspace loading or error feedback out of unrelated path completion. The clients preserve already loaded repo-local skills while refreshing the same workspace, fall back to provider snapshot skills when a settled workspace lookup returns no skills or errors, keep structured lookup errors visible alongside those fallback skills, and clear stale repo-local skills during workspace switches or settled no-data states.
+- The composer loads workspace skills lazily: it starts workspace skill discovery when the `$` skill menu is active or the prompt already contains a complete `$skill` token at whitespace, punctuation, or end-of-input, rather than probing on every empty composer mount. Mobile extends the upstream shared `useComposerCommandMenu` hook with one workspace-skill state value and one activation callback. `resolveComposerWorkspaceSkillMenu` selects workspace or provider-snapshot skills and keeps workspace loading or error feedback out of unrelated path completion. `ThreadComposer` and `NewTaskDraftScreen` no longer maintain separate `$` trigger and search implementations. The clients preserve already loaded repo-local skills while refreshing the same workspace, fall back to provider snapshot skills when a settled workspace lookup returns no skills or errors, keep structured lookup errors visible alongside those fallback skills, and clear stale repo-local skills during workspace switches or settled no-data states.
 - Shared composer token collection uses the canonical skill parser. Its default whitespace boundary keeps active trailing mobile `$` queries editable, while web prompt segmentation opts into complete punctuation and end-of-input boundaries. The web path filters the active caret query before chip conversion, so it does not need a separate skill parse and deduplication pass.
 - While the desktop composer caret is at the end of an active `$` query, the query remains editable text through workspace-skill refreshes and is excluded from inline-token cursor adjacency. This keeps the filtered picker open until the user selects a skill; selected and otherwise completed references still render as skill chips.
 - The conversation timeline renders sent user prompts against the same workspace-aware skill list as the composer, so repo-local `$skill-name` references display with the same skill chip treatment as user-level skills. Timeline lookup stays disabled until a sent user prompt contains a complete skill token, including one at the end of the message, so an empty draft does not probe Codex merely to decorate nonexistent messages.
@@ -26,29 +26,44 @@ Primary files:
 
 - `apps/server/src/ws.ts`
 - `apps/server/src/auth/RpcAuthorization.ts`
+- `apps/server/src/diagnostics/ErrorCause.ts`
+- `apps/server/src/provider/Drivers/CodexDriver.ts`
+- `apps/server/src/provider/Drivers/CodexHomeLayout.ts`
 - `apps/server/src/provider/ProviderSkillsRpc.ts`
 - `apps/server/src/provider/ProviderSkillsLister.ts`
 - `apps/server/src/provider/Layers/CodexProvider.ts`
+- `apps/server/src/workspace/WorkspacePaths.ts`
+- `apps/web/src/components/ChatView.logic.ts`
 - `apps/web/src/components/ChatView.tsx`
 - `apps/web/src/components/ComposerPromptEditor.tsx`
 - `apps/web/src/components/chat/ChatComposer.tsx`
+- `apps/web/src/components/chat/ComposerCommandMenu.tsx`
 - `apps/web/src/components/chat/MessagesTimeline.tsx`
+- `apps/web/src/components/chat/SkillInlineText.tsx`
+- `apps/web/src/components/chat/skillInlineTokens.ts`
 - `apps/web/src/composer-editor-mentions.ts`
 - `apps/web/src/composer-logic.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.ts`
 - `apps/web/src/lib/useTimelineProviderWorkspaceSkills.ts`
 - `apps/web/src/providerInstances.ts`
+- `apps/web/src/state/query.ts`
+- `apps/mobile/modules/t3-markdown-text/src/nativeMarkdownText.ts`
 - `apps/mobile/src/state/providerWorkspaceSkillsState.ts`
+- `apps/mobile/src/state/query.ts`
+- `apps/mobile/src/features/threads/ComposerCommandPopover.tsx`
 - `apps/mobile/src/features/threads/new-task-flow-provider.tsx`
 - `apps/mobile/src/features/threads/NewTaskDraftScreen.tsx`
 - `apps/mobile/src/features/threads/ThreadComposer.tsx`
 - `apps/mobile/src/features/threads/ThreadDetailScreen.tsx`
 - `apps/mobile/src/features/threads/new-task-provider-skills.ts`
 - `apps/mobile/src/features/threads/thread-composer-skill-items.ts`
+- `apps/mobile/src/features/threads/thread-provider-skills.ts`
 - `apps/mobile/src/features/threads/use-composer-command-menu.ts`
 - `packages/shared/src/composerInlineTokens.ts`
 - `packages/shared/src/skillInlineTokens.ts`
+- `packages/client-runtime/src/providerSkills.ts`
 - `packages/client-runtime/src/state/providerWorkspaceSkills.ts`
+- `packages/contracts/src/rpc.ts`
 - `packages/contracts/src/server.ts`
 - `packages/client-runtime/src/state/server.ts`
 
@@ -57,23 +72,32 @@ Relevant tests and fixtures live in:
 - `apps/server/scripts/codex-skills-mock-app-server.ts`
 - `apps/server/src/server.test.ts`
 - `apps/server/src/auth/RpcAuthorization.test.ts`
+- `apps/server/src/diagnostics/ErrorCause.test.ts`
+- `apps/server/src/provider/Drivers/CodexHomeLayout.test.ts`
 - `apps/server/src/provider/ProviderSkillsRpc.test.ts`
 - `apps/server/src/provider/ProviderSkillsLister.test.ts`
 - `apps/server/src/provider/Layers/CodexProvider.test.ts`
 - `apps/server/src/provider/Layers/CodexProviderSkills.test.ts`
 - `apps/server/src/provider/Layers/CursorProvider.test.ts`
 - `apps/server/src/provider/Layers/GrokProvider.test.ts`
+- `apps/server/src/provider/Layers/ProviderRegistry.test.ts`
+- `apps/server/src/provider/testUtils/serverProviderSnapshot.ts`
+- `apps/web/src/components/ChatView.logic.test.ts`
+- `apps/web/src/components/chat/ComposerCommandMenu.test.tsx`
 - `apps/web/src/components/chat/MessagesTimeline.test.tsx`
 - `apps/web/src/composer-editor-mentions.test.ts`
 - `apps/web/src/composer-logic.test.ts`
 - `apps/web/src/lib/providerWorkspaceSkillsState.test.ts`
 - `apps/web/src/lib/useTimelineProviderWorkspaceSkills.test.ts`
 - `apps/web/src/providerInstances.test.ts`
+- `apps/mobile/src/lib/nativeMarkdownText.test.ts`
 - `apps/mobile/src/features/threads/new-task-provider-skills.test.ts`
 - `apps/mobile/src/features/threads/thread-composer-skill-items.test.ts`
+- `apps/mobile/src/features/threads/thread-provider-skills.test.ts`
 - `apps/mobile/src/features/threads/use-composer-command-menu.test.ts`
 - `packages/shared/src/composerInlineTokens.test.ts`
 - `packages/shared/src/skillInlineTokens.test.ts`
+- `packages/client-runtime/src/providerSkills.test.ts`
 - `packages/client-runtime/src/state/providerWorkspaceSkills.test.ts`
 - `packages/client-runtime/src/state/runtime.test.ts`
 
@@ -82,7 +106,7 @@ Useful focused commands:
 ```sh
 (cd apps/server && pnpm exec vp test run --passWithNoTests src/provider/ProviderSkillsRpc.test.ts src/provider/ProviderSkillsLister.test.ts src/provider/Layers/CodexProvider.test.ts src/provider/Layers/CodexProviderSkills.test.ts src/provider/Layers/CursorProvider.test.ts src/provider/Layers/GrokProvider.test.ts)
 (cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/composer-editor-mentions.test.ts src/composer-logic.test.ts src/lib/providerWorkspaceSkillsState.test.ts)
-(cd apps/mobile && pnpm exec vp test run --passWithNoTests src/features/threads/new-task-provider-skills.test.ts src/features/threads/thread-composer-skill-items.test.ts)
+(cd apps/mobile && pnpm exec vp test run --passWithNoTests src/features/threads/new-task-provider-skills.test.ts src/features/threads/thread-composer-skill-items.test.ts src/features/threads/thread-provider-skills.test.ts src/features/threads/use-composer-command-menu.test.ts)
 (cd packages/shared && pnpm exec vp test run --passWithNoTests src/composerInlineTokens.test.ts src/skillInlineTokens.test.ts)
 (cd packages/client-runtime && pnpm exec vp test run --passWithNoTests src/state/providerWorkspaceSkills.test.ts)
 ```
