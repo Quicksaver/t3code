@@ -5502,9 +5502,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.cwd, workspaceDir);
       assert.equal(readError.relativePath, "linked-outside.txt");
       assert.equal(readError.failure, "resolved_path_outside_root");
-      assert.equal(path.basename(readError.resolvedPath), "outside.txt");
-      assert.include(readError.resolvedPath, path.basename(outsideDir));
-      assert.equal(yield* fs.readFileString(readError.resolvedPath), "outside\n");
+      if (readError.resolvedPath === undefined) {
+        assert.fail("Expected the rejected resolved path");
+      }
+      const resolvedReadPath = readError.resolvedPath;
+      assert.equal(path.basename(resolvedReadPath), "outside.txt");
+      assert.include(resolvedReadPath, path.basename(outsideDir));
+      assert.equal(yield* fs.readFileString(resolvedReadPath), "outside\n");
       assert.isDefined(readError.cause);
 
       if (
