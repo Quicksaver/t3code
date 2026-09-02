@@ -1,3 +1,5 @@
+import type { AssistantCitation } from "@t3tools/contracts";
+import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -21,6 +23,11 @@ export type ComposerPromptSegment =
   | {
       type: "skill";
       name: string;
+    }
+  | {
+      type: "citation";
+      citation: AssistantCitation;
+      source: string;
     }
   | {
       type: "terminal-context";
@@ -113,7 +120,7 @@ function forEachMentionMatch(
   ) => boolean | void,
 ): boolean {
   return forEachPromptTextSlice(prompt, (text, promptOffset) => {
-    for (const match of collectComposerInlineTokens(text)) {
+    for (const match of collectComposerPromptInlineTokens(text)) {
       if (match.type !== "mention") {
         continue;
       }
@@ -135,6 +142,21 @@ export interface SplitPromptIntoComposerSegmentsOptions {
   preserveSkillQueryAt?: number;
 }
 
+export function collectComposerPromptInlineTokens(text: string) {
+  const tokens = collectComposerInlineTokens(text, { skillBoundary: "complete" });
+  const citations = collectAssistantCitations(text);
+  if (citations.length === 0) return tokens;
+
+  // An unfinished @ mention can otherwise consume the start of a citation's label.
+  return [
+    ...tokens.filter(
+      (token) =>
+        !citations.some((citation) => token.start < citation.end && token.end > citation.start),
+    ),
+    ...citations.map((match) => ({ ...match, type: "citation" as const })),
+  ].sort((left, right) => left.start - right.start);
+}
+
 function splitPromptTextIntoComposerSegments(
   text: string,
   promptOffset: number,
@@ -147,7 +169,7 @@ function splitPromptTextIntoComposerSegments(
 
   const shouldPreserveSkillQuery = (start: number, end: number) =>
     options.preserveSkillQueryAt === promptOffset + end && start < end;
-  const tokenMatches = collectComposerInlineTokens(text, { skillBoundary: "complete" }).filter(
+  const tokenMatches = collectComposerPromptInlineTokens(text).filter(
     (match) => match.type !== "skill" || !shouldPreserveSkillQuery(match.start, match.end),
   );
   let cursor = 0;
@@ -160,7 +182,9 @@ function splitPromptTextIntoComposerSegments(
       pushTextSegment(segments, text.slice(cursor, match.start));
     }
 
-    if (match.type === "mention") {
+    if (match.type === "citation") {
+      segments.push({ type: "citation", citation: match.citation, source: match.source });
+    } else if (match.type === "mention") {
       segments.push({
         type: "mention",
         path: match.value,

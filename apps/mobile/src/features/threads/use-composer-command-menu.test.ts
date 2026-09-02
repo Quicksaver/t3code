@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { detectComposerTrigger } from "@t3tools/shared/composerTrigger";
 
-vi.mock("../../state/use-composer-path-search", () => ({
+vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
 }));
 

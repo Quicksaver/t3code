@@ -237,9 +237,10 @@ export function deriveProviderEntriesByEnvironment(
  * settings write, so picker visibility must follow settings rather than waiting
  * for probe reconciliation.
  *
- * Non-default instances only exist through `providerInstances`; if one is
- * absent there, its streamed snapshot is stale (for example immediately after
- * deletion) and is treated as disabled.
+ * Only built-in default instances have a legacy `providers` entry. Every
+ * other instance exists through `providerInstances`; if it is absent there,
+ * its streamed snapshot is stale (for example immediately after deletion)
+ * and is treated as disabled.
  */
 export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -273,17 +274,6 @@ export function getProviderInstanceEntry(
   instanceId: ProviderInstanceId,
 ): ProviderInstanceEntry | undefined {
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
-}
-
-/**
- * Model list for a specific instance. Returns `[]` when the instance isn't
- * present so callers don't have to thread optionality through render code.
- */
-export function getProviderInstanceModels(
-  providers: ReadonlyArray<ServerProvider>,
-  instanceId: ProviderInstanceId,
-): ReadonlyArray<ServerProviderModel> {
-  return getProviderInstanceEntry(providers, instanceId)?.models ?? [];
 }
 
 /**
