@@ -2,6 +2,27 @@
 
 Fix Codex repo-local skill discovery in the composer by resolving skills for the active project/worktree cwd, instead of relying on the global provider status snapshot.
 
+## Upstream supersession assessment
+
+Upstream now covers most of this branch's behavior:
+
+- `80a14b6588` adds core workspace-scoped skill discovery for Codex and OpenCode, including server contracts, caching, the web composer, and timeline rendering.
+- `bc918e74ac` adds the same `snapshotForCwd` mechanism for Claude.
+- `15fea6c5f4`, still to be merged into this branch, extends discovery to Cursor and Grok, wires it into mobile, and adds a ten-second retry cooldown.
+
+The dedicated RPC and parallel `providerWorkspaceSkills` cache are superseded. Upstream's active `$` query handling and thread-provider timeline decoration also work as needed.
+
+Parts that may still be worth preserving in a later, smaller change:
+
+- Codex plugin discovery
+- Authentication-aware failure handling, even with a simpler structured error contract
+- The unsettled-worktree guard
+- Cwd normalization folded into upstream's snapshot keying to prevent inconsistent cache entries
+- Disconnected-workspace isolation
+- Windows shadow-home symlink retry handling
+
+Lazy skill discovery is no longer needed. Timeline provider selection is also unnecessary because changing providers for the next turn is not currently possible.
+
 Expected behavior:
 
 - Repo-local Codex skills for the active workspace appear in the `$` skill picker.
