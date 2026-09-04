@@ -111,6 +111,12 @@ overrides:
   "@clerk/clerk-js>@wallet-standard/core": "-"
   "@clerk/electron": "catalog:"
   "@clerk/electron-passkeys": "catalog:"
+  # Clerk's 0.0.4 canary native tarballs omit their declared .node files.
+  # The 0.0.3 native packages match the unchanged 0.0.4 JavaScript wrapper.
+  "@clerk/electron-passkeys-darwin-arm64": 0.0.3
+  "@clerk/electron-passkeys-darwin-x64": 0.0.3
+  "@clerk/electron-passkeys-win32-arm64-msvc": 0.0.3
+  "@clerk/electron-passkeys-win32-x64-msvc": 0.0.3
   "@clerk/expo": "catalog:"
   "@clerk/react": "catalog:"
   "@clerk/shared": "catalog:"

@@ -56,6 +56,10 @@ overrides:
   '@clerk/clerk-js>@wallet-standard/core': '-'
   '@clerk/electron': 0.0.37
   '@clerk/electron-passkeys': 0.0.3
+  '@clerk/electron-passkeys-darwin-arm64': 0.0.3
+  '@clerk/electron-passkeys-darwin-x64': 0.0.3
+  '@clerk/electron-passkeys-win32-arm64-msvc': 0.0.3
+  '@clerk/electron-passkeys-win32-x64-msvc': 0.0.3
   '@clerk/expo': 4.2.0
   '@clerk/react': 6.14.7
   '@clerk/shared': 4.30.1

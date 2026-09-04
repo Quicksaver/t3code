@@ -154,3 +154,11 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Fork
+
+This main checkout is a fork of the original `upstream` branch.
+
+- When performing or evaluating implementation work in this checkout, study `FORK.md` before acting.
+- Otherwise, when the task is only to orchestrate worktree subagents, follow only the referenced instructions instead without reading any additional documentation files.
+- The information about each customization line of work recorded in `FORK.md` is synced to each branch's own `BRANCH_DETAILS.md` file.

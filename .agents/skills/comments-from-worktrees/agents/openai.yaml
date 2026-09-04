@@ -1,0 +1,6 @@
+interface:
+  display_name: "Comments From Worktrees"
+  short_description: "Address PR comments in active non-main worktrees."
+
+policy:
+  allow_implicit_invocation: false
