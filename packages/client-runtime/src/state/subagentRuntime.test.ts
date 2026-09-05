@@ -8,6 +8,7 @@ import {
   isAgentAttributedToolActivity,
   isSubagentActivityKind,
   isTimelineBypassActivity,
+  reconcileSubagentProjectionStatuses,
   workflowCardMembers,
 } from "./subagentRuntime.ts";
 
@@ -481,6 +482,74 @@ describe("deriveAgentPanelModel", () => {
     ).toEqual(["direct-a", "direct-b"]);
   });
 
+  it("orders live direct-agent branches first and nests descendants below their parent", () => {
+    const directRoster = fold([
+      activity(
+        "task.started",
+        { taskId: "finished-root", title: "Finished root", agentPath: "/root/finished" },
+        "2026-08-01T11:00:00.000Z",
+      ),
+      activity(
+        "task.started",
+        { taskId: "parent", title: "Parent", agentPath: "/root/parent" },
+        "2026-08-01T11:00:01.000Z",
+      ),
+      activity(
+        "task.started",
+        { taskId: "direct-live", title: "Direct live", agentPath: "/root/direct" },
+        "2026-08-01T11:00:03.000Z",
+      ),
+      activity(
+        "task.started",
+        {
+          taskId: "child",
+          title: "Child",
+          taskType: "local_agent",
+          agentId: "parent",
+          agentPath: "/root/parent/child",
+        },
+        "2026-08-01T11:00:04.000Z",
+      ),
+      activity(
+        "task.completed",
+        { taskId: "finished-root", status: "completed" },
+        "2026-08-01T11:00:05.000Z",
+      ),
+      activity(
+        "task.completed",
+        { taskId: "parent", status: "completed" },
+        "2026-08-01T11:00:06.000Z",
+      ),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: directRoster });
+    expect(model.directAgents.map((agent) => agent.id)).toEqual([
+      "parent",
+      "child",
+      "direct-live",
+      "finished-root",
+    ]);
+    expect(model.directAgentDepthById.get("parent")).toBe(0);
+    expect(model.directAgentDepthById.get("child")).toBe(1);
+    expect(model.directAgentDepthById.get("finished-root")).toBe(0);
+  });
+
+  it("derives direct-agent ancestry from agent paths when an owner id is unavailable", () => {
+    const directRoster = fold([
+      activity("task.started", { taskId: "path-parent", agentPath: "/root/a" }),
+      activity("task.started", { taskId: "path-child", agentPath: "/root/a/b" }),
+      activity("task.started", { taskId: "path-grandchild", agentPath: "/root/a/b/c" }),
+    ]);
+
+    const model = deriveAgentPanelModel({ agents: directRoster });
+    expect(model.directAgents.map((agent) => agent.id)).toEqual([
+      "path-parent",
+      "path-child",
+      "path-grandchild",
+    ]);
+    expect(model.directAgentDepthById.get("path-grandchild")).toBe(2);
+  });
+
   it("keeps first-seen order after the roster retention ranking runs", () => {
     const starts = Array.from({ length: 101 }, (_, index) =>
       activity(
@@ -554,6 +623,74 @@ describe("deriveAgentPanelModel", () => {
     const model = deriveAgentPanelModel({ agents: orphans });
     expect(model.workflows).toHaveLength(0);
     expect(model.directAgents.map((agent) => agent.id)).toEqual(["gone:wf:0"]);
+  });
+});
+
+describe("reconcileSubagentProjectionStatuses", () => {
+  it("settles a stale working row from its authoritative child projection", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "provider-child-thread",
+        title: "Completed child",
+      }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([
+        ["provider-child-thread", { status: "completed", completedAt: "2026-08-01T10:01:00.000Z" }],
+      ]),
+    );
+
+    expect(reconciled[0]).toMatchObject({
+      status: "completed",
+      completedAt: "2026-08-01T10:01:00.000Z",
+    });
+    expect(deriveAgentPanelModel({ agents: reconciled })).toMatchObject({
+      liveCount: 0,
+      settledCount: 1,
+    });
+  });
+
+  it("maps terminal projection vocabulary without overriding idle or terminal activity rows", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "errored" }),
+      activity("task.started", { taskId: "stopped" }),
+      activity("task.started", { taskId: "idle" }),
+      activity("task.updated", { taskId: "idle", status: "idle" }),
+      activity("task.completed", { taskId: "already-terminal", status: "failed" }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([
+        ["errored", { status: "errored", completedAt: null }],
+        ["stopped", { status: "stopped", completedAt: null }],
+        ["idle", { status: "completed", completedAt: null }],
+        ["already-terminal", { status: "completed", completedAt: null }],
+      ]),
+    );
+    const byId = new Map(reconciled.map((agent) => [agent.id, agent]));
+
+    expect(byId.get("errored")?.status).toBe("failed");
+    expect(byId.get("stopped")?.status).toBe("interrupted");
+    expect(byId.get("idle")?.status).toBe("idle");
+    expect(byId.get("already-terminal")?.status).toBe("failed");
+  });
+
+  it("keeps unmatched or still-running projections active", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "still-running" }),
+      activity("task.started", { taskId: "unmatched" }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([["still-running", { status: "running", completedAt: null }]]),
+    );
+
+    expect(reconciled).toBe(agents);
+    expect(reconciled.map((agent) => agent.status)).toEqual(["running", "running"]);
   });
 });
 

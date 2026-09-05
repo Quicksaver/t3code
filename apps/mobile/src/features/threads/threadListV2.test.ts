@@ -7,15 +7,18 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderItemId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { threadShellKey } from "../../lib/threadLineage";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  canUseThreadListV2LifecycleActions,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -52,13 +55,31 @@ function makeThread(
   };
 }
 
+function subagentRelation(input: {
+  readonly parentThreadId: ThreadId;
+  readonly rootThreadId?: ThreadId;
+  readonly depth?: number;
+  readonly sequence: number;
+  readonly status?: "running" | "completed" | "errored" | "interrupted" | "stopped";
+}) {
+  const timestampSecond = String(input.sequence).padStart(2, "0");
+  return {
+    kind: "subagent" as const,
+    rootThreadId: input.rootThreadId ?? input.parentThreadId,
+    parentThreadId: input.parentThreadId,
+    parentTurnId: TurnId.make("turn-parent"),
+    parentItemId: ProviderItemId.make(`item-${input.sequence}`),
+    parentActivitySequence: input.sequence,
+    providerThreadId: `provider-child-${input.sequence}`,
+    titleSeed: "Inspect child work",
+    depth: input.depth ?? 1,
+    startedAt: `2026-06-01T00:00:${timestampSecond}.000Z`,
+    completedAt: input.status && input.status !== "running" ? NOW : null,
+    status: input.status ?? "running",
+  };
+}
+
 const NOW = "2026-06-02T00:00:00.000Z";
-const linkedPullRequest = {
-  projectId: ProjectId.make("project-1"),
-  repository: "pingdotgg/t3code",
-  number: 42,
-  url: "https://github.com/pingdotgg/t3code/pull/42",
-};
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {
@@ -155,6 +176,34 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",
     );
+  });
+});
+
+describe("canUseThreadListV2LifecycleActions", () => {
+  it("allows lifecycle actions only for root rows", () => {
+    const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
+    const runningChild = makeThread({
+      id: ThreadId.make("running-child"),
+      title: "Running child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "running",
+      }),
+    });
+    const terminalChild = makeThread({
+      id: ThreadId.make("terminal-child"),
+      title: "Terminal child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 2,
+        status: "completed",
+      }),
+    });
+
+    expect(canUseThreadListV2LifecycleActions(root)).toBe(true);
+    expect(canUseThreadListV2LifecycleActions(runningChild)).toBe(false);
+    expect(canUseThreadListV2LifecycleActions(terminalChild)).toBe(false);
   });
 });
 
@@ -282,11 +331,288 @@ describe("sortThreadsForListV2", () => {
 });
 
 describe("buildThreadListV2Items", () => {
+  it("orders pinned root lineages by pin key without detaching their children", () => {
+    const laterRoot = makeThread({
+      id: ThreadId.make("a-later-root"),
+      title: "A later root",
+      pinnedAt: NOW,
+      pinOrderKey: "z",
+    });
+    const laterChild = makeThread({
+      id: ThreadId.make("later-child"),
+      title: "Later child",
+      parentRelation: subagentRelation({ parentThreadId: laterRoot.id, sequence: 1 }),
+    });
+    const earlierRoot = makeThread({
+      id: ThreadId.make("z-earlier-root"),
+      title: "Z earlier root",
+      pinnedAt: NOW,
+      pinOrderKey: "a",
+    });
+    const earlierChild = makeThread({
+      id: ThreadId.make("earlier-child"),
+      title: "Earlier child",
+      parentRelation: subagentRelation({ parentThreadId: earlierRoot.id, sequence: 1 }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [laterRoot, laterChild, earlierRoot, earlierChild],
+      environmentId,
+      searchQuery: "",
+      expandedThreadKeys: new Set([threadShellKey(laterRoot), threadShellKey(earlierRoot)]),
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      [earlierRoot.id, 0],
+      [earlierChild.id, 1],
+      [laterRoot.id, 0],
+      [laterChild.id, 1],
+    ]);
+  });
+
+  it("uses a pinned child as its lineage representative without promoting it", () => {
+    const childPinnedRoot = makeThread({
+      id: ThreadId.make("z-child-pinned-root"),
+      title: "Z child-pinned root",
+    });
+    const pinnedChild = makeThread({
+      id: ThreadId.make("pinned-child"),
+      title: "Pinned child",
+      pinnedAt: NOW,
+      pinOrderKey: "a",
+      parentRelation: subagentRelation({ parentThreadId: childPinnedRoot.id, sequence: 1 }),
+    });
+    const pinnedRoot = makeThread({
+      id: ThreadId.make("a-pinned-root"),
+      title: "A pinned root",
+      pinnedAt: NOW,
+      pinOrderKey: "z",
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [pinnedRoot, childPinnedRoot, pinnedChild],
+      environmentId,
+      searchQuery: "",
+      expandedThreadKeys: new Set([threadShellKey(childPinnedRoot)]),
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      [childPinnedRoot.id, 0],
+      [pinnedChild.id, 1],
+      [pinnedRoot.id, 0],
+    ]);
+  });
+
+  it("counts and discloses only running recursive subagents", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      parentRelation: subagentRelation({ parentThreadId: root.id, sequence: 1 }),
+    });
+    const grandchild = makeThread({
+      id: ThreadId.make("grandchild"),
+      title: "Grandchild",
+      parentRelation: subagentRelation({
+        parentThreadId: child.id,
+        rootThreadId: root.id,
+        depth: 2,
+        sequence: 2,
+        status: "completed",
+      }),
+    });
+
+    const collapsed = buildThreadListV2Items({
+      threads: [grandchild, child, root],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(
+      collapsed.items.map((item) => [
+        item.thread.id,
+        item.depth,
+        item.descendantCount,
+        item.descendantsExpanded,
+      ]),
+    ).toEqual([["root", 0, 1, false]]);
+
+    const rootExpanded = buildThreadListV2Items({
+      threads: [grandchild, child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(root)]),
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(
+      rootExpanded.items.map((item) => [
+        item.thread.id,
+        item.depth,
+        item.descendantCount,
+        item.descendantsExpanded,
+      ]),
+    ).toEqual([
+      ["root", 0, 1, true],
+      ["child", 1, 0, false],
+    ]);
+
+    const bothLevelsExpanded = buildThreadListV2Items({
+      threads: [grandchild, child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(root), threadShellKey(child)]),
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(bothLevelsExpanded.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["root", 0],
+      ["child", 1],
+    ]);
+  });
+
+  it("keeps a running child lineage together in the active block", () => {
+    const oldTimestamp = "2026-05-01T00:00:00.000Z";
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      createdAt: oldTimestamp,
+      updatedAt: oldTimestamp,
+      parentRelation: subagentRelation({ parentThreadId: root.id, sequence: 1 }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(
+      layout.items.map((item) => [item.thread.id, item.variant, item.depth, item.descendantCount]),
+    ).toEqual([["root", "card", 0, 1]]);
+  });
+
+  it("retains only the exact selected terminal child at its stored depth", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+    const grandchild = makeThread({
+      id: ThreadId.make("grandchild"),
+      title: "Grandchild",
+      parentRelation: subagentRelation({
+        parentThreadId: child.id,
+        rootThreadId: root.id,
+        depth: 2,
+        sequence: 2,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [grandchild, child, root],
+      environmentId: null,
+      activeThreadKey: threadShellKey(grandchild),
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth, item.descendantCount])).toEqual([
+      ["root", 0, 0],
+      ["grandchild", 2, 0],
+    ]);
+  });
+
+  it("keeps a selected settled root in the settled tail", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      settledOverride: "settled",
+      settledAt: NOW,
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [root],
+      environmentId: null,
+      activeThreadKey: threadShellKey(root),
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.variant])).toEqual([["root", "slim"]]);
+    expect(layout.settledShelfHeaderIndex).toBe(0);
+  });
+
+  it("rebases a matching child when search filters out its parent", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Unrelated root",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Matching child",
+      parentRelation: subagentRelation({ parentThreadId: root.id, sequence: 1 }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "matching",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([["child", 0]]);
+  });
+
+  it("finds a terminal child by title and rebases it when its parent does not match", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Unrelated root",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Matching terminal child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "matching terminal",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([["child", 0]]);
+  });
+
   it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),
       title: "Linked merged pull request",
-      linkedPullRequest,
       settledOverride: "settled",
       settledAt: NOW,
     });
@@ -328,6 +654,33 @@ describe("buildThreadListV2Items", () => {
     // thread is BACK in the card block and the snoozed one is gone.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("counts only search-matching snoozed threads and their next wake", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Fix login" }),
+        makeThread({
+          id: ThreadId.make("matching-snoozed"),
+          title: "Login later",
+          snoozedUntil: "2026-06-03T10:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("unrelated-snoozed"),
+          title: "Settings",
+          snoozedUntil: "2026-06-03T09:00:00.000Z",
+          snoozedAt: "2026-06-01T12:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "login",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active"]);
+    expect(layout.snoozedCount).toBe(1);
+    expect(layout.nextSnoozeWakeAt).toBe("2026-06-03T10:00:00.000Z");
   });
 
   it("places settled pinned threads in the settled shelf", () => {
@@ -516,6 +869,286 @@ describe("buildThreadListV2Items", () => {
     expect(layout.snoozedCount).toBe(2);
   });
 
+  it("keeps a snoozed root shelved without disclosed terminal subagents", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const collapsed = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    expect(collapsed.items).toEqual([]);
+    expect(collapsed.snoozedCount).toBe(1);
+    expect(collapsed.snoozedShelfHeaderIndex).toBe(0);
+    expect(collapsed.nextSnoozeWakeAt).toBe("2026-06-03T09:00:00.000Z");
+
+    const expanded = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(root)]),
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+    expect(expanded.items.map((item) => [item.thread.id, item.depth, item.snoozed])).toEqual([
+      ["root", 0, true],
+    ]);
+    expect(expanded.items[0]?.snoozed).toBe(true);
+    expect(expanded.items[0]?.descendantCount).toBe(0);
+    expect(expanded.snoozedCount).toBe(1);
+    expect(expanded.nextSnoozeWakeAt).toBe("2026-06-03T09:00:00.000Z");
+  });
+
+  it("keeps a snoozed root shelved while its subagent is running", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "running",
+      }),
+    });
+
+    const collapsed = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(collapsed.items).toEqual([]);
+    expect(collapsed.snoozedCount).toBe(1);
+    expect(collapsed.snoozedShelfHeaderIndex).toBe(0);
+
+    const shelfExpanded = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+    expect(shelfExpanded.items.map((item) => item.thread.id)).toEqual(["root"]);
+
+    const lineageExpanded = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(root)]),
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+    expect(lineageExpanded.items.map((item) => [item.thread.id, item.depth, item.snoozed])).toEqual(
+      [
+        ["root", 0, true],
+        ["child", 1, false],
+      ],
+    );
+  });
+
+  it("hides a terminal snoozed descendant subtree while keeping its root visible", () => {
+    const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+    const grandchild = makeThread({
+      id: ThreadId.make("grandchild"),
+      title: "Grandchild",
+      parentRelation: subagentRelation({
+        parentThreadId: child.id,
+        rootThreadId: root.id,
+        depth: 2,
+        sequence: 2,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [grandchild, child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(child)]),
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+
+    expect(
+      layout.items.map((item) => [
+        item.thread.id,
+        item.variant,
+        item.depth,
+        item.descendantCount,
+        item.snoozed,
+      ]),
+    ).toEqual([["root", "card", 0, 0, false]]);
+    expect(layout.snoozedCount).toBe(0);
+    expect(layout.nextSnoozeWakeAt).toBe(null);
+  });
+
+  it("keeps a selected descendant lineage visible on a collapsed snoozed shelf", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      activeThreadKey: threadShellKey(child),
+      searchQuery: "",
+      now: NOW,
+      selectedThreadKey: threadShellKey(child),
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["root", 0],
+      ["child", 1],
+    ]);
+  });
+
+  it("scopes snoozed lineage membership and wake metadata to matching search rows", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root only",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child only",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const childSearch = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "child only",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+    expect(childSearch.items.map((item) => [item.thread.id, item.depth])).toEqual([["child", 0]]);
+    expect(childSearch.snoozedCount).toBe(0);
+    expect(childSearch.nextSnoozeWakeAt).toBeNull();
+
+    const rootSearch = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "root only",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+    expect(rootSearch.items.map((item) => [item.thread.id, item.depth])).toEqual([["root", 0]]);
+    expect(rootSearch.snoozedCount).toBe(1);
+    expect(rootSearch.nextSnoozeWakeAt).toBe("2026-06-03T09:00:00.000Z");
+  });
+
+  it("shows every matching snoozed lineage row during search", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Matching root",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Matching child",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      searchQuery: "matching",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["root", 0],
+      ["child", 1],
+    ]);
+  });
+
+  it("does not count a terminal snoozed subagent as a visible shelf member", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      snoozedUntil: "2026-06-03T09:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      snoozedUntil: "2026-06-03T10:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      expandedThreadKeys: new Set([threadShellKey(root)]),
+      searchQuery: "",
+      now: NOW,
+      snoozedShelfExpanded: true,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.snoozed])).toEqual([["root", true]]);
+    expect(layout.snoozedCount).toBe(1);
+  });
+
   it("keeps snoozed threads visible on environments without the snooze capability", () => {
     const layout = buildThreadListV2Items({
       threads: [
@@ -614,6 +1247,45 @@ describe("buildThreadListV2Items", () => {
     });
 
     expect(layout.items.map((item) => item.thread.id)).toEqual(["selected"]);
+    expect(layout.settledCount).toBe(2);
+    expect(layout.settledShelfHeaderIndex).toBe(0);
+  });
+
+  it("keeps a selected settled subagent's ancestor path on a collapsed shelf", () => {
+    const root = makeThread({
+      id: ThreadId.make("root"),
+      title: "Root",
+      settledOverride: "settled",
+      settledAt: NOW,
+    });
+    const child = makeThread({
+      id: ThreadId.make("child"),
+      title: "Child",
+      settledOverride: "settled",
+      settledAt: NOW,
+      parentRelation: subagentRelation({
+        parentThreadId: root.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+    const selectedThreadKey = threadShellKey(child);
+
+    const layout = buildThreadListV2Items({
+      threads: [child, root],
+      environmentId: null,
+      activeThreadKey: selectedThreadKey,
+      searchQuery: "",
+      now: NOW,
+      selectedThreadKey,
+      settledShelfExpanded: false,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["root", 0],
+      ["child", 1],
+    ]);
+    expect(layout.hiddenSettledCount).toBe(0);
     expect(layout.settledCount).toBe(2);
     expect(layout.settledShelfHeaderIndex).toBe(0);
   });
@@ -796,6 +1468,120 @@ describe("buildThreadListV2Items settled paging", () => {
       "settled-3",
       "settled-2",
     ]);
+  });
+
+  it("keeps settled lineage groups whole and counts hidden rows", () => {
+    const newestRoot = makeThread({
+      id: ThreadId.make("newest-root"),
+      title: "Matching newest root",
+      settledOverride: "settled",
+      settledAt: NOW,
+      latestUserMessageAt: "2026-06-01T05:00:00.000Z",
+    });
+    const newestChild = makeThread({
+      id: ThreadId.make("newest-child"),
+      title: "Matching newest child",
+      settledOverride: "settled",
+      settledAt: NOW,
+      latestUserMessageAt: "2026-06-01T05:00:00.000Z",
+      parentRelation: subagentRelation({
+        parentThreadId: newestRoot.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+    const olderRoot = makeThread({
+      id: ThreadId.make("older-root"),
+      title: "Matching older root",
+      settledOverride: "settled",
+      settledAt: NOW,
+      latestUserMessageAt: "2026-06-01T03:00:00.000Z",
+    });
+    const olderChild = makeThread({
+      id: ThreadId.make("older-child"),
+      title: "Matching older child",
+      settledOverride: "settled",
+      settledAt: NOW,
+      latestUserMessageAt: "2026-06-01T03:00:00.000Z",
+      parentRelation: subagentRelation({
+        parentThreadId: olderRoot.id,
+        sequence: 2,
+        status: "completed",
+      }),
+    });
+    const oldestRoot = makeThread({
+      id: ThreadId.make("oldest-root"),
+      title: "Matching oldest root",
+      settledOverride: "settled",
+      settledAt: NOW,
+      latestUserMessageAt: "2026-06-01T01:00:00.000Z",
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [oldestRoot, olderChild, olderRoot, newestChild, newestRoot],
+      environmentId: null,
+      searchQuery: "matching",
+      settledLimit: 1,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["newest-root", 0],
+      ["newest-child", 1],
+    ]);
+    expect(layout.hiddenSettledCount).toBe(3);
+  });
+
+  it("retains a selected settled lineage beyond the paging budget", () => {
+    const newestRoot = makeThread({
+      id: ThreadId.make("newest-root"),
+      title: "Newest root",
+      settledOverride: "settled",
+      settledAt: "2026-06-01T05:00:00.000Z",
+      latestUserMessageAt: "2026-06-01T05:00:00.000Z",
+    });
+    const middleRoot = makeThread({
+      id: ThreadId.make("middle-root"),
+      title: "Middle root",
+      settledOverride: "settled",
+      settledAt: "2026-06-01T03:00:00.000Z",
+      latestUserMessageAt: "2026-06-01T03:00:00.000Z",
+    });
+    const selectedRoot = makeThread({
+      id: ThreadId.make("selected-root"),
+      title: "Selected root",
+      settledOverride: "settled",
+      settledAt: "2026-06-01T01:00:00.000Z",
+      latestUserMessageAt: "2026-06-01T01:00:00.000Z",
+    });
+    const selectedChild = makeThread({
+      id: ThreadId.make("selected-child"),
+      title: "Selected child",
+      settledOverride: "settled",
+      settledAt: "2026-06-01T01:00:00.000Z",
+      latestUserMessageAt: "2026-06-01T01:00:00.000Z",
+      parentRelation: subagentRelation({
+        parentThreadId: selectedRoot.id,
+        sequence: 1,
+        status: "completed",
+      }),
+    });
+
+    const layout = buildThreadListV2Items({
+      threads: [selectedChild, selectedRoot, middleRoot, newestRoot],
+      environmentId: null,
+      activeThreadKey: threadShellKey(selectedChild),
+      searchQuery: "",
+      settledLimit: 1,
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => [item.thread.id, item.depth])).toEqual([
+      ["newest-root", 0],
+      ["selected-root", 0],
+      ["selected-child", 1],
+    ]);
+    expect(layout.hiddenSettledCount).toBe(1);
   });
 });
 

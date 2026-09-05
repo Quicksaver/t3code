@@ -6,6 +6,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  ProviderItemId,
   ThreadId,
   TurnId,
   ProviderInstanceId,
@@ -20,7 +21,10 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import {
+  DEFAULT_READ_FROM_SEQUENCE_LIMIT,
+  OrchestrationEventStoreLive,
+} from "../../persistence/Layers/OrchestrationEventStore.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
@@ -1521,6 +1525,163 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.projects}
       `;
       assert.deepEqual(stateRows, [{ lastAppliedSequence: lastSequence }]);
+    }),
+  );
+
+  it.effect("replays a child relation beyond the default bootstrap limit", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const completedAt = "2026-01-01T00:05:00.000Z";
+      const childThreadId = ThreadId.make("thread-bootstrap-child");
+      const rootThreadId = ThreadId.make("thread-bootstrap-root");
+      const parentThreadId = ThreadId.make("thread-bootstrap-parent");
+      const parentTurnId = TurnId.make("turn-bootstrap-parent");
+      const parentItemId = ProviderItemId.make("item-bootstrap-parent");
+
+      const sequenceRows = yield* sql<{ readonly maxSequence: number | null }>`
+        SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events
+      `;
+      const sequenceBeforeBacklog = sequenceRows[0]?.maxSequence ?? 0;
+
+      yield* Effect.forEach(
+        Array.from({ length: DEFAULT_READ_FROM_SEQUENCE_LIMIT }, (_, index) => index),
+        (index) => {
+          const eventId = EventId.make(`evt-child-backlog-filler-${index}`);
+          const commandId = CommandId.make(`cmd-child-backlog-filler-${index}`);
+          return eventStore.append({
+            type: "project.created",
+            eventId,
+            aggregateKind: "project",
+            aggregateId: ProjectId.make("project-child-backlog-filler"),
+            occurredAt: now,
+            commandId,
+            causationEventId: null,
+            correlationId: CorrelationId.make(commandId),
+            metadata: {},
+            payload: {
+              projectId: ProjectId.make("project-child-backlog-filler"),
+              title: `Child backlog filler ${index}`,
+              workspaceRoot: "/tmp/project-child-backlog-filler",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+            },
+          });
+        },
+        { discard: true },
+      );
+
+      const childEvent = yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-child-backlog-relation"),
+        aggregateKind: "thread",
+        aggregateId: childThreadId,
+        occurredAt: now,
+        commandId: CommandId.make("cmd-child-backlog-relation"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-child-backlog-relation"),
+        metadata: {},
+        payload: {
+          threadId: childThreadId,
+          projectId: ProjectId.make("project-child-backlog-filler"),
+          title: "Bootstrap child",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          parentRelation: {
+            kind: "subagent",
+            rootThreadId,
+            parentThreadId,
+            parentTurnId,
+            parentItemId,
+            parentActivitySequence: 1_001,
+            providerThreadId: "provider-thread-bootstrap-child",
+            titleSeed: "Inspect the bootstrap backlog",
+            depth: 2,
+            startedAt: now,
+            completedAt,
+            status: "completed",
+          },
+          createdAt: now,
+          updatedAt: completedAt,
+        },
+      });
+
+      yield* Effect.forEach(
+        Object.values(ORCHESTRATION_PROJECTOR_NAMES),
+        (projector) => {
+          const lastAppliedSequence =
+            projector === ORCHESTRATION_PROJECTOR_NAMES.threads
+              ? sequenceBeforeBacklog
+              : childEvent.sequence;
+          return sql`
+            INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+            VALUES (${projector}, ${lastAppliedSequence}, ${now})
+            ON CONFLICT (projector)
+            DO UPDATE SET
+              last_applied_sequence = excluded.last_applied_sequence,
+              updated_at = excluded.updated_at
+          `;
+        },
+        { discard: true },
+      );
+
+      yield* projectionPipeline.bootstrap;
+
+      const childRows = yield* sql<{
+        readonly parentKind: string;
+        readonly rootThreadId: string;
+        readonly parentThreadId: string | null;
+        readonly parentTurnId: string | null;
+        readonly parentItemId: string | null;
+        readonly parentActivitySequence: number;
+        readonly providerThreadId: string | null;
+        readonly titleSeed: string | null;
+        readonly subagentDepth: number;
+        readonly subagentStartedAt: string | null;
+        readonly subagentCompletedAt: string | null;
+        readonly subagentStatus: string | null;
+      }>`
+        SELECT
+          parent_kind AS "parentKind",
+          root_thread_id AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          parent_activity_sequence AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          subagent_depth AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus"
+        FROM projection_threads
+        WHERE thread_id = ${childThreadId}
+      `;
+      assert.deepEqual(childRows, [
+        {
+          parentKind: "subagent",
+          rootThreadId,
+          parentThreadId,
+          parentTurnId,
+          parentItemId,
+          parentActivitySequence: 1_001,
+          providerThreadId: "provider-thread-bootstrap-child",
+          titleSeed: "Inspect the bootstrap backlog",
+          subagentDepth: 2,
+          subagentStartedAt: now,
+          subagentCompletedAt: completedAt,
+          subagentStatus: "completed",
+        },
+      ]);
     }),
   );
 

@@ -8,18 +8,21 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("042_ProjectionThreadLinkedPullRequest", (it) => {
-  it.effect("adds the linked pull request column", () =>
+layer("043_ProjectionProjectFaviconPath", (it) => {
+  it.effect("adds the nullable favicon path to project projections", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 41 });
       yield* runMigrations({ toMigrationInclusive: 42 });
+      yield* runMigrations({ toMigrationInclusive: 43 });
 
-      const columns = yield* sql<{ readonly name: string }>`
-        PRAGMA table_info(projection_threads)
+      const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
+        PRAGMA table_info(projection_projects)
       `;
-      assert.ok(columns.some((column) => column.name === "linked_pull_request_json"));
+      const faviconPath = columns.find((column) => column.name === "favicon_path");
+
+      assert.isDefined(faviconPath);
+      assert.equal(faviconPath.notnull, 0);
     }),
   );
 });

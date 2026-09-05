@@ -2,8 +2,13 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ScopedThreadRef,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   NavigationContext,
@@ -292,16 +297,26 @@ function AdaptiveWorkspaceLayoutContent(
   const activeThread = parseActiveThreadPath(pathname);
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
-  const selectedThreadKey = useMemo(() => {
+  const selectedThreadRef = useMemo<ScopedThreadRef | null>(() => {
     if (environmentId === null || threadId === null) {
       return null;
     }
     try {
-      return scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+      return {
+        environmentId: EnvironmentId.make(environmentId),
+        threadId: ThreadId.make(threadId),
+      };
     } catch {
       return null;
     }
   }, [environmentId, threadId]);
+  const selectedThreadKey = useMemo(
+    () =>
+      selectedThreadRef === null
+        ? null
+        : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId),
+    [selectedThreadRef],
+  );
   // Wrapped in an object: bare functions in useState would be treated as
   // lazy initializers/updaters. `active: false` keeps the outgoing route's
   // content mounted so the pane can animate closed (or be replaced
@@ -539,6 +554,7 @@ function AdaptiveWorkspaceLayoutContent(
                     width={layout.listPaneWidth}
                     visible={panes.primarySidebarVisible}
                     onRequestVisibility={revealPrimarySidebar}
+                    selectedThreadRef={selectedThreadRef}
                     selectedThreadKey={selectedThreadKey}
                     onOpenSettings={handleOpenSettings}
                     onOpenEnvironmentSettings={handleOpenEnvironmentSettings}

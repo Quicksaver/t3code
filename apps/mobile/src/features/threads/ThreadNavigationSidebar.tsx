@@ -2,14 +2,19 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { useAtomValue } from "@effect/atom-react";
 import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import {
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useAtomValue } from "@effect/atom-react";
-import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
@@ -21,17 +26,19 @@ import type { SearchBarCommands } from "react-native-screens";
 
 import { AppText as Text } from "../../components/AppText";
 import { CompactBrandTitle } from "../../components/CompactBrandTitle";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { includeThreadShellIfMissing } from "../../lib/threadLineage";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
-import { useProjects, useThreadShells } from "../../state/entities";
+import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
-import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { useEnvironmentThread } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
+import { threadDetailToShell } from "../../state/use-thread-selection";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -51,7 +58,11 @@ import {
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "../home/homeListItems";
-import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThreadList";
+import {
+  buildHomeProjectScopes,
+  buildHomeProjectTitleIndex,
+  buildHomeThreadGroups,
+} from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -63,6 +74,7 @@ import { SidebarHeaderActions } from "./sidebar-header-actions";
 import { SidebarFilterButton } from "./sidebar-filter-button";
 import { createSidebarHeaderItems } from "./sidebar-native-header-items";
 import { SidebarNavigationShell } from "./sidebar-navigation-shell";
+import { useThreadListV2Enabled } from "./use-thread-list-v2-enabled";
 import {
   PendingTaskListRow,
   ThreadListGroupHeader,
@@ -96,6 +108,7 @@ const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
 interface ThreadNavigationSidebarProps {
   readonly width: number;
   readonly visible: boolean;
+  readonly selectedThreadRef: ScopedThreadRef | null;
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
@@ -142,6 +155,24 @@ function ThreadNavigationSidebarPane(
   const insets = useSafeAreaInsets();
   const projects = useProjects();
   const threads = useThreadShells();
+  const selectedThreadShell = useThreadShell(props.selectedThreadRef);
+  const selectedThreadDetailState = useEnvironmentThread(
+    props.selectedThreadRef?.environmentId ?? null,
+    props.selectedThreadRef?.threadId ?? null,
+  );
+  const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  const selectedThreadForGrouping = useMemo(
+    () =>
+      selectedThreadShell ??
+      (props.selectedThreadRef !== null && selectedThreadDetail !== null
+        ? threadDetailToShell(props.selectedThreadRef.environmentId, selectedThreadDetail)
+        : null),
+    [props.selectedThreadRef, selectedThreadDetail, selectedThreadShell],
+  );
+  const threadsForGrouping = useMemo(
+    () => includeThreadShellIfMissing(threads, selectedThreadForGrouping),
+    [selectedThreadForGrouping, threads],
+  );
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const searchInputRef = useRef<TextInput>(null);
@@ -227,18 +258,7 @@ function ThreadNavigationSidebarPane(
     [projectScopes],
   );
   const projectTitleByProjectKey = useMemo(
-    () =>
-      new Map(
-        projectScopes.flatMap((scope) =>
-          scope.projectRefs.map(
-            (projectRef) =>
-              [
-                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
-                scope.title,
-              ] as const,
-          ),
-        ),
-      ),
+    () => buildHomeProjectTitleIndex(projectScopes),
     [projectScopes],
   );
   const selectedProjectScope = useMemo(
@@ -279,11 +299,11 @@ function ThreadNavigationSidebarPane(
   const scopedThreads = useMemo(
     () =>
       selectedProjectRefs === null
-        ? threads
-        : threads.filter((thread) =>
+        ? threadsForGrouping
+        : threadsForGrouping.filter((thread) =>
             selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [selectedProjectRefs, threads],
+    [selectedProjectRefs, threadsForGrouping],
   );
   const scopedPendingTasks = useMemo(
     () =>
@@ -308,11 +328,13 @@ function ThreadNavigationSidebarPane(
         projectSortOrder: options.projectSortOrder,
         threadSortOrder: options.threadSortOrder,
         projectGroupingMode: options.projectGroupingMode,
+        activeThreadKey: props.selectedThreadKey,
       }),
     [
       matchedThreadKeys,
       options,
       props.searchQuery,
+      props.selectedThreadKey,
       scopedPendingTasks,
       scopedProjects,
       scopedThreads,
@@ -356,8 +378,24 @@ function ThreadNavigationSidebarPane(
     return map;
   }, [projects]);
 
-  // Thread List v2 (beta) support — same model as the compact Home list
-  // (HomeScreen.tsx): flat creation-order card block + settled recency tail.
+  // Thread List v2 support uses the same model as the compact Home list:
+  // creation-order root cards, explicitly disclosed compact subagents, and a
+  // settled recency tail.
+  const [expandedSubagentThreadKeys, setExpandedSubagentThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const handleToggleSubagentThread = useCallback((thread: EnvironmentThreadShell) => {
+    const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+    setExpandedSubagentThreadKeys((current) => {
+      const next = new Set(current);
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+      return next;
+    });
+  }, []);
   // The settled tail renders in pages; expansion resets when the filter
   // context changes so environment/search flips never inherit a deep page.
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -476,9 +514,11 @@ function ThreadNavigationSidebarPane(
         nextSnoozeWakeAt: null,
       };
     return buildThreadListV2Items({
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads: threadsForGrouping.filter((thread) => thread.archivedAt === null),
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
+      activeThreadKey: props.selectedThreadKey,
+      expandedThreadKeys: expandedSubagentThreadKeys,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       settlementEnvironmentIds,
@@ -490,6 +530,7 @@ function ThreadNavigationSidebarPane(
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    expandedSubagentThreadKeys,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -502,7 +543,7 @@ function ThreadNavigationSidebarPane(
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     threadListV2Enabled,
-    threads,
+    threadsForGrouping,
     selectedProjectScope,
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
@@ -755,6 +796,9 @@ function ThreadNavigationSidebarPane(
           previous.key === item.key &&
           previous.item.thread === item.item.thread &&
           previous.item.variant === item.item.variant &&
+          previous.item.depth === item.item.depth &&
+          previous.item.descendantCount === item.item.descendantCount &&
+          previous.item.descendantsExpanded === item.item.descendantsExpanded &&
           previous.item.snoozed === item.item.snoozed &&
           previous.item.pinned === item.item.pinned &&
           previous.snoozeWakeLabelText === item.snoozeWakeLabelText
@@ -846,6 +890,9 @@ function ThreadNavigationSidebarPane(
             <ThreadListV2Row
               thread={thread}
               variant={item.item.variant}
+              depth={item.item.depth}
+              descendantCount={item.item.descendantCount}
+              descendantsExpanded={item.item.descendantsExpanded}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
               snoozePresetMinute={nowMinute}
@@ -882,6 +929,7 @@ function ThreadNavigationSidebarPane(
               onSelectThread={handleSelectThread}
               onDeleteThread={confirmDeleteThread}
               onArchiveThread={archiveThread}
+              onToggleDescendants={handleToggleSubagentThread}
               onRegenerateThreadTitle={regenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -984,6 +1032,7 @@ function ThreadNavigationSidebarPane(
             <ThreadListRow
               variant="sidebar"
               thread={thread}
+              depth={item.depth}
               environmentLabel={
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
@@ -1035,6 +1084,7 @@ function ThreadNavigationSidebarPane(
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      handleToggleSubagentThread,
       machineByEnvironmentId,
       movePinnedThread,
       openPendingTask,

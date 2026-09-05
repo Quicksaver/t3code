@@ -272,6 +272,23 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ClientSettings subagent conversations", () => {
+  it("defaults standalone subagent conversation visibility off", () => {
+    expect(decodeClientSettings({}).subagentConversationVisibilityEnabled).toBe(false);
+  });
+
+  it("preserves an explicit opt-in in settings and patches", () => {
+    expect(
+      decodeClientSettings({ subagentConversationVisibilityEnabled: true })
+        .subagentConversationVisibilityEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ subagentConversationVisibilityEnabled: true })
+        .subagentConversationVisibilityEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults text generation to Luna at low reasoning effort", () => {
     expect(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection).toEqual({

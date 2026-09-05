@@ -37,6 +37,12 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import {
+  codexSubagentChildrenFromNotification,
+  type CodexSubagentRoutingInfo,
+  rememberCodexSubagentRoutes,
+  resolveCodexSubagentRoute,
+} from "./CodexSubagentRouting.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
@@ -1083,7 +1089,6 @@ export function routeCodexChildNotification(method: string): CodexChildNotificat
   // Unknown or parent-owned (serverRequest/resolved, approvals, …).
   return "parent";
 }
-
 function toCodexUserInputAnswer(
   questionId: string,
   value: ProviderUserInputAnswers[string],
@@ -1165,6 +1170,7 @@ export const makeCodexSessionRuntime = (
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
+    const subagentRoutesRef = yield* Ref.make(new Map<string, CodexSubagentRoutingInfo>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const collabChildAgentsRef = yield* Ref.make(new Map<string, CollabChildAgentState>());
     const collabChildMetadataRef = yield* Ref.make(new Map<string, CollabChildMetadataState>());
@@ -1730,21 +1736,30 @@ export const makeCodexSessionRuntime = (
 
         const payload = notification.params;
         const route = readRouteFields(notification);
+        const subagentRoutes = yield* Ref.get(subagentRoutesRef);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
-        const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
-          return providerConversationId
-            ? collabReceiverTurns.get(providerConversationId)
-            : undefined;
-        })();
+        const providerConversationId = readNotificationThreadId(notification);
+        const rootProviderThreadId = yield* currentSessionProviderThreadId;
+        const childParentInfo = resolveCodexSubagentRoute(
+          subagentRoutes,
+          providerConversationId,
+          rootProviderThreadId,
+        );
 
+        const routeAccepted = rememberCodexSubagentRoutes(
+          subagentRoutes,
+          notification,
+          route.turnId,
+          childParentInfo?.childThreadId ?? options.threadId,
+        );
         rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
-        // Interception FIRST: a registered v2 child is usually also in the
-        // receiver-turn map (collabAgentToolCall.receiverThreadIds), and the
-        // legacy suppressor below would drop its lifecycle before it could
-        // become synthetic collabAgent events (review finding). The
-        // suppressor still covers UNREGISTERED children.
-        if (yield* interceptCollabChildNotification(notification)) {
+        // Preserve upstream's source-neutral Agents feed while also routing
+        // registered child notifications into the branch's real child
+        // conversations. An intercepted notification only returns early
+        // when no child-conversation route exists.
+        const interceptedForAgents = yield* interceptCollabChildNotification(notification);
+        if (interceptedForAgents && !childParentInfo && !routeAccepted) {
+          yield* Ref.set(subagentRoutesRef, subagentRoutes);
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }
@@ -1766,7 +1781,9 @@ export const makeCodexSessionRuntime = (
           );
         })();
         if (
-          (childParentTurnId !== undefined || foreignConversation) &&
+          !childParentInfo &&
+          (collabReceiverTurns.get(providerConversationId ?? "") !== undefined ||
+            foreignConversation) &&
           shouldSuppressChildConversationNotification(notification.method)
         ) {
           // Stop-everything must not depend on registration timing: a
@@ -1801,6 +1818,7 @@ export const makeCodexSessionRuntime = (
               });
             }
           }
+          yield* Ref.set(subagentRoutesRef, subagentRoutes);
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }
@@ -1811,7 +1829,7 @@ export const makeCodexSessionRuntime = (
 
         let requestId: ApprovalRequestId | undefined;
         let requestKind: ProviderRequestKind | undefined;
-        let turnId = childParentTurnId ?? route.turnId;
+        let turnId = route.turnId;
         let itemId = route.itemId;
 
         if (notification.method === "serverRequest/resolved") {
@@ -1835,10 +1853,38 @@ export const makeCodexSessionRuntime = (
           }
         }
 
+        yield* Ref.set(subagentRoutesRef, subagentRoutes);
         yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+        const subagentChildren = codexSubagentChildrenFromNotification(
+          subagentRoutes,
+          notification,
+          routeAccepted,
+        );
+        const parentCollab =
+          childParentInfo && childParentInfo.parentItemId
+            ? {
+                parentThreadId: String(childParentInfo.parentThreadId),
+                providerThreadId: childParentInfo.providerThreadId,
+                childThreadId: String(childParentInfo.childThreadId),
+                itemId: String(childParentInfo.parentItemId),
+                ...(childParentInfo.parentTurnId
+                  ? { parentTurnId: String(childParentInfo.parentTurnId) }
+                  : {}),
+                ...(childParentInfo.detail ? { detail: childParentInfo.detail } : {}),
+                source: childParentInfo.source,
+              }
+            : undefined;
+        const emittedPayload =
+          subagentChildren.length > 0 || parentCollab
+            ? {
+                ...payload,
+                ...(parentCollab ? { parentCollab } : {}),
+                ...(subagentChildren.length > 0 ? { subagentChildren } : {}),
+              }
+            : payload;
         yield* emitEvent({
           kind: "notification",
-          threadId: options.threadId,
+          threadId: childParentInfo?.childThreadId ?? options.threadId,
           method: notification.method,
           ...(turnId ? { turnId } : {}),
           ...(itemId ? { itemId } : {}),
@@ -1847,7 +1893,7 @@ export const makeCodexSessionRuntime = (
           ...(notification.method === "item/agentMessage/delta"
             ? { textDelta: notification.params.delta }
             : {}),
-          ...(payload !== undefined ? { payload } : {}),
+          ...(emittedPayload !== undefined ? { payload: emittedPayload } : {}),
         });
       });
 

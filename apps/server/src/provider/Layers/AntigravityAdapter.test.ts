@@ -405,6 +405,8 @@ it.layer(layer)("AntigravityAdapter", (it) => {
   it.effect("reapplies the exact saved model and mode after a native resume", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
+      const path = yield* Path.Path;
+      const resumedCwd = path.resolve("/tmp");
       const first = yield* h.adapter.startSession({
         threadId,
         cwd: process.cwd(),
@@ -415,13 +417,13 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       yield* h.adapter.stopSession(threadId);
       const second = yield* h.adapter.startSession({
         threadId,
-        cwd: "/tmp",
+        cwd: resumedCwd,
         runtimeMode: "auto-accept-edits",
         resumeCursor: first.resumeCursor,
         modelSelection: { instanceId, model: nativeAlternative },
       });
       expect(second.model).toBe(nativeAlternative);
-      expect(second.cwd).toBe("/tmp");
+      expect(second.cwd).toBe(resumedCwd);
       expect(h.launches[1]?.resumeSessionId).toBe(nativeSessionId);
       expect(h.calls).toEqual([
         "start",

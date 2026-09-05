@@ -10,8 +10,10 @@ import {
 } from "./logicalProject";
 import {
   buildPhysicalToLogicalProjectKeyMap,
+  buildSidebarProjectScopeKeys,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  selectSidebarProjectLineageThreads,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -256,6 +258,54 @@ describe("environment grouping", () => {
     });
     expect(pickerEntry?.isPreferred).toBe(true);
     expect(pickerEntry?.targetProject.id).toBe(canonical.id);
+  });
+
+  it("selects lineage across every stale and canonical logical-project reference", () => {
+    const stale = makeProject({
+      id: ProjectId.make("project-stale"),
+      repositoryIdentity: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const canonical = makeProject({
+      id: ProjectId.make("project-canonical"),
+      repositoryIdentity,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [stale, canonical],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    expect(group).toBeDefined();
+    if (!group) return;
+
+    const projectKeys = buildSidebarProjectScopeKeys(group);
+    expect(projectKeys).toEqual(
+      new Set([`${primaryEnvironmentId}:${stale.id}`, `${primaryEnvironmentId}:${canonical.id}`]),
+    );
+    expect(
+      selectSidebarProjectLineageThreads({
+        projectKeys,
+        threads: [
+          { environmentId: primaryEnvironmentId, projectId: stale.id, archivedAt: null },
+          { environmentId: primaryEnvironmentId, projectId: canonical.id, archivedAt: null },
+          {
+            environmentId: primaryEnvironmentId,
+            projectId: canonical.id,
+            archivedAt: "2026-01-03T00:00:00.000Z",
+          },
+          {
+            environmentId: primaryEnvironmentId,
+            projectId: ProjectId.make("project-other"),
+            archivedAt: null,
+          },
+        ],
+      }),
+    ).toEqual([
+      { environmentId: primaryEnvironmentId, projectId: stale.id, archivedAt: null },
+      { environmentId: primaryEnvironmentId, projectId: canonical.id, archivedAt: null },
+    ]);
   });
 
   it("routes duplicate physical project keys to the winning logical group", () => {

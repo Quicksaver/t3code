@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
+import {
+  buildThreadActionMenuItems,
+  canUseRootThreadLifecycleActions,
+  isRootThreadLifecycleAction,
+  type ThreadActionMenuId,
+  type ThreadActionMenuState,
+} from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   branch: null,
@@ -11,6 +17,7 @@ const baseState: ThreadActionMenuState = {
   isRegeneratingTitle: false,
   isRunning: false,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
+  permissions: { rootLifecycle: true },
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
@@ -81,6 +88,27 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({ ...baseState, branch: "main" });
     expect(items.at(-1)).toMatchObject({ id: "delete", destructive: true });
   });
+  it("hides root lifecycle actions for a persisted subagent", () => {
+    expect(ids({ ...baseState, permissions: { rootLifecycle: false } })).toEqual([
+      "pin",
+      "rename",
+      "regenerate-title",
+      "mark-unread",
+      "copy",
+      "project-settings",
+    ]);
+    expect(allIds({ ...baseState, permissions: { rootLifecycle: false } })).toEqual([
+      "pin",
+      "rename",
+      "regenerate-title",
+      "mark-unread",
+      "copy",
+      "copy-path",
+      "copy-thread-id",
+      "project-settings",
+    ]);
+  });
+
   it("offers archive as a non-destructive action right before delete", () => {
     const items = buildThreadActionMenuItems(baseState);
     const archiveItem = items.at(-2);
@@ -105,5 +133,29 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+});
+
+describe("root lifecycle action permissions", () => {
+  it("treats missing relations as legacy roots and persisted children as subagents", () => {
+    expect(canUseRootThreadLifecycleActions(null)).toBe(true);
+    expect(canUseRootThreadLifecycleActions({})).toBe(true);
+    expect(canUseRootThreadLifecycleActions({ parentRelation: { kind: "root" } })).toBe(true);
+    expect(canUseRootThreadLifecycleActions({ parentRelation: { kind: "subagent" } })).toBe(false);
+  });
+
+  it("recognizes every root lifecycle action returned by native menus", () => {
+    const actions: ThreadActionMenuId[] = [
+      "settle",
+      "unsettle",
+      "snooze",
+      "snooze:hour",
+      "unsnooze",
+      "archive",
+      "delete",
+    ];
+    expect(actions.every(isRootThreadLifecycleAction)).toBe(true);
+    expect(isRootThreadLifecycleAction("pin")).toBe(false);
+    expect(isRootThreadLifecycleAction("copy-branch")).toBe(false);
   });
 });

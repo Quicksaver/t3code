@@ -224,14 +224,32 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+      buildMultiSelectThreadContextMenuItems({
+        count: 3,
+        hasRunningThread: false,
+        canUseLifecycleActions: true,
+      }),
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
   it("disables bulk archive when a selected thread is running", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+      buildMultiSelectThreadContextMenuItems({
+        count: 2,
+        hasRunningThread: true,
+        canUseLifecycleActions: true,
+      }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
+  });
+
+  it("hides lifecycle actions when a selected row is not a lifecycle root", () => {
+    expect(
+      buildMultiSelectThreadContextMenuItems({
+        count: 2,
+        hasRunningThread: false,
+        canUseLifecycleActions: false,
+      }),
+    ).toEqual([{ id: "mark-unread", label: "Mark unread (2)" }]);
   });
 });
 

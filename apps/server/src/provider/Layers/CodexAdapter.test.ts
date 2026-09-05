@@ -1223,6 +1223,395 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("maps multi-agent v2 activity to a canonical subagent item", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-v2-subagent-activity"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("activity-1"),
+        payload: {
+          threadId: "provider-parent",
+          turnId: "turn-1",
+          completedAtMs: 1_767_225_600_000,
+          item: {
+            id: "activity-1",
+            type: "subAgentActivity",
+            kind: "started",
+            agentThreadId: "provider-child",
+            agentPath: "/root/test_audit",
+          },
+          subagentChildren: [
+            {
+              providerThreadId: "provider-child",
+              childThreadId: "subagent-local-child",
+              parentItemId: "activity-1",
+              titleSeed: "/root/test_audit",
+            },
+          ],
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") return;
+      NodeAssert.equal(firstEvent.value.payload.itemType, "collab_agent_tool_call");
+      NodeAssert.equal(firstEvent.value.payload.title, "Subagent");
+      NodeAssert.equal(firstEvent.value.payload.detail, "/root/test_audit");
+      NodeAssert.deepStrictEqual(
+        (firstEvent.value.payload.data as { subagentChildren?: unknown }).subagentChildren,
+        [
+          {
+            providerThreadId: "provider-child",
+            childThreadId: "subagent-local-child",
+            parentItemId: "activity-1",
+            titleSeed: "/root/test_audit",
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("maps live collabAgent notifications into the shared task lifecycle", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
+        Effect.forkChild,
+      );
+      const common = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+
+      yield* runtime.emit({
+        ...common,
+        id: asEventId("evt-collab-activity"),
+        method: "collabAgent/activity",
+        payload: {
+          agentThreadId: "provider-child-1",
+          agentPath: "/root/level_one_long",
+          activityKind: "started",
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        ...common,
+        id: asEventId("evt-collab-status"),
+        method: "collabAgent/statusChanged",
+        payload: {
+          agentThreadId: "provider-child-1",
+          nickname: "level_one_long",
+          agentPath: "/root/level_one_long",
+          status: { type: "active", activeFlags: ["waitingOnUserInput"] },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        ...common,
+        id: asEventId("evt-collab-item"),
+        method: "collabAgent/item",
+        payload: {
+          agentThreadId: "provider-child-1",
+          nickname: "level_one_long",
+          agentPath: "/root/level_one_long",
+          item: {
+            type: "commandExecution",
+            command: "node -e setTimeout(...)",
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        ...common,
+        id: asEventId("evt-collab-usage"),
+        method: "collabAgent/tokenUsage",
+        payload: {
+          agentThreadId: "provider-child-1",
+          nickname: "level_one_long",
+          agentPath: "/root/level_one_long",
+          tokenUsage: {
+            last: { totalTokens: 3 },
+            total: {
+              totalTokens: 21,
+              inputTokens: 13,
+              cachedInputTokens: 5,
+              outputTokens: 8,
+              reasoningOutputTokens: 2,
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        ...common,
+        id: asEventId("evt-collab-completed"),
+        method: "collabAgent/turnCompleted",
+        payload: {
+          agentThreadId: "provider-child-1",
+          nickname: "level_one_long",
+          agentPath: "/root/level_one_long",
+          turn: { status: "completed" },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => event.type),
+        ["task.started", "task.updated", "task.progress", "task.progress", "task.updated"],
+      );
+
+      const started = events[0];
+      NodeAssert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        NodeAssert.deepStrictEqual(started.payload, {
+          taskId: "provider-child-1",
+          description: "level_one_long",
+          title: "level_one_long",
+          role: "level_one_long",
+          agentPath: "/root/level_one_long",
+          timelineBypass: true,
+        });
+      }
+
+      const waiting = events[1];
+      NodeAssert.equal(waiting?.type, "task.updated");
+      if (waiting?.type === "task.updated") {
+        NodeAssert.equal(waiting.payload.status, "waiting");
+        NodeAssert.equal(waiting.payload.title, "level_one_long");
+      }
+
+      const item = events[2];
+      NodeAssert.equal(item?.type, "task.progress");
+      if (item?.type === "task.progress") {
+        NodeAssert.equal(item.payload.summary, "node -e setTimeout(...)");
+      }
+
+      const usage = events[3];
+      NodeAssert.equal(usage?.type, "task.progress");
+      if (usage?.type === "task.progress") {
+        NodeAssert.deepStrictEqual(usage.payload.typedUsage, {
+          totalTokens: 21,
+          inputTokens: 13,
+          cachedInputTokens: 5,
+          outputTokens: 8,
+          reasoningOutputTokens: 2,
+        });
+      }
+
+      const completed = events[4];
+      NodeAssert.equal(completed?.type, "task.updated");
+      if (completed?.type === "task.updated") {
+        NodeAssert.equal(completed.payload.status, "idle");
+      }
+    }),
+  );
+
+  it.effect("streams multi-agent v2 child deltas into the child thread", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-v2-subagent-delta"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/agentMessage/delta",
+        threadId: asThreadId("subagent-local-child"),
+        turnId: asTurnId("child-turn"),
+        itemId: asItemId("child-message"),
+        textDelta: "child-only marker",
+        payload: {
+          threadId: "provider-child",
+          turnId: "child-turn",
+          itemId: "child-message",
+          delta: "child-only marker",
+          parentCollab: {
+            parentThreadId: "thread-1",
+            providerThreadId: "provider-child",
+            childThreadId: "subagent-local-child",
+            itemId: "activity-1",
+            parentTurnId: "turn-1",
+            detail: "/root/test_audit",
+            source: "subAgentActivity",
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      NodeAssert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "content.delta") return;
+      NodeAssert.equal(firstEvent.value.threadId, "subagent-local-child");
+      NodeAssert.deepStrictEqual(firstEvent.value.payload, {
+        streamKind: "assistant_text",
+        delta: "child-only marker",
+      });
+    }),
+  );
+
+  it.effect("buffers child subagent deltas until the parent collab tool completes", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-subagent-started"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/started",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab-1"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          startedAtMs: 1_767_225_600_000,
+          item: {
+            id: "collab-1",
+            type: "collabAgentToolCall",
+            tool: "spawnAgent",
+            status: "inProgress",
+            prompt: "Inspect routing",
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["child-thread-1"],
+            agentsStates: {
+              "child-thread-1": {
+                status: "running",
+              },
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      yield* runtime.emit({
+        id: asEventId("evt-subagent-delta-1"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/agentMessage/delta",
+        threadId: asThreadId("subagent-local-child-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("child-msg-1"),
+        textDelta: "Subagent ",
+        payload: {
+          threadId: "child-thread-1",
+          turnId: "child-turn-1",
+          itemId: "child-msg-1",
+          delta: "Subagent ",
+          parentCollab: {
+            parentThreadId: "thread-1",
+            itemId: "collab-1",
+            detail: "Inspect routing",
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-subagent-delta-2"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/agentMessage/delta",
+        threadId: asThreadId("subagent-local-child-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("child-msg-1"),
+        textDelta: "result",
+        payload: {
+          threadId: "child-thread-1",
+          turnId: "child-turn-1",
+          itemId: "child-msg-1",
+          delta: "result",
+          parentCollab: {
+            parentThreadId: "thread-1",
+            itemId: "collab-1",
+            detail: "Inspect routing",
+          },
+        },
+      } satisfies ProviderEvent);
+      yield* runtime.emit({
+        id: asEventId("evt-subagent-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("collab-1"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          completedAtMs: 1_767_225_601_000,
+          item: {
+            id: "collab-1",
+            type: "collabAgentToolCall",
+            tool: "spawnAgent",
+            status: "completed",
+            prompt: "Inspect routing",
+            senderThreadId: "thread-1",
+            receiverThreadIds: ["child-thread-1"],
+            agentsStates: {
+              "child-thread-1": {
+                status: "completed",
+              },
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+
+      NodeAssert.equal(events.length, 2);
+      const runningEvent = events[0];
+      NodeAssert.equal(runningEvent?.type, "item.updated");
+      if (runningEvent?.type === "item.updated") {
+        NodeAssert.equal(runningEvent.payload.itemType, "collab_agent_tool_call");
+        NodeAssert.equal(runningEvent.payload.status, "inProgress");
+        NodeAssert.equal(runningEvent.payload.title, "Subagent");
+        NodeAssert.equal(runningEvent.payload.detail, "Inspect routing");
+      }
+
+      const completedEvent = events[1];
+      NodeAssert.equal(completedEvent?.type, "item.completed");
+      if (completedEvent?.type !== "item.completed") {
+        return;
+      }
+      NodeAssert.equal(completedEvent.payload.itemType, "collab_agent_tool_call");
+      NodeAssert.equal(completedEvent.payload.detail, "Inspect routing");
+      const completedData = completedEvent.payload.data as Record<string, unknown>;
+      NodeAssert.deepEqual(completedData.parentCollab, {
+        parentThreadId: "thread-1",
+        itemId: "collab-1",
+        detail: "Inspect routing",
+      });
+      NodeAssert.equal(completedData.toolCallId, "collab-1");
+      NodeAssert.deepEqual(completedData.rawOutput, {
+        content: "Subagent result",
+      });
+      NodeAssert.deepEqual(completedData.item, {
+        id: "collab-1",
+        type: "collabAgentToolCall",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Inspect routing",
+        senderThreadId: "thread-1",
+        receiverThreadIds: ["child-thread-1"],
+        agentsStates: {
+          "child-thread-1": {
+            status: "completed",
+          },
+        },
+      });
+    }),
+  );
+
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

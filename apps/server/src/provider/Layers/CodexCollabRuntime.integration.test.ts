@@ -9,11 +9,13 @@
  */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -26,6 +28,7 @@ import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
+const ROOT_SESSION_THREAD_ID = ThreadId.make("thread-collab-integration");
 const MEMORY = "memory-consolidation-thread";
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -157,7 +160,15 @@ function readRecordedRequests() {
 }
 
 const scriptPath = NodePath.join(import.meta.dirname, "../testFixtures/.collab-script.json");
-const peerPath = NodePath.join(import.meta.dirname, "../testFixtures/codexCollabMockPeer.sh");
+const peerPath = Effect.map(HostProcessPlatform, (platform) =>
+  NodePath.join(
+    import.meta.dirname,
+    platform === "win32"
+      ? "../testFixtures/codexCollabMockPeer.cmd"
+      : "../testFixtures/codexCollabMockPeer.sh",
+  ),
+);
+const runtimeCwd = NodeOS.tmpdir();
 
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("looks up child model metadata once after activity registration", () =>
@@ -194,7 +205,7 @@ describe("CodexSessionRuntime collab integration", () => {
 
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-model-activity"),
-        binaryPath: peerPath,
+        binaryPath: yield* peerPath,
         cwd: "/tmp",
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
@@ -286,7 +297,7 @@ describe("CodexSessionRuntime collab integration", () => {
 
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-model-spawn"),
-        binaryPath: peerPath,
+        binaryPath: yield* peerPath,
         cwd: "/tmp",
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
@@ -365,7 +376,7 @@ describe("CodexSessionRuntime collab integration", () => {
 
           const runtime = yield* makeCodexSessionRuntime({
             threadId: ThreadId.make(`thread-collab-model-${name}`),
-            binaryPath: peerPath,
+            binaryPath: yield* peerPath,
             cwd: "/tmp",
             runtimeMode: "full-access",
             environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
@@ -394,7 +405,7 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
+  it.effect("replays fan-out into both synthetic agent events and routed child conversations", () =>
     Effect.gen(function* () {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       NodeFS.writeFileSync(scriptPath, JSON.stringify(buildScript()), "utf8");
@@ -403,15 +414,17 @@ describe("CodexSessionRuntime collab integration", () => {
       );
 
       const runtime = yield* makeCodexSessionRuntime({
-        threadId: ThreadId.make("thread-collab-integration"),
-        binaryPath: peerPath,
-        cwd: "/tmp",
+        threadId: ROOT_SESSION_THREAD_ID,
+        binaryPath: yield* peerPath,
+        cwd: runtimeCwd,
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
 
       const eventsFiber = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.method === "turn/completed"),
+        Stream.takeUntil(
+          (event) => event.method === "turn/completed" && event.threadId === ROOT_SESSION_THREAD_ID,
+        ),
         Stream.runCollect,
         Effect.forkScoped,
       );
@@ -443,6 +456,53 @@ describe("CodexSessionRuntime collab integration", () => {
       );
       assert.isDefined(childClosed, "child B's close becomes an agent event");
 
+      // The source-neutral Agents feed is additive: the original lifecycle
+      // item still carries the deterministic child route that ingestion uses
+      // to project a titled, navigable child shell.
+      const routedSpawn = events.find((event) => {
+        const payload = event.payload as {
+          item?: { type?: string; agentThreadId?: string };
+          subagentChildren?: ReadonlyArray<{ childThreadId?: string }>;
+        };
+        return (
+          event.method === "item/completed" &&
+          payload.item?.type === "subAgentActivity" &&
+          payload.item.agentThreadId === CHILD_A &&
+          payload.subagentChildren?.length === 1
+        );
+      });
+      assert.isDefined(routedSpawn, "child A's spawn retains persisted conversation routing");
+      const routedChildThreadId = (
+        routedSpawn.payload as {
+          subagentChildren?: ReadonlyArray<{ childThreadId?: string }>;
+        }
+      ).subagentChildren?.[0]?.childThreadId;
+      assert.match(routedChildThreadId ?? "", /^subagent_/);
+
+      const routedChildCompletion = events.find(
+        (event) => event.method === "turn/completed" && event.threadId === routedChildThreadId,
+      );
+      assert.isDefined(
+        routedChildCompletion,
+        "child A's own lifecycle is emitted on its canonical child thread",
+      );
+      assert.equal(
+        (
+          routedChildCompletion.payload as {
+            parentCollab?: { providerThreadId?: string; childThreadId?: string };
+          }
+        ).parentCollab?.providerThreadId,
+        CHILD_A,
+      );
+      assert.equal(
+        (
+          routedChildCompletion.payload as {
+            parentCollab?: { providerThreadId?: string; childThreadId?: string };
+          }
+        ).parentCollab?.childThreadId,
+        routedChildThreadId,
+      );
+
       // Parent-owned resolution passes through — not swallowed, not
       // re-labelled as an agent event.
       assert.include(methods, "serverRequest/resolved");
@@ -451,11 +511,17 @@ describe("CodexSessionRuntime collab integration", () => {
       // root as a child: the parent turn completion still flows.
       assert.include(methods, "turn/completed");
 
-      // No raw child conversation methods leak onto the parent stream.
+      // Child sessions legitimately emit their own thread/* events on this
+      // shared stream. Only a child-addressed event labelled as the root
+      // session would leak child lifecycle into the parent conversation.
       const leaked = events.filter((event) => {
         const payload = event.payload as { threadId?: string } | undefined;
         const addressedToChild = payload?.threadId === CHILD_A || payload?.threadId === CHILD_B;
-        return addressedToChild && (event.method?.startsWith("thread/") ?? false);
+        return (
+          event.threadId === ROOT_SESSION_THREAD_ID &&
+          addressedToChild &&
+          (event.method?.startsWith("thread/") ?? false)
+        );
       });
       assert.deepEqual(
         leaked.map((event) => event.method),
@@ -546,8 +612,8 @@ describe("CodexSessionRuntime collab integration", () => {
 
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-collab-stop"),
-        binaryPath: peerPath,
-        cwd: "/tmp",
+        binaryPath: yield* peerPath,
+        cwd: runtimeCwd,
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -624,8 +690,8 @@ describe("CodexSessionRuntime collab integration", () => {
 
       const runtime = yield* makeCodexSessionRuntime({
         threadId: ThreadId.make("thread-codex-queued-stop"),
-        binaryPath: peerPath,
-        cwd: "/tmp",
+        binaryPath: yield* peerPath,
+        cwd: runtimeCwd,
         runtimeMode: "full-access",
         environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
       });
@@ -721,8 +787,8 @@ describe("CodexSessionRuntime collab integration", () => {
 
         const runtime = yield* makeCodexSessionRuntime({
           threadId: ThreadId.make("thread-codex-mcp-elicitation"),
-          binaryPath: peerPath,
-          cwd: "/tmp",
+          binaryPath: yield* peerPath,
+          cwd: runtimeCwd,
           runtimeMode: "auto",
           environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
         });

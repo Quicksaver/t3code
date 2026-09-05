@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getLatestThreadSortTimestamp,
   planPinnedMove,
   resolveSettledThreadTimestamp,
   sortPinnedThreadsByOrderKey,
@@ -105,6 +106,24 @@ describe("sortThreads", () => {
     );
 
     expect(sorted.map((thread) => thread.id)).toEqual(["thread-1", "thread-2"]);
+  });
+});
+
+describe("getLatestThreadSortTimestamp", () => {
+  it("uses the newest thread across a lineage group", () => {
+    expect(
+      getLatestThreadSortTimestamp(
+        [
+          makeThread({ latestUserMessageAt: "2026-03-09T10:00:00.000Z" }),
+          makeThread({ latestUserMessageAt: "2026-03-09T12:00:00.000Z" }),
+        ],
+        "updated_at",
+      ),
+    ).toBe(Date.parse("2026-03-09T12:00:00.000Z"));
+  });
+
+  it("sinks an empty group below groups with sortable threads", () => {
+    expect(getLatestThreadSortTimestamp([], "updated_at")).toBe(Number.NEGATIVE_INFINITY);
   });
 });
 

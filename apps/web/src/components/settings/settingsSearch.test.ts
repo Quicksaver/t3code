@@ -211,6 +211,14 @@ describe("searchSettings", () => {
     });
   });
 
+  it("indexes the subagent conversation beta preference in General", () => {
+    expect(searchSettings("subagent conversations")[0]).toMatchObject({
+      id: "subagent-conversations",
+      title: "Subagent conversations",
+      to: "/settings/general",
+    });
+  });
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({

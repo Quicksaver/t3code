@@ -31,7 +31,7 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(val
 
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
@@ -43,6 +43,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
       const sql = yield* SqlClient.SqlClient;
 
       yield* sql`DELETE FROM projection_projects`;
@@ -339,6 +340,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           pinOrderKey: "gm",
           titleRegeneration: null,
           deletedAt: null,
+          parentRelation: {
+            kind: "root",
+            rootThreadId: ThreadId.make("thread-1"),
+          },
           messages: [
             {
               id: asMessageId("message-1"),
@@ -394,6 +399,14 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           },
         },
       ]);
+
+      backgroundLiveness.recordTaskLiveness({
+        threadId: "thread-1",
+        taskId: "agent-1",
+        taskType: "subagent",
+        status: "running",
+        kind: "started",
+      });
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
       assert.equal(shellSnapshot.snapshotSequence, 5);
@@ -458,6 +471,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           createdAt: "2026-02-24T00:00:02.000Z",
           updatedAt: "2026-02-24T00:00:03.000Z",
           archivedAt: null,
+          parentRelation: {
+            kind: "root",
+            rootThreadId: ThreadId.make("thread-1"),
+          },
           settledOverride: null,
           settledAt: null,
           unsettledAt: null,
@@ -479,7 +496,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
-          backgroundLiveness: null,
+          backgroundLiveness: "working",
+          activeSubagentCount: 1,
           planProgress: null,
         },
       ]);

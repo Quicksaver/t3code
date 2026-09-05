@@ -15,13 +15,18 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
+import {
+  buildVisibleThreadLineage,
+  rebaseThreadDepthsToVisibleAncestors,
+  threadShellKey,
+} from "../../lib/threadLineage";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 
 export { snoozeWakeLabel };
 
 /**
  * Thread List v2 model, ported from the web sidebar v2
- * (apps/web/src/components/Sidebar.logic.ts + SidebarV2.tsx).
+ * (apps/web/src/components/Sidebar.logic.ts + Sidebar.tsx).
  *
  * Four visual states, three colors: color is reserved for "act now"
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
@@ -143,6 +148,12 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
+export function canUseThreadListV2LifecycleActions(
+  thread: Pick<EnvironmentThreadShell, "parentRelation">,
+): boolean {
+  return thread.parentRelation?.kind !== "subagent";
+}
+
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
     poison the whole ordering, so it sinks to the epoch instead. */
 function parseTimestampMs(isoDate: string): number {
@@ -177,6 +188,12 @@ export function sortThreadsForListV2<
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  /** Mobile lineage depth after contextual visibility/search rebasing. */
+  readonly depth: number;
+  /** Recursive subagent total for this conversation in the current list scope. */
+  readonly descendantCount: number;
+  /** Whether this conversation's direct children are currently disclosed. */
+  readonly descendantsExpanded: boolean;
   /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
@@ -309,6 +326,11 @@ export function buildThreadListV2Items(input: {
     readonly environmentId: EnvironmentId;
     readonly projectId: ProjectId;
   }> | null;
+  /** Selected child route whose terminal lineage must remain visible. */
+  readonly activeThreadKey?: string | null;
+  /** Conversations whose direct subagent children should be disclosed. Each
+      nested generation requires its own explicit expansion. */
+  readonly expandedThreadKeys?: ReadonlySet<string>;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
   /** Environments whose server supports thread.settle/unsettle. Threads on
@@ -318,7 +340,10 @@ export function buildThreadListV2Items(input: {
   /** Environments whose server supports thread.snooze/unsnooze. Same
       contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  /** Max settled rows to render; the rest are counted, not built. */
+  /**
+   * Settled-row budget. Lineage groups stay atomic, so the newest group can
+   * exceed the budget and the selected settled group is always retained.
+   */
   readonly settledLimit?: number;
   /** Second-precise clock used for time-based classification. */
   readonly now: string;
@@ -336,11 +361,7 @@ export function buildThreadListV2Items(input: {
     ? new Set(input.projectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`))
     : null;
 
-  const pinned: EnvironmentThreadShell[] = [];
-  const active: EnvironmentThreadShell[] = [];
-  const settled: EnvironmentThreadShell[] = [];
-  const snoozed: EnvironmentThreadShell[] = [];
-  let nextSnoozeWakeAt: string | null = null;
+  const scopedThreads: EnvironmentThreadShell[] = [];
   for (const thread of input.threads) {
     // Callers pass live shells. The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
@@ -359,94 +380,285 @@ export function buildThreadListV2Items(input: {
     ) {
       continue;
     }
-    const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
-    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    // Snooze outranks settlement and pinning until the thread wakes.
-    if (supportsSnooze && effectiveSnoozed(thread, { now })) {
-      snoozed.push(thread);
-      if (
-        thread.snoozedUntil != null &&
-        (nextSnoozeWakeAt === null ||
-          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
-      ) {
-        nextSnoozeWakeAt = thread.snoozedUntil;
-      }
-      continue;
-    }
-    if (supportsSettlement && thread.settledOverride === "settled") {
-      settled.push(thread);
-    } else if (thread.pinnedAt != null) {
-      pinned.push(thread);
-    } else {
-      active.push(thread);
-    }
+    scopedThreads.push(thread);
   }
 
-  const orderedActive = sortThreadsForListV2(active);
-  const orderedSnoozed = [...snoozed].sort(
-    (left, right) =>
-      parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
-  );
-  const selectedThreadKey = input.selectedThreadKey ?? null;
-  const visibleSnoozed =
-    input.snoozedShelfExpanded === true
-      ? orderedSnoozed
-      : orderedSnoozed.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+  const matchingThreadKeys = query.length === 0 ? null : new Set(scopedThreads.map(threadShellKey));
+  const lineage = buildVisibleThreadLineage({
+    threads: scopedThreads,
+    activeThreadKey: input.activeThreadKey,
+    // Search can navigate to a matching terminal child. Outside search, only
+    // running subagents and the exact active child belong in the sidebar.
+    additionalVisibleThreadKeys: matchingThreadKeys ?? undefined,
+    sortRootThreads: sortThreadsForListV2,
+  });
+  const searchedThreads =
+    query.length === 0
+      ? lineage.threads
+      : lineage.threads.filter(
+          (thread) => matchingThreadKeys?.has(threadShellKey(thread)) === true,
         );
-  const orderedSettled = [...settled].sort(
+  const threadDepths =
+    query.length === 0
+      ? lineage.threadDepths
+      : rebaseThreadDepthsToVisibleAncestors(searchedThreads);
+  const activePathKeys = threadListV2ActivePathKeys(scopedThreads, input.activeThreadKey);
+  const expandedThreadKeys = input.expandedThreadKeys ?? new Set<string>();
+  const visibleThreads =
+    query.length > 0
+      ? searchedThreads
+      : filterThreadListV2ExpandedLineage({
+          threads: searchedThreads,
+          threadDepths,
+          expandedThreadKeys,
+          activePathKeys,
+        });
+  const visibleThreadKeys = new Set(visibleThreads.map(threadShellKey));
+
+  const snoozedByThreadKey = new Map<string, boolean>();
+  const pinnedByThreadKey = new Map<string, boolean>();
+  const settledByThreadKey = new Map<string, boolean>();
+  let snoozedCount = 0;
+  let nextSnoozeWakeAt: string | null = null;
+  for (const thread of searchedThreads) {
+    const key = threadShellKey(thread);
+    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+    const snoozed = supportsSnooze && effectiveSnoozed(thread, { now });
+    snoozedByThreadKey.set(key, snoozed);
+    pinnedByThreadKey.set(key, !snoozed && thread.pinnedAt != null);
+    if (
+      snoozed &&
+      thread.snoozedUntil != null &&
+      (nextSnoozeWakeAt === null ||
+        parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
+    ) {
+      nextSnoozeWakeAt = thread.snoozedUntil;
+    }
+    if (snoozed) snoozedCount += 1;
+    const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
+    settledByThreadKey.set(key, supportsSettlement && thread.settledOverride === "settled");
+  }
+
+  // Partition whole visible lineage groups. Classifying flattened rows
+  // independently can move an auto-settled parent away from its running
+  // child, while slicing the settled tail can hide part of a selected path.
+  type LineageGroup = [EnvironmentThreadShell, ...EnvironmentThreadShell[]];
+  const lineageGroups: LineageGroup[] = [];
+  for (const thread of searchedThreads) {
+    const depth = threadDepths.get(threadShellKey(thread)) ?? 0;
+    const currentGroup = lineageGroups.at(-1);
+    if (depth === 0 || currentGroup === undefined) {
+      lineageGroups.push([thread]);
+    } else {
+      currentGroup.push(thread);
+    }
+  }
+  const activeGroups: LineageGroup[] = [];
+  const pinnedGroups: LineageGroup[] = [];
+  const snoozedGroups: LineageGroup[] = [];
+  const settledGroups: LineageGroup[] = [];
+  for (const group of lineageGroups) {
+    // Snooze is per thread. Shelve a snoozed thread together with its own
+    // descendants, but leave an unsnoozed ancestor and sibling subtrees in
+    // their ordinary lifecycle partition. A snoozed root naturally captures
+    // the entire lineage without allowing its children to be promoted.
+    const remainingGroup: EnvironmentThreadShell[] = [];
+    let currentSnoozedGroup: LineageGroup | null = null;
+    let currentSnoozedDepth = Number.POSITIVE_INFINITY;
+    for (const thread of group) {
+      const key = threadShellKey(thread);
+      const depth = threadDepths.get(key) ?? 0;
+      if (currentSnoozedGroup !== null && depth > currentSnoozedDepth) {
+        currentSnoozedGroup.push(thread);
+        continue;
+      }
+      currentSnoozedGroup = null;
+      if (snoozedByThreadKey.get(key) === true) {
+        currentSnoozedGroup = [thread];
+        currentSnoozedDepth = depth;
+        snoozedGroups.push(currentSnoozedGroup);
+      } else {
+        remainingGroup.push(thread);
+      }
+    }
+    if (remainingGroup.length === 0) continue;
+    const remainingLineageGroup = remainingGroup as LineageGroup;
+    const containsRunningSubagent = remainingLineageGroup.some(
+      (thread) =>
+        thread.parentRelation?.kind === "subagent" && thread.parentRelation.status === "running",
+    );
+    const everyThreadSettled = remainingLineageGroup.every(
+      (thread) => settledByThreadKey.get(threadShellKey(thread)) === true,
+    );
+    const containsPinnedThread = remainingLineageGroup.some(
+      (thread) => pinnedByThreadKey.get(threadShellKey(thread)) === true,
+    );
+    // Selection affects lineage visibility, not lifecycle classification.
+    // Running descendants override settlement unless that running subtree is
+    // itself snoozed, in which case it has already moved to the shelf above.
+    if (everyThreadSettled) {
+      settledGroups.push(remainingLineageGroup);
+    } else if (containsPinnedThread) {
+      pinnedGroups.push(remainingLineageGroup);
+    } else if (containsRunningSubagent) {
+      activeGroups.push(remainingLineageGroup);
+    } else {
+      activeGroups.push(remainingLineageGroup);
+    }
+  }
+  const runningSubagentThreadKeys = new Set(
+    scopedThreads
+      .filter(
+        (thread) =>
+          thread.parentRelation?.kind === "subagent" &&
+          (thread.parentRelation.status === "running" || thread.session?.status === "running"),
+      )
+      .map(threadShellKey),
+  );
+  const descendantCountByThreadKey = threadListV2DescendantCounts(
+    scopedThreads,
+    runningSubagentThreadKeys,
+  );
+
+  // Lineage traversal already sorts active roots by creation. Re-sorting the
+  // flattened rows would promote children to root positions. Settled groups
+  // retain their internal lineage order while sorting by root recency.
+  const orderedActive = activeGroups.flat();
+  const pinnedGroupByRepresentativeKey = new Map<string, LineageGroup>();
+  const pinnedGroupRepresentatives = pinnedGroups.map((group) => {
+    const representative =
+      group.find((thread) => pinnedByThreadKey.get(threadShellKey(thread)) === true) ?? group[0];
+    pinnedGroupByRepresentativeKey.set(threadShellKey(representative), group);
+    return representative;
+  });
+  const orderedPinned = sortPinnedThreadsByOrderKey(pinnedGroupRepresentatives).flatMap(
+    (representative) => pinnedGroupByRepresentativeKey.get(threadShellKey(representative)) ?? [],
+  );
+  const orderedSnoozedGroups = snoozedGroups
+    .map((group) => ({
+      group,
+      wakeAtMs: group.reduce(
+        (earliest, thread) =>
+          snoozedByThreadKey.get(threadShellKey(thread)) === true && thread.snoozedUntil != null
+            ? Math.min(earliest, parseTimestampMs(thread.snoozedUntil))
+            : earliest,
+        Number.POSITIVE_INFINITY,
+      ),
+    }))
+    .sort((left, right) => left.wakeAtMs - right.wakeAtMs)
+    .map(({ group }) => group);
+  const selectedThreadKey = input.selectedThreadKey ?? null;
+  const visibleSnoozedGroups =
+    input.snoozedShelfExpanded === true
+      ? orderedSnoozedGroups
+      : orderedSnoozedGroups.filter((group) =>
+          group.some((thread) => threadShellKey(thread) === selectedThreadKey),
+        );
+  const orderedSettledGroups = [...settledGroups].sort(
     (left, right) =>
-      parseTimestampMs(resolveSettledThreadTimestamp(right) ?? "") -
-      parseTimestampMs(resolveSettledThreadTimestamp(left) ?? ""),
+      parseTimestampMs(resolveSettledThreadTimestamp(right[0]) ?? "") -
+      parseTimestampMs(resolveSettledThreadTimestamp(left[0]) ?? ""),
   );
   const settledLimit = input.settledLimit ?? Number.POSITIVE_INFINITY;
-  const pagedSettled =
-    orderedSettled.length > settledLimit ? orderedSettled.slice(0, settledLimit) : orderedSettled;
-  const selectedSettled = orderedSettled
-    .slice(pagedSettled.length)
-    .find((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
-  if (selectedSettled !== undefined) pagedSettled.push(selectedSettled);
-  const visibleSettled =
+  const pagedSettledGroups = new Set<LineageGroup>();
+  let pagedSettledCount = 0;
+  if (settledLimit > 0) {
+    for (const group of orderedSettledGroups) {
+      if (pagedSettledCount > 0 && pagedSettledCount + group.length > settledLimit) break;
+      pagedSettledGroups.add(group);
+      pagedSettledCount += group.length;
+    }
+  }
+  const retainedSettledThreadKey = input.activeThreadKey ?? selectedThreadKey;
+  if (retainedSettledThreadKey != null) {
+    const selectedGroup = orderedSettledGroups.find((group) =>
+      group.some((thread) => threadShellKey(thread) === retainedSettledThreadKey),
+    );
+    if (selectedGroup) {
+      pagedSettledGroups.add(selectedGroup);
+    }
+  }
+  const orderedSettled = orderedSettledGroups.flat();
+  const pagedSettled = orderedSettledGroups.filter((group) => pagedSettledGroups.has(group)).flat();
+  const visibleSettledGroups =
     input.settledShelfExpanded !== false
-      ? pagedSettled
-      : pagedSettled.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+      ? orderedSettledGroups.filter((group) => pagedSettledGroups.has(group))
+      : orderedSettledGroups.filter(
+          (group) =>
+            pagedSettledGroups.has(group) &&
+            group.some((thread) => threadShellKey(thread) === retainedSettledThreadKey),
         );
+  const visibleSettled = visibleSettledGroups.flat();
 
   const items: ThreadListV2Item[] = [];
-  for (const thread of sortPinnedThreadsByOrderKey(pinned)) {
+  for (const thread of orderedPinned) {
+    const key = threadShellKey(thread);
+    if (!visibleThreadKeys.has(key)) continue;
     items.push({
       thread,
       variant: "card",
+      depth: threadDepths.get(key) ?? 0,
+      descendantCount: descendantCountByThreadKey.get(key) ?? 0,
+      descendantsExpanded: expandedThreadKeys.has(key),
       snoozed: false,
-      pinned: true,
+      pinned: pinnedByThreadKey.get(key) === true,
       isLast: false,
     });
   }
   for (const thread of orderedActive) {
+    const key = threadShellKey(thread);
+    if (!visibleThreadKeys.has(key)) continue;
     items.push({
       thread,
       variant: "card",
+      depth: threadDepths.get(key) ?? 0,
+      descendantCount: descendantCountByThreadKey.get(key) ?? 0,
+      descendantsExpanded: expandedThreadKeys.has(key),
       snoozed: false,
       pinned: false,
       isLast: false,
     });
   }
-  const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
-  for (const thread of visibleSnoozed) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: true,
-      pinned: false,
-      isLast: false,
-    });
+  const snoozedShelfHeaderIndex = orderedSnoozedGroups.length > 0 ? items.length : null;
+  for (const group of visibleSnoozedGroups) {
+    const rootDepth = threadDepths.get(threadShellKey(group[0])) ?? 0;
+    const selectedPathKeys = threadListV2ActivePathKeys(group, selectedThreadKey);
+    const visibleSnoozedKeys = new Set<string>();
+    for (const thread of group) {
+      const key = threadShellKey(thread);
+      const depth = Math.max(0, (threadDepths.get(key) ?? rootDepth) - rootDepth);
+      const parentKey = threadListV2ParentKey(thread);
+      const visible =
+        query.length > 0 ||
+        depth === 0 ||
+        selectedPathKeys.has(key) ||
+        (parentKey !== null &&
+          visibleSnoozedKeys.has(parentKey) &&
+          expandedThreadKeys.has(parentKey));
+      if (!visible) continue;
+      visibleSnoozedKeys.add(key);
+      items.push({
+        thread,
+        variant: "slim",
+        depth,
+        descendantCount: descendantCountByThreadKey.get(key) ?? 0,
+        descendantsExpanded: expandedThreadKeys.has(key),
+        snoozed: snoozedByThreadKey.get(key) === true,
+        pinned: pinnedByThreadKey.get(key) === true,
+        isLast: false,
+      });
+    }
   }
   const settledShelfHeaderIndex = orderedSettled.length > 0 ? items.length : null;
   for (const thread of visibleSettled) {
+    const key = threadShellKey(thread);
+    if (!visibleThreadKeys.has(key)) continue;
     items.push({
       thread,
       variant: "slim",
+      depth: threadDepths.get(key) ?? 0,
+      descendantCount: descendantCountByThreadKey.get(key) ?? 0,
+      descendantsExpanded: expandedThreadKeys.has(key),
       snoozed: false,
       pinned: false,
       isLast: false,
@@ -459,10 +671,97 @@ export function buildThreadListV2Items(input: {
   return {
     items,
     hiddenSettledCount: orderedSettled.length - pagedSettled.length,
-    snoozedCount: orderedSnoozed.length,
+    snoozedCount,
     snoozedShelfHeaderIndex,
     settledCount: orderedSettled.length,
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
   };
+}
+
+function threadListV2ParentKey(thread: EnvironmentThreadShell): string | null {
+  const relation = thread.parentRelation;
+  return relation?.kind === "subagent"
+    ? `${thread.environmentId}:${relation.parentThreadId}`
+    : null;
+}
+
+export function threadListV2DescendantCounts(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  countedThreadKeys?: ReadonlySet<string>,
+): ReadonlyMap<string, number> {
+  const threadKeys = new Set(threads.map(threadShellKey));
+  const childrenByParentKey = new Map<string, EnvironmentThreadShell[]>();
+  for (const thread of threads) {
+    const parentKey = threadListV2ParentKey(thread);
+    if (!parentKey || !threadKeys.has(parentKey)) continue;
+    const children = childrenByParentKey.get(parentKey);
+    if (children) {
+      children.push(thread);
+    } else {
+      childrenByParentKey.set(parentKey, [thread]);
+    }
+  }
+
+  const counts = new Map<string, number>();
+  for (const thread of threads) {
+    const rootKey = threadShellKey(thread);
+    const visited = new Set<string>([rootKey]);
+    const pending = [...(childrenByParentKey.get(rootKey) ?? [])];
+    let count = 0;
+    while (pending.length > 0) {
+      const descendant = pending.pop();
+      if (!descendant) continue;
+      const descendantKey = threadShellKey(descendant);
+      if (visited.has(descendantKey)) continue;
+      visited.add(descendantKey);
+      if (!countedThreadKeys || countedThreadKeys.has(descendantKey)) {
+        count += 1;
+      }
+      pending.push(...(childrenByParentKey.get(descendantKey) ?? []));
+    }
+    if (count > 0) counts.set(rootKey, count);
+  }
+  return counts;
+}
+
+function threadListV2ActivePathKeys(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  activeThreadKey: string | null | undefined,
+): ReadonlySet<string> {
+  const path = new Set<string>();
+  if (!activeThreadKey) return path;
+  const threadByKey = new Map(threads.map((thread) => [threadShellKey(thread), thread] as const));
+  let current = threadByKey.get(activeThreadKey) ?? null;
+  while (current) {
+    const key = threadShellKey(current);
+    if (path.has(key)) break;
+    path.add(key);
+    const parentKey = threadListV2ParentKey(current);
+    current = parentKey ? (threadByKey.get(parentKey) ?? null) : null;
+  }
+  return path;
+}
+
+function filterThreadListV2ExpandedLineage(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  readonly threadDepths: ReadonlyMap<string, number>;
+  readonly expandedThreadKeys: ReadonlySet<string>;
+  readonly activePathKeys: ReadonlySet<string>;
+}): EnvironmentThreadShell[] {
+  const visibleKeys = new Set<string>();
+  const result: EnvironmentThreadShell[] = [];
+  for (const thread of input.threads) {
+    const key = threadShellKey(thread);
+    const depth = input.threadDepths.get(key) ?? 0;
+    const parentKey = threadListV2ParentKey(thread);
+    const visible =
+      depth === 0 ||
+      input.activePathKeys.has(key) ||
+      (parentKey !== null && visibleKeys.has(parentKey) && input.expandedThreadKeys.has(parentKey));
+    if (!visible) continue;
+    visibleKeys.add(key);
+    result.push(thread);
+  }
+  return result;
 }

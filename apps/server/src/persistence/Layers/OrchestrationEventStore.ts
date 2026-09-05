@@ -72,7 +72,7 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
   sequenceExclusive: NonNegativeInt,
   limit: Schema.Number,
 });
-const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
+export const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
 
 function inferActorKind(

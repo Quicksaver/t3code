@@ -4,7 +4,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   activeThreadAnchorTimestampMs,
-  getThreadSortTimestamp,
+  getLatestThreadSortTimestamp,
   resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
@@ -15,15 +15,16 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
+
+export { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription. Each prewarmed
-// thread holds a live, fully hydrated detail subscription (all messages and
-// activities, growing as agents work) for as long as the row stays visible,
-// so this limit is a direct renderer-heap and server-load multiplier — keep
-// it small; cold opens still render instantly from the cached snapshot.
+// nearby thread usually reuses an already-hot subscription.
+// Each prewarmed thread holds a live, fully hydrated detail subscription, so
+// keep the bound deliberately small; cold opens still use cached snapshots.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // A small buffer keeps the next few rows warm without leasing every row that
 // content-visibility leaves mounted below the scroll viewport.
@@ -76,13 +77,11 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   if (value !== null) return value;
   return key !== null && retained.current?.key === key ? retained.current.value : null;
 }
-
 // The list already reaches its destination through sortable transforms while
 // the pointer is down. dnd-kit's default also animates the committed DOM order
 // after release, replaying the same movement across every affected row.
 export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
-
 type SidebarProject = {
   id: string;
   title: string;
@@ -147,15 +146,20 @@ export async function archiveSelectedThreadEntries<
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
+  canUseLifecycleActions: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
   return [
     { id: "mark-unread", label: `Mark unread (${input.count})` },
-    {
-      id: "archive",
-      label: `Archive (${input.count})`,
-      disabled: input.hasRunningThread,
-    },
-    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+    ...(input.canUseLifecycleActions
+      ? [
+          {
+            id: "archive" as const,
+            label: `Archive (${input.count})`,
+            disabled: input.hasRunningThread,
+          },
+          { id: "delete" as const, label: `Delete (${input.count})`, destructive: true },
+        ]
+      : []),
   ];
 }
 
@@ -311,6 +315,16 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+export function canUseSelectedRootThreadLifecycleActions(
+  threadKeys: readonly string[],
+  threadByKey: ReadonlyMap<string, Pick<SidebarThreadSummary, "parentRelation">>,
+): boolean {
+  return threadKeys.every((threadKey) => {
+    const thread = threadByKey.get(threadKey);
+    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
+  });
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -891,10 +905,7 @@ export function getProjectSortTimestamp(
   sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (projectThreads.length > 0) {
-    return projectThreads.reduce(
-      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
-      Number.NEGATIVE_INFINITY,
-    );
+    return getLatestThreadSortTimestamp(projectThreads, sortOrder);
   }
 
   if (sortOrder === "created_at") {
