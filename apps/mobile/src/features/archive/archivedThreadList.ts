@@ -157,15 +157,28 @@ export function archivedThreadTimestampValue(
   field: ArchivedThreadSortField,
 ): string {
   if (field === "createdAt" || thread.archivedAt === null) return thread.createdAt;
-  return Number.isNaN(Date.parse(thread.archivedAt)) ? thread.createdAt : thread.archivedAt;
+  return thread.archivedAt;
 }
 
 function archivedThreadTimestamp(
   thread: Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
   field: ArchivedThreadSortField,
-): number {
+): number | null {
   const timestamp = Date.parse(archivedThreadTimestampValue(thread, field));
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+  if (!Number.isNaN(timestamp)) return timestamp;
+  return field === "archivedAt" ? null : 0;
+}
+
+function makeArchivedTimestampOrder(
+  direction: ArchivedThreadSortDirection,
+): Order.Order<number | null> {
+  const timestampOrder = direction === "asc" ? Order.Number : Order.flip(Order.Number);
+  return Order.make((left, right) => {
+    if (left === null && right === null) return 0;
+    if (left === null) return 1;
+    if (right === null) return -1;
+    return timestampOrder(left, right);
+  });
 }
 
 export function formatArchivedThreadRelativeTime(input: string): string | null {
@@ -238,8 +251,10 @@ export function compareArchivedThreads(
 ): number {
   const leftTimestamp = archivedThreadTimestamp(left, sort.field);
   const rightTimestamp = archivedThreadTimestamp(right, sort.field);
-  const timestampComparison =
-    sort.direction === "asc" ? leftTimestamp - rightTimestamp : rightTimestamp - leftTimestamp;
+  const timestampComparison = makeArchivedTimestampOrder(sort.direction)(
+    leftTimestamp,
+    rightTimestamp,
+  );
   return timestampComparison || left.id.localeCompare(right.id);
 }
 
@@ -315,25 +330,15 @@ export function buildArchivedThreadGroups(input: {
     groups,
     Order.mapInput(
       Order.Struct({
-        timestamp: input.sort.direction === "asc" ? Order.Number : Order.flip(Order.Number),
+        timestamp: makeArchivedTimestampOrder(input.sort.direction),
         title: Order.String,
         key: Order.String,
       }),
-      (group: ArchivedThreadGroup) => {
-        let timestamp = archivedThreadTimestamp(group.threads[0]!, input.sort.field);
-        for (let index = 1; index < group.threads.length; index += 1) {
-          const candidate = archivedThreadTimestamp(group.threads[index]!, input.sort.field);
-          timestamp =
-            input.sort.direction === "asc"
-              ? Math.min(timestamp, candidate)
-              : Math.max(timestamp, candidate);
-        }
-        return {
-          timestamp,
-          title: group.project.title,
-          key: group.key,
-        };
-      },
+      (group: ArchivedThreadGroup) => ({
+        timestamp: archivedThreadTimestamp(group.threads[0]!, input.sort.field),
+        title: group.project.title,
+        key: group.key,
+      }),
     ),
   );
 }

@@ -1,9 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import {
-  type EnvironmentId,
-  type EnvironmentMachineKind,
-  resolveEnvironmentMachineKind,
-} from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { MenuAction, NativeActionEvent } from "@react-native-menu/menu";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { SymbolView } from "../../components/AppSymbol";
@@ -25,10 +21,9 @@ import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSw
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useServerConfigs } from "../../state/entities";
+import { useThemeColor } from "../../lib/useThemeColor";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import {
   createNativeMailSearchToolbarItem,
@@ -54,7 +49,6 @@ type ArchivedThreadListItem =
       readonly kind: "project";
       readonly key: string;
       readonly environmentLabel: string | null;
-      readonly environmentMachine: EnvironmentMachineKind;
       readonly expanded: boolean;
       readonly group: ArchivedThreadGroup;
       readonly isSearching: boolean;
@@ -70,11 +64,6 @@ type ArchivedThreadListItem =
       readonly thread: EnvironmentThreadShell;
     };
 
-// A lowercase module-level wrapper avoids react(capitalized-calls), which otherwise makes React Compiler skip this screen.
-function createNativeScrollGesture() {
-  return Gesture.Native();
-}
-
 function ArchivedThreadsHeader(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly searchQuery: string;
@@ -88,11 +77,12 @@ function ArchivedThreadsHeader(props: {
   const { width } = useWindowDimensions();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const { onEnvironmentChange, onSortChange } = props;
   const hasCustomFilter =
     props.selectedEnvironmentId !== null ||
     props.sort.field !== "archivedAt" ||
     props.sort.direction !== "desc";
+  const searchIconColor = useThemeColor("--color-icon");
+  const searchTextColor = useThemeColor("--color-foreground");
   const usesNativeChrome = Platform.OS === "ios";
   const usesCompactMailToolbar =
     Platform.OS === "ios" && width < 700 && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
@@ -162,20 +152,20 @@ function ArchivedThreadsHeader(props: {
     (event: { nativeEvent: { event: string } }) => {
       const action = event.nativeEvent.event;
       if (action === "environment:all") {
-        onEnvironmentChange(null);
+        props.onEnvironmentChange(null);
       } else if (action.startsWith("environment:")) {
-        onEnvironmentChange(action.slice("environment:".length) as EnvironmentId);
+        props.onEnvironmentChange(action.slice("environment:".length) as EnvironmentId);
       } else if (action.startsWith("sort:")) {
         const [, field, direction] = action.split(":");
         if (
           (field === "archivedAt" || field === "createdAt") &&
           (direction === "asc" || direction === "desc")
         ) {
-          onSortChange({ field, direction });
+          props.onSortChange({ field, direction });
         }
       }
     },
-    [onEnvironmentChange, onSortChange],
+    [props.onEnvironmentChange, props.onSortChange],
   );
 
   if (Platform.OS === "android") {
@@ -201,7 +191,7 @@ function ArchivedThreadsHeader(props: {
               <SymbolView
                 name="chevron.left"
                 size={24}
-                tintColorClassName={"accent-foreground"}
+                tintColor={searchTextColor}
                 type="monochrome"
               />
             </Pressable>
@@ -209,7 +199,7 @@ function ArchivedThreadsHeader(props: {
               <SymbolView
                 name="magnifyingglass"
                 size={17}
-                tintColorClassName={"accent-icon"}
+                tintColor={searchIconColor}
                 type="monochrome"
               />
               <TextInput
@@ -239,7 +229,7 @@ function ArchivedThreadsHeader(props: {
                       : "line.3.horizontal.decrease.circle"
                   }
                   size={16}
-                  tintColorClassName={"accent-icon"}
+                  tintColor={searchIconColor}
                   type="monochrome"
                 />
               </Pressable>
@@ -449,6 +439,7 @@ function ArchivedSortButton(props: {
   readonly sort: ArchivedThreadSortState;
   readonly onSortChange: (sort: ArchivedThreadSortState) => void;
 }) {
+  const iconColor = useThemeColor("--color-icon-subtle");
   const active = props.sort.field === props.field;
   return (
     <Pressable
@@ -468,7 +459,7 @@ function ArchivedSortButton(props: {
         <SymbolView
           name={props.sort.direction === "asc" ? "chevron.up" : "chevron.down"}
           size={9}
-          tintColorClassName={"accent-icon-subtle"}
+          tintColor={iconColor}
           type="monochrome"
         />
       ) : (
@@ -480,7 +471,6 @@ function ArchivedSortButton(props: {
 
 function ProjectGroupHeader(props: {
   readonly environmentLabel: string | null;
-  readonly environmentMachine: EnvironmentMachineKind;
   readonly expanded: boolean;
   readonly group: ArchivedThreadGroup;
   readonly isBusy: boolean;
@@ -491,6 +481,7 @@ function ProjectGroupHeader(props: {
   readonly onToggle: () => void;
   readonly sort: ArchivedThreadSortState;
 }) {
+  const iconColor = useThemeColor("--color-icon-subtle");
   const scopeLabel = props.isSearching ? "matching" : "all";
   const actions = useMemo<MenuAction[]>(
     () => [
@@ -521,7 +512,7 @@ function ProjectGroupHeader(props: {
           <SymbolView
             name={props.expanded ? "chevron.down" : "chevron.right"}
             size={11}
-            tintColorClassName={"accent-icon-subtle"}
+            tintColor={iconColor}
             type="monochrome"
           />
           <ProjectFavicon
@@ -538,16 +529,9 @@ function ProjectGroupHeader(props: {
             {props.group.threads.length}
           </Text>
           {props.environmentLabel ? (
-            <View className="max-w-[32%] flex-row items-center gap-1">
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={10}
-                tintColorClassName="accent-foreground-tertiary"
-              />
-              <Text className="shrink text-2xs text-foreground-tertiary" numberOfLines={1}>
-                {props.environmentLabel}
-              </Text>
-            </View>
+            <Text className="max-w-[32%] text-2xs text-foreground-tertiary" numberOfLines={1}>
+              {props.environmentLabel}
+            </Text>
           ) : null}
         </Pressable>
         {props.isBusy ? (
@@ -557,7 +541,7 @@ function ProjectGroupHeader(props: {
             className="size-9 items-center justify-center rounded-full active:bg-subtle"
             disabled
           >
-            <ActivityIndicator colorClassName={"accent-icon-subtle"} size="small" />
+            <ActivityIndicator color={iconColor} size="small" />
           </Pressable>
         ) : props.isReserved ? (
           <Pressable
@@ -566,12 +550,7 @@ function ProjectGroupHeader(props: {
             className="size-9 items-center justify-center rounded-full opacity-50"
             disabled
           >
-            <SymbolView
-              name="ellipsis"
-              size={17}
-              tintColorClassName={"accent-icon-subtle"}
-              type="monochrome"
-            />
+            <SymbolView name="ellipsis" size={17} tintColor={iconColor} type="monochrome" />
           </Pressable>
         ) : (
           <ControlPillMenu
@@ -587,12 +566,7 @@ function ProjectGroupHeader(props: {
               accessibilityRole="button"
               className="size-9 items-center justify-center rounded-full active:bg-subtle"
             >
-              <SymbolView
-                name="ellipsis"
-                size={17}
-                tintColorClassName={"accent-icon-subtle"}
-                type="monochrome"
-              />
+              <SymbolView name="ellipsis" size={17} tintColor={iconColor} type="monochrome" />
             </Pressable>
           </ControlPillMenu>
         )}
@@ -636,7 +610,9 @@ function ArchivedThreadRow(props: {
   readonly thread: EnvironmentThreadShell;
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const { onDelete, onUnarchive } = props;
+  const cardColor = useThemeColor("--color-card");
+  const iconColor = useThemeColor("--color-icon-subtle");
+  const separatorColor = useThemeColor("--color-separator");
   const archivedTimestamp = formatArchivedThreadRelativeTime(
     archivedThreadTimestampValue(props.thread, "archivedAt"),
   );
@@ -645,7 +621,7 @@ function ArchivedThreadRow(props: {
     Boolean(part),
   );
   const isBlocked = props.isReserved || props.isBusy;
-  const swipeDeleteAction = isBlocked ? () => undefined : onDelete;
+  const onDelete = isBlocked ? () => undefined : props.onDelete;
   const menuActions = useMemo<MenuAction[]>(
     () => [
       { id: "unarchive", title: "Unarchive", image: "arrow.uturn.backward" },
@@ -655,20 +631,22 @@ function ArchivedThreadRow(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "unarchive") onUnarchive();
-      if (nativeEvent.event === "delete") onDelete();
+      if (nativeEvent.event === "unarchive") props.onUnarchive();
+      if (nativeEvent.event === "delete") props.onDelete();
     },
-    [onDelete, onUnarchive],
+    [props.onDelete, props.onUnarchive],
   );
   const rowContent = (
     <View
-      className={`min-h-14 flex-row items-center gap-2 bg-card px-4 py-2.5 ${props.isLast ? "" : "border-b border-separator"}`}
+      className="min-h-14 flex-row items-center gap-2 bg-card px-4 py-2.5"
+      style={{
+        borderBottomColor: separatorColor,
+        borderBottomWidth: props.isLast ? 0 : 1,
+      }}
     >
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="flex-row items-center gap-2">
-          {props.isBusy ? (
-            <ActivityIndicator colorClassName={"accent-icon-subtle"} size="small" />
-          ) : null}
+          {props.isBusy ? <ActivityIndicator color={iconColor} size="small" /> : null}
           <Text
             className="min-w-0 flex-1 text-sm font-t3-bold leading-snug text-foreground"
             numberOfLines={1}
@@ -692,6 +670,7 @@ function ArchivedThreadRow(props: {
   );
   return (
     <ThreadSwipeable
+      backgroundColor={cardColor}
       // Round + clip the swipeable container so the group's corners stay
       // rounded while rows swipe; the row itself stays square inside.
       containerStyle={{
@@ -703,14 +682,14 @@ function ArchivedThreadRow(props: {
       }}
       enabled={!isBlocked}
       fullSwipeWidth={windowWidth - 32}
-      onDelete={swipeDeleteAction}
+      onDelete={onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
         accessibilityLabel: `Unarchive ${props.thread.title}`,
         icon: "arrow.uturn.backward",
         label: "Unarchive",
-        onPress: isBlocked ? () => undefined : onUnarchive,
+        onPress: isBlocked ? () => undefined : props.onUnarchive,
       }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
@@ -769,21 +748,14 @@ export function ArchivedThreadsScreen(props: {
   readonly onSortChange: (sort: ArchivedThreadSortState) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
-  const {
-    busyThreadKeys,
-    onDeleteThread,
-    onProjectAction,
-    onSortChange,
-    onUnarchiveThread,
-    reservedThreadKeys,
-    sort,
-  } = props;
+  const { onDeleteThread, onUnarchiveThread } = props;
   const [expandedProjectKeys, setExpandedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [listViewportHeight, setListViewportHeight] = useState(0);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
-  const archiveScrollGesture = useMemo(() => createNativeScrollGesture(), []);
+  const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
+  const refreshTint = useThemeColor("--color-icon");
   const environmentLabelsById = useMemo(
     () =>
       new Map(
@@ -791,7 +763,6 @@ export function ArchivedThreadsScreen(props: {
       ),
     [props.environments],
   );
-  const serverConfigs = useServerConfigs();
   const isSearching = props.searchQuery.trim().length > 0;
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
     const items: ArchivedThreadListItem[] = [];
@@ -802,16 +773,15 @@ export function ArchivedThreadsScreen(props: {
         kind: "project",
         key: `${group.key}:project`,
         environmentLabel,
-        environmentMachine: resolveEnvironmentMachineKind(
-          serverConfigs.get(group.project.environmentId) ?? null,
-        ),
         expanded,
         group,
         isSearching,
         isReserved: group.threads.some((thread) =>
-          reservedThreadKeys.has(archivedThreadActionKey(thread)),
+          props.reservedThreadKeys.has(archivedThreadActionKey(thread)),
         ),
-        isBusy: group.threads.some((thread) => busyThreadKeys.has(archivedThreadActionKey(thread))),
+        isBusy: group.threads.some((thread) =>
+          props.busyThreadKeys.has(archivedThreadActionKey(thread)),
+        ),
       });
 
       if (!expanded) continue;
@@ -831,10 +801,9 @@ export function ArchivedThreadsScreen(props: {
     environmentLabelsById,
     expandedProjectKeys,
     isSearching,
-    busyThreadKeys,
+    props.busyThreadKeys,
     props.groups,
-    reservedThreadKeys,
-    serverConfigs,
+    props.reservedThreadKeys,
   ]);
   const toggleProject = useCallback((projectKey: string) => {
     setExpandedProjectKeys((current) => {
@@ -863,23 +832,22 @@ export function ArchivedThreadsScreen(props: {
         return (
           <ProjectGroupHeader
             environmentLabel={item.environmentLabel}
-            environmentMachine={item.environmentMachine}
             expanded={item.expanded}
             group={item.group}
             isBusy={item.isBusy}
             isReserved={item.isReserved}
             isSearching={item.isSearching}
             onProjectAction={(action) =>
-              onProjectAction(
+              props.onProjectAction(
                 item.group.project.title,
                 item.group.threads,
                 item.isSearching ? "matching" : "all",
                 action,
               )
             }
-            onSortChange={onSortChange}
+            onSortChange={props.onSortChange}
             onToggle={() => toggleProject(item.group.key)}
-            sort={sort}
+            sort={props.sort}
           />
         );
       }
@@ -889,8 +857,8 @@ export function ArchivedThreadsScreen(props: {
           environmentLabel={item.environmentLabel}
           isFirst={item.isFirst}
           isLast={item.isLast}
-          isBusy={busyThreadKeys.has(archivedThreadActionKey(item.thread))}
-          isReserved={reservedThreadKeys.has(archivedThreadActionKey(item.thread))}
+          isBusy={props.busyThreadKeys.has(archivedThreadActionKey(item.thread))}
+          isReserved={props.reservedThreadKeys.has(archivedThreadActionKey(item.thread))}
           onDelete={() => onDeleteThread(item.thread)}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -906,11 +874,11 @@ export function ArchivedThreadsScreen(props: {
       handleSwipeableWillOpen,
       onDeleteThread,
       onUnarchiveThread,
-      busyThreadKeys,
-      reservedThreadKeys,
-      onProjectAction,
-      onSortChange,
-      sort,
+      props.busyThreadKeys,
+      props.reservedThreadKeys,
+      props.onProjectAction,
+      props.onSortChange,
+      props.sort,
       toggleProject,
     ],
   );
@@ -918,7 +886,7 @@ export function ArchivedThreadsScreen(props: {
     if (isInitialLoad) {
       return (
         <View className="items-center py-16">
-          <ActivityIndicator colorClassName={"accent-icon"} />
+          <ActivityIndicator color={refreshTint} />
           <Text className="mt-3 text-sm text-foreground-muted">Loading archive...</Text>
         </View>
       );
@@ -934,7 +902,7 @@ export function ArchivedThreadsScreen(props: {
         title={isFiltered ? "No matching threads" : "No archived threads"}
       />
     );
-  }, [isFiltered, isInitialLoad]);
+  }, [isFiltered, isInitialLoad, refreshTint]);
 
   return (
     <View className="flex-1 bg-sheet">
@@ -983,7 +951,7 @@ export function ArchivedThreadsScreen(props: {
             <RefreshControl
               onRefresh={props.onRefresh}
               refreshing={props.isLoading && !isInitialLoad}
-              tintColorClassName={String("accent-icon")}
+              tintColor={String(refreshTint)}
             />
           }
           renderItem={renderListItem}
