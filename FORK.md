@@ -10,6 +10,40 @@ The fork integration boundary is the attached `base/main` control branch at exac
 
 For diagnosing existing verification failures, obtain native control results through the main checkout's `scripts/worktree-baseline.ts` `ensure` command; agents must not install or run checks in the control worktree directly. The helper returns the cached manifest for the exact control commit and host/toolchain fingerprint or elects one caller to produce it while concurrent callers wait. A failure seen in a fork worktree is pre-existing only when the same failure appears in the same-host manifest. If it does not, fix it in the fork worktree that introduced or exposed it.
 
+## Fork Documentation And Worktree Orchestration
+
+**Worktree branch:** `none`
+
+`AGENTS.md` points implementation and evaluation work at this file. A task that only orchestrates worktree subagents follows its invoked skill instructions without loading unrelated documentation. Each feature or fix worktree keeps its branch-only contract in `BRANCH_DETAILS.md`; `fork/main` consolidates that material here and must not track the branch-specific `BRANCH_DETAILS.md` files themselves.
+
+Fork assembly is incremental. Apply one branch-owned commit at a time, complete any required integration glue for that commit, and update the affected `FORK.md` sections before applying the next branch commit. Do not defer those documentation updates to an end-of-series cleanup. A branch documentation change that affects the integrated result must be reflected here during the same step.
+
+The repository-local orchestration skills divide responsibilities as follows:
+
+- `$worktrees` is the worker contract for exact-worktree execution, same-host control comparison, runtime leases, cross-host source transfer, Android and iOS isolation, and owned teardown.
+- `$spawn-worktree` dispatches one worker to one absolute worktree path with only its branch task and required skills. It requires the worker to read that worktree's `BRANCH_DETAILS.md`, supervises runtime ownership without leaking orchestration context into the child prompt, and performs exact-worktree lease cleanup only after the worker is terminal.
+- `$spawn-worktrees` inventories active non-`main` worktrees and dispatches through `$spawn-worktree`, explicitly excluding the `base/main` control worktree from worker tasks.
+- `$update-worktree` merges the control boundary into one feature or fix branch, assesses only the interaction between incoming upstream work and that branch's customizations, adapts and documents the branch, and keeps all commits local.
+- `$update-worktrees` first fetches upstream and fast-forwards a clean attached `base/main` to the selected `upstream/main` boundary. Only after verifying that exact control state does it dispatch the individual branch updates; it does not mutate the other worktrees itself.
+- `$pick-from-worktrees` inventories each branch's upstream merges and non-upstream commits, brings the shared upstream range into the integration branch, preserves direct branch commit boundaries where possible, and records integration glue and `FORK.md` corrections separately.
+- `$comments-from-worktrees` delegates each branch's pull-request comments through `$piz-comments`, then invokes `$pick-from-worktrees` when fixes were produced. `$update-prs` delegates pull-request publication through `$piz-pr` without doing branch work in the orchestrator.
+- `$update-unattended` sequences the full maintenance run: update all worktrees, integrate them, push tracked branches, synchronize the Windows and Mac checkouts, and build the configured Windows, macOS, and Android artifacts. Its per-platform command recipes remain authoritative in that skill.
+
+Every repository-local skill above includes matching `agents/openai.yaml` metadata for its user-facing name, description, and invocation policy. Keep that metadata paired with the corresponding `SKILL.md` when a skill is renamed, added, or removed.
+
+Primary files:
+
+- `AGENTS.md`
+- `.agents/skills/worktrees/SKILL.md`
+- `.agents/skills/spawn-worktree/SKILL.md`
+- `.agents/skills/spawn-worktrees/SKILL.md`
+- `.agents/skills/update-worktree/SKILL.md`
+- `.agents/skills/update-worktrees/SKILL.md`
+- `.agents/skills/pick-from-worktrees/SKILL.md`
+- `.agents/skills/comments-from-worktrees/SKILL.md`
+- `.agents/skills/update-prs/SKILL.md`
+- `.agents/skills/update-unattended/SKILL.md`
+
 ## Local Rust Toolchain Overrides
 
 **Worktree branch:** `none`
@@ -273,12 +307,16 @@ Build a local macOS arm64 DMG, then hand the install step to Terminal.app so it 
 scripts/install-desktop-dmg-from-t3.zsh
 ```
 
+The macOS handoff selects the newest arm64 DMG under `release`, launches a separately titled Terminal tab, asks the installed app to quit, and mounts the selected image read-only in a task-owned temporary directory. It replaces only `/Applications/T3 Code (Alpha).app`, verifies the installed signature, applies an ad-hoc signature only when the local build is unsigned or already ad-hoc, detaches the image, relaunches the app, and closes the owned Terminal window. Stale mount cleanup is limited to the script's `t3-code-dmg.*` temporary directories.
+
 Build a local Windows x64 installer, then hand the install step to a temporary per-user scheduled task so it can finish after the running T3 Code app and its terminal process tree quit:
 
 ```powershell
 pnpm run dist:desktop:win:x64
 scripts/install-desktop-exe-from-t3.ps1
 ```
+
+The Windows handoff selects the newest x64 installer under `release` and starts one limited, interactive-user scheduled task so installation survives shutdown of the originating T3 Code terminal. Before closing the app it verifies the desktop process by PID, start time, and executable path to prevent PID-reuse mistakes. It waits for every process using that exact executable path, force-stops only those matching processes after the graceful deadline, runs the selected installer silently, and unregisters the one-time task. The task writes a temporary transcript, and a failed update attempts to restart the exact previous executable.
 
 ### Mobile App
 
@@ -413,6 +451,8 @@ Expected behavior:
 - The web connection database v6 upgrade clears only disposable cached thread-detail snapshots, preventing pre-lazy-output caches from hydrating legacy embedded command output after an upgrade.
 
 Provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging live in the directly tested `apps/web/src/lib/workLogActivity.ts` module. `apps/web/src/session-logic.ts` retains timeline ordering, lifecycle collapse, subagent-row composition, and the public work-log API.
+
+The desktop identity regression fixture derives its legacy macOS user-data probe through the injected host path service. This keeps the unchanged identity behavior testable on both Windows and POSIX hosts instead of embedding a POSIX-only expected path.
 
 When reconciling `MessagesTimeline.tsx`, preserve both the expandable activity-row behavior and the `hideEmptyPlaceholder` handling used by the draft hero. Neither concern supersedes the other during upstream merges.
 
@@ -704,6 +744,13 @@ Client ownership:
 Primary reference:
 
 - `MAGI.md`
+
+Supporting operational and security references:
+
+- `MAGI_ARBITRATOR_CODE_REVIEW.md` defines the complete review-and-fix arbitration example, including roster preflight, evidence requirements, proposal handling, and the final consensus condition.
+- `MAGI_ARBITRATOR_PLAN_REFINEMENT.md` defines the document-refinement arbitration example and keeps that workflow separate from implementation authorization.
+- `MAGI_PERSONALITY_CODE_REVIEWER.md` is the complete participant review rubric used by the code-review example; a pointer to an explicit-only provider skill is not a substitute for supplying its contents.
+- `apps/server/src/magi/THREAT_MODEL.md` records Magi's prompt-injection, credential, tool-access, denial-of-service, cancellation, and durable-audit-data trust boundaries.
 
 ### Dev-server testing
 
