@@ -55,14 +55,16 @@ const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: (options) =>
-    makeProviderMaintenanceCapabilities({
+  resolve: (options) => {
+    return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: null,
-      updateExecutable: options?.binaryPath?.trim() || "cursor-agent",
+      updateExecutable: options.binaryPath?.trim() || "cursor-agent",
       updateArgs: ["update"],
       updateLockKey: "cursor-agent",
-    }),
+      platform: options.platform,
+    });
+  },
 };
 
 export type CursorDriverEnv =

@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
@@ -27,6 +28,20 @@ const makeTempDir = (name: string) =>
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
     Effect.map((id) => NodePath.join(NodeOS.tmpdir(), `${name}-${id}`)),
   );
+const makeExecutableTestCommand = (directory: string, command: string): string => {
+  const commandPath = NodePath.join(
+    directory,
+    NodeProcess.platform === "win32" ? `${command}.cmd` : command,
+  );
+  NodeFS.writeFileSync(
+    commandPath,
+    NodeProcess.platform === "win32" ? "@echo off\r\n" : "#!/bin/sh\n",
+  );
+  if (NodeProcess.platform !== "win32") {
+    NodeFS.chmodSync(commandPath, 0o755);
+  }
+  return commandPath;
+};
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
@@ -35,6 +50,23 @@ const packageToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
   homebrewFormula: "package-tool",
+  nativeUpdate: null,
+});
+const packageToolNpmUpdate = {
+  command: "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
+  executable: "npm",
+  args: ["install", "-g", "--allow-scripts=@example/package-tool", "@example/package-tool@latest"],
+  lockKey: "npm-global",
+};
+const fallbackPackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
+  provider: driver("fallbackPackageTool"),
+  npmPackageName: "@example/fallback-package-tool",
+  homebrewFormula: "fallback-package-tool",
+  fallbackUpdate: {
+    executable: "fallback-package-tool",
+    args: ["update"],
+    lockKey: "fallback-package-tool-native",
+  },
   nativeUpdate: null,
 });
 const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
@@ -66,6 +98,7 @@ const staticToolUpdate = makeStaticProviderMaintenanceResolver(
     updateExecutable: "static-tool",
     updateArgs: ["update"],
     updateLockKey: "static-tool",
+    platform: "linux",
   }),
 );
 const installedPackageToolProvider: ServerProvider = {
@@ -84,7 +117,7 @@ const installedPackageToolProvider: ServerProvider = {
 
 it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("reads cached versions through the injectable cache reference", () =>
-    resolveLatestProviderVersion(packageToolUpdate.resolve()).pipe(
+    resolveLatestProviderVersion(packageToolUpdate.resolve({ platform: "linux" })).pipe(
       Effect.provideService(
         ProviderVersionCache,
         new Map([
@@ -112,7 +145,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
     enrichProviderSnapshotWithVersionAdvisory(
       installedPackageToolProvider,
-      packageToolUpdate.resolve(),
+      packageToolUpdate.resolve({ platform: "linux" }),
       {
         enableProviderUpdateChecks: false,
       },
@@ -170,7 +203,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         driver: driver("nativePackageTool"),
         currentVersion: "2.1.110",
         latestVersion: "2.1.117",
-        maintenanceCapabilities: nativePackageToolUpdate.resolve(),
+        maintenanceCapabilities: nativePackageToolUpdate.resolve({
+          platform: "linux",
+        }),
       }),
     ).toMatchObject({
       status: "behind_latest",
@@ -184,7 +219,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   });
 
   it("keeps update commands owned by provider maintenance capabilities", () => {
-    expect(staticToolUpdate.resolve()).toEqual({
+    expect(staticToolUpdate.resolve({ platform: "linux" })).toEqual({
       provider: driver("staticTool"),
       packageName: null,
       update: {
@@ -199,6 +234,216 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it.each([
+    {
+      platform: "win32" as const,
+      command:
+        "& 'C:\\Program Files\\Tool''s\\tool.exe' update 'release candidate' '--token=$env:TOKEN' 'can''t'",
+    },
+    {
+      platform: "linux" as const,
+      command: `'C:\\Program Files\\Tool'"'"'s\\tool.exe' update 'release candidate' '--token=$env:TOKEN' 'can'"'"'t'`,
+    },
+  ])(
+    "formats displayed commands for $platform without changing structured execution values",
+    ({ platform, command }) => {
+      const executable = "C:\\Program Files\\Tool's\\tool.exe";
+      const args = ["update", "release candidate", "--token=$env:TOKEN", "can't"];
+
+      expect(
+        makeProviderMaintenanceCapabilities({
+          provider: driver("quotedTool"),
+          packageName: null,
+          updateExecutable: executable,
+          updateArgs: args,
+          updateLockKey: "quoted-tool",
+          platform,
+        }),
+      ).toEqual({
+        provider: driver("quotedTool"),
+        packageName: null,
+        update: {
+          command,
+          executable,
+          args,
+          lockKey: "quoted-tool",
+        },
+      });
+    },
+  );
+
+  it.effect("renders resolved commands for the injected host platform", () =>
+    Effect.gen(function* () {
+      const options = {
+        binaryPath: "/opt/Package Tools/fallback-package-tool",
+        env: {},
+      };
+      const windows = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        fallbackPackageToolUpdate,
+        options,
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+      const posix = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        fallbackPackageToolUpdate,
+        options,
+      ).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+
+      expect(windows.update?.command).toBe("& '/opt/Package Tools/fallback-package-tool' update");
+      expect(posix.update?.command).toBe("'/opt/Package Tools/fallback-package-tool' update");
+    }),
+  );
+
+  it.each([
+    {
+      label: "a missing binary path",
+      options: { platform: "linux" as const },
+      expected: packageToolNpmUpdate,
+    },
+    {
+      label: "an unresolved bare command",
+      options: {
+        binaryPath: "missing-package-tool",
+        platform: "linux" as const,
+      },
+      expected: packageToolNpmUpdate,
+    },
+    {
+      label: "an explicit unclassified command",
+      options: {
+        binaryPath: "C:\\Tools\\package-tool.exe",
+        platform: "linux" as const,
+      },
+      expected: null,
+    },
+  ])(
+    "keeps standard resolver behavior for $label when fallbackUpdate is omitted",
+    ({ options, expected }) => {
+      expect(packageToolUpdate.resolve(options).update).toEqual(expected);
+    },
+  );
+
+  it.each([
+    {
+      label: "a missing binary path",
+      options: { platform: "linux" as const },
+      executable: "fallback-package-tool",
+      command: "fallback-package-tool update",
+    },
+    {
+      label: "an unresolved bare command",
+      options: {
+        binaryPath: "fallback-package-tool",
+        platform: "linux" as const,
+      },
+      executable: "fallback-package-tool",
+      command: "fallback-package-tool update",
+    },
+    {
+      label: "an explicit unclassified command",
+      options: {
+        binaryPath: "C:\\Tools\\fallback-package-tool.exe",
+        platform: "linux" as const,
+      },
+      executable: "C:\\Tools\\fallback-package-tool.exe",
+      command: "'C:\\Tools\\fallback-package-tool.exe' update",
+    },
+  ])("uses the configured fallback for $label", ({ options, executable, command }) => {
+    expect(fallbackPackageToolUpdate.resolve(options).update).toEqual({
+      command,
+      executable,
+      args: ["update"],
+      lockKey: "fallback-package-tool-native",
+    });
+  });
+
+  it.each([
+    {
+      label: "Vite+",
+      options: {
+        binaryPath: "fallback-package-tool",
+        platform: "linux" as const,
+        resolvedCommandPath: "/Users/test/.vite-plus/bin/fallback-package-tool",
+        realCommandPath: "/Users/test/.vite-plus/bin/fallback-package-tool",
+      },
+      expected: {
+        command: "vp i -g @example/fallback-package-tool",
+        executable: "vp",
+        args: ["i", "-g", "@example/fallback-package-tool"],
+        lockKey: "vite-plus-global",
+      },
+    },
+    {
+      label: "redirected APPDATA npm",
+      options: {
+        binaryPath: "fallback-package-tool",
+        platform: "linux" as const,
+        env: { APPDATA: "D:\\Profiles\\test\\Roaming" },
+        resolvedCommandPath: "D:\\Profiles\\test\\Roaming\\npm\\fallback-package-tool.cmd",
+        realCommandPath: "D:\\Profiles\\test\\Roaming\\npm\\fallback-package-tool.cmd",
+      },
+      expected: {
+        command:
+          "npm install -g --allow-scripts=@example/fallback-package-tool @example/fallback-package-tool@latest",
+        executable: "npm",
+        args: [
+          "install",
+          "-g",
+          "--allow-scripts=@example/fallback-package-tool",
+          "@example/fallback-package-tool@latest",
+        ],
+        lockKey: "npm-global",
+      },
+    },
+    {
+      label: "Homebrew",
+      options: {
+        binaryPath: "fallback-package-tool",
+        platform: "linux" as const,
+        resolvedCommandPath: "/opt/homebrew/bin/fallback-package-tool",
+        realCommandPath:
+          "/opt/homebrew/Cellar/fallback-package-tool/1.0.0/bin/fallback-package-tool",
+      },
+      expected: {
+        command: "brew upgrade fallback-package-tool",
+        executable: "brew",
+        args: ["upgrade", "fallback-package-tool"],
+        lockKey: "homebrew",
+      },
+    },
+  ])("keeps $label updates ahead of the fallback", ({ options, expected }) => {
+    expect(fallbackPackageToolUpdate.resolve(options).update).toEqual(expected);
+  });
+
+  it.each([
+    {
+      commandPath: "C:\\Program Files\\nodejs\\fallback-package-tool.cmd",
+      expectedExecutable: "npm",
+    },
+    {
+      commandPath: "C:\\Program Files (x86)\\nodejs\\fallback-package-tool.ps1",
+      expectedExecutable: "npm",
+    },
+    {
+      commandPath: "C:\\Program Files\\nodejs\\fallback-package-tool.exe",
+      expectedExecutable: "fallback-package-tool",
+    },
+    {
+      commandPath: "C:\\Program Files\\nodejs\\custom\\fallback-package-tool.cmd",
+      expectedExecutable: "fallback-package-tool",
+    },
+  ])(
+    "classifies only direct Program Files npm shims for $commandPath",
+    ({ commandPath, expectedExecutable }) => {
+      expect(
+        fallbackPackageToolUpdate.resolve({
+          binaryPath: "fallback-package-tool",
+          platform: "linux",
+          resolvedCommandPath: commandPath,
+          realCommandPath: commandPath,
+        }).update?.executable,
+      ).toBe(expectedExecutable);
+    },
+  );
+
   it.effect(
     "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",
     () =>
@@ -206,9 +451,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-vite-plus-capabilities");
         const vitePlusBinDir = NodePath.join(tempDir, ".vite-plus", "bin");
         NodeFS.mkdirSync(vitePlusBinDir, { recursive: true });
-        const packageToolPath = NodePath.join(vitePlusBinDir, "package-tool");
-        NodeFS.writeFileSync(packageToolPath, "#!/bin/sh\n");
-        NodeFS.chmodSync(packageToolPath, 0o755);
+        makeExecutableTestCommand(vitePlusBinDir, "package-tool");
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           packageToolUpdate,
@@ -218,7 +461,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               PATH: vitePlusBinDir,
             },
           },
-        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+        );
 
         expect(capabilities).toEqual({
           provider: driver("packageTool"),
@@ -279,9 +522,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
         const pnpmHomeDir = NodePath.join(tempDir, ".local", "share", "pnpm");
         NodeFS.mkdirSync(pnpmHomeDir, { recursive: true });
-        const scopedPackageToolPath = NodePath.join(pnpmHomeDir, "scoped-package-tool");
-        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
+        makeExecutableTestCommand(pnpmHomeDir, "scoped-package-tool");
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           scopedPackageToolUpdate,
@@ -291,7 +532,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               PATH: pnpmHomeDir,
             },
           },
-        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+        );
 
         expect(capabilities).toEqual({
           provider: driver("scopedPackageTool"),
@@ -313,6 +554,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       packageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/package-tool",
+        platform: "linux",
         env: {
           PATH: "",
         },
@@ -339,9 +581,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-native-package-tool-native-capabilities");
         const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
         NodeFS.mkdirSync(nativeBinDir, { recursive: true });
-        const nativePackageToolPath = NodePath.join(nativeBinDir, "native-package-tool");
-        NodeFS.writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
-        NodeFS.chmodSync(nativePackageToolPath, 0o755);
+        makeExecutableTestCommand(nativeBinDir, "native-package-tool");
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
@@ -351,7 +591,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               PATH: nativeBinDir,
             },
           },
-        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+        );
 
         expect(capabilities).toEqual({
           provider: driver("nativePackageTool"),
@@ -376,9 +616,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const tempDir = yield* makeTempDir("t3-scoped-package-tool-native-capabilities");
         const nativeBinDir = NodePath.join(tempDir, ".scoped-package-tool", "bin");
         NodeFS.mkdirSync(nativeBinDir, { recursive: true });
-        const scopedPackageToolPath = NodePath.join(nativeBinDir, "scoped-package-tool");
-        NodeFS.writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-        NodeFS.chmodSync(scopedPackageToolPath, 0o755);
+        makeExecutableTestCommand(nativeBinDir, "scoped-package-tool");
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           scopedPackageToolUpdate,
@@ -388,7 +626,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               PATH: nativeBinDir,
             },
           },
-        ).pipe(Effect.provideService(HostProcessPlatform, "darwin"));
+        );
 
         expect(capabilities).toEqual({
           provider: driver("scopedPackageTool"),
@@ -410,6 +648,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       nativePackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/native-package-tool",
+        platform: "linux",
         env: {
           PATH: "",
         },
@@ -433,6 +672,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     expect(
       scopedPackageToolUpdate.resolve({
         binaryPath: "/opt/homebrew/bin/scoped-package-tool",
+        platform: "linux",
         env: {
           PATH: "",
         },
@@ -561,7 +801,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       },
     });
 
-    expect(claudeUpdate.resolve()).toEqual({
+    expect(claudeUpdate.resolve({ platform: "linux" })).toEqual({
       provider: driver("claudeAgent"),
       packageName: "@anthropic-ai/claude-code",
       update: {
@@ -579,22 +819,6 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
 
         lockKey: "npm-global",
       },
-    });
-  });
-
-  it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
-    expect(
-      packageToolUpdate.resolve({
-        binaryPath: "C:\\Tools\\package-tool\\package-tool.exe",
-        env: {
-          PATH: "",
-          PATHEXT: ".COM;.EXE;.BAT;.CMD",
-        },
-      }),
-    ).toEqual({
-      provider: driver("packageTool"),
-      packageName: "@example/package-tool",
-      update: null,
     });
   });
 });

@@ -18,6 +18,35 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const POSIX_DISPLAY_COMMAND_SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
+const POWERSHELL_DISPLAY_COMMAND_SAFE_TOKEN = /^[A-Za-z0-9_@%+=:./\\-]+$/;
+
+function quotePosixDisplayToken(token: string): string {
+  if (POSIX_DISPLAY_COMMAND_SAFE_TOKEN.test(token)) return token;
+  return `'${token.replaceAll("'", `'"'"'`)}'`;
+}
+
+function quotePowerShellDisplayToken(token: string): string {
+  if (POWERSHELL_DISPLAY_COMMAND_SAFE_TOKEN.test(token)) return token;
+  return `'${token.replaceAll("'", "''")}'`;
+}
+
+/**
+ * Formats a copyable command for the host's conventional interactive shell.
+ * The result targets PowerShell on Windows and a POSIX shell elsewhere. This
+ * is display-only: execution should continue to use the original executable
+ * and argv values without shell parsing.
+ */
+export function formatDisplayCommand(
+  executable: string,
+  args: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+): string {
+  const quoteToken = platform === "win32" ? quotePowerShellDisplayToken : quotePosixDisplayToken;
+  const formattedExecutable = quoteToken(executable);
+  const commandPrefix = platform === "win32" && formattedExecutable !== executable ? "& " : "";
+  return [commandPrefix + formattedExecutable, ...args.map(quoteToken)].join(" ");
+}
 
 type ExecFileSyncLike = (
   file: string,

@@ -51,6 +51,7 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
       updateExecutable: "cursor-agent",
       updateArgs: ["update"],
       updateLockKey: "cursor-agent",
+      platform: "linux",
     });
   }
   return makeProviderMaintenanceCapabilities({
@@ -62,6 +63,7 @@ function lifecycleFor(provider: ProviderDriverKind): ProviderMaintenanceCapabili
         ? ["install", "-g", "opencode-ai@latest"]
         : ["install", "-g", "@openai/codex@latest"],
     updateLockKey: "npm-global",
+    platform: "linux",
   });
 }
 
@@ -275,6 +277,7 @@ describe("providerMaintenanceRunner", () => {
               updateExecutable: "bun",
               updateArgs: ["i", "-g", "@openai/codex@latest"],
               updateLockKey: "bun-global",
+              platform: "linux",
             }),
           ),
       });
@@ -360,6 +363,7 @@ describe("providerMaintenanceRunner", () => {
               updateExecutable: "vp",
               updateArgs: ["i", "-g", "@openai/codex"],
               updateLockKey: "vite-plus-global",
+              platform: "linux",
             }),
           ).pipe(
             Effect.tap(() => Effect.sync(() => assert.strictEqual(instanceId, personalInstanceId))),
@@ -524,6 +528,7 @@ describe("providerMaintenanceRunner", () => {
                   ? ["install", "-g", "opencode-ai@latest"]
                   : ["install", "-g", "@openai/codex@latest"],
               updateLockKey: "npm-global",
+              platform: "linux",
             }),
           ),
       });
@@ -594,6 +599,7 @@ describe("providerMaintenanceRunner", () => {
               updateExecutable: "npm",
               updateArgs: ["install", "-g", "@openai/codex@latest"],
               updateLockKey: "unknown-lock-key",
+              platform: "linux",
             }),
           ),
       });

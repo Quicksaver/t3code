@@ -3,8 +3,9 @@ import {
   type ServerProvider,
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compareSemverVersions } from "@t3tools/shared/semver";
-import { resolveCommandPath } from "@t3tools/shared/shell";
+import { formatDisplayCommand, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +34,7 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  APPDATA: Config.string("APPDATA").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -53,13 +55,14 @@ export interface ProviderMaintenanceCommandAction {
 export interface ProviderMaintenanceCapabilityResolutionOptions {
   readonly binaryPath?: string | null;
   readonly env?: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
   readonly resolvedCommandPath?: string | null;
   readonly realCommandPath?: string | null;
 }
 
 export interface ProviderMaintenanceCapabilitiesResolver {
   readonly resolve: (
-    options?: ProviderMaintenanceCapabilityResolutionOptions,
+    options: ProviderMaintenanceCapabilityResolutionOptions,
   ) => ProviderMaintenanceCapabilities;
 }
 
@@ -67,6 +70,11 @@ export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
   readonly homebrewFormula: string | null;
+  readonly fallbackUpdate?: {
+    readonly executable: string;
+    readonly args: ReadonlyArray<string>;
+    readonly lockKey: string;
+  };
   readonly nativeUpdate: {
     readonly executable: string;
     readonly args: ReadonlyArray<string>;
@@ -100,12 +108,13 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  readonly platform: NodeJS.Platform;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: formatDisplayCommand(input.updateExecutable, input.updateArgs, input.platform),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -121,17 +130,16 @@ export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
 }): ProviderMaintenanceCapabilities {
-  return makeProviderMaintenanceCapabilities({
+  return {
     provider: input.provider,
     packageName: input.packageName,
-    updateExecutable: null,
-    updateArgs: [],
-    updateLockKey: null,
-  });
+    update: null,
+  };
 }
 
 function makeNpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
@@ -149,11 +157,13 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
       `${definition.npmPackageName}@latest`,
     ],
     updateLockKey: "npm-global",
+    platform,
   });
 }
 
 function makeBunGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
@@ -161,11 +171,13 @@ function makeBunGlobalProviderMaintenanceCapabilities(
     updateExecutable: "bun",
     updateArgs: ["i", "-g", `${definition.npmPackageName}@latest`],
     updateLockKey: "bun-global",
+    platform,
   });
 }
 
 function makePnpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
@@ -173,11 +185,13 @@ function makePnpmGlobalProviderMaintenanceCapabilities(
     updateExecutable: "pnpm",
     updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
     updateLockKey: "pnpm-global",
+    platform,
   });
 }
 
 function makeVitePlusGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities {
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
@@ -185,11 +199,13 @@ function makeVitePlusGlobalProviderMaintenanceCapabilities(
     updateExecutable: "vp",
     updateArgs: ["i", "-g", definition.npmPackageName],
     updateLockKey: "vite-plus-global",
+    platform,
   });
 }
 
 function makeHomebrewProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities {
   if (!definition.homebrewFormula) {
     return makeManualOnlyProviderMaintenanceCapabilities({
@@ -204,11 +220,13 @@ function makeHomebrewProviderMaintenanceCapabilities(
     updateExecutable: "brew",
     updateArgs: ["upgrade", definition.homebrewFormula],
     updateLockKey: "homebrew",
+    platform,
   });
 }
 
 function makeNativeProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -220,6 +238,26 @@ function makeNativeProviderMaintenanceCapabilities(
     updateExecutable: definition.nativeUpdate.executable,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
+    platform,
+  });
+}
+
+function makeFallbackProviderMaintenanceCapabilities(
+  definition: PackageManagedProviderMaintenanceDefinition,
+  platform: NodeJS.Platform,
+  updateExecutable?: string,
+): ProviderMaintenanceCapabilities | null {
+  if (!definition.fallbackUpdate) {
+    return null;
+  }
+
+  return makeProviderMaintenanceCapabilities({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: updateExecutable ?? definition.fallbackUpdate.executable,
+    updateArgs: definition.fallbackUpdate.args,
+    updateLockKey: definition.fallbackUpdate.lockKey,
+    platform,
   });
 }
 
@@ -250,12 +288,33 @@ function isPnpmGlobalCommandPath(commandPath: string): boolean {
   );
 }
 
-function isNpmGlobalCommandPath(commandPath: string): boolean {
+function isProgramFilesNodeNpmShimPath(normalizedCommandPath: string): boolean {
+  const nodeDirectory = [":/program files/nodejs/", ":/program files (x86)/nodejs/"].find(
+    (directory) => normalizedCommandPath.includes(directory),
+  );
+  if (!nodeDirectory) {
+    return false;
+  }
+
+  const shimName = normalizedCommandPath.slice(
+    normalizedCommandPath.indexOf(nodeDirectory) + nodeDirectory.length,
+  );
+  return !shimName.includes("/") && (shimName.endsWith(".cmd") || shimName.endsWith(".ps1"));
+}
+
+function isNpmGlobalCommandPath(commandPath: string, env?: NodeJS.ProcessEnv): boolean {
   const normalized = normalizeCommandPath(commandPath);
+  const appData = nonEmptyString(env?.APPDATA);
+  const appDataNpmPrefix = appData
+    ? `${normalizeCommandPath(appData).replace(/\/+$/, "")}/npm/`
+    : null;
   return (
     normalized.includes("/node_modules/.bin/") ||
     normalized.includes("/lib/node_modules/") ||
-    normalized.includes("/npm/node_modules/")
+    normalized.includes("/npm/node_modules/") ||
+    normalized.includes("/appdata/roaming/npm/") ||
+    (appDataNpmPrefix !== null && normalized.startsWith(appDataNpmPrefix)) ||
+    isProgramFilesNodeNpmShimPath(normalized)
   );
 }
 
@@ -275,11 +334,15 @@ function isHomebrewCommandPath(commandPath: string): boolean {
 
 export function resolvePackageManagedProviderMaintenance(
   definition: PackageManagedProviderMaintenanceDefinition,
-  options?: ProviderMaintenanceCapabilityResolutionOptions,
+  options: ProviderMaintenanceCapabilityResolutionOptions,
 ): ProviderMaintenanceCapabilities {
-  const binaryPath = nonEmptyString(options?.binaryPath);
+  const platform = options.platform;
+  const binaryPath = nonEmptyString(options.binaryPath);
   if (!binaryPath) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    return (
+      makeFallbackProviderMaintenanceCapabilities(definition, platform) ??
+      makeNpmGlobalProviderMaintenanceCapabilities(definition, platform)
+    );
   }
 
   const resolvedCommandPath =
@@ -297,29 +360,38 @@ export function resolvePackageManagedProviderMaintenance(
       commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
     ) {
       return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
+        makeNativeProviderMaintenanceCapabilities(definition, platform) ??
+        makeNpmGlobalProviderMaintenanceCapabilities(definition, platform)
       );
     }
     if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition);
+      return makeVitePlusGlobalProviderMaintenanceCapabilities(definition, platform);
     }
     if (commandPaths.some(isBunGlobalCommandPath)) {
-      return makeBunGlobalProviderMaintenanceCapabilities(definition);
+      return makeBunGlobalProviderMaintenanceCapabilities(definition, platform);
     }
     if (commandPaths.some(isPnpmGlobalCommandPath)) {
-      return makePnpmGlobalProviderMaintenanceCapabilities(definition);
+      return makePnpmGlobalProviderMaintenanceCapabilities(definition, platform);
     }
-    if (commandPaths.some(isNpmGlobalCommandPath)) {
-      return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    if (commandPaths.some((commandPath) => isNpmGlobalCommandPath(commandPath, options?.env))) {
+      return makeNpmGlobalProviderMaintenanceCapabilities(definition, platform);
     }
     if (commandPaths.some(isHomebrewCommandPath)) {
-      return makeHomebrewProviderMaintenanceCapabilities(definition);
+      return makeHomebrewProviderMaintenanceCapabilities(definition, platform);
     }
   }
 
+  const fallbackUpdate = makeFallbackProviderMaintenanceCapabilities(
+    definition,
+    platform,
+    hasPathSeparator(binaryPath) ? binaryPath : undefined,
+  );
+  if (fallbackUpdate) {
+    return fallbackUpdate;
+  }
+
   if (!hasPathSeparator(binaryPath)) {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition);
+    return makeNpmGlobalProviderMaintenanceCapabilities(definition, platform);
   }
 
   return makeManualOnlyProviderMaintenanceCapabilities({
@@ -357,11 +429,13 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   "resolveProviderMaintenanceCapabilitiesEffect",
 )(function* (
   resolver: ProviderMaintenanceCapabilitiesResolver,
-  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
+  options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "platform" | "realCommandPath">,
 ) {
+  const platform = yield* HostProcessPlatform;
+  const resolutionOptions = { ...options, platform };
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
-    return resolver.resolve(options);
+    return resolver.resolve(resolutionOptions);
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
@@ -370,7 +444,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
       Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
     )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
-    return resolver.resolve(options);
+    return resolver.resolve(resolutionOptions);
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
@@ -378,7 +452,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     .realPath(resolvedCommandPath)
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
   return resolver.resolve({
-    ...options,
+    ...resolutionOptions,
     env,
     resolvedCommandPath,
     realCommandPath,
