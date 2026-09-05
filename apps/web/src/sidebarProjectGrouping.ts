@@ -31,6 +31,39 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
+export function buildSidebarProjectScopeKeys(
+  group: Pick<SidebarProjectSnapshot, "memberProjectRefs"> | null,
+): ReadonlySet<string> | null {
+  return group === null
+    ? null
+    : new Set(
+        group.memberProjectRefs.map(
+          (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+        ),
+      );
+}
+
+/**
+ * Selects non-archived structural threads before subagent root classification
+ * or lineage traversal. The caller must build `projectKeys` from every stale
+ * and canonical project reference in the logical group so lineage is not split
+ * across physical project identities.
+ */
+export function selectSidebarProjectLineageThreads<
+  TThread extends {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly archivedAt: string | null;
+  },
+>(input: { threads: readonly TThread[]; projectKeys: ReadonlySet<string> | null }): TThread[] {
+  return input.threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      (input.projectKeys === null ||
+        input.projectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+  );
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;

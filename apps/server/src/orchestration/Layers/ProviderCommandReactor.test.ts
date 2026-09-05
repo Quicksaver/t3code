@@ -19,6 +19,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  ProviderItemId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -74,6 +75,7 @@ import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 const assistantQuoteText = "Retain the reconnect backoff.";
@@ -171,6 +173,7 @@ describe("ProviderCommandReactor", () => {
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
+    readonly failProviderFailureActivityDispatch?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -421,6 +424,13 @@ describe("ProviderCommandReactor", () => {
         return {
           readEvents: engine.readEvents,
           dispatch: (command) => {
+            if (
+              input?.failProviderFailureActivityDispatch === true &&
+              command.type === "thread.activity.append" &&
+              command.activity.kind.startsWith("provider.")
+            ) {
+              return Effect.die(new Error("provider failure activity dispatch failed"));
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -3195,6 +3205,270 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("routes subagent turn interrupts through the provider-bound root thread", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = ThreadId.make("subagent-thread-1");
+    const childTurnId = asTurnId("child-turn-1");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-root-session-set"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-subagent-thread-create"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Subagent Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        parentRelation: {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-1"),
+          parentTurnId: asTurnId("turn-1"),
+          parentItemId: asProviderItemId("parent-item-1"),
+          parentActivitySequence: 0,
+          providerThreadId: "provider-child-thread-1",
+          titleSeed: "Investigate child task",
+          depth: 1,
+          startedAt: now,
+          completedAt: null,
+          status: "running",
+        },
+        createdAt: now,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-subagent-turn-interrupt"),
+        threadId: childThreadId,
+        turnId: childTurnId,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
+    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+      threadId: "thread-1",
+      turnId: childTurnId,
+    });
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const child = readModel.threads.find((entry) => entry.id === childThreadId);
+      return (
+        child?.parentRelation?.kind === "subagent" && child.parentRelation.status === "stopped"
+      );
+    });
+  });
+
+  it("stops a subagent after interrupt and failure-activity recording both fail", async () => {
+    const harness = await createHarness({ failProviderFailureActivityDispatch: true });
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = ThreadId.make("subagent-failed-interrupt");
+    const childTurnId = asTurnId("failed-child-turn");
+    harness.interruptTurn.mockImplementation(() =>
+      Effect.die(new Error("provider interrupt failed")),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-root-session-set-failed-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("root-turn"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-subagent-create-failed-interrupt"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Subagent Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        parentRelation: {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-1"),
+          parentTurnId: asTurnId("root-turn"),
+          parentItemId: asProviderItemId("parent-item-failed-interrupt"),
+          parentActivitySequence: 0,
+          providerThreadId: "provider-child-failed-interrupt",
+          titleSeed: "Investigate failure",
+          depth: 1,
+          startedAt: now,
+          completedAt: null,
+          status: "running",
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-subagent-session-set-failed-interrupt"),
+        threadId: childThreadId,
+        session: {
+          threadId: childThreadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: childTurnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-subagent-failed-interrupt"),
+        threadId: childThreadId,
+        turnId: childTurnId,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const child = readModel.threads.find((entry) => entry.id === childThreadId);
+      return (
+        child?.parentRelation?.kind === "subagent" &&
+        child.parentRelation.status === "stopped" &&
+        child.session?.status === "stopped" &&
+        child.session.activeTurnId === null
+      );
+    });
+    const readModel = await harness.readModel();
+    const child = readModel.threads.find((entry) => entry.id === childThreadId);
+    expect(child?.activities).not.toContainEqual(
+      expect.objectContaining({ kind: "provider.turn.interrupt.failed" }),
+    );
+  });
+
+  it("does not interrupt the root session when a subagent has no active child turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = ThreadId.make("subagent-thread-without-turn");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-root-session-set-no-child-turn"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("root-active-turn"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-subagent-thread-create-no-child-turn"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Subagent Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        parentRelation: {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-1"),
+          parentTurnId: asTurnId("root-active-turn"),
+          parentItemId: asProviderItemId("parent-item-no-child-turn"),
+          parentActivitySequence: 0,
+          providerThreadId: "provider-child-thread-no-turn",
+          titleSeed: "Investigate child task",
+          depth: 1,
+          startedAt: now,
+          completedAt: null,
+          status: "running",
+        },
+        createdAt: now,
+      }),
+    );
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-subagent-turn-interrupt-no-child-turn"),
+        threadId: childThreadId,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const child = readModel.threads.find((entry) => entry.id === childThreadId);
+      return (
+        child?.activities.some((activity) => activity.kind === "provider.turn.interrupt.failed") ??
+        false
+      );
+    });
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    const child = readModel.threads.find((entry) => entry.id === childThreadId);
+    expect(child?.parentRelation).toMatchObject({
+      kind: "subagent",
+      status: "stopped",
+      completedAt: now,
+    });
+  });
+
   effectIt.effect(
     "stops a running session and records the failure when provider interrupt fails",
     () =>
@@ -3863,6 +4137,129 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
+  });
+
+  it("clears session state when provider stop and failure-activity recording both fail", async () => {
+    const harness = await createHarness({ failProviderFailureActivityDispatch: true });
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.stopSession.mockImplementation(() => Effect.die(new Error("provider stop failed")));
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-for-failed-stop"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-session-failed-stop"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.session
+          ?.status === "stopped"
+      );
+    });
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.activities).not.toContainEqual(
+      expect.objectContaining({ kind: "provider.session.stop.failed" }),
+    );
+  });
+
+  it("clears a stale subagent session without requiring a child provider binding", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const childThreadId = ThreadId.make("subagent-stale-session");
+
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-create-stale-subagent"),
+        threadId: childThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Stale Subagent",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        parentRelation: {
+          kind: "subagent",
+          rootThreadId: ThreadId.make("thread-1"),
+          parentThreadId: ThreadId.make("thread-1"),
+          parentTurnId: asTurnId("root-turn"),
+          parentItemId: asProviderItemId("parent-item-stale-subagent"),
+          parentActivitySequence: 0,
+          providerThreadId: "provider-stale-subagent",
+          titleSeed: "Clean up stale state",
+          depth: 1,
+          startedAt: now,
+          completedAt: null,
+          status: "running",
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-set-stale-subagent-session"),
+        threadId: childThreadId,
+        session: {
+          threadId: childThreadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("stale-child-turn"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await runtime!.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-stop-stale-subagent-session"),
+        threadId: childThreadId,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const child = readModel.threads.find((thread) => thread.id === childThreadId);
+      return (
+        child?.session?.status === "stopped" &&
+        child.parentRelation?.kind === "subagent" &&
+        child.parentRelation.status === "stopped"
+      );
+    });
+    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(harness.interruptTurn).not.toHaveBeenCalled();
   });
 
   effectIt.effect("stops a ready provider session after automatic settlement", () =>

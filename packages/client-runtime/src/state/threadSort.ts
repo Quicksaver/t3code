@@ -99,6 +99,16 @@ export function getThreadSortTimestamp(
   return getLatestUserMessageTimestamp(thread);
 }
 
+export function getLatestThreadSortTimestamp(
+  threads: readonly ThreadSortInput[],
+  sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
+): number {
+  return threads.reduce(
+    (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
+    Number.NEGATIVE_INFINITY,
+  );
+}
+
 /**
  * Sort anchor for the active thread list: creation time, re-anchored to
  * unsettledAt when the thread last re-entered the active list (an explicit

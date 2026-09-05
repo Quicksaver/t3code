@@ -2888,6 +2888,513 @@ describe("deriveWorkLogEntries", () => {
     });
   });
 
+  it("collapses streamed subagent output under the parent collab tool id", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-output-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            toolCallId: "collab-1",
+            parentCollab: {
+              itemId: "collab-1",
+              detail: "Inspect the auth flow",
+            },
+            rawOutput: {
+              content: "Found the login path. ",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-b",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            toolCallId: "collab-1",
+            parentCollab: {
+              itemId: "collab-1",
+              detail: "Inspect the auth flow",
+            },
+            rawOutput: {
+              content: "No failures.",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-complete",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Inspect the auth flow",
+          data: {
+            item: {
+              id: "collab-1",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-complete",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Inspect the auth flow",
+      output: "Found the login path. No failures.",
+    });
+  });
+
+  it("preserves same-timestamp subagent output chunk order", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-output-z",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Commit staged changes",
+          data: {
+            toolCallId: "collab-commit",
+            parentCollab: {
+              itemId: "collab-commit",
+              detail: "Commit staged changes",
+            },
+            rawOutput: {
+              content: "createdCommit: yes\n\n**hash:** `884f",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-a",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Commit staged changes",
+          data: {
+            toolCallId: "collab-commit",
+            parentCollab: {
+              itemId: "collab-commit",
+              detail: "Commit staged changes",
+            },
+            rawOutput: {
+              content: "619b`\n**subject:** `Fix overage reset display`",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.output).toBe(
+      "createdCommit: yes\n\n**hash:** `884f619b`\n**subject:** `Fix overage reset display`",
+    );
+  });
+
+  it("collapses late subagent output into an already completed subagent row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-complete",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Create a haiku",
+          data: {
+            item: {
+              id: "collab-haiku",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-output-late",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          title: "Subagent",
+          detail: "below",
+          data: {
+            toolCallId: "collab-haiku",
+            parentCollab: {
+              itemId: "collab-haiku",
+              detail: "below",
+            },
+            rawOutput: {
+              content:
+                "Rain lifts from the wires\nA window gathers pale dawn\nFootsteps bloom below",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-output-late",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Create a haiku",
+      output: "Rain lifts from the wires\nA window gathers pale dawn\nFootsteps bloom below",
+    });
+  });
+
+  it("omits empty subagent placeholders around prompt and output rows", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-empty-before",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "subagent-prompt",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Create a haiku",
+          data: {
+            item: {
+              id: "collab-haiku",
+              prompt: "Create a haiku",
+            },
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-empty-after",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+        },
+      }),
+      makeActivity({
+        id: "subagent-output",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            toolCallId: "collab-haiku",
+            rawOutput: {
+              content: "Rain lifts from wires",
+            },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-output",
+      itemType: "collab_agent_tool_call",
+      subagentPrompt: "Create a haiku",
+      output: "Rain lifts from wires",
+    });
+  });
+
+  it("drops duplicate subagent control rows for an already rendered child block", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run a harmless shell command",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Run a harmless shell command",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                titleSeed: "Run a harmless shell command",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-close",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-close",
+              prompt: null,
+              tool: "closeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "subagent-spawn",
+      itemType: "collab_agent_tool_call",
+      subagentChildren: [
+        {
+          threadId: "subagent-child-1",
+          titleSeed: "Run a harmless shell command",
+        },
+      ],
+    });
+  });
+
+  it("keeps a resumed subagent child block as a new parent work-log row", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-spawn",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run initial check",
+          data: {
+            item: {
+              id: "call-spawn",
+              prompt: "Run initial check",
+              tool: "spawnAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Run initial check",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-wait",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          data: {
+            item: {
+              id: "call-wait",
+              prompt: null,
+              tool: "wait",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Run follow-up check",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Run follow-up check",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Run follow-up check",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.id)).toEqual(["subagent-spawn", "subagent-resume"]);
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-spawn",
+        titleSeed: "Run initial check",
+      },
+    ]);
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Run follow-up check",
+      },
+    ]);
+  });
+
+  it("keeps separate resumed subagent child blocks within the same parent turn", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "subagent-resume",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-resume",
+              prompt: "Say hi in German",
+              tool: "resumeAgent",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-resume",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+      makeActivity({
+        id: "subagent-send-input",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Subagent",
+        turnId: "turn-followup",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Say hi in German",
+          data: {
+            item: {
+              id: "call-send-input",
+              prompt: "Say hi in German",
+              tool: "sendInput",
+            },
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-send-input",
+                titleSeed: "Say hi in German",
+              },
+            ],
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe("subagent-resume");
+    expect(entries[0]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-resume",
+        titleSeed: "Say hi in German",
+      },
+    ]);
+    expect(entries[1]?.id).toBe("subagent-send-input");
+    expect(entries[1]?.subagentChildren).toEqual([
+      {
+        threadId: "subagent-child-1",
+        parentItemId: "call-send-input",
+        titleSeed: "Say hi in German",
+      },
+    ]);
+  });
+
   it("uses completed read-file output previews and still collapses the same tool call", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -3441,6 +3948,61 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
+  it("keeps the upstream spawn CTA and omits fork child-reference rows from the timeline", () => {
+    const workEntries = deriveWorkLogEntries([
+      makeActivity({
+        id: "fork-child-reference",
+        kind: "tool.completed",
+        summary: "Subagent",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          title: "Subagent",
+          detail: "Inspect the regression",
+          data: {
+            subagentChildren: [
+              {
+                childThreadId: "subagent-child-1",
+                parentItemId: "call-spawn",
+                titleSeed: "Inspect the regression",
+              },
+            ],
+          },
+        },
+        turnId: "turn-spawn",
+        sequence: 1,
+      }),
+      makeActivity({
+        id: "native-agent-summary",
+        kind: "task.completed",
+        summary: "Task completed",
+        tone: "info",
+        payload: {
+          taskId: "provider-child-1",
+          timelineBypass: true,
+          status: "completed",
+        },
+        turnId: "turn-spawn",
+        sequence: 2,
+      }),
+    ]);
+
+    expect(workEntries).toHaveLength(2);
+    expect(workEntries.some((entry) => entry.subagentChildren?.length)).toBe(true);
+
+    const timeline = deriveTimelineEntries([], [], workEntries);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      kind: "work",
+      entry: {
+        id: "native-agent-summary",
+        agentSpawn: {
+          workflowId: null,
+          agentTaskIds: ["provider-child-1"],
+        },
+      },
+    });
+  });
+
   it("N concurrent subagents produce exactly N lifecycle rows, zero attributed tool rows", () => {
     const activities: OrchestrationThreadActivity[] = [];
     for (let agent = 0; agent < 5; agent += 1) {

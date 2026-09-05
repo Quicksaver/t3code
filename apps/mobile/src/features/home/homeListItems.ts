@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import type { HomeThreadGroup } from "./homeThreadList";
 
@@ -31,6 +32,7 @@ export interface HomeThreadListItem {
   readonly type: "thread";
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
+  readonly depth: number;
   readonly isLast: boolean;
 }
 
@@ -104,6 +106,7 @@ export function homeListItemsAreEqual(previous: HomeListItem, item: HomeListItem
       return (
         previous.type === "thread" &&
         previous.thread === item.thread &&
+        previous.depth === item.depth &&
         previous.isLast === item.isLast
       );
     case "show-more":
@@ -185,6 +188,7 @@ export function buildHomeListLayout(input: {
         type: "thread",
         key: `thread:${thread.environmentId}:${thread.id}`,
         thread,
+        depth: group.threadDepths.get(scopedThreadKey(thread.environmentId, thread.id)) ?? 0,
         isLast: threadIndex === visibleThreads.length - 1 && !hasShowMoreRow,
       });
     }

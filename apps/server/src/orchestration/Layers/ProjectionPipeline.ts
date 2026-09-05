@@ -3,6 +3,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
+  type OrchestrationThreadParentRelation,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -33,7 +34,10 @@ import {
   type ProjectionTurn,
   ProjectionTurnRepository,
 } from "../../persistence/Services/ProjectionTurns.ts";
-import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
+import {
+  type ProjectionThread,
+  ProjectionThreadRepository,
+} from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -104,6 +108,59 @@ interface ProjectorDefinition {
 interface AttachmentSideEffects {
   readonly deletedThreadIds: Set<string>;
   readonly prunedThreadRelativePaths: Map<string, Set<string>>;
+}
+
+type ProjectionThreadParentFields = Pick<
+  ProjectionThread,
+  | "parentKind"
+  | "rootThreadId"
+  | "parentThreadId"
+  | "parentTurnId"
+  | "parentItemId"
+  | "parentActivitySequence"
+  | "providerThreadId"
+  | "titleSeed"
+  | "subagentDepth"
+  | "subagentStartedAt"
+  | "subagentCompletedAt"
+  | "subagentStatus"
+>;
+
+function mapThreadParentRelationFields(
+  threadId: ThreadId,
+  parentRelation: OrchestrationThreadParentRelation | undefined,
+): ProjectionThreadParentFields {
+  if (parentRelation?.kind !== "subagent") {
+    return {
+      parentKind: "root",
+      rootThreadId: parentRelation?.rootThreadId ?? threadId,
+      parentThreadId: null,
+      parentTurnId: null,
+      parentItemId: null,
+      parentActivitySequence: 0,
+      providerThreadId: null,
+      titleSeed: null,
+      subagentDepth: 0,
+      subagentStartedAt: null,
+      subagentCompletedAt: null,
+      subagentStatus: null,
+    };
+  }
+
+  return {
+    parentKind: "subagent",
+    rootThreadId: parentRelation.rootThreadId,
+    parentThreadId: parentRelation.parentThreadId,
+    parentTurnId: parentRelation.parentTurnId,
+    parentItemId: parentRelation.parentItemId,
+    parentActivitySequence: parentRelation.parentActivitySequence,
+    providerThreadId: parentRelation.providerThreadId,
+    titleSeed: parentRelation.titleSeed,
+    subagentDepth: parentRelation.depth,
+    subagentStartedAt: parentRelation.startedAt,
+    subagentCompletedAt: parentRelation.completedAt,
+    subagentStatus: parentRelation.status,
+  };
 }
 
 const materializeAttachmentsForProjection = Effect.fn("materializeAttachmentsForProjection")(
@@ -636,6 +693,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            ...mapThreadParentRelationFields(event.payload.threadId, event.payload.parentRelation),
             linkedPullRequest: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
@@ -718,9 +776,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             settledOverride: event.payload.reason === "user" ? "active" : null,
             settledAt: null,
-            // Re-entry stamp for active-list ordering. A thread already pinned
-            // active keeps its stamp: the activity reset that clears the pin
-            // is not a re-entry and must not reorder the list.
             unsettledAt:
               existingRow.value.settledOverride === "active"
                 ? existingRow.value.unsettledAt
@@ -833,6 +888,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(event.payload.branch !== undefined ? { branch: event.payload.branch } : {}),
             ...(event.payload.worktreePath !== undefined
               ? { worktreePath: event.payload.worktreePath }
+              : {}),
+            ...(event.payload.parentRelation !== undefined
+              ? mapThreadParentRelationFields(event.payload.threadId, event.payload.parentRelation)
               : {}),
             ...(event.payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: event.payload.linkedPullRequest }

@@ -102,6 +102,31 @@ interface CodexAdapterSessionContext {
   stopped: boolean;
 }
 
+interface BufferedSubagentOutput {
+  readonly parentCollab: {
+    readonly itemId: string;
+    readonly parentThreadId?: string | undefined;
+    readonly detail?: string | undefined;
+  };
+  readonly content: string;
+}
+
+function subagentOutputBufferKey(threadId: ThreadId, itemId: string): string {
+  return `${threadId}\0${itemId}`;
+}
+
+function clearSubagentOutputBuffersForThread(
+  buffers: Map<string, BufferedSubagentOutput>,
+  threadId: ThreadId,
+): void {
+  const prefix = `${threadId}\0`;
+  for (const key of buffers.keys()) {
+    if (key.startsWith(prefix)) {
+      buffers.delete(key);
+    }
+  }
+}
+
 function mapCodexRuntimeError(
   threadId: ThreadId,
   method: string,
@@ -465,6 +490,7 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
     return "file_change";
   if (type.includes("mcp")) return "mcp_tool_call";
   if (type.includes("dynamic tool")) return "dynamic_tool_call";
+  if (type.includes("sub agent activity")) return "collab_agent_tool_call";
   if (type.includes("collab")) return "collab_agent_tool_call";
   if (type.includes("web search")) return "web_search";
   if (type.includes("image")) return "image_view";
@@ -568,6 +594,8 @@ function itemTitle(
       return "File change";
     case "mcp_tool_call":
       return "MCP tool call";
+    case "collab_agent_tool_call":
+      return "Subagent";
     case "dynamic_tool_call":
       return "Tool call";
     case "web_search":
@@ -594,6 +622,7 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
     "summary" in item ? item.summary : undefined,
     "text" in item ? item.text : undefined,
     "path" in item ? item.path : undefined,
+    "agentPath" in item ? item.agentPath : undefined,
     "prompt" in item ? item.prompt : undefined,
   ];
 
@@ -816,6 +845,198 @@ function mapItemLifecycle(
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function parentCollabFromPayload(payload: ProviderEvent["payload"]):
+  | {
+      itemId?: string | undefined;
+      parentThreadId?: string | undefined;
+      detail?: string | undefined;
+      source?: "collabAgentToolCall" | "subAgentActivity" | undefined;
+    }
+  | undefined {
+  const parentCollab = asRecord(asRecord(payload)?.parentCollab);
+  if (!parentCollab) {
+    return undefined;
+  }
+  const itemId =
+    typeof parentCollab.itemId === "string" ? trimText(parentCollab.itemId) : undefined;
+  const parentThreadId =
+    typeof parentCollab.parentThreadId === "string"
+      ? trimText(parentCollab.parentThreadId)
+      : undefined;
+  const detail =
+    typeof parentCollab.detail === "string" ? trimText(parentCollab.detail) : undefined;
+  const source =
+    parentCollab.source === "collabAgentToolCall" || parentCollab.source === "subAgentActivity"
+      ? parentCollab.source
+      : undefined;
+  return itemId || parentThreadId || detail
+    ? { itemId, parentThreadId, detail, source }
+    : undefined;
+}
+
+function childCollabAgentMessageDelta(event: ProviderEvent): {
+  readonly parentCollab: {
+    itemId?: string | undefined;
+    parentThreadId?: string | undefined;
+    detail?: string | undefined;
+    source?: "collabAgentToolCall" | "subAgentActivity" | undefined;
+  };
+  readonly delta: string;
+  readonly payload: EffectCodexSchema.V2AgentMessageDeltaNotification | undefined;
+  readonly rawPayload: Record<string, unknown> | undefined;
+} | null {
+  if (event.method !== "item/agentMessage/delta") {
+    return null;
+  }
+  const parentCollab = parentCollabFromPayload(event.payload);
+  if (!parentCollab) {
+    return null;
+  }
+  const payload = readPayload(EffectCodexSchema.V2AgentMessageDeltaNotification, event.payload);
+  const rawPayload = asRecord(event.payload);
+  const delta =
+    event.textDelta ??
+    payload?.delta ??
+    (typeof rawPayload?.delta === "string" ? rawPayload.delta : undefined);
+  if (!delta || delta.length === 0) {
+    return null;
+  }
+
+  return {
+    parentCollab,
+    delta,
+    payload,
+    rawPayload,
+  };
+}
+
+function bufferChildCollabAgentMessageDelta(
+  event: ProviderEvent,
+  buffers: Map<string, BufferedSubagentOutput>,
+): boolean {
+  const childDelta = childCollabAgentMessageDelta(event);
+  if (!childDelta?.parentCollab.itemId) {
+    return false;
+  }
+
+  const parentThreadId = childDelta.parentCollab.parentThreadId
+    ? ThreadId.make(childDelta.parentCollab.parentThreadId)
+    : event.threadId;
+  const key = subagentOutputBufferKey(parentThreadId, childDelta.parentCollab.itemId);
+  const previous = buffers.get(key);
+  const bufferedParentThreadId =
+    childDelta.parentCollab.parentThreadId ?? previous?.parentCollab.parentThreadId;
+  const bufferedDetail = childDelta.parentCollab.detail ?? previous?.parentCollab.detail;
+  buffers.set(key, {
+    parentCollab: {
+      itemId: childDelta.parentCollab.itemId,
+      parentThreadId: bufferedParentThreadId,
+      detail: bufferedDetail,
+    },
+    content: `${previous?.content ?? ""}${childDelta.delta}`,
+  });
+  return true;
+}
+
+function collabItemIdFromLifecycleEvent(event: ProviderEvent): string | undefined {
+  if (event.method !== "item/started" && event.method !== "item/completed") {
+    return undefined;
+  }
+  const payload =
+    event.method === "item/started"
+      ? readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload)
+      : readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
+  const item = payload?.item;
+  if (!item || toCanonicalItemType(item.type) !== "collab_agent_tool_call") {
+    return undefined;
+  }
+  return item.id;
+}
+
+function drainBufferedSubagentOutput(
+  event: ProviderEvent,
+  buffers: Map<string, BufferedSubagentOutput>,
+): BufferedSubagentOutput | undefined {
+  if (event.method !== "item/completed") {
+    return undefined;
+  }
+  const itemId = collabItemIdFromLifecycleEvent(event);
+  if (!itemId) {
+    return undefined;
+  }
+  const key = subagentOutputBufferKey(event.threadId, itemId);
+  const buffered = buffers.get(key);
+  if (buffered) {
+    buffers.delete(key);
+  }
+  return buffered;
+}
+
+function attachBufferedSubagentOutput(
+  event: ProviderRuntimeEvent,
+  buffered: BufferedSubagentOutput | undefined,
+): ProviderRuntimeEvent {
+  if (!buffered || event.type !== "item.completed") {
+    return event;
+  }
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      data: {
+        ...asRecord(event.payload.data),
+        parentCollab: buffered.parentCollab,
+        toolCallId: buffered.parentCollab.itemId,
+        rawOutput: {
+          content: buffered.content,
+        },
+      },
+    },
+  };
+}
+
+function mapChildCollabAgentMessageDelta(
+  event: ProviderEvent,
+  canonicalThreadId: ThreadId,
+): ProviderRuntimeEvent | undefined {
+  const childDelta = childCollabAgentMessageDelta(event);
+  if (!childDelta) {
+    return undefined;
+  }
+
+  return {
+    ...runtimeEventBase(event, canonicalThreadId),
+    type: "item.updated",
+    payload: {
+      itemType: "collab_agent_tool_call",
+      status: "inProgress",
+      title: "Subagent",
+      ...(childDelta.parentCollab.detail ? { detail: childDelta.parentCollab.detail } : {}),
+      data: {
+        parentCollab: childDelta.parentCollab,
+        toolCallId: childDelta.parentCollab.itemId,
+        childThreadId:
+          childDelta.payload?.threadId ??
+          (typeof childDelta.rawPayload?.threadId === "string"
+            ? childDelta.rawPayload.threadId
+            : undefined),
+        childItemId:
+          childDelta.payload?.itemId ??
+          (typeof childDelta.rawPayload?.itemId === "string"
+            ? childDelta.rawPayload.itemId
+            : undefined),
+        rawOutput: {
+          content: childDelta.delta,
+        },
+      },
+    },
+  };
+}
+
 /**
  * Maps the session runtime's synthetic `collabAgent/*` events (native
  * multi-agent v2 child-thread signals) into the shared task.* lifecycle.
@@ -828,10 +1049,7 @@ function mapCollabAgentEvent(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
-  const payload =
-    typeof event.payload === "object" && event.payload !== null
-      ? (event.payload as Record<string, unknown>)
-      : undefined;
+  const payload = asRecord(event.payload);
   const agentThreadId = typeof payload?.agentThreadId === "string" ? payload.agentThreadId : "";
   if (!payload || agentThreadId.length === 0) {
     return [];
@@ -844,8 +1062,7 @@ function mapCollabAgentEvent(
   const role =
     (typeof payload.role === "string" ? payload.role : undefined) ?? pathLeaf ?? "general-purpose";
   // A bare thread id is not a name. Omitting the title lets the client fold
-  // keep the real one from task.started instead of clobbering it (probe
-  // finding: progress rows renamed math_one to its UUID).
+  // keep the real one from task.started instead of clobbering it.
   const knownName = nickname ?? pathLeaf;
   const title = knownName ?? agentThreadId;
   const model = typeof payload.model === "string" ? payload.model.trim() : "";
@@ -899,10 +1116,8 @@ function mapCollabAgentEvent(
         ];
       }
       if (activityKind === "started") {
-        // Wire-probe finding: children often register via subAgentActivity
-        // alone (no thread/started with a spawn source), so this is the one
-        // shot at a task.started with a real name — agentPath leaf beats a
-        // bare thread-id title.
+        // Children often register via activity alone (without a thread/started
+        // spawn source), making this the first reliable identity event.
         return [
           {
             ...base,
@@ -916,8 +1131,8 @@ function mapCollabAgentEvent(
           },
         ];
       }
-      // Reading a child's result also emits "interacted" after its turn is idle.
-      // Only the child's turn or thread lifecycle can prove it resumed work.
+      // An interaction only means the parent sent input to or read output from
+      // the child. Only child turn or thread lifecycle proves resumed work.
       return [];
     }
     case "collabAgent/turnStarted":
@@ -930,10 +1145,7 @@ function mapCollabAgentEvent(
       ];
     case "collabAgent/turnCompleted": {
       // Idle, not terminal: the identity is resumable via sendInput/resume.
-      const turn =
-        typeof payload.turn === "object" && payload.turn !== null
-          ? (payload.turn as Record<string, unknown>)
-          : undefined;
+      const turn = asRecord(payload.turn);
       const turnStatus = typeof turn?.status === "string" ? turn.status : undefined;
       const status =
         turnStatus === "failed"
@@ -950,13 +1162,9 @@ function mapCollabAgentEvent(
       ];
     }
     case "collabAgent/statusChanged": {
-      const status =
-        typeof payload.status === "object" && payload.status !== null
-          ? (payload.status as Record<string, unknown>)
-          : undefined;
+      const status = asRecord(payload.status);
       const statusType = typeof status?.type === "string" ? status.type : undefined;
       if (statusType === "systemError") {
-        // Silently dropping this once left children stuck running forever.
         return [
           {
             ...base,
@@ -990,20 +1198,12 @@ function mapCollabAgentEvent(
       return [];
     }
     case "collabAgent/tokenUsage": {
-      // Cumulative per child thread: always the `total` breakdown, never
-      // `last` (which shrinks on follow-ups). Client folds max-merge.
-      const tokenUsage =
-        typeof payload.tokenUsage === "object" && payload.tokenUsage !== null
-          ? (payload.tokenUsage as Record<string, unknown>)
-          : undefined;
-      const total =
-        typeof tokenUsage?.total === "object" && tokenUsage.total !== null
-          ? (tokenUsage.total as Record<string, unknown>)
-          : undefined;
+      // Cumulative per child thread: always use `total`, never `last` (which
+      // shrinks on follow-up turns). Client folds max-merge these snapshots.
+      const tokenUsage = asRecord(payload.tokenUsage);
+      const total = asRecord(tokenUsage?.total);
       const count = (value: unknown): number | undefined =>
         typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-      // Same validation as every other field: RuntimeTaskUsage.totalTokens
-      // is NonNegativeInt, so NaN/Infinity/negative wire values must miss.
       const totalTokens = count(total?.totalTokens);
       if (totalTokens === undefined) {
         return [];
@@ -1037,21 +1237,17 @@ function mapCollabAgentEvent(
       ];
     }
     case "collabAgent/item": {
-      const item =
-        typeof payload.item === "object" && payload.item !== null
-          ? (payload.item as Record<string, unknown>)
-          : undefined;
+      const item = asRecord(payload.item);
       const itemTypeRaw = typeof item?.type === "string" ? item.type : undefined;
       if (!itemTypeRaw) {
         return [];
       }
-      // A loose summary from the raw item: the child stream is untyped at
-      // this boundary (synthetic event payload), so read best-effort fields
-      // rather than force a schema decode.
+      // Synthetic child items are intentionally loose at this boundary.
       const looseSummary =
         (typeof item?.command === "string" ? item.command : undefined) ??
         (typeof item?.title === "string" ? item.title : undefined) ??
-        (typeof item?.query === "string" ? item.query : undefined);
+        (typeof item?.query === "string" ? item.query : undefined) ??
+        (typeof item?.text === "string" ? trimText(item.text) : undefined);
       const canonical = toCanonicalItemType(itemTypeRaw);
       const summary = looseSummary ?? canonical.replaceAll("_", " ");
       return [
@@ -1083,10 +1279,30 @@ function mapCollabAgentEvent(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  subagentOutputBuffers?: Map<string, BufferedSubagentOutput>,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
   }
+
+  const childCollabDelta = childCollabAgentMessageDelta(event);
+  const isThreadedSubagentDelta = childCollabDelta?.parentCollab.source === "subAgentActivity";
+
+  if (
+    !isThreadedSubagentDelta &&
+    subagentOutputBuffers &&
+    bufferChildCollabAgentMessageDelta(event, subagentOutputBuffers)
+  ) {
+    return [];
+  }
+
+  const legacyChildCollabDelta = isThreadedSubagentDelta
+    ? undefined
+    : mapChildCollabAgentMessageDelta(event, canonicalThreadId);
+  if (legacyChildCollabDelta) {
+    return [legacyChildCollabDelta];
+  }
+
   if (event.kind === "error") {
     if (!event.message) {
       return [];
@@ -1438,6 +1654,18 @@ function mapToRuntimeEvents(
 
   if (event.method === "item/started") {
     const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
+    if (started?.type === "item.started" && started.payload.itemType === "collab_agent_tool_call") {
+      return [
+        {
+          ...started,
+          type: "item.updated",
+          payload: {
+            ...started.payload,
+            status: "inProgress",
+          },
+        },
+      ];
+    }
     return started ? [started] : [];
   }
 
@@ -1484,12 +1712,18 @@ function mapToRuntimeEvents(
         },
       ];
     }
+    const buffered = subagentOutputBuffers
+      ? drainBufferedSubagentOutput(event, subagentOutputBuffers)
+      : undefined;
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    if (!completed || itemType !== "context_compaction") {
-      return completed ? [completed] : [];
+    const completedWithBuffered = completed
+      ? attachBufferedSubagentOutput(completed, buffered)
+      : undefined;
+    if (!completedWithBuffered || itemType !== "context_compaction") {
+      return completedWithBuffered ? [completedWithBuffered] : [];
     }
     return [
-      completed,
+      completedWithBuffered,
       {
         ...runtimeEventBase(event, canonicalThreadId),
         eventId: EventId.make(`${event.id}:thread-compacted`),
@@ -2010,6 +2244,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const subagentOutputBuffers = new Map<string, BufferedSubagentOutput>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -2087,11 +2322,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // Fork into the session scope, not the calling fiber. `forkChild` makes
         // this a child of `startSession`, and Effect interrupts a fiber's
         // children when it completes, so the consumer died on return and every
-        // runtime event the session emitted afterwards was dropped.
+        // runtime event the session emitted afterwards was dropped. Command
+        // workers are intentionally short-lived, so the provider session owns
+        // the event pump after startSession returns.
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId, subagentOutputBuffers);
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -2325,6 +2562,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
     session.stopped = true;
     sessions.delete(session.threadId);
+    clearSubagentOutputBuffersForThread(subagentOutputBuffers, session.threadId);
     yield* session.runtime.close.pipe(Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);

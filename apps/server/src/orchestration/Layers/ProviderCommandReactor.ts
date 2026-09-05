@@ -30,7 +30,11 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
+import {
+  increment,
+  orchestrationEventsProcessedTotal,
+  providerFailureActivityAppendFailuresTotal,
+} from "../../observability/Metrics.ts";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterValidationError,
@@ -106,6 +110,7 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
+const PROVIDER_CONTROL_REQUEST_TIMEOUT = "10 seconds" as const;
 const MAX_REGENERATION_ATTACHMENTS = 4;
 const MAX_THREAD_TITLE_CONTEXT_CHARS = 8_000;
 const MAX_FIRST_USER_TITLE_CONTEXT_CHARS = 2_000;
@@ -386,6 +391,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const appendProviderFailureActivityBestEffort = (
+    input: Parameters<typeof appendProviderFailureActivity>[0],
+  ) =>
+    appendProviderFailureActivity(input).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return increment(providerFailureActivityAppendFailuresTotal, {
+          activityKind: input.kind,
+        }).pipe(
+          Effect.andThen(
+            Effect.logWarning("failed to append provider failure activity", {
+              threadId: input.threadId,
+              activityKind: input.kind,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+      }),
+    );
+
   const formatFailureDetail = (cause: Cause.Cause<unknown>): string => {
     const failReason = cause.reasons.find(Cause.isFailReason);
     if (isProviderAdapterRequestError(failReason?.error)) {
@@ -413,6 +440,28 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const setThreadSessionStopped = (input: {
+    readonly threadId: ThreadId;
+    readonly session: OrchestrationSession | null;
+    readonly createdAt: string;
+  }) =>
+    setThreadSession({
+      threadId: input.threadId,
+      session: {
+        threadId: input.threadId,
+        status: "stopped",
+        providerName: input.session?.providerName ?? null,
+        ...(input.session?.providerInstanceId !== undefined
+          ? { providerInstanceId: input.session.providerInstanceId }
+          : {}),
+        runtimeMode: input.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        activeTurnId: null,
+        lastError: input.session?.lastError ?? null,
+        updatedAt: input.createdAt,
+      },
+      createdAt: input.createdAt,
+    });
 
   const setThreadSessionErrorOnTurnStartFailure = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
@@ -479,12 +528,6 @@ const make = Effect.gen(function* () {
       .pipe(Effect.map(Option.getOrUndefined));
   });
 
-  /**
-   * Recreates a thread's worktree from its branch when the directory has
-   * disappeared. Provider sessions resume into the persisted cwd, so a missing
-   * worktree makes every later turn fail as a bogus "session not found".
-   * Best-effort: on failure the turn proceeds and reports the real error.
-   */
   const ensureThreadWorktree = Effect.fnUntraced(function* (thread: {
     readonly id: ThreadId;
     readonly projectId: ProjectId;
@@ -509,8 +552,6 @@ const make = Effect.gen(function* () {
       worktreePath,
       branch,
     });
-    // A directory deleted without `git worktree remove` leaves an admin entry
-    // that makes `git worktree add` refuse the path; prune clears it.
     yield* gitWorkflow.pruneWorktrees({ cwd }).pipe(
       Effect.andThen(gitWorkflow.createWorktree({ cwd, refName: branch, path: worktreePath })),
       Effect.catchCause((cause) =>
@@ -1440,8 +1481,12 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
-    const session = thread.session;
-    if (!session || session.status === "stopped") {
+    const subagentRelation =
+      thread.parentRelation?.kind === "subagent" ? thread.parentRelation : null;
+    const providerThread = subagentRelation
+      ? yield* resolveThread(subagentRelation.rootThreadId)
+      : thread;
+    if (!providerThread?.session || providerThread.session.status === "stopped") {
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
@@ -1450,6 +1495,76 @@ const make = Effect.gen(function* () {
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
       });
+    }
+
+    const childTurnId = subagentRelation
+      ? (event.payload.turnId ??
+        (thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined))
+      : undefined;
+    if (subagentRelation && !childTurnId) {
+      yield* appendProviderFailureActivityBestEffort({
+        threadId: event.payload.threadId,
+        kind: "provider.turn.interrupt.failed",
+        summary: "Provider turn interrupt failed",
+        detail: "No active subagent turn is available to interrupt.",
+        turnId: null,
+        createdAt: event.payload.createdAt,
+      });
+      yield* setThreadSessionStopped({
+        threadId: event.payload.threadId,
+        session: thread.session,
+        createdAt: event.payload.createdAt,
+      });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("subagent-interrupt-missing-turn-status"),
+        threadId: event.payload.threadId,
+        parentRelation: {
+          ...subagentRelation,
+          completedAt: event.payload.createdAt,
+          status: "stopped",
+        },
+      });
+      return;
+    }
+    if (subagentRelation) {
+      yield* providerService
+        .interruptTurn({
+          threadId: providerThread.id,
+          turnId: childTurnId!,
+        })
+        .pipe(
+          Effect.timeout(PROVIDER_CONTROL_REQUEST_TIMEOUT),
+          Effect.catchCause((cause) => {
+            if (Cause.hasInterruptsOnly(cause)) {
+              return Effect.interrupt;
+            }
+            return appendProviderFailureActivityBestEffort({
+              threadId: event.payload.threadId,
+              kind: "provider.turn.interrupt.failed",
+              summary: "Provider turn interrupt failed",
+              detail: formatFailureDetail(cause),
+              turnId: childTurnId ?? event.payload.turnId ?? null,
+              createdAt: event.payload.createdAt,
+            });
+          }),
+        );
+      yield* setThreadSessionStopped({
+        threadId: event.payload.threadId,
+        session: thread.session,
+        createdAt: event.payload.createdAt,
+      });
+      yield* orchestrationEngine.dispatch({
+        type: "thread.meta.update",
+        commandId: yield* serverCommandId("subagent-interrupt-status"),
+        threadId: event.payload.threadId,
+        parentRelation: {
+          ...subagentRelation,
+          completedAt: event.payload.createdAt,
+          status: "stopped",
+        },
+      });
+      return;
     }
 
     const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
@@ -1522,9 +1637,9 @@ const make = Effect.gen(function* () {
       });
     };
 
-    // Orchestration turn ids are not provider turn ids, so interrupt by session.
+    // Orchestration turn ids are not provider turn ids for root sessions.
     yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
+      .interruptTurn({ threadId: providerThread.id })
       .pipe(Effect.catchCause(recoverInterruptFailure));
   });
 
@@ -1625,6 +1740,57 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
+    const subagentRelation =
+      thread.parentRelation?.kind === "subagent" ? thread.parentRelation : null;
+    if (subagentRelation) {
+      const providerThread = yield* resolveThread(subagentRelation.rootThreadId);
+      const childTurnId =
+        thread.latestTurn?.state === "running" ? thread.latestTurn.turnId : undefined;
+      if (
+        subagentRelation.status === "running" &&
+        childTurnId !== undefined &&
+        providerThread?.session &&
+        providerThread.session.status !== "stopped"
+      ) {
+        yield* providerService
+          .interruptTurn({ threadId: providerThread.id, turnId: childTurnId })
+          .pipe(
+            Effect.timeout(PROVIDER_CONTROL_REQUEST_TIMEOUT),
+            Effect.catchCause((cause) => {
+              if (Cause.hasInterruptsOnly(cause)) {
+                return Effect.interrupt;
+              }
+              return appendProviderFailureActivityBestEffort({
+                threadId: thread.id,
+                kind: "provider.session.stop.failed",
+                summary: "Provider session stop failed",
+                detail: formatFailureDetail(cause),
+                turnId: childTurnId,
+                createdAt: now,
+              });
+            }),
+          );
+      }
+      if (subagentRelation.status === "running") {
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: yield* serverCommandId("subagent-session-stop-status"),
+          threadId: thread.id,
+          parentRelation: {
+            ...subagentRelation,
+            completedAt: now,
+            status: "stopped",
+          },
+        });
+      }
+      yield* setThreadSessionStopped({
+        threadId: thread.id,
+        session: thread.session,
+        createdAt: now,
+      });
+      return;
+    }
+
     const wasCompacting = compactingThreadIds.has(thread.id);
     stoppingThreadIds.add(thread.id);
     const clearStopping = Effect.sync(() => void stoppingThreadIds.delete(thread.id));

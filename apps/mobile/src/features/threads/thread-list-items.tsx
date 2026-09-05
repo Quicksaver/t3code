@@ -422,6 +422,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly isLast: boolean;
   /** Sidebar only: the thread currently open in the detail pane. */
   readonly selected?: boolean;
+  readonly depth?: number;
   /** Defaults to window width minus compact margins. */
   readonly fullSwipeWidth?: number;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
@@ -439,6 +440,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
+  const depth = Math.max(0, props.depth ?? 0);
+  const depthInset = depth * (compact ? 16 : 14);
   // Recycling-safe: resets when the list container is reused for another
   // thread, so a hover highlight can't leak across rows.
   const [hovered, setHovered] = useRecyclingState(false);
@@ -474,6 +477,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           textClassName: "text-user-bubble-foreground",
         }
       : status;
+  const canUseLifecycleActions = thread.parentRelation?.kind !== "subagent";
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
@@ -572,7 +576,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const rowContent = (close: () => void) =>
     compact ? (
       <Pressable
-        accessibilityHint="Swipe left for archive and delete actions"
+        accessibilityHint={
+          canUseLifecycleActions ? "Swipe left for archive and delete actions" : "Opens the thread"
+        }
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         className="bg-screen active:opacity-70"
@@ -581,7 +587,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           onSelectThread(thread);
         }}
       >
-        <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
+        <View
+          className="pr-[18px] pt-[10px]"
+          style={{ paddingLeft: THREAD_LIST_COMPACT_INSET + depthInset }}
+        >
           <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
             <View className="flex-row items-center justify-between gap-2">
               <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
@@ -632,6 +641,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
           minHeight: 64,
           justifyContent: "center",
           paddingHorizontal: 12,
+          paddingLeft: 12 + depthInset,
           paddingVertical: 10,
         })}
       >
@@ -670,6 +680,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         </View>
       </Pressable>
     );
+
+  if (!canUseLifecycleActions) {
+    return rowContent(() => undefined);
+  }
 
   return (
     <ThreadSwipeable

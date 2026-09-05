@@ -2,13 +2,10 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
-  MagiParticipantId,
-  MagiRunId,
   ProjectId,
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationEvent,
-  type OrchestrationReadModel,
   ProviderInstanceId,
   ProviderItemId,
   TurnId,
@@ -108,27 +105,6 @@ const seedReadModel = Effect.gen(function* () {
     },
   });
 });
-
-function archiveThread(readModel: OrchestrationReadModel, threadId: ThreadId, index: number) {
-  const archivedAt = `2026-01-01T00:0${index}:00.000Z`;
-  return projectEvent(readModel, {
-    sequence: readModel.snapshotSequence + 1,
-    eventId: asEventId(`evt-thread-archive-${index}`),
-    aggregateKind: "thread",
-    aggregateId: threadId,
-    type: "thread.archived",
-    occurredAt: archivedAt,
-    commandId: asCommandId(`cmd-thread-archive-${index}`),
-    causationEventId: null,
-    correlationId: asCommandId(`cmd-thread-archive-${index}`),
-    metadata: {},
-    payload: {
-      threadId,
-      archivedAt,
-      updatedAt: archivedAt,
-    },
-  });
-}
 
 const seedReadModelWithSubagents = Effect.gen(function* () {
   const now = "2026-01-01T00:00:00.000Z";
@@ -264,7 +240,6 @@ function normalizeThreadLifecycleEvents(event: PlannedEvent | ReadonlyArray<Plan
           threadId: entry.payload.threadId,
         };
       case "thread.archived":
-      case "thread.unarchived":
         return {
           type: entry.type,
           threadId: entry.payload.threadId,
@@ -295,80 +270,6 @@ it.layer(NodeServices.layer)("decider thread lifecycle flows", (it) => {
         }),
       );
       expect(error.message).toContain("cannot be deleted without force=true");
-    }),
-  );
-
-  it.effect("rejects deleteArchivedThreads when the project still has a live thread", () =>
-    Effect.gen(function* () {
-      const readModel = yield* seedReadModel;
-      const withArchivedThread = yield* archiveThread(readModel, asThreadId("thread-delete-1"), 1);
-      expect(
-        withArchivedThread.threads.find((thread) => thread.id === "thread-delete-2")?.archivedAt,
-      ).toBeNull();
-
-      const error = yield* Effect.flip(
-        decideOrchestrationCommand({
-          command: {
-            type: "project.delete",
-            commandId: asCommandId("cmd-project-delete-archived-only-mixed"),
-            projectId: asProjectId("project-delete"),
-            deleteArchivedThreads: true,
-          },
-          readModel: withArchivedThread,
-        }),
-      );
-
-      expect(error._tag).toBe("OrchestrationCommandInvariantError");
-      expect(error.message).toContain("cannot be deleted without force=true");
-    }),
-  );
-
-  it.effect("rejects deleting archived threads without explicit opt-in", () =>
-    Effect.gen(function* () {
-      let readModel = yield* seedReadModel;
-      for (const [index, threadId] of ["thread-delete-1", "thread-delete-2"].entries()) {
-        readModel = yield* archiveThread(readModel, asThreadId(threadId), index + 1);
-      }
-
-      const error = yield* Effect.flip(
-        decideOrchestrationCommand({
-          command: {
-            type: "project.delete",
-            commandId: asCommandId("cmd-project-delete-archived-no-opt-in"),
-            projectId: asProjectId("project-delete"),
-          },
-          readModel,
-        }),
-      );
-
-      expect(error._tag).toBe("OrchestrationCommandInvariantError");
-      expect(error.message).toContain("cannot be deleted without force=true");
-    }),
-  );
-
-  it.effect("deletes a project containing only archived threads without force", () =>
-    Effect.gen(function* () {
-      let readModel = yield* seedReadModel;
-      for (const [index, threadId] of ["thread-delete-1", "thread-delete-2"].entries()) {
-        readModel = yield* archiveThread(readModel, asThreadId(threadId), index + 1);
-      }
-
-      const result = yield* decideOrchestrationCommand({
-        command: {
-          type: "project.delete",
-          commandId: asCommandId("cmd-project-delete-archived-only"),
-          projectId: asProjectId("project-delete"),
-          deleteArchivedThreads: true,
-        },
-        readModel,
-      });
-      const events = Array.isArray(result) ? result : [result];
-
-      expect(events.map((event) => event.type)).toEqual([
-        "thread.deleted",
-        "thread.deleted",
-        "project.deleted",
-      ]);
     }),
   );
 
@@ -471,43 +372,6 @@ it.layer(NodeServices.layer)("decider thread lifecycle flows", (it) => {
         { type: "thread.archived", threadId: asThreadId("thread-delete-1-grandchild") },
         { type: "thread.archived", threadId: asThreadId("thread-delete-1-child") },
         { type: "thread.archived", threadId: asThreadId("thread-delete-1") },
-      ]);
-    }),
-  );
-
-  it.effect("unarchives every archived subagent descendant with its root thread", () =>
-    Effect.gen(function* () {
-      const readModel = yield* seedReadModelWithSubagents;
-      const archiveResult = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.archive",
-          commandId: asCommandId("cmd-thread-archive-before-unarchive"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel,
-      });
-      const archiveEvents = Array.isArray(archiveResult) ? archiveResult : [archiveResult];
-      let archivedReadModel = readModel;
-      for (const [index, event] of archiveEvents.entries()) {
-        archivedReadModel = yield* projectEvent(archivedReadModel, {
-          ...event,
-          sequence: readModel.snapshotSequence + index + 1,
-        });
-      }
-
-      const result = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.unarchive",
-          commandId: asCommandId("cmd-thread-unarchive-cascade"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: archivedReadModel,
-      });
-
-      expect(normalizeThreadLifecycleEvents(result)).toEqual([
-        { type: "thread.unarchived", threadId: asThreadId("thread-delete-1-grandchild") },
-        { type: "thread.unarchived", threadId: asThreadId("thread-delete-1-child") },
-        { type: "thread.unarchived", threadId: asThreadId("thread-delete-1") },
       ]);
     }),
   );
@@ -633,176 +497,6 @@ it.layer(NodeServices.layer)("decider thread lifecycle flows", (it) => {
         { type: "thread.deleted", threadId: asThreadId("thread-delete-1") },
         { type: "thread.deleted", threadId: asThreadId("thread-delete-2") },
         { type: "project.deleted", projectId: asProjectId("project-delete") },
-      ]);
-    }),
-  );
-
-  it.effect("applies lifecycle changes to a native subagent's Magi tree in lineage order", () =>
-    Effect.gen(function* () {
-      const readModel = yield* seedReadModelWithSubagents;
-      const ownerThreadId = asThreadId("thread-delete-1-child");
-      const participantThreadId = asThreadId("zz-thread-delete-1-child-magi-participant");
-      const now = "2026-01-01T00:00:00.000Z";
-      const withParticipant = yield* projectEvent(readModel, {
-        sequence: readModel.snapshotSequence + 1,
-        eventId: asEventId("evt-create-subagent-magi-participant"),
-        aggregateKind: "thread",
-        aggregateId: participantThreadId,
-        type: "thread.created",
-        occurredAt: now,
-        commandId: asCommandId("cmd-create-subagent-magi-participant"),
-        causationEventId: null,
-        correlationId: asCommandId("cmd-create-subagent-magi-participant"),
-        metadata: {},
-        payload: {
-          threadId: participantThreadId,
-          projectId: asProjectId("project-delete"),
-          title: "Nested Magi participant",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5-codex",
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          branch: null,
-          worktreePath: null,
-          parentRelation: {
-            kind: "magi",
-            rootThreadId: ownerThreadId,
-            parentThreadId: ownerThreadId,
-            runId: MagiRunId.make("run-delete-subagent-owner"),
-            participantId: MagiParticipantId.make("participant-delete-subagent-owner"),
-            providerThreadId: "provider-subagent-magi-participant",
-            depth: 1,
-            startedAt: now,
-            completedAt: null,
-            status: "completed",
-          },
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
-
-      const archived = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.archive",
-          commandId: asCommandId("cmd-archive-root-with-subagent-magi"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: withParticipant,
-      });
-      expect(normalizeThreadLifecycleEvents(archived)).toEqual([
-        { type: "thread.archived", threadId: asThreadId("thread-delete-1-grandchild") },
-        { type: "thread.archived", threadId: participantThreadId },
-        { type: "thread.archived", threadId: ownerThreadId },
-        { type: "thread.archived", threadId: asThreadId("thread-delete-1") },
-      ]);
-
-      let archivedReadModel = withParticipant;
-      for (const [index, event] of (Array.isArray(archived) ? archived : [archived]).entries()) {
-        archivedReadModel = yield* projectEvent(archivedReadModel, {
-          ...event,
-          sequence: withParticipant.snapshotSequence + index + 1,
-        });
-      }
-      const unarchived = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.unarchive",
-          commandId: asCommandId("cmd-unarchive-root-with-subagent-magi"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: archivedReadModel,
-      });
-      expect(normalizeThreadLifecycleEvents(unarchived)).toEqual([
-        { type: "thread.unarchived", threadId: asThreadId("thread-delete-1-grandchild") },
-        { type: "thread.unarchived", threadId: participantThreadId },
-        { type: "thread.unarchived", threadId: ownerThreadId },
-        { type: "thread.unarchived", threadId: asThreadId("thread-delete-1") },
-      ]);
-
-      const deleted = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.delete",
-          commandId: asCommandId("cmd-delete-root-with-subagent-magi"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: withParticipant,
-      });
-
-      expect(normalizeThreadLifecycleEvents(deleted)).toEqual([
-        { type: "thread.deleted", threadId: asThreadId("thread-delete-1-grandchild") },
-        { type: "thread.deleted", threadId: participantThreadId },
-        { type: "thread.deleted", threadId: ownerThreadId },
-        { type: "thread.deleted", threadId: asThreadId("thread-delete-1") },
-      ]);
-    }),
-  );
-
-  it.effect("archives and deletes Magi participant descendants with their root", () =>
-    Effect.gen(function* () {
-      const roots = yield* seedReadModel;
-      const now = "2026-01-01T00:00:00.000Z";
-      const childId = asThreadId("thread-delete-1-magi-participant");
-      const created = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.create",
-          commandId: asCommandId("cmd-create-magi-participant"),
-          threadId: childId,
-          projectId: asProjectId("project-delete"),
-          title: "Magi participant",
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("codex"),
-            model: "gpt-5-codex",
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          branch: null,
-          worktreePath: null,
-          parentRelation: {
-            kind: "magi",
-            rootThreadId: asThreadId("thread-delete-1"),
-            parentThreadId: asThreadId("thread-delete-1"),
-            runId: MagiRunId.make("run-delete-1"),
-            participantId: MagiParticipantId.make("participant-delete-1"),
-            providerThreadId: "provider-magi-participant",
-            depth: 1,
-            startedAt: now,
-            completedAt: null,
-            status: "running",
-          },
-          createdAt: now,
-        },
-        readModel: roots,
-      });
-      const withMagi = yield* projectEvent(roots, {
-        ...(Array.isArray(created) ? created[0]! : created),
-        sequence: roots.snapshotSequence + 1,
-      });
-
-      const archived = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.archive",
-          commandId: asCommandId("cmd-archive-root-with-magi"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: withMagi,
-      });
-      expect(normalizeThreadLifecycleEvents(archived)).toEqual([
-        { type: "thread.archived", threadId: childId },
-        { type: "thread.archived", threadId: asThreadId("thread-delete-1") },
-      ]);
-
-      const deleted = yield* decideOrchestrationCommand({
-        command: {
-          type: "thread.delete",
-          commandId: asCommandId("cmd-delete-root-with-magi"),
-          threadId: asThreadId("thread-delete-1"),
-        },
-        readModel: withMagi,
-      });
-      expect(normalizeThreadLifecycleEvents(deleted)).toEqual([
-        { type: "thread.deleted", threadId: childId },
-        { type: "thread.deleted", threadId: asThreadId("thread-delete-1") },
       ]);
     }),
   );

@@ -8,21 +8,22 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("040_ProjectionProjectFaviconPath", (it) => {
-  it.effect("adds the nullable favicon path to project projections", () =>
+layer("042_ProjectionProjectsDefaultThreadEnvMode", (it) => {
+  it.effect("adds the nullable default thread environment mode", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 39 });
-      yield* runMigrations({ toMigrationInclusive: 40 });
+      yield* runMigrations({ toMigrationInclusive: 42 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_projects)
       `;
-      const faviconPath = columns.find((column) => column.name === "favicon_path");
+      const defaultThreadEnvMode = columns.find(
+        (column) => column.name === "default_thread_env_mode",
+      );
 
-      assert.equal(faviconPath?.name, "favicon_path");
-      assert.equal(faviconPath?.notnull, 0);
+      assert.isDefined(defaultThreadEnvMode);
+      assert.equal(defaultThreadEnvMode.notnull, 0);
     }),
   );
 });

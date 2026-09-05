@@ -1692,6 +1692,83 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;/review_comment&gt;");
   });
 
+  it("renders the upstream subagent summary with token usage and no fork child card", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        agentPanelModel={{
+          workflows: [],
+          directAgents: [
+            {
+              id: "provider-child-1",
+              kind: "subagent",
+              title: "Inspect the regression",
+              role: null,
+              model: null,
+              effort: null,
+              status: "completed",
+              activationCount: 1,
+              usage: { totalTokens: 1_234 },
+              progress: null,
+              lastToolName: null,
+              result: null,
+              error: null,
+              outputFile: null,
+              owningAgentId: null,
+              parentAgentId: null,
+              agentPath: "/root/inspector",
+              agentIndex: null,
+              phaseIndex: null,
+              phaseTitle: null,
+              attempt: null,
+              workflowName: null,
+              phases: [],
+              runHandles: null,
+              recentActivity: [],
+              firstSeenAt: "2026-03-17T19:12:28.000Z",
+              startedAt: "2026-03-17T19:12:28.000Z",
+              completedAt: "2026-03-17T19:12:30.000Z",
+              updatedAt: "2026-03-17T19:12:30.000Z",
+            },
+          ],
+          directAgentDepthById: new Map(),
+          runningCount: 0,
+          waitingCount: 0,
+          idleCount: 0,
+          settledCount: 1,
+          totalTokens: 1_234,
+          hasAgents: true,
+          liveCount: 0,
+        }}
+        timelineEntries={[
+          {
+            id: "native-agent-summary",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "native-agent-summary",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              turnId: TurnId.make("turn-spawn"),
+              label: "Task completed",
+              tone: "info",
+              taskId: "provider-child-1",
+              agentSpawn: {
+                workflowId: null,
+                agentTaskIds: ["provider-child-1"],
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Ran 1 subagent");
+    expect(markup).toContain("Σ 1.2k");
+    expect(markup).toContain("View ▸");
+    expect(markup).not.toContain("Subagent - Inspect the regression");
+    expect(markup).not.toContain("Completed in");
+  });
+
   it("renders file review comments as source code instead of diffs", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

@@ -31,6 +31,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
   ProjectId,
+  ProviderItemId,
   type ProviderAuthState,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -8259,9 +8260,24 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const busyThreadId = ThreadId.make("thread-busy");
       const newThreadId = ThreadId.make("thread-new");
+      const parentThreadId = ThreadId.make("thread-parent");
       const now = "2026-01-01T00:00:00.000Z";
       const shellFetches: Array<string> = [];
       let replayLimit: number | undefined;
+      const parentRelation = {
+        kind: "subagent",
+        rootThreadId: parentThreadId,
+        parentThreadId,
+        parentTurnId: TurnId.make("turn-parent"),
+        parentItemId: ProviderItemId.make("item-parent"),
+        parentActivitySequence: 7,
+        providerThreadId: "provider-thread-child",
+        titleSeed: "Investigate the busy thread",
+        depth: 1,
+        startedAt: now,
+        completedAt: null,
+        status: "running",
+      } as const;
 
       const messageEvent = (sequence: number): OrchestrationEvent =>
         ({
@@ -8310,7 +8326,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             getThreadShellById: (threadId) =>
               Effect.sync(() => {
                 shellFetches.push(threadId);
-                return Option.some(makeDefaultOrchestrationThreadShell({ id: threadId }));
+                return Option.some(
+                  makeDefaultOrchestrationThreadShell({
+                    id: threadId,
+                    ...(threadId === busyThreadId ? { parentRelation } : {}),
+                  }),
+                );
               }),
           },
         },
@@ -8334,6 +8355,21 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       // a single shell refetch (not 20). The new thread is not stuck behind it.
       assert.include(upsertedIds, busyThreadId);
       assert.include(upsertedIds, newThreadId);
+      const busyUpsert = collected.find(
+        (item) => item.kind === "thread-upserted" && item.thread.id === busyThreadId,
+      );
+      assert.deepEqual(
+        busyUpsert?.kind === "thread-upserted" ? busyUpsert.thread.parentRelation : null,
+        parentRelation,
+      );
+      const newThreadUpsert = collected.find(
+        (item) => item.kind === "thread-upserted" && item.thread.id === newThreadId,
+      );
+      assert.isUndefined(
+        newThreadUpsert?.kind === "thread-upserted"
+          ? newThreadUpsert.thread.parentRelation
+          : undefined,
+      );
       assert.equal(collected[2]?.kind, "synchronized");
       assert.equal(shellFetches.filter((id) => id === busyThreadId).length, 1);
       assert.equal(replayLimit, 50);

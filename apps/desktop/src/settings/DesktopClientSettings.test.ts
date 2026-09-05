@@ -47,6 +47,7 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
+  subagentConversationVisibilityEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},

@@ -14,12 +14,13 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { discardComposerDraft } from "../lib/composerDraftUploads";
+import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsPinning,
@@ -34,14 +35,11 @@ import {
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
+import type { Thread } from "../types";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
-import {
-  optimisticallyHideArchivedThread,
-  revealOptimisticallyArchivedThread,
-} from "../optimisticThreadArchiveStore";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -53,6 +51,35 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   override get message(): string {
     return "Cannot archive a running thread.";
   }
+}
+
+function collectLifecycleThreadIds(
+  threads: readonly Pick<Thread, "id" | "parentRelation">[],
+  rootThreadIds: ReadonlySet<ThreadId>,
+): Set<ThreadId> {
+  const threadIds = new Set(rootThreadIds);
+  for (const thread of threads) {
+    if (
+      thread.parentRelation?.kind === "subagent" &&
+      rootThreadIds.has(thread.parentRelation.rootThreadId)
+    ) {
+      threadIds.add(thread.id);
+    }
+  }
+  return threadIds;
+}
+
+function withRootLast(threadIds: ReadonlySet<ThreadId>, rootThreadId: ThreadId): ThreadId[] {
+  return [...threadIds].sort((left, right) =>
+    left === rootThreadId ? 1 : right === rootThreadId ? -1 : 0,
+  );
+}
+
+function findThreadById<T extends Pick<Thread, "id">>(
+  threads: readonly T[],
+  threadId: ThreadId,
+): T | null {
+  return threads.find((thread) => thread.id === threadId) ?? null;
 }
 
 export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<ThreadSettlementUnsupportedError>()(
@@ -189,6 +216,10 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
+  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
+  const clearProjectDraftThreadById = useComposerDraftStore(
+    (store) => store.clearProjectDraftThreadById,
+  );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
@@ -220,7 +251,19 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+      const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
+        const shell = readThreadShell(ref);
+        return shell === null ? [] : [shell];
+      });
+      const archivedThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
+      if (
+        threads.some(
+          (entry) =>
+            archivedThreadIds.has(entry.id) &&
+            entry.session?.status === "running" &&
+            entry.session.activeTurnId != null,
+        )
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({
@@ -233,31 +276,23 @@ export function useThreadActions() {
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId;
-      optimisticallyHideArchivedThread(threadRef);
-      const archiveResult = await archiveThreadMutation({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId },
-      });
-      if (archiveResult._tag === "Failure") {
-        revealOptimisticallyArchivedThread(threadRef);
-        return archiveResult;
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        archivedThreadIds.has(currentRouteThreadRef.threadId);
+
+      for (const archivedThreadId of withRootLast(archivedThreadIds, threadRef.threadId)) {
+        const archiveResult = await archiveThreadMutation({
+          environmentId: threadRef.environmentId,
+          input: { threadId: archivedThreadId },
+        });
+        if (archiveResult._tag === "Failure") {
+          return archiveResult;
+        }
       }
-      // The domain event is published before the command acknowledgement, so
-      // the shell now owns visibility. Do not retain a local tombstone that
-      // could hide a later unarchive performed by another client.
-      revealOptimisticallyArchivedThread(threadRef);
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      // The local composer draft intentionally survives archive, but its
-      // pending server uploads are transient and never enter the cold bundle.
-      // Release them now; opening the restored draft starts fresh uploads from
-      // its local image data.
-      releaseComposerDraftUploads(threadRef);
       opts.onArchived?.();
 
       if (shouldNavigateToDraft) {
@@ -267,17 +302,16 @@ export function useThreadActions() {
         if (navigationResult._tag === "Failure") {
           return navigationResult;
         }
-        return archiveResult;
+        return AsyncResult.success(undefined);
       }
 
-      return archiveResult;
+      return AsyncResult.success(undefined);
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
     async (target: ScopedThreadRef) => {
-      revealOptimisticallyArchivedThread(target);
       const result = await unarchiveThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
@@ -313,7 +347,7 @@ export function useThreadActions() {
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,
       });
-      const deletedIds =
+      const selectedDeleteRootIds =
         opts.deletedThreadKeys && opts.deletedThreadKeys.size > 0
           ? new Set<ThreadId>(
               [...opts.deletedThreadKeys].flatMap((threadKey) => {
@@ -322,6 +356,11 @@ export function useThreadActions() {
               }),
             )
           : undefined;
+      const targetThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
+      const deletedIds =
+        selectedDeleteRootIds && selectedDeleteRootIds.size > 0
+          ? collectLifecycleThreadIds(threads, selectedDeleteRootIds)
+          : targetThreadIds;
       const survivingThreads =
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
@@ -354,39 +393,58 @@ export function useThreadActions() {
         shouldDeleteWorktree = confirmationResult.value;
       }
 
-      if (thread.session && thread.session.status !== "stopped") {
-        await stopThreadSession({
+      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
+        const deletedThread = findThreadById(threads, deletedThreadId);
+        if (deletedThread?.session && deletedThread.session.status !== "stopped") {
+          await stopThreadSession({
+            environmentId: threadRef.environmentId,
+            input: { threadId: deletedThreadId },
+          });
+        }
+
+        await closeTerminal({
           environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
+          input: { threadId: deletedThreadId, deleteHistory: true },
         });
       }
 
-      await closeTerminal({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, deleteHistory: true },
-      });
-
-      const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
       const currentRouteThreadRef = getCurrentRouteThreadRef();
-      const shouldNavigateToFallback =
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId;
+      const activeDeletedThreadId =
+        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
+        deletedIds.has(currentRouteThreadRef.threadId)
+          ? currentRouteThreadRef.threadId
+          : null;
+      const shouldNavigateToFallback = activeDeletedThreadId !== null;
+      const deletedThreadIdForFallback = activeDeletedThreadId ?? threadRef.threadId;
       const fallbackThreadId = getFallbackThreadIdAfterDelete({
         threads,
-        deletedThreadId: threadRef.threadId,
-        deletedThreadIds,
+        deletedThreadId: deletedThreadIdForFallback,
+        deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      const deleteResult = await deleteThreadMutation({
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId },
-      });
-      if (deleteResult._tag === "Failure") {
-        return deleteResult;
+      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
+        const deleteResult = await deleteThreadMutation({
+          environmentId: threadRef.environmentId,
+          input: { threadId: deletedThreadId },
+        });
+        if (deleteResult._tag === "Failure") {
+          return deleteResult;
+        }
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      discardComposerDraft(threadRef);
-      clearTerminalUiState(threadRef);
+      for (const deletedThreadId of deletedIds) {
+        const deletedThreadRef = scopeThreadRef(threadRef.environmentId, deletedThreadId);
+        const deletedThread = findThreadById(threads, deletedThreadId);
+        releaseComposerDraftUploads(deletedThreadRef);
+        clearComposerDraftForThread(deletedThreadRef);
+        if (deletedThread) {
+          clearProjectDraftThreadById(
+            scopeProjectRef(threadRef.environmentId, deletedThread.projectId),
+            deletedThreadRef,
+          );
+        }
+        clearTerminalUiState(deletedThreadRef);
+      }
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -425,7 +483,7 @@ export function useThreadActions() {
       }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
-        return deleteResult;
+        return AsyncResult.success(undefined);
       }
 
       const removeResult = await removeWorktree({
@@ -467,9 +525,11 @@ export function useThreadActions() {
         );
         return cleanupFailure;
       }
-      return deleteResult;
+      return AsyncResult.success(undefined);
     },
     [
+      clearComposerDraftForThread,
+      clearProjectDraftThreadById,
       clearTerminalUiState,
       closeTerminal,
       deleteThreadMutation,

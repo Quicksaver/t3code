@@ -2,17 +2,25 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
-import { threadHasStarted } from "../components/ChatView.logic";
+import {
+  canLoadStandaloneThreadConversation,
+  resolveDisabledSubagentParentThreadRef,
+  threadHasStarted,
+} from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
-import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
+import {
+  buildThreadRouteParams,
+  resolveThreadRouteRef,
+  resolveThreadRouteRenderState,
+} from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
-  classifyThreadDetail,
   useEnvironmentThreadRefs,
-  useThreadDetailWhenReady,
+  useThreadDetail,
   useThreadShell,
-  useThreadStatusWhenReady,
+  useThreadStatus,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -26,19 +34,33 @@ function ChatThreadRouteView() {
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
-  const draftThread = useComposerDraftStore((store) =>
-    threadRef ? store.getDraftThreadByRef(threadRef) : null,
+  const draftThreadExists = useComposerDraftStore((store) =>
+    threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
   );
-  const draftThreadExists = draftThread !== null;
-  const threadClassification = classifyThreadDetail({
+  const subagentConversationVisibilityEnabled = useClientSettings(
+    (settings) => settings.subagentConversationVisibilityEnabled,
+  );
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const canLoadConversation = canLoadStandaloneThreadConversation({
+    threadShell: serverThreadShell,
     hasLocalDraft: draftThreadExists,
-    hasServerShell: serverThreadShell !== null,
+    clientSettingsHydrated,
+    subagentConversationVisibilityEnabled,
   });
-  const serverThreadDetail = useThreadDetailWhenReady(threadRef, threadClassification);
-  const serverThreadStatus = useThreadStatusWhenReady(threadRef, threadClassification);
+  const disabledSubagentParentRef = resolveDisabledSubagentParentThreadRef({
+    threadShell: serverThreadShell,
+    clientSettingsHydrated,
+    subagentConversationVisibilityEnabled,
+  });
+  const detailThreadRef = canLoadConversation ? threadRef : null;
+  const serverThreadDetail = useThreadDetail(detailThreadRef);
+  const serverThreadStatus = useThreadStatus(detailThreadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const environmentHasServerThreads = environmentThreadRefs.length > 0;
+  const draftThread = useComposerDraftStore((store) =>
+    threadRef ? store.getDraftThreadByRef(threadRef) : null,
+  );
   const environmentHasDraftThreads = useComposerDraftStore((store) => {
     if (!threadRef) {
       return false;
@@ -59,6 +81,15 @@ function ChatThreadRouteView() {
   });
   const serverThreadStarted = threadHasStarted(serverThreadDetail);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
+
+  useEffect(() => {
+    if (!disabledSubagentParentRef) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(disabledSubagentParentRef),
+      replace: true,
+    });
+  }, [disabledSubagentParentRef, navigate]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -83,7 +114,8 @@ function ChatThreadRouteView() {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
+      {canLoadConversation &&
+      (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) ? (
         <ChatView
           environmentId={threadRef.environmentId}
           threadId={threadRef.threadId}
