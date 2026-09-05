@@ -1,14 +1,12 @@
 ---
 name: update-worktree
-description: Merge upstream/main into one worktree and adapt its customizations.
+description: Squash and rebase one worktree at the base/main boundary, adapting its customizations.
 disable-model-invocation: true
 ---
 
 # Update one worktree
 
-Load `$spawn-worktree`.
-
-Give the subagent one step at a time. Send the next step only after it returns the current step's result. Be silent while you patiently wait for each subagent terminal result.
+Load `$spawn-worktree`. Give the subagent one step at a time. Send the next step only after it returns the current step's result. Be silent while you patiently wait for each subagent terminal result.
 
 You only orchestrate and report. Do not validate the work or load skills assigned to the subagent.
 
@@ -25,14 +23,15 @@ Keep every assessment and follow-up **relative to the branch's own customization
 
 ## Steps
 
-### 1. Merge and assess
+### 1. Squash, rebase, and assess
 
-Instruct the subagent to fetch and merge `upstream/main` into its current branch. Treat the incoming changes as intentional, preserve the branch's intended customizations around them, and run focused validation for touched areas.
+Instruct the subagent to preserve a recovery ref, squash its current branch's combined changes against its current upstream merge base, then rebase that single commit onto the target while preserving upstream tracking. Treat incoming changes as intentional, preserve the branch's intended customizations around them, and run focused validation for touched areas. Record the rebased commit as the baseline for later adaptation review.
 
-The exact target commit from `upstream/main` is same as the latest head of `base/main`; even if `upstream/main` itself has newer commits, do not pursue them.
+The exact target is the `base/main` tip at the start of the update. Do not pursue newer commits in `upstream/main`.
 
-- If the branch is already current with `upstream/main` at the target commit specified above, skip validation, report that result, and stop.
-- If upstream makes a significant portion of the branch obsolete, irrelevant, redundant, or superseded, report the affected customizations and stop after the merge.
+- If the branch started with exactly one commit directly above the target, skip validation, report that result, and stop. A branch already based there but carrying multiple commits still needs squashing.
+- If no customizations remain, leave the branch at the target and report that result.
+- If upstream makes a significant portion of the branch obsolete, irrelevant, redundant, or superseded, report the affected customizations and stop after the rebase.
 
 Otherwise, require a report covering:
 
@@ -50,10 +49,10 @@ If the report identifies worthwhile changes **relative to the branch's own custo
 
 ### 4. Update branch documentation
 
-If step 3 changed the branch, instruct the subagent to update stale or missing branch Markdown files according to the documentation rules.
+If conflict resolution or step 3 changed documented behavior, instruct the subagent to update stale or missing branch Markdown files according to the documentation rules.
 
 ### 5. Assess the adaptation
 
-If step 3 changed the branch, instruct the subagent to ensure everything is properly committed, then use the global `$magi-arbitrator-code-review` skill on high level and set the initial review `BASE` to the merge commit. Tell it to specify to the Magi participants performing the review that every item must be assessed **relative to the branch's own customizations in light of the incoming upstream changes**. Ignore every item outside that scope regardless of severity, including findings about incoming upstream changes or branch customizations by themselves. Do not load `$magi-arbitrator-code-review` yourself.
+If step 3 changed the branch, instruct the subagent to commit the follow-ups separately for review, then use the global `$magi-arbitrator-code-review` skill on high level and set the initial review `BASE` to the rebased commit recorded in step 1. Tell it to specify to the Magi participants performing the review that every item must be assessed **relative to the branch's own customizations in light of the incoming upstream changes**. Ignore every item outside that scope regardless of severity, including findings about incoming upstream changes or branch customizations by themselves. Do not load `$magi-arbitrator-code-review` yourself.
 
-After the sequence finishes, report everything the subagent reported.
+At completion, whether or not review was needed, instruct the subagent to fold all follow-up fixes and documentation into the single branch-owned commit. Verify its parent is the fixed target, tracking is unchanged, and the worktree is clean. Report everything the subagent reported.

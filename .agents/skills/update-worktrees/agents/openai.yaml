@@ -1,6 +1,6 @@
 interface:
   display_name: "Update Worktrees"
-  short_description: "Merge upstream/main into active non-main worktrees."
+  short_description: "Squash and rebase active non-main worktrees."
 
 policy:
   allow_implicit_invocation: false
