@@ -41,14 +41,20 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode,
           branch,
           worktree_path,
-          magi_root_thread_id,
-          magi_parent_thread_id,
+          parent_kind,
+          root_thread_id,
+          parent_thread_id,
+          parent_turn_id,
+          parent_item_id,
+          parent_activity_sequence,
+          provider_thread_id,
+          title_seed,
+          subagent_depth,
+          subagent_started_at,
+          subagent_completed_at,
+          subagent_status,
           magi_run_id,
           magi_participant_id,
-          magi_provider_thread_id,
-          magi_started_at,
-          magi_completed_at,
-          magi_status,
           active_magi_run_json,
           linked_pull_request_json,
           latest_turn_id,
@@ -79,23 +85,29 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
-          ${row.magiRootThreadId ?? null},
-          ${row.magiParentThreadId ?? null},
+          ${row.parentKind},
+          ${row.rootThreadId},
+          ${row.parentThreadId},
+          ${row.parentTurnId},
+          ${row.parentItemId},
+          ${row.parentActivitySequence},
+          ${row.providerThreadId},
+          ${row.titleSeed},
+          ${row.subagentDepth},
+          ${row.subagentStartedAt},
+          ${row.subagentCompletedAt},
+          ${row.subagentStatus},
           ${row.magiRunId ?? null},
           ${row.magiParticipantId ?? null},
-          ${row.magiProviderThreadId ?? null},
-          ${row.magiStartedAt ?? null},
-          ${row.magiCompletedAt ?? null},
-          ${row.magiStatus ?? null},
           ${row.activeMagiRun == null ? null : JSON.stringify(row.activeMagiRun)},
-          ${row.linkedPullRequest === undefined || row.linkedPullRequest === null ? null : JSON.stringify(row.linkedPullRequest)},
+          ${row.linkedPullRequest == null ? null : JSON.stringify(row.linkedPullRequest)},
           ${row.latestTurnId},
           ${row.createdAt},
           ${row.updatedAt},
           ${row.archivedAt},
           ${row.settledOverride},
           ${row.settledAt},
-          ${row.unsettledAt},
+          ${row.unsettledAt ?? null},
           ${row.snoozedUntil},
           ${row.snoozedAt},
           ${row.pinnedAt},
@@ -117,14 +129,76 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
-          magi_root_thread_id = excluded.magi_root_thread_id,
-          magi_parent_thread_id = excluded.magi_parent_thread_id,
-          magi_run_id = excluded.magi_run_id,
-          magi_participant_id = excluded.magi_participant_id,
-          magi_provider_thread_id = excluded.magi_provider_thread_id,
-          magi_started_at = excluded.magi_started_at,
-          magi_completed_at = excluded.magi_completed_at,
-          magi_status = excluded.magi_status,
+          parent_kind = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.parent_kind
+            ELSE excluded.parent_kind
+          END,
+          root_thread_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.root_thread_id
+            ELSE excluded.root_thread_id
+          END,
+          parent_thread_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.parent_thread_id
+            ELSE excluded.parent_thread_id
+          END,
+          parent_turn_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.parent_turn_id
+            ELSE excluded.parent_turn_id
+          END,
+          parent_item_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.parent_item_id
+            ELSE excluded.parent_item_id
+          END,
+          parent_activity_sequence = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.parent_activity_sequence
+            ELSE excluded.parent_activity_sequence
+          END,
+          provider_thread_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.provider_thread_id
+            ELSE excluded.provider_thread_id
+          END,
+          title_seed = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.title_seed
+            ELSE excluded.title_seed
+          END,
+          subagent_depth = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.subagent_depth
+            ELSE excluded.subagent_depth
+          END,
+          subagent_started_at = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.subagent_started_at
+            ELSE excluded.subagent_started_at
+          END,
+          subagent_completed_at = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.subagent_completed_at
+            ELSE excluded.subagent_completed_at
+          END,
+          subagent_status = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.subagent_status
+            ELSE excluded.subagent_status
+          END,
+          magi_run_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.magi_run_id
+            ELSE excluded.magi_run_id
+          END,
+          magi_participant_id = CASE
+            WHEN projection_threads.parent_kind != 'root' AND excluded.parent_kind = 'root'
+              THEN projection_threads.magi_participant_id
+            ELSE excluded.magi_participant_id
+          END,
           active_magi_run_json = excluded.active_magi_run_json,
           linked_pull_request_json = excluded.linked_pull_request_json,
           latest_turn_id = excluded.latest_turn_id,
@@ -162,14 +236,20 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          magi_root_thread_id AS "magiRootThreadId",
-          magi_parent_thread_id AS "magiParentThreadId",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           magi_run_id AS "magiRunId",
           magi_participant_id AS "magiParticipantId",
-          magi_provider_thread_id AS "magiProviderThreadId",
-          magi_started_at AS "magiStartedAt",
-          magi_completed_at AS "magiCompletedAt",
-          magi_status AS "magiStatus",
           active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -209,14 +289,20 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
-          magi_root_thread_id AS "magiRootThreadId",
-          magi_parent_thread_id AS "magiParentThreadId",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(TRIM(root_thread_id), ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           magi_run_id AS "magiRunId",
           magi_participant_id AS "magiParticipantId",
-          magi_provider_thread_id AS "magiProviderThreadId",
-          magi_started_at AS "magiStartedAt",
-          magi_completed_at AS "magiCompletedAt",
-          magi_status AS "magiStatus",
           active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           latest_turn_id AS "latestTurnId",
