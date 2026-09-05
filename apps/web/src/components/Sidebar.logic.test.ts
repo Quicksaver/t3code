@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
   animatePinnedLayoutChanges,
-  archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
@@ -132,59 +131,6 @@ describe("shouldNavigateAfterProjectRemoval", () => {
   });
 });
 
-describe("archiveSelectedThreadEntries", () => {
-  const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
-  const success = { _tag: "Success" } as const;
-  const failure = { _tag: "Failure" } as const;
-
-  it("records every entry after full success", async () => {
-    const outcome = await archiveSelectedThreadEntries({
-      entries,
-      archive: async (_entry, onArchived) => {
-        onArchived();
-        return success;
-      },
-    });
-
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one", "two", "three"],
-      mutationFailure: null,
-      followupFailures: [],
-    });
-  });
-
-  it("stops at a mutation failure and retains prior successes", async () => {
-    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
-      if (entry.threadKey === "two") return failure;
-      onArchived();
-      return success;
-    });
-    const outcome = await archiveSelectedThreadEntries({ entries, archive });
-
-    expect(archive).toHaveBeenCalledTimes(2);
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one"],
-      mutationFailure: failure,
-      followupFailures: [],
-    });
-  });
-
-  it("continues after a post-archive failure", async () => {
-    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
-      onArchived();
-      return entry.threadKey === "two" ? failure : success;
-    });
-    const outcome = await archiveSelectedThreadEntries({ entries, archive });
-
-    expect(archive).toHaveBeenCalledTimes(3);
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one", "two", "three"],
-      mutationFailure: null,
-      followupFailures: [failure],
-    });
-  });
-});
-
 describe("buildBulkTitleRegenerationContextMenuItem", () => {
   it("counts only threads that can start a new regeneration", () => {
     expect(
@@ -224,13 +170,13 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasArchiveBlockedThread: false }),
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
-  it("disables bulk archive when a selected thread is running", () => {
+  it("disables bulk archive when a selected thread cannot be archived", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
