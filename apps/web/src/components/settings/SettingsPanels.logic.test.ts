@@ -89,6 +89,7 @@ describe("background activity settings restore", () => {
 
   it("preserves advanced overrides when the shared policy changes", () => {
     const automaticGitFetchInterval = Duration.seconds(42);
+    const sourceControlAllRemotesFetchInterval = Duration.minutes(8);
     expect(
       backgroundActivitySharedPolicySettings(
         {
@@ -99,6 +100,7 @@ describe("background activity settings restore", () => {
             baseProfile: "balanced",
             overrides: {
               automaticGitFetchInterval,
+              sourceControlAllRemotesFetchInterval,
               pauseWhenOnBattery: true,
             },
           },
@@ -111,6 +113,7 @@ describe("background activity settings restore", () => {
       baseProfile: "performance",
       overrides: {
         automaticGitFetchInterval,
+        sourceControlAllRemotesFetchInterval,
         pauseWhenOnBattery: true,
       },
     });

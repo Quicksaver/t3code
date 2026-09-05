@@ -35,6 +35,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import { type GitCommandTimeoutOverride, resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -45,7 +46,7 @@ export interface ExecuteGitInput {
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
-  readonly timeoutMs?: number | null;
+  readonly timeoutMs?: GitCommandTimeoutOverride;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   readonly progress?: ExecuteGitProgress;
@@ -277,6 +278,7 @@ export class GitVcsDriver extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly invalidateRefs: (cwd: string) => Effect.Effect<void>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
@@ -445,7 +447,7 @@ const gitCommand = (
     ...(options?.allowNonZeroExit !== undefined
       ? { allowNonZeroExit: options.allowNonZeroExit }
       : {}),
-    ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    timeoutMs: resolveGitCommandTimeoutMs(args, options?.timeoutMs),
     ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
     ...(options?.appendTruncationMarker !== undefined
       ? { appendTruncationMarker: options.appendTruncationMarker }
