@@ -25,12 +25,10 @@ when an occupied port forces a shift.
 
 ## Current integration seams
 
-- `apps/server/src/persistence/Migrations.ts` runs core and Magi migrations through separate ledgers.
-  Core uses `effect_sql_migrations`; Magi uses `effect_sql_magi_migrations` with ids 47 through 50.
-  Startup removes exact historical Magi names from the core ledger before running both manifests, so
-  future core ids may overlap without being skipped. `apps/server/scripts/migrate-dev-db.ts` validates
-  slots against both ledgers. `MAGI.md` (`Implemented integration boundaries`) is authoritative for
-  this compatibility path. Do not restore a shared loader or reuse a Magi id within the Magi ledger.
+- `apps/server/src/persistence/Migrations.ts` adds one canonical migration after `base/main`.
+  `048_MagiProjections` creates the complete final Magi schema, indexes, and proposal terminology.
+  It uses the ordinary `effect_sql_migrations` ledger because this branch is intended to merge
+  directly into upstream without any intermediate branch migration history.
 - `apps/server/src/persistence/Layers/ProjectionThreads.ts`,
   `apps/server/src/orchestration/Layers/ProjectionPipeline.ts`, and
   `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts` project Magi lineage and

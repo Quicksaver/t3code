@@ -77,6 +77,23 @@ export default Effect.gen(function* () {
     CREATE INDEX IF NOT EXISTS idx_projection_magi_runs_initiating_reference
     ON projection_magi_runs(initiating_reference_id, started_at DESC)
   `;
+  yield* sql`
+    CREATE UNIQUE INDEX uq_projection_magi_runs_active_conversation
+    ON projection_magi_runs(root_thread_id)
+    WHERE state IN (
+      'initializing',
+      'awaiting-main-tool',
+      'deliberating',
+      'awaiting-arbitration',
+      'awaiting-actions',
+      'awaiting-next-turn',
+      'awaiting-main-approval',
+      'awaiting-main-input',
+      'awaiting-action-reconciliation',
+      'paused',
+      'cancelling'
+    )
+  `;
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS projection_magi_members (

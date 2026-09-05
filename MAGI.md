@@ -638,17 +638,11 @@ Update generic root/descendant lifecycle traversal to include Magi relations. Ke
 
 ### Implemented integration boundaries
 
-The server runs core and Magi migrations through independent numeric ledgers. Core uses
-`effect_sql_migrations`; Magi uses `effect_sql_magi_migrations` for `047_MagiProjections`,
-`048_MagiActiveConversationUniqueness`, `049_MagiProposalTerminology`, and
-`050_MagiCoreMigrationCompatibility`. Before either manifest runs, startup removes rows with those
-exact Magi names from the core ledger. This upgrades every shipped shared-ledger layout, lets missing
-core migrations above the remaining ledger maximum run, and then records the idempotent Magi
-migrations in their own ledger. The compatibility migration reapplies the core work through 46 and
-all Magi migrations, covering older ledger holes below that maximum. Migration tests must run through
-the exact current ids and simulate every legacy ledger. `apps/server/scripts/migrate-dev-db.ts` checks
-each manifest against its corresponding ledger. Do not combine the loaders or renumber only the files
-and imports.
+The branch applies one `048_MagiProjections` migration directly after the `base/main` migration tail.
+That migration creates the complete final Magi schema, active-conversation uniqueness rule, and
+proposal terminology in the ordinary `effect_sql_migrations` ledger. Intermediate Magi migration
+histories belong only to an integration branch that actually ran those development builds. The
+upstream-ready feature branch contains no compatibility migrations for states that upstream never ran.
 
 The thread projection stores Magi lineage columns and `active_magi_run_json` beside core
 `linked_pull_request_json` and `unsettled_at`. `ProjectionThreads`, `ProjectionPipeline`, and
