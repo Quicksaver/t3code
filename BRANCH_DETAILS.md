@@ -8,6 +8,13 @@ Primary reference:
 
 - `MAGI.md`
 
+Supporting operational and security references:
+
+- `MAGI_ARBITRATOR_CODE_REVIEW.md` defines the complete review-and-fix arbitration example, including roster preflight, evidence requirements, proposal handling, and the final consensus condition.
+- `MAGI_ARBITRATOR_PLAN_REFINEMENT.md` defines the document-refinement arbitration example and keeps that workflow separate from implementation authorization.
+- `MAGI_PERSONALITY_CODE_REVIEWER.md` is the participant review rubric used by the code-review example.
+- `apps/server/src/magi/THREAT_MODEL.md` records Magi's prompt-injection, credential, tool-access, denial-of-service, cancellation, and durable-audit-data trust boundaries.
+
 ## Preferred development ports
 
 - Web: `8556`
