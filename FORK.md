@@ -308,7 +308,7 @@ Regression coverage lives in `apps/web/src/components/ChatView.logic.test.ts`, `
 
 ## Conversation User Context Rendering
 
-**Worktree branch:** `split/conversation-user-context-rendering`
+**Worktree branch:** `feat/conversation-user-context-rendering`
 
 The fork's user-message rendering composes upstream standalone element-pick chips with local terminal-context and preview-annotation presentation.
 
@@ -334,7 +334,7 @@ Primary files:
 
 ## Conversation Tool Activity Rendering
 
-**Worktree branch:** `split/file-command-activity-boxes`
+**Worktree branch:** `feat/file-command-activity-boxes`
 
 The custom behavior is focused on making tool activity easier to read in long-running Codex threads without changing agent execution semantics.
 
@@ -401,7 +401,7 @@ Useful focused commands:
 
 ## Archive Settings UX
 
-**Worktree branch:** `split/archive-settings-ux`
+**Worktree branch:** `feat/archive-settings-ux`
 
 The settings Archive panel is intentionally denser than the upstream-style settings rows so large archives remain scannable. The native mobile Archived Threads screen mirrors the same information hierarchy and behavior with mobile-native project sections, swipe actions, long-press menus, and header controls.
 
@@ -440,7 +440,7 @@ Primary files:
 
 ## Conversation Data Savings
 
-**Worktree branch:** `split/conversation-data-savings`
+**Worktree branch:** `feat/conversation-data-savings`
 
 Archived conversations use cold storage instead of retaining full hot projections and diagnostics in `state.sqlite`.
 
@@ -546,7 +546,7 @@ Focused regression coverage lives in `apps/server/src/provider/providerMaintenan
 
 ## Subagent Threading Work
 
-**Worktree branch:** `split/subagent-threading-work`
+**Worktree branch:** `feat/subagent-threading-work`
 
 The Codex subagent-threading work is integrated on `main`; the active worktree remains its maintenance owner. Treat Codex subagent lineage, child-thread projection, the default Sidebar's running-descendant/live-task counter and Agents-panel navigation, Legacy Sidebar and mobile lineage rows, child-thread output isolation, child stop behavior, provider-control failure isolation, parent metadata ingestion, and related tests as part of the fork's customization set during upstream merges.
 
@@ -635,7 +635,7 @@ Primary files:
 
 ## Version Control Panel Work
 
-**Worktree branch:** `split/version-control-panel-work`
+**Worktree branch:** `feat/version-control-panel-work`
 
 The first-class Version Control panel is integrated on `main`; the active worktree remains its maintenance owner. Treat the Version Control singleton right-panel surface, its native mobile screen, live VCS status watcher, Actionable and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, compare-base semantics, review-patch construction, and Version Control panel RPC/contracts as part of the fork's customization set during upstream merges. The native screen reuses the server-authoritative panel RPCs and shared branch/change presentation rules, and is opened from the mobile Git action menu through the explicit `Version Control` action.
 
