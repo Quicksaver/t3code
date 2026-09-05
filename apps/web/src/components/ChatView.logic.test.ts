@@ -6,11 +6,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderItemId,
   type ServerProvider,
   ThreadId,
   TurnId,
-  type OrchestrationThreadParentRelation,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -28,10 +26,8 @@ import {
   buildLoadingThreadFromShell,
   buildRevertTurnCountByUserMessageId,
   buildThreadTurnInterruptInput,
-  canLoadStandaloneThreadConversation,
+  clearThreadErrorRecord,
   createLocalDispatchSnapshot,
-  deriveAgentChildConversationByProviderId,
-  deriveAgentChildLifecycleByProviderId,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
@@ -40,17 +36,18 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
+  isLatestRequestSequence,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
-  resolveRightPanelControlsOwner,
-  resolveDisabledSubagentParentThreadRef,
+  retainThreadKeyRecord,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveDraftHeroState,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
-  resolveDraftHeroState,
+  shouldApplySourceControlMetadataUpdateResult,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -120,68 +117,6 @@ describe("floating browser preview", () => {
       }),
     ).toBe(true);
     expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
-  });
-});
-
-describe("Agents panel controls", () => {
-  it("keeps controls at the root for the inline panel layout", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: true,
-        rightPanelPresent: true,
-        shouldUseRightPanelSheet: false,
-      }),
-    ).toBe("root");
-  });
-
-  it("keeps controls at the root while an inline panel closes", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: false,
-        rightPanelPresent: true,
-        shouldUseRightPanelSheet: false,
-      }),
-    ).toBe("root");
-  });
-
-  it("moves controls into the open sheet layout", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: true,
-        rightPanelPresent: true,
-        shouldUseRightPanelSheet: true,
-      }),
-    ).toBe("sheet");
-  });
-
-  it("leaves controls in the header while the sheet does not own them", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: false,
-        rightPanelPresent: true,
-        shouldUseRightPanelSheet: true,
-      }),
-    ).toBe("header");
-  });
-
-  it("leaves controls in the header when the inline panel is absent", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: false,
-        rightPanelPresent: false,
-        shouldUseRightPanelSheet: false,
-      }),
-    ).toBe("header");
-  });
-
-  it("keeps absent inline panel controls in the header despite a stale open flag", () => {
-    expect(
-      resolveRightPanelControlsOwner({
-        rightPanelOpen: true,
-        rightPanelPresent: false,
-        shouldUseRightPanelSheet: false,
-      }),
-    ).toBe("header");
   });
 });
 
@@ -605,26 +540,6 @@ const readySession = {
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
 
-function makeSubagentParentRelation(
-  overrides: Partial<Extract<OrchestrationThreadParentRelation, { kind: "subagent" }>> = {},
-): Extract<OrchestrationThreadParentRelation, { kind: "subagent" }> {
-  return {
-    kind: "subagent",
-    rootThreadId: ThreadId.make("root-thread"),
-    parentThreadId: ThreadId.make("parent-thread"),
-    parentTurnId: TurnId.make("parent-turn"),
-    parentItemId: ProviderItemId.make("parent-item"),
-    parentActivitySequence: 1,
-    providerThreadId: "provider-child-thread",
-    titleSeed: "Child task",
-    depth: 1,
-    startedAt: now,
-    completedAt: null,
-    status: "running",
-    ...overrides,
-  };
-}
-
 describe("draft promotion during worktree setup", () => {
   const serverThreadRef = { environmentId, threadId };
 
@@ -730,188 +645,6 @@ describe("buildLoadingThreadFromShell", () => {
   });
 });
 
-describe("deriveAgentChildConversationByProviderId", () => {
-  it("returns no conversations without an active thread", () => {
-    expect(
-      deriveAgentChildConversationByProviderId({ activeThread: null, threadShells: [] }).size,
-    ).toBe(0);
-  });
-
-  it("does not index child conversations when standalone visibility is disabled", () => {
-    expect(
-      deriveAgentChildConversationByProviderId({
-        activeThread: { environmentId, id: threadId },
-        threadShells: [
-          {
-            environmentId,
-            id: ThreadId.make("child-thread"),
-            title: "Child",
-            parentRelation: makeSubagentParentRelation(),
-          },
-        ],
-        enabled: false,
-      }).size,
-    ).toBe(0);
-  });
-
-  it("keeps the persisted title and route scoped to the active environment and root", () => {
-    const rootThreadId = ThreadId.make("root-thread");
-    const childThreadId = ThreadId.make("child-thread");
-    const providerThreadId = "provider-child-thread";
-    const conversations = deriveAgentChildConversationByProviderId({
-      activeThread: {
-        environmentId,
-        id: rootThreadId,
-      },
-      threadShells: [
-        {
-          environmentId,
-          id: childThreadId,
-          title: "Persisted child title",
-          parentRelation: makeSubagentParentRelation({ rootThreadId, providerThreadId }),
-        },
-        {
-          environmentId,
-          id: ThreadId.make("other-root-child"),
-          title: "Unrelated root title",
-          parentRelation: makeSubagentParentRelation({
-            rootThreadId: ThreadId.make("other-root"),
-            providerThreadId,
-          }),
-        },
-        {
-          environmentId: EnvironmentId.make("other-environment"),
-          id: ThreadId.make("other-environment-child"),
-          title: "Unrelated environment title",
-          parentRelation: makeSubagentParentRelation({ rootThreadId, providerThreadId }),
-        },
-      ],
-    });
-
-    expect(conversations.get(providerThreadId)).toEqual({
-      threadRef: { environmentId, threadId: childThreadId },
-      title: "Persisted child title",
-    });
-  });
-
-  it("uses the active child's root lineage when indexing sibling agents", () => {
-    const rootThreadId = ThreadId.make("root-thread");
-    const activeChildId = ThreadId.make("active-child");
-    const siblingId = ThreadId.make("sibling-child");
-    const conversations = deriveAgentChildConversationByProviderId({
-      activeThread: {
-        environmentId,
-        id: activeChildId,
-        parentRelation: makeSubagentParentRelation({ rootThreadId }),
-      },
-      threadShells: [
-        {
-          environmentId,
-          id: siblingId,
-          title: "Sibling agent",
-          parentRelation: makeSubagentParentRelation({
-            rootThreadId,
-            providerThreadId: "provider-sibling",
-          }),
-        },
-      ],
-    });
-
-    expect(conversations.get("provider-sibling")).toEqual({
-      threadRef: { environmentId, threadId: siblingId },
-      title: "Sibling agent",
-    });
-  });
-});
-
-describe("deriveAgentChildLifecycleByProviderId", () => {
-  it("indexes terminal child state even when standalone child conversations are hidden", () => {
-    const rootThreadId = ThreadId.make("root-thread");
-    const completedAt = "2026-03-29T00:01:00.000Z";
-    const lifecycles = deriveAgentChildLifecycleByProviderId({
-      activeThread: { environmentId, id: rootThreadId },
-      threadShells: [
-        {
-          environmentId,
-          id: ThreadId.make("child-thread"),
-          title: "Completed child",
-          parentRelation: makeSubagentParentRelation({
-            rootThreadId,
-            providerThreadId: "provider-child",
-            status: "completed",
-            completedAt,
-          }),
-        },
-      ],
-    });
-
-    expect(lifecycles.get("provider-child")).toEqual({ status: "completed", completedAt });
-  });
-});
-
-describe("standalone subagent conversation visibility", () => {
-  const rootShell = { environmentId, parentRelation: undefined };
-  const childShell = { environmentId, parentRelation: makeSubagentParentRelation() };
-
-  it("loads root conversations independently of the beta preference", () => {
-    expect(
-      canLoadStandaloneThreadConversation({
-        threadShell: rootShell,
-        hasLocalDraft: false,
-        clientSettingsHydrated: false,
-        subagentConversationVisibilityEnabled: false,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not load child detail until hydrated settings explicitly opt in", () => {
-    expect(
-      canLoadStandaloneThreadConversation({
-        threadShell: childShell,
-        hasLocalDraft: false,
-        clientSettingsHydrated: false,
-        subagentConversationVisibilityEnabled: true,
-      }),
-    ).toBe(false);
-    expect(
-      canLoadStandaloneThreadConversation({
-        threadShell: childShell,
-        hasLocalDraft: false,
-        clientSettingsHydrated: true,
-        subagentConversationVisibilityEnabled: false,
-      }),
-    ).toBe(false);
-    expect(
-      canLoadStandaloneThreadConversation({
-        threadShell: childShell,
-        hasLocalDraft: false,
-        clientSettingsHydrated: true,
-        subagentConversationVisibilityEnabled: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("redirects disabled child routes to their immediate parent", () => {
-    expect(
-      resolveDisabledSubagentParentThreadRef({
-        threadShell: childShell,
-        clientSettingsHydrated: true,
-        subagentConversationVisibilityEnabled: false,
-      }),
-    ).toEqual({
-      environmentId,
-      threadId: ThreadId.make("parent-thread"),
-    });
-    expect(
-      resolveDisabledSubagentParentThreadRef({
-        threadShell: childShell,
-        clientSettingsHydrated: true,
-        subagentConversationVisibilityEnabled: true,
-      }),
-    ).toBeNull();
-  });
-});
-
 describe("resolveThreadMetadataUpdateForNextTurn", () => {
   const modelSelection = {
     instanceId: ProviderInstanceId.make("codex"),
@@ -961,93 +694,6 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
-  });
-
-  it("targets the latest child turn when interrupting a running subagent thread", () => {
-    const sessionTurnId = TurnId.make("root-session-turn");
-    const childTurnId = TurnId.make("child-latest-turn");
-
-    expect(
-      buildThreadTurnInterruptInput(
-        makeThread({
-          parentRelation: makeSubagentParentRelation(),
-          latestTurn: {
-            ...completedTurn,
-            turnId: childTurnId,
-            state: "running",
-            completedAt: null,
-          },
-          session: {
-            ...readySession,
-            status: "running",
-            activeTurnId: sessionTurnId,
-          },
-        }),
-      ),
-    ).toEqual({ threadId, turnId: childTurnId });
-  });
-
-  it("omits a turn id when a running subagent has no latest turn", () => {
-    const activeTurnId = TurnId.make("turn-running");
-
-    expect(
-      buildThreadTurnInterruptInput(
-        makeThread({
-          parentRelation: makeSubagentParentRelation(),
-          latestTurn: null,
-          session: {
-            ...readySession,
-            status: "running",
-            activeTurnId,
-          },
-        }),
-      ),
-    ).toEqual({ threadId });
-  });
-
-  it("omits a turn id when a running subagent latest turn is not running", () => {
-    const activeTurnId = TurnId.make("turn-running");
-
-    expect(
-      buildThreadTurnInterruptInput(
-        makeThread({
-          parentRelation: makeSubagentParentRelation(),
-          latestTurn: completedTurn,
-          session: {
-            ...readySession,
-            status: "running",
-            activeTurnId,
-          },
-        }),
-      ),
-    ).toEqual({ threadId });
-  });
-
-  it("omits a turn id when the subagent relation is not running", () => {
-    const activeTurnId = TurnId.make("turn-running");
-    const childTurnId = TurnId.make("child-latest-turn");
-
-    expect(
-      buildThreadTurnInterruptInput(
-        makeThread({
-          parentRelation: makeSubagentParentRelation({
-            status: "completed",
-            completedAt: "2026-03-29T00:00:20.000Z",
-          }),
-          latestTurn: {
-            ...completedTurn,
-            turnId: childTurnId,
-            state: "running",
-            completedAt: null,
-          },
-          session: {
-            ...readySession,
-            status: "running",
-            activeTurnId,
-          },
-        }),
-      ),
-    ).toEqual({ threadId });
   });
 });
 
@@ -1727,6 +1373,87 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         targetThreadId: threadId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("clearThreadErrorRecord", () => {
+  it("clears only the selected thread error", () => {
+    expect(
+      clearThreadErrorRecord(
+        {
+          "environment-local:thread-1": "metadata failed",
+          "environment-local:thread-2": "send failed",
+        },
+        "environment-local:thread-1",
+      ),
+    ).toEqual({
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    });
+  });
+
+  it("keeps the same object when the selected thread has no error", () => {
+    const existing = {
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    };
+
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-1")).toBe(existing);
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-3")).toBe(existing);
+  });
+});
+
+describe("retainThreadKeyRecord", () => {
+  it("drops stale thread keys", () => {
+    expect(
+      retainThreadKeyRecord(
+        {
+          "environment-local:thread-1": "send failed",
+          "environment-local:thread-2": null,
+        },
+        new Set(["environment-local:thread-1"]),
+      ),
+    ).toEqual({
+      "environment-local:thread-1": "send failed",
+    });
+  });
+
+  it("preserves reference identity when no keys are pruned", () => {
+    const existing = {
+      "environment-local:thread-1": "send failed",
+    };
+
+    expect(retainThreadKeyRecord(existing, new Set(["environment-local:thread-1"]))).toBe(existing);
+  });
+});
+
+describe("shouldApplySourceControlMetadataUpdateResult", () => {
+  it("allows only the latest metadata update result for a thread", () => {
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 2,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: undefined,
+        requestSequence: 1,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isLatestRequestSequence", () => {
+  it("rejects a stop completion after a newer thread starts another request", () => {
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 3 })).toBe(false);
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 4 })).toBe(true);
   });
 });
 

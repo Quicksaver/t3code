@@ -4,7 +4,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ContextMenuItem, EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
-import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import {
+  LegendList,
+  type LegendListRef,
+  type LegendListRenderItemProps,
+} from "@legendapp/list/react";
 import { ChevronDownIcon, GitBranchIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import {
   useCallback,
@@ -824,15 +828,17 @@ export function BranchToolbarBranchSelector({
               <LegendList<string>
                 ref={branchListRef}
                 data={filteredBranchPickerItems}
-                keyExtractor={(item) => item}
-                getItemType={(item) =>
+                keyExtractor={(item: string) => item}
+                getItemType={(item: string) =>
                   item === checkoutPullRequestItemValue
                     ? "checkout-pull-request"
                     : item === createBranchItemValue
                       ? "create-branch"
                       : "branch"
                 }
-                renderItem={({ item, index }) => renderPickerItem(item, index)}
+                renderItem={({ item, index }: LegendListRenderItemProps<string>) =>
+                  renderPickerItem(item, index)
+                }
                 estimatedItemSize={28}
                 drawDistance={336}
                 onLayout={() => {

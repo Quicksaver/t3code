@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - Native realpath makes Windows long and 8.3 path assertions comparable.
+import * as NodeFS from "node:fs";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -16,6 +19,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type ReviewDiffFileContentsInput } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import {
+  makeSourceControlPanelActions,
+  type SourceControlPanelActionDependencies,
+} from "../sourceControl/SourceControlPanelActions.ts";
 import { makeGitVcsDriverCore, splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -161,7 +168,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
 
     assert.deepStrictEqual(commands, [
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
-      { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
+      { args: ["branch", "--show-current"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
@@ -322,6 +329,85 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
       );
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("exposes shared ref snapshot invalidation for raw Git mutation services", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      const initialRefs = yield* driver.listRefs({ cwd, refresh: true });
+      assert.equal(
+        initialRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* git(cwd, ["branch", "feature/raw-panel"]);
+      const cachedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        cachedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* driver.invalidateRefs(cwd);
+      const invalidatedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        invalidatedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("refreshes pull-request listRefs data after a ref-changing panel action", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const headSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+      const branchName = "feature/panel-list-refs";
+      const pullRequestRefsInput = {
+        cwd,
+        includeMatchingRemoteRefs: true,
+        limit: 2,
+        query: branchName,
+      } as const;
+      const before = yield* driver.listRefs({ ...pullRequestRefsInput, refresh: true });
+      assert.equal(
+        before.refs.some((ref) => ref.name === branchName),
+        false,
+      );
+
+      const actions = makeSourceControlPanelActions({
+        invalidateRefs: driver.invalidateRefs,
+        run: (operation, commandCwd, args, options) =>
+          driver
+            .execute({
+              operation,
+              cwd: commandCwd,
+              args: [...args],
+              timeoutMs: 10_000,
+              ...(options?.allowNonZeroExit !== undefined
+                ? { allowNonZeroExit: options.allowNonZeroExit }
+                : {}),
+              ...(options?.env !== undefined ? { env: options.env } : {}),
+              ...(options?.progress !== undefined ? { progress: options.progress } : {}),
+            })
+            .pipe(Effect.map((result) => result.stdout)),
+      } as SourceControlPanelActionDependencies);
+
+      yield* actions.createBranchFromCommit({ cwd, sha: headSha, branchName });
+
+      const after = yield* driver.listRefs(pullRequestRefsInput);
+      assert.equal(
+        after.refs.some((ref) => ref.name === branchName),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
@@ -570,7 +656,6 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
       const driver = yield* makeGitVcsDriverCore().pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingFetchSpawner),
       );
-      const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* makeTmpDir();
       const remote = yield* makeTmpDir("git-vcs-driver-remote-");
       const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
@@ -606,9 +691,10 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
         "rev-parse",
         "--git-common-dir",
       ])).stdout.trim();
+      const rootCommonDirFromLinkedWorktree = pathService.resolve(worktreePath, linkedCommonDir);
       assert.equal(
-        yield* fileSystem.realPath(pathService.resolve(cwd, rootCommonDir)),
-        yield* fileSystem.realPath(pathService.resolve(worktreePath, linkedCommonDir)),
+        NodeFS.realpathSync.native(pathService.resolve(cwd, rootCommonDir)),
+        NodeFS.realpathSync.native(rootCommonDirFromLinkedWorktree),
       );
       yield* Ref.set(fetchAttempts, 0);
 
@@ -1051,6 +1137,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports an unborn branch when its configured remote repository is unavailable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const unavailableRemoteParent = yield* makeTmpDir("git-vcs-driver-missing-remote-");
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, [
+          "remote",
+          "add",
+          "origin",
+          pathService.join(unavailableRemoteParent, "not-created.git"),
+        ]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+      }),
+    );
+
+    it.effect("reports an unborn branch when its remote exists without an uploaded branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-empty-remote-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+      }),
+    );
+
     it.effect("reports remote status on unborn HEAD without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1357,6 +1488,63 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("creates a suffixed tracking branch for colliding remote refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+        const upstream = yield* makeTmpDir("git-vcs-driver-upstream-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "origin", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["push", "upstream", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["fetch", "upstream"]);
+        yield* git(cwd, ["checkout", "-b", "release", "--track", "upstream/release"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "origin/release",
+        });
+
+        assert.equal(result.refName, "release-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "release-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "origin/release",
+        );
+      }),
+    );
+
+    it.effect("derives tracking branches from slashful remote names", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const slashfulRemote = yield* makeTmpDir("git-vcs-driver-slashful-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(slashfulRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "my-org/upstream", slashfulRemote]);
+        yield* git(cwd, ["push", "my-org/upstream", `${initialBranch}:refs/heads/effect-atom`]);
+        yield* git(cwd, ["fetch", "my-org/upstream"]);
+        yield* git(cwd, ["checkout", "-b", "effect-atom"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "my-org/upstream/effect-atom",
+        });
+
+        assert.equal(result.refName, "effect-atom-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "effect-atom-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "my-org/upstream/effect-atom",
+        );
+      }),
+    );
+
     it.effect("returns the existing refName when rename source and target match", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -1376,31 +1564,34 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("preserves newline characters in worktree paths when listing refs", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    // Git for Windows cannot create a worktree whose path contains a newline.
+    // oxlint-disable-next-line t3code/no-global-process-runtime -- test registration must follow the host Git implementation.
+    it.effect.skipIf(process.platform === "win32")(
+      "preserves newline characters in worktree paths when listing refs",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
+          yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
 
-        const refs = yield* driver.listRefs({ cwd, refresh: true });
-        const listedPath = refs.refs.find(
-          (ref) => ref.name === "feature/newline-path",
-        )?.worktreePath;
+          const refs = yield* driver.listRefs({ cwd, refresh: true });
+          const listedPath = refs.refs.find(
+            (ref) => ref.name === "feature/newline-path",
+          )?.worktreePath;
 
-        if (typeof listedPath !== "string") {
-          return assert.fail("expected the linked branch to include its worktree path");
-        }
-        assert.equal(
-          yield* fileSystem.realPath(listedPath),
-          yield* fileSystem.realPath(worktreePath),
-        );
-      }),
+          if (typeof listedPath !== "string") {
+            return assert.fail("expected the linked branch to include its worktree path");
+          }
+          assert.equal(
+            NodeFS.realpathSync.native(listedPath),
+            NodeFS.realpathSync.native(worktreePath),
+          );
+        }),
     );
 
     it.effect("checks out submodules in a new worktree", () =>
