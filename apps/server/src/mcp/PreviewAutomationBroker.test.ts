@@ -2,7 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,
+  PreviewAutomationHostAssignmentConflictError,
+  PreviewAutomationHostUnavailableError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
@@ -123,6 +127,46 @@ it.effect("targets multiple tabs explicitly while retaining a default tab", () =
       expect(routedRequests[3]?.tabId).toBe(appTabId);
       expect(routedRequests[3]?.tabIdExplicit).toBe(true);
       expect(routedRequests[4]?.tabId).toBe(appTabId);
+    }),
+  ),
+);
+
+it.effect("clears the assigned tab after close returns a null target", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const openedTabId = PreviewTabId.make("tab-to-close");
+      const routedRequests: RoutedRequest[] = [];
+      const requests = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            supportedOperations: ["open", "close", "snapshot"],
+          }),
+        ),
+      );
+      yield* Stream.runForEach(requests, (request) => {
+        routedRequests.push(request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result:
+            request.operation === "open"
+              ? { available: true, tabId: openedTabId }
+              : request.operation === "close"
+                ? { available: true, tabId: null }
+                : { url: "http://localhost:3200" },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      yield* broker.invoke({ scope, operation: "close", input: {} });
+      yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+
+      expect(routedRequests[1]?.tabId).toBe(openedTabId);
+      expect(routedRequests[2]?.tabId).toBeUndefined();
     }),
   ),
 );
@@ -456,6 +500,341 @@ it.effect("rejects calls when no connected host exists", () =>
   }),
 );
 
+it.effect("discovers stable host identities with metadata only inside the caller environment", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const macEvents = yield* broker.connect(
+        makeHost({
+          clientId: "mac-connection",
+          hostId: "host-mac",
+          label: "MacBook Pro",
+          platform: "macos",
+          supportedOperations: ["status", "open"],
+        }),
+      );
+      const windowsEvents = yield* broker.connect(
+        makeHost({
+          clientId: "windows-connection",
+          hostId: "host-windows",
+          label: "Windows Desktop",
+          platform: "windows",
+          supportedOperations: ["status"],
+        }),
+      );
+      const foreignEvents = yield* broker.connect(
+        makeHost({
+          clientId: "foreign-connection",
+          hostId: "host-foreign",
+          environmentId: EnvironmentId.make("environment-foreign"),
+          label: "Foreign Mac",
+          platform: "macos",
+        }),
+      );
+      yield* Stream.runDrain(macEvents).pipe(Effect.forkScoped);
+      yield* Stream.runDrain(windowsEvents).pipe(Effect.forkScoped);
+      yield* Stream.runDrain(foreignEvents).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.listHosts(scope)).toEqual({
+        hosts: [
+          {
+            hostId: "host-mac",
+            label: "MacBook Pro",
+            platform: "macos",
+            supportedOperations: ["status", "open"],
+            focused: false,
+          },
+          {
+            hostId: "host-windows",
+            label: "Windows Desktop",
+            platform: "windows",
+            supportedOperations: ["status"],
+            focused: false,
+          },
+        ],
+        assignedHostId: null,
+      });
+    }),
+  ),
+);
+
+it.effect("discovers and selects a legacy host through stable metadata fallbacks", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const clientId = "legacy-client-abcdef01";
+      const events = yield* broker.connect(makeHost({ clientId }));
+      yield* Stream.runDrain(events).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const expectedHost = {
+        hostId: clientId,
+        label: "Preview host abcdef01",
+        platform: "unknown",
+        supportedOperations: [...PREVIEW_AUTOMATION_V1_OPERATIONS],
+        focused: false,
+      } as const;
+      expect(yield* broker.listHosts(scope)).toEqual({
+        hosts: [expectedHost],
+        assignedHostId: null,
+      });
+      expect(yield* broker.selectHost(scope, clientId)).toEqual({ host: expectedHost });
+    }),
+  ),
+);
+
+it.effect("explicitly selects one host, keeps it sticky, and rejects a conflicting live host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const macTabId = PreviewTabId.make("tab-on-mac");
+      let macRoutedTabId: PreviewTabId | undefined;
+      let windowsConnectionId = "";
+      const macRequests = requestsFrom(
+        yield* broker.connect(
+          makeHost({ clientId: "mac-connection", hostId: "host-mac", label: "MacBook Pro" }),
+        ),
+      );
+      const windowsRequests = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            clientId: "windows-connection",
+            hostId: "host-windows",
+            label: "Windows Desktop",
+          }),
+        ),
+        (connectionId) => {
+          windowsConnectionId = connectionId;
+        },
+      );
+      yield* Stream.runForEach(macRequests, (request) => {
+        macRoutedTabId = request.tabId;
+        return broker.respond({
+          clientId: "mac-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: request.operation === "open" ? { host: "mac", tabId: macTabId } : "mac",
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(windowsRequests, (request) =>
+        broker.respond({
+          clientId: "windows-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "windows",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect((yield* broker.selectHost(scope, "host-mac")).host.hostId).toBe("host-mac");
+      expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toEqual({
+        host: "mac",
+        tabId: macTabId,
+      });
+      expect((yield* broker.selectHost(scope, "host-mac")).host.hostId).toBe("host-mac");
+      yield* broker.focusHost({
+        clientId: "windows-connection",
+        environmentId: scope.environmentId,
+        connectionId: windowsConnectionId,
+        focused: true,
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe("mac");
+      expect(macRoutedTabId).toBe(macTabId);
+      expect((yield* broker.listHosts(scope)).assignedHostId).toBe("host-mac");
+
+      const conflict = yield* broker.selectHost(scope, "host-windows").pipe(Effect.flip);
+      expect(conflict).toBeInstanceOf(PreviewAutomationHostAssignmentConflictError);
+      expect(conflict).toMatchObject({
+        assignedHostId: "host-mac",
+        requestedHostId: "host-windows",
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("mac");
+    }),
+  ),
+);
+
+it.effect("rejects explicit selection of another host after an implicit assignment", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const windowsRequests = requestsFrom(
+        yield* broker.connect(
+          makeHost({
+            clientId: "windows-connection",
+            hostId: "host-windows",
+            label: "Windows Desktop",
+          }),
+        ),
+      );
+      const macRequests = requestsFrom(
+        yield* broker.connect(
+          makeHost({ clientId: "mac-connection", hostId: "host-mac", label: "MacBook Pro" }),
+        ),
+      );
+      yield* Stream.runForEach(windowsRequests, (request) =>
+        broker.respond({
+          clientId: "windows-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "windows",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(macRequests, (request) =>
+        broker.respond({
+          clientId: "mac-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "mac",
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("mac");
+      const conflict = yield* broker.selectHost(scope, "host-windows").pipe(Effect.flip);
+      expect(conflict).toBeInstanceOf(PreviewAutomationHostAssignmentConflictError);
+      expect(conflict).toMatchObject({
+        assignedHostId: "host-mac",
+        requestedHostId: "host-windows",
+      });
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("mac");
+    }),
+  ),
+);
+
+it.effect("rejects unavailable and foreign explicit hosts without assigning a fallback", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const localEvents = yield* broker.connect(
+        makeHost({ clientId: "local-connection", hostId: "host-local" }),
+      );
+      const foreignEvents = yield* broker.connect(
+        makeHost({
+          clientId: "foreign-connection",
+          hostId: "host-foreign",
+          environmentId: EnvironmentId.make("environment-foreign"),
+        }),
+      );
+      yield* Stream.runDrain(localEvents).pipe(Effect.forkScoped);
+      yield* Stream.runDrain(foreignEvents).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      for (const hostId of ["host-missing", "host-foreign"]) {
+        const error = yield* broker.selectHost(scope, hostId).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(PreviewAutomationHostUnavailableError);
+        expect(error).toMatchObject({ hostId, environmentId: scope.environmentId });
+      }
+      expect((yield* broker.listHosts(scope)).assignedHostId).toBeNull();
+    }),
+  ),
+);
+
+it.effect("keeps an explicit assignment unavailable after disconnect instead of falling back", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const macRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "mac-connection", hostId: "host-mac" })),
+      );
+      const windowsRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "windows-connection", hostId: "host-windows" })),
+      );
+      const macConsumer = yield* Stream.runForEach(macRequests, (request) =>
+        broker.respond({
+          clientId: "mac-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "mac",
+        }),
+      ).pipe(Effect.forkScoped);
+      let windowsRequestCount = 0;
+      yield* Stream.runForEach(windowsRequests, (request) => {
+        windowsRequestCount += 1;
+        return broker.respond({
+          clientId: "windows-connection",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "windows",
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.selectHost(scope, "host-mac");
+      expect(yield* broker.invoke<string>({ scope, operation: "status", input: {} })).toBe("mac");
+      yield* Fiber.interrupt(macConsumer);
+      yield* Effect.yieldNow;
+
+      const conflict = yield* broker.selectHost(scope, "host-windows").pipe(Effect.flip);
+      expect(conflict).toBeInstanceOf(PreviewAutomationHostAssignmentConflictError);
+      expect(conflict).toMatchObject({
+        assignedHostId: "host-mac",
+        requestedHostId: "host-windows",
+      });
+      const error = yield* broker
+        .invoke<string>({ scope, operation: "status", input: {} })
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(PreviewAutomationHostUnavailableError);
+      expect(error).toMatchObject({ hostId: "host-mac", operation: "status" });
+      expect(windowsRequestCount).toBe(0);
+      expect((yield* broker.listHosts(scope)).assignedHostId).toBe("host-mac");
+    }),
+  ),
+);
+
+it.effect("restores an explicit host and its tab after that physical renderer reconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const tabId = PreviewTabId.make("tab-on-reconnecting-mac");
+      const firstRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "mac-connection-1", hostId: "host-mac" })),
+      );
+      yield* Stream.runForEach(firstRequests, (request) =>
+        broker.respond({
+          clientId: "mac-connection-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: { host: "mac", tabId },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      yield* broker.selectHost(scope, "host-mac");
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+
+      let reconnectedTabId: PreviewTabId | undefined;
+      const replacementRequests = requestsFrom(
+        yield* broker.connect(makeHost({ clientId: "mac-connection-2", hostId: "host-mac" })),
+      );
+      yield* Stream.runForEach(replacementRequests, (request) => {
+        reconnectedTabId = request.tabId;
+        return broker.respond({
+          clientId: "mac-connection-2",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "reconnected",
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      expect(yield* broker.invoke<string>({ scope, operation: "snapshot", input: {} })).toBe(
+        "reconnected",
+      );
+      expect(reconnectedTabId).toBe(tabId);
+      expect((yield* broker.listHosts(scope)).assignedHostId).toBe("host-mac");
+    }),
+  ),
+);
+
 it.effect("does not create host state from focus updates without a live stream", () =>
   Effect.gen(function* () {
     const broker = yield* makeBroker;
@@ -736,7 +1115,10 @@ it.effect("does not move a live legacy assignment to another runtime for resize"
 
       const capableRequests = requestsFrom(
         yield* broker.connect(
-          makeHost({ clientId: "client-capable", supportedOperations: ["resize"] }),
+          makeHost({
+            clientId: "client-capable",
+            supportedOperations: PREVIEW_AUTOMATION_OPERATIONS,
+          }),
         ),
       );
       yield* Stream.runForEach(capableRequests, (request) =>
