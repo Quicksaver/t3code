@@ -308,7 +308,6 @@ export function EnvironmentMagiSettings({
                     }`}
                   />
                 }
-                secondary={personality.prompt}
                 control={
                   <Switch
                     checked={personality.included}

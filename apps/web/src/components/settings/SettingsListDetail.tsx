@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { ScrollArea } from "../ui/scroll-area";
 
 export function SettingsListDetail({
   listLabel,
@@ -27,7 +28,11 @@ export function SettingsListDetail({
         </div>
         {footer ? <div className="shrink-0 border-t border-border/60">{footer}</div> : null}
       </div>
-      <div className="min-w-0 lg:min-h-0">{detail}</div>
+      <div className="min-w-0 lg:min-h-0">
+        <ScrollArea scrollFade chainVerticalScroll className="h-auto lg:h-full">
+          {detail}
+        </ScrollArea>
+      </div>
     </div>
   );
 }
