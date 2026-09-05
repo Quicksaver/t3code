@@ -316,7 +316,7 @@ pnpm run dist:desktop:win:x64
 scripts/install-desktop-exe-from-t3.ps1
 ```
 
-The Windows handoff selects the newest x64 installer under `release` and starts one limited, interactive-user scheduled task so installation survives shutdown of the originating T3 Code terminal. Before closing the app it verifies the desktop process by PID, start time, and executable path to prevent PID-reuse mistakes. It waits for every process using that exact executable path, force-stops only those matching processes after the graceful deadline, runs the selected installer silently, and unregisters the one-time task. The task writes a temporary transcript, and a failed update attempts to restart the exact previous executable.
+The Windows handoff selects the newest x64 installer under `release` and starts one interactive-user scheduled task at the caller's current elevation level so installation survives shutdown of the originating T3 Code terminal and can close an elevated desktop process. Before closing the app it verifies the desktop process by PID, start time, and executable path to prevent PID-reuse mistakes. It waits for every process using that exact executable path, force-stops only those matching processes after the graceful deadline, runs the selected installer silently, and unregisters the one-time task. The task writes a temporary transcript, and a failed update attempts to restart the exact previous executable.
 
 ### Mobile App
 
