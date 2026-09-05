@@ -122,6 +122,15 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+const { copiedMessageTexts } = vi.hoisted(() => ({ copiedMessageTexts: [] as string[] }));
+
+vi.mock("./MessageCopyButton", () => ({
+  MessageCopyButton: ({ text }: { text: string }) => {
+    copiedMessageTexts.push(text);
+    return <button type="button" aria-label="Copy link" />;
+  },
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -219,6 +228,27 @@ function buildUserTimelineEntry(text: string) {
       streaming: false,
     },
   };
+}
+
+function expectNoContextTagLeak(markup: string) {
+  for (const tag of ["terminal_context", "element_context", "preview_annotation"]) {
+    expect(markup).not.toContain(`<${tag}`);
+    expect(markup).not.toContain(`</${tag}>`);
+    expect(markup).not.toContain(`&lt;${tag}`);
+    expect(markup).not.toContain(`&lt;/${tag}&gt;`);
+  }
+}
+
+function expectMarkupOrder(markup: string, ...needles: string[]) {
+  let previousIndex = -1;
+  for (const needle of needles) {
+    const index = markup.indexOf(needle);
+    expect(index, `${needle} should exist`).toBeGreaterThan(-1);
+    expect(index, `${needle} should appear after the previous marker`).toBeGreaterThan(
+      previousIndex,
+    );
+    previousIndex = index;
+  }
 }
 
 function buildAssistantTimelineEntry(text: string) {
@@ -923,20 +953,111 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Show full message");
   }, 20_000);
 
-  it("renders chips for standalone element-pick context messages", () => {
+  it("renders generated contexts and review comments in send order", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
         timelineEntries={[
           buildUserTimelineEntry(
             [
+              "Fix this interaction.",
+              "",
+              "<terminal_context>",
+              "- Terminal 1 lines 7-8:",
+              "  7 | pnpm test",
+              "  8 | failing assertion",
+              "</terminal_context>",
+              "",
+              '<review_comment sectionId="turn:2" sectionTitle="Turn 2" filePath="apps/web/src/lib/contextWindow.test.ts" startIndex="3" endIndex="14" rangeLabel="+47 to +58">',
+              "Keep this comment visible.",
+              "```diff",
+              "@@ -0,0 +47,2 @@",
+              '+  it("keeps valid zero-usage snapshots", () => {',
+              "+    expect(snapshot).not.toBeNull();",
+              "```",
+              "</review_comment>",
+              "",
               "<element_context>",
               "- <SubmitButton> (Button.tsx:12):",
               "  url: https://example.com/dashboard",
               "  selector: button.submit",
-              "  source: /repo/src/Button.tsx:12:5",
-              "  html:",
-              '  <button class="submit">Save</button>',
+              "</element_context>",
+              "",
+              "<preview_annotation>",
+              "Preview annotation:",
+              "Id: annotation_1",
+              "Page: Example",
+              "Targets: 1 selected element.",
+              "</preview_annotation>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Fix this interaction.");
+    expect(markup).toContain("Terminal 1 lines 7-8");
+    expect(markup).toContain("contextWindow.test.ts");
+    expect(markup).toContain("Keep this comment visible.");
+    expect(markup).toContain('data-testid="file-diff"');
+    expect(markup).toContain("SubmitButton");
+    expect(markup).toContain("1 selected element.");
+    expect(markup).toContain('data-user-message-terminal-context="true"');
+    expect(markup).toContain('data-user-message-element-context="true"');
+    expect(markup).toContain('data-user-message-preview-annotation="true"');
+    expectMarkupOrder(
+      markup,
+      'data-user-message-body="true"',
+      'data-user-message-terminal-context="true"',
+      "contextWindow.test.ts",
+      'data-user-message-element-context="true"',
+      'data-user-message-preview-annotation="true"',
+    );
+    expectNoContextTagLeak(markup);
+  });
+
+  it("keeps literal context tags in user-authored text visible", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Explain this sample:",
+              "",
+              "<terminal_context>",
+              "not generated context",
+              "</terminal_context>",
+            ].join("\n"),
+          ),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Explain this sample:");
+    expect(markup).toContain("not generated context");
+  });
+
+  it("escapes extracted context chip content", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildUserTimelineEntry(
+            [
+              "Review unsafe context.",
+              "",
+              "<terminal_context>",
+              "- Terminal <script>alert(1)</script>:",
+              "  1 | <img src=x onerror=alert(1)>",
+              "</terminal_context>",
+              "",
+              "<element_context>",
+              "- <img src=x onerror=alert(1)>:",
+              "  selector: <script>alert(2)</script>",
               "</element_context>",
             ].join("\n"),
           ),
@@ -944,9 +1065,11 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("SubmitButton");
-    expect(markup).not.toContain("&lt;element_context");
-    expect(markup).not.toContain("<element_context");
+    expect(markup).not.toContain("<script>");
+    expect(markup).not.toContain("<img src=x");
+    expect(markup).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(markup).toContain("&lt;img src=x onerror=alert(1)&gt;");
+    expectNoContextTagLeak(markup);
   });
 
   it("keeps the copy button for collapsed long user messages", () => {
@@ -960,6 +1083,52 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('aria-label="Copy link"');
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-footer="true"');
+  });
+
+  it("copies the raw user message text with structured context blocks", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const text = [
+      "Copy this prompt.",
+      "",
+      "<terminal_context>",
+      "- Terminal 1 line 1:",
+      "  1 | hidden terminal output",
+      "</terminal_context>",
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry(text)]} />,
+    );
+
+    expect(copiedMessageTexts.at(-1)).toBe(text);
+    expectNoContextTagLeak(markup);
+  });
+
+  it("preserves exact copy text for normal user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("  keep whitespace  ")]}
+      />,
+    );
+
+    expect(copiedMessageTexts.at(-1)).toBe("  keep whitespace  ");
+  });
+
+  it("copies the original message text for context-only messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const text = [
+      "<terminal_context>",
+      "- Terminal 1 line 1:",
+      "  1 | hidden terminal output",
+      "</terminal_context>",
+    ].join("\n");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildUserTimelineEntry(text)]} />,
+    );
+
+    expect(copiedMessageTexts.at(-1)).toBe(text);
+    expectNoContextTagLeak(markup);
   });
 
   it("renders context compaction entries in the normal work log", () => {
