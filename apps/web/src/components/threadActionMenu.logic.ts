@@ -8,12 +8,10 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
-  | "project-settings"
   | "pin"
   | "unpin"
   | "settle"
   | "unsettle"
-  | "archive"
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -24,7 +22,31 @@ export type ThreadActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "copy-thread-id"
+  | "archive"
   | "delete";
+
+type ThreadParentRelationLike = { readonly kind: string } | null | undefined;
+
+/** Missing and explicit root relations are user-facing roots. Child
+ * orchestration conversations inherit lifecycle from their owner. */
+export function canUseRootThreadLifecycleActions(
+  thread: { readonly parentRelation?: ThreadParentRelationLike } | null | undefined,
+): boolean {
+  return thread?.parentRelation == null || thread.parentRelation.kind === "root";
+}
+
+/** Defense-in-depth gate for action ids returned by a stale native menu. */
+export function isRootThreadLifecycleAction(action: string): boolean {
+  return (
+    action === "settle" ||
+    action === "unsettle" ||
+    action === "snooze" ||
+    action.startsWith("snooze:") ||
+    action === "unsnooze" ||
+    action === "archive" ||
+    action === "delete"
+  );
+}
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
@@ -40,6 +62,9 @@ export interface ThreadActionMenuState {
     readonly snooze: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
+  };
+  readonly permissions: {
+    readonly rootLifecycle: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
@@ -72,14 +97,14 @@ export function buildThreadActionMenuItems(
     // Both lifecycle actions stay available on pinned threads: settling
     // clears the pin ("done" beats "keep on top"), and snoozing hides the
     // card until wake with the pin intact.
-    ...(state.supports.settlement
+    ...(state.permissions.rootLifecycle && state.supports.settlement
       ? [
           state.isSettled
             ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]
       : []),
-    ...(state.supports.snooze
+    ...(state.permissions.rootLifecycle && state.supports.snooze
       ? [
           state.isSnoozed
             ? { id: "unsnooze" as const, label: "Wake thread", icon: "clock" }
@@ -120,24 +145,27 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
-    // Archive removes the thread from the sidebar while keeping its
-    // conversation under Settings > Archived threads — distinct from Settle
-    // (stays visible in the Settled shelf) and Delete (clears history for
-    // good), so it sits beside Delete without borrowing its destructive
-    // styling.
-    {
-      id: "archive",
-      label: "Archive thread",
-      icon: "archive",
-      disabled: state.archive.disabled,
-      separatorBefore: true,
-    },
-    {
-      id: "delete",
-      label: "Delete",
-      destructive: true,
-      icon: "trash",
-    },
+    ...(state.permissions.rootLifecycle
+      ? [
+          // Archive removes the thread from the sidebar while keeping its
+          // conversation under Settings > Archived threads — distinct from
+          // Settle (stays visible in the Settled shelf) and Delete (clears
+          // history for good), so it sits beside Delete without borrowing its
+          // destructive styling.
+          {
+            id: "archive" as const,
+            label: "Archive thread",
+            icon: "archive",
+            disabled: state.archive.disabled,
+            separatorBefore: true,
+          },
+          {
+            id: "delete" as const,
+            label: "Delete",
+            destructive: true,
+            icon: "trash",
+          },
+        ]
+      : []),
   ];
 }

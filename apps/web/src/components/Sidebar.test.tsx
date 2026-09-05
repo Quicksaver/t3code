@@ -30,7 +30,12 @@ vi.mock("./ThreadStatusIndicators", async (importOriginal) => ({
   useLinkedThreadPullRequest: () => null,
 }));
 
-import { SidebarThreadRow } from "./Sidebar";
+import {
+  SidebarHomeButton,
+  SidebarThreadRow,
+  SubagentCountButton,
+  SubagentRunningTooltipRow,
+} from "./Sidebar";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -48,7 +53,6 @@ function makeSettledPinnedThread(): SidebarThreadSummary {
     interactionMode: "default",
     branch: null,
     worktreePath: null,
-    linkedPullRequest: null,
     latestTurn: null,
     createdAt: "2026-08-27T08:00:00.000Z",
     updatedAt: "2026-08-27T09:00:00.000Z",
@@ -64,6 +68,47 @@ function makeSettledPinnedThread(): SidebarThreadSummary {
   };
 }
 
+describe("SidebarHomeButton", () => {
+  it("renders the app wordmark as a button without an href", () => {
+    const html = renderToStaticMarkup(<SidebarHomeButton aria-label="Go to threads" />);
+
+    expect(html).toContain("<button");
+    expect(html).toContain('type="button"');
+    expect(html).not.toContain("<a ");
+    expect(html).not.toContain("href=");
+  });
+});
+
+describe("SubagentCountButton", () => {
+  it("renders a running count that opens the Agents panel without disclosure", () => {
+    const markup = renderToStaticMarkup(
+      <SubagentCountButton count={2} threadTitle="Root thread" onOpen={() => undefined} />,
+    );
+
+    expect(markup).toContain('data-testid="sidebar-v2-subagent-indicator"');
+    expect(markup).toContain('aria-label="Open 2 running subagents for Root thread"');
+    expect(markup).not.toContain("lucide-chevron-right");
+    expect(markup).not.toContain("aria-expanded");
+  });
+});
+
+describe("SubagentRunningTooltipRow", () => {
+  it("renders the same running count in its own tooltip row", () => {
+    const markup = renderToStaticMarkup(<SubagentRunningTooltipRow count={2} />);
+
+    expect(markup).toContain('data-testid="sidebar-v2-tooltip-subagent-indicator"');
+    expect(markup).toContain("lucide-bot");
+    expect(markup).toContain("2 subagents running");
+  });
+
+  it("uses a singular label and follows the row indicator's zero-count condition", () => {
+    expect(renderToStaticMarkup(<SubagentRunningTooltipRow count={1} />)).toContain(
+      "1 subagent running",
+    );
+    expect(renderToStaticMarkup(<SubagentRunningTooltipRow count={0} />)).toBe("");
+  });
+});
+
 describe("SidebarThreadRow", () => {
   it("keeps the pin marker before adjacent un-settle and archive controls", () => {
     const markup = renderToStaticMarkup(
@@ -72,6 +117,7 @@ describe("SidebarThreadRow", () => {
         variant="slim"
         variantAction="unsettle"
         settlementSupported
+        autoSettleOnMerge={false}
         snoozeSupported={false}
         pinningSupported
         isPinned
@@ -81,13 +127,10 @@ describe("SidebarThreadRow", () => {
         openPullRequestsInRightPanel={false}
         jumpLabel={null}
         currentEnvironmentId={localEnvironmentId}
-        environmentMachine="server"
         environmentLabel={null}
         projectCwd={null}
         projectFaviconPath={null}
-        projectIcon={null}
         projectTitle="Project"
-        projectDisplayName="Project"
         providerEntryByInstanceId={new Map()}
         timestampFormat="locale"
         onThreadClick={vi.fn()}
@@ -106,6 +149,8 @@ describe("SidebarThreadRow", () => {
         onUnsnooze={vi.fn()}
         onUnpin={vi.fn()}
         onAcknowledgeWoke={vi.fn()}
+        subagentCount={0}
+        onOpenSubagents={vi.fn()}
         changeRequestSnapshot={null}
         onChangeRequestSnapshot={vi.fn()}
       />,

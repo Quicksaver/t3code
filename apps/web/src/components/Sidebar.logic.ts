@@ -1,97 +1,47 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   activeThreadAnchorTimestampMs,
   getThreadSortTimestamp,
-  resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
-  type SettledThreadTimestampInput,
   type ThreadSortInput,
 } from "../lib/threadSort";
 import type { SidebarThreadSummary, Thread } from "../types";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
+import { isThreadArchiveBlocked } from "./threadArchive.logic";
+import { sidebarThreadKey, sidebarThreadParentKey } from "./SidebarSubagents.logic";
 
-export {
-  buildMultiSelectThreadContextMenuItems,
-  filterArchivableSidebarThreads,
-} from "./SidebarArchiveControls.logic";
+export { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
+
+export { shouldRenderSidebarArchiveAll } from "./SidebarArchiveControls.logic";
 export {
   archiveSelectedThreadEntries,
   formatArchiveSkippedDescription,
+  getCompletedArchiveThreadKeys,
   isThreadArchiveBlocked,
+  isThreadSessionRunning,
+  withCoordinatedThreadArchiveEntries,
 } from "./threadArchive.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
-export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription. Each prewarmed
-// thread holds a live, fully hydrated detail subscription (all messages and
-// activities, growing as agents work) for as long as the row stays visible,
-// so this limit is a direct renderer-heap and server-load multiplier — keep
-// it small; cold opens still render instantly from the cached snapshot.
-export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
-// A small buffer keeps the next few rows warm without leasing every row that
-// content-visibility leaves mounted below the scroll viewport.
-export const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
-
-export function useSidebarRowSubscriptionLease(isActive: boolean): {
-  readonly leaseLiveStatus: boolean;
-  readonly rowRef: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
-} {
-  const [row, setRow] = React.useState<HTMLElement | null>(null);
-  const [isNearViewport, setIsNearViewport] = React.useState(isActive);
-
-  React.useEffect(() => {
-    if (isActive) {
-      setIsNearViewport(true);
-      return;
-    }
-    if (row === null) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setIsNearViewport(true);
-      return;
-    }
-
-    const scrollRoot = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    const observer = new IntersectionObserver(
-      ([entry]) => setIsNearViewport(entry?.isIntersecting === true),
-      {
-        root: scrollRoot,
-        rootMargin: `${SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX}px 0px`,
-      },
-    );
-    observer.observe(row);
-    return () => observer.disconnect();
-  }, [isActive, row]);
-
-  return {
-    leaseLiveStatus: isActive || isNearViewport,
-    rowRef: setRow,
-  };
-}
-
-// A row keeps the last live value it rendered so a released lease never
-// blanks its badge. The value is bound to `key`, so a different worktree or
-// linked pull request cannot reuse the previous one.
-export function useRetainedValue<T>(key: string | null, value: T | null): T | null {
-  const retained = React.useRef<{ readonly key: string; readonly value: T } | null>(null);
-  if (key !== null && value !== null) {
-    retained.current = { key, value };
-  }
-  if (value !== null) return value;
-  return key !== null && retained.current?.key === key ? retained.current.value : null;
-}
+// nearby thread usually reuses an already-hot subscription.
+export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 
 // The list already reaches its destination through sortable transforms while
-// the pointer is down. dnd-kit's default also animates the committed DOM order
-// after release, replaying the same movement across every affected row.
+// the pointer is down. Avoid replaying that movement after the DOM order commits.
 export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
+export type SidebarNewThreadEnvMode = "local" | "worktree";
 
 type SidebarProject = {
   id: string;
@@ -100,13 +50,38 @@ type SidebarProject = {
   updatedAt?: string | undefined;
 };
 
+type SidebarThreadParentRelationInput = {
+  readonly parentRelation?: { readonly kind: string } | null | undefined;
+};
+
+type SidebarThreadVisibilityInput = {
+  readonly id: string;
+  readonly parentRelation?:
+    | {
+        readonly kind: string;
+        readonly parentThreadId?: string | undefined;
+        readonly parentActivitySequence?: number | undefined;
+        readonly depth?: number | undefined;
+        readonly status?: string | undefined;
+      }
+    | null
+    | undefined;
+  readonly session?: { readonly status: string } | null | undefined;
+};
+
+export type SidebarThreadRowModel<TThread> = {
+  readonly thread: TThread;
+  readonly indentLevel: number;
+};
+
 type ScopedSidebarProject = SidebarProject & {
   environmentId: string;
 };
 
 type ScopedSidebarThread = ThreadSortInput & {
-  environmentId: string;
-  projectId: string;
+  id: ThreadId;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
   archivedAt: string | null;
 };
 
@@ -119,6 +94,26 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export function buildMultiSelectThreadContextMenuItems(input: {
+  count: number;
+  hasArchiveBlockedThread: boolean;
+  canUseLifecycleActions?: boolean;
+}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
+  return [
+    { id: "mark-unread", label: `Mark unread (${input.count})` },
+    ...(input.canUseLifecycleActions === false
+      ? []
+      : [
+          {
+            id: "archive" as const,
+            label: `Archive (${input.count})`,
+            disabled: input.hasArchiveBlockedThread,
+          },
+          { id: "delete" as const, label: `Delete (${input.count})`, destructive: true },
+        ]),
+  ];
+}
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
@@ -138,6 +133,75 @@ export function buildBulkTitleRegenerationContextMenuItem(input: {
   };
 }
 
+export interface SidebarV2ThreadContextMenuSlots {
+  lifecycleItems: readonly ContextMenuItem<"settle" | "unsettle" | "archive">[];
+  renameItem: ContextMenuItem<"rename">;
+  markUnreadItem: ContextMenuItem<"mark-unread">;
+  destructiveItems: readonly ContextMenuItem<"delete">[];
+}
+
+export function buildSidebarV2ThreadContextMenuSlots(input: {
+  canUseLifecycleActions: boolean;
+  supportsSettlement: boolean;
+  isSettled: boolean;
+  isArchiveBlocked: boolean;
+}): SidebarV2ThreadContextMenuSlots {
+  return {
+    lifecycleItems: [
+      ...(input.supportsSettlement
+        ? [
+            input.isSettled
+              ? ({ id: "unsettle", label: "Un-settle thread" } as const)
+              : ({ id: "settle", label: "Settle thread" } as const),
+          ]
+        : []),
+      ...(input.canUseLifecycleActions
+        ? [{ id: "archive" as const, label: "Archive thread", disabled: input.isArchiveBlocked }]
+        : []),
+    ],
+    renameItem: { id: "rename", label: "Rename thread" },
+    markUnreadItem: { id: "mark-unread", label: "Mark unread" },
+    destructiveItems: input.canUseLifecycleActions
+      ? [
+          {
+            id: "delete" as const,
+            label: "Delete",
+            destructive: true,
+            icon: "trash" as const,
+          },
+        ]
+      : [],
+  };
+}
+
+export function composeSidebarV2ThreadContextMenuItems(input: {
+  slots: SidebarV2ThreadContextMenuSlots;
+  leadingItems: readonly ContextMenuItem<string>[];
+  pinningItems: readonly ContextMenuItem<string>[];
+  snoozeItems: readonly ContextMenuItem<string>[];
+  titleRegenerationItems: readonly ContextMenuItem<string>[];
+  copyItems: readonly ContextMenuItem<string>[];
+}): readonly ContextMenuItem<string>[] {
+  return [
+    ...input.leadingItems,
+    ...input.pinningItems,
+    ...input.slots.lifecycleItems,
+    ...input.snoozeItems,
+    input.slots.renameItem,
+    ...input.titleRegenerationItems,
+    input.slots.markUnreadItem,
+    ...input.copyItems,
+    ...input.slots.destructiveItems,
+  ];
+}
+
+export function shouldShowSidebarV2SettledHeader(input: {
+  isSettled: boolean;
+  previousIsSettled: boolean;
+}): boolean {
+  return input.isSettled && !input.previousIsSettled;
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"
@@ -152,9 +216,18 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
-// Rollup order mirrors the per-thread resolver exactly: attention states,
-// then active work, then the actionable plan prompt, then passive
-// monitoring. A Monitoring sibling must never hide a Plan Ready thread.
+export function resolveSidebarOptionsMenuVisibility(input: { hideProjectChrome: boolean }): {
+  showButton: boolean;
+  showProjectOptions: boolean;
+  showThreadOptions: boolean;
+} {
+  return {
+    showButton: true,
+    showProjectOptions: !input.hideProjectChrome,
+    showThreadOptions: true,
+  };
+}
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 6,
   "Awaiting Input": 5,
@@ -181,6 +254,19 @@ type ThreadStatusInput = Pick<
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
   dispose: () => void;
+}
+
+export const SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS = "md:hidden";
+
+export function resolveSidebarStageBadgeLabel(input: {
+  primaryServerVersion: string | null | undefined;
+  fallbackStageLabel: string;
+}): string {
+  return resolveServerBackedAppStageLabel(input);
+}
+
+export function resolveSidebarTriggerVisibilityClassName(): string {
+  return SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS;
 }
 
 export function createThreadJumpHintVisibilityController(input: {
@@ -274,6 +360,17 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+export function filterSidebarThreadsByProjectScope(
+  threads: readonly SidebarThreadSummary[],
+  scopedProjectKeys: ReadonlySet<string> | null,
+): SidebarThreadSummary[] {
+  return threads.filter(
+    (thread) =>
+      scopedProjectKeys === null ||
+      scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+  );
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);
@@ -365,6 +462,148 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   return renderedProjects.flatMap((renderedProject) =>
     renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
   );
+}
+
+export function isRootSidebarThread<T extends SidebarThreadParentRelationInput>(
+  thread: T,
+): boolean {
+  return thread.parentRelation == null || thread.parentRelation.kind === "root";
+}
+
+export function canArchiveSettledSidebarThread(input: {
+  readonly threadKey: string;
+  readonly settledThreadKeys: ReadonlySet<string>;
+  readonly session: { readonly status: string; readonly activeTurnId?: unknown } | null | undefined;
+  readonly backgroundLiveness?: "working" | "monitoring" | null | undefined;
+}): boolean {
+  return input.settledThreadKeys.has(input.threadKey) && !isThreadArchiveBlocked(input);
+}
+
+export function filterArchivableSidebarThreads<
+  T extends SidebarThreadParentRelationInput & {
+    readonly session?:
+      | { readonly status: string; readonly activeTurnId?: unknown }
+      | null
+      | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return threads.filter(
+    (thread) => canUseRootThreadLifecycleActions(thread) && !isThreadArchiveBlocked(thread),
+  );
+}
+
+export function canUseSelectedRootThreadLifecycleActions<
+  T extends SidebarThreadParentRelationInput,
+>(threadKeys: readonly string[], threadByKey: ReadonlyMap<string, T>): boolean {
+  return threadKeys.every((threadKey) => {
+    const thread = threadByKey.get(threadKey);
+    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
+  });
+}
+
+export function isContextualSubagentSidebarThread<T extends SidebarThreadVisibilityInput>(
+  thread: T,
+  activeThreadId: string | null | undefined,
+): boolean {
+  if (thread.parentRelation?.kind !== "subagent") {
+    return false;
+  }
+  if (activeThreadId !== null && activeThreadId !== undefined && thread.id === activeThreadId) {
+    return true;
+  }
+  return thread.parentRelation.status === "running" || thread.session?.status === "running";
+}
+
+function compareSubagentSidebarRows<T extends SidebarThreadVisibilityInput>(
+  left: SidebarThreadRowModel<T>,
+  right: SidebarThreadRowModel<T>,
+): number {
+  const leftRelation =
+    left.thread.parentRelation?.kind === "subagent" ? left.thread.parentRelation : null;
+  const rightRelation =
+    right.thread.parentRelation?.kind === "subagent" ? right.thread.parentRelation : null;
+  const sequence =
+    (leftRelation?.parentActivitySequence ?? 0) - (rightRelation?.parentActivitySequence ?? 0);
+  if (sequence !== 0) {
+    return sequence;
+  }
+  return left.thread.id.localeCompare(right.thread.id);
+}
+
+export function buildSidebarThreadRows<T extends SidebarThreadVisibilityInput>(
+  threads: readonly T[],
+  activeThreadId: string | null | undefined,
+): SidebarThreadRowModel<T>[] {
+  const rootRows: SidebarThreadRowModel<T>[] = [];
+  const childRowsByParentId = new Map<
+    string,
+    { row: SidebarThreadRowModel<T>; visible: boolean }[]
+  >();
+  const orphanChildRows: SidebarThreadRowModel<T>[] = [];
+  for (const thread of threads) {
+    if (isRootSidebarThread(thread)) {
+      rootRows.push({ thread, indentLevel: 0 });
+      continue;
+    }
+    const visible = isContextualSubagentSidebarThread(thread, activeThreadId);
+
+    const indentLevel = Math.max(1, thread.parentRelation?.depth ?? 1);
+    const row = { thread, indentLevel };
+    const parentThreadId = thread.parentRelation?.parentThreadId;
+    if (!parentThreadId) {
+      if (visible) {
+        orphanChildRows.push(row);
+      }
+      continue;
+    }
+    const existing = childRowsByParentId.get(parentThreadId);
+    if (existing) {
+      existing.push({ row, visible });
+    } else {
+      childRowsByParentId.set(parentThreadId, [{ row, visible }]);
+    }
+  }
+  for (const children of childRowsByParentId.values()) {
+    children.sort((left, right) => compareSubagentSidebarRows(left.row, right.row));
+  }
+
+  const rows: SidebarThreadRowModel<T>[] = [];
+  const renderedChildThreadIds = new Set<string>();
+  const renderedThreadIds = new Set<string>();
+  const traversedParentThreadIds = new Set<string>();
+  const appendRow = (row: SidebarThreadRowModel<T>) => {
+    if (renderedThreadIds.has(row.thread.id)) {
+      return;
+    }
+    renderedThreadIds.add(row.thread.id);
+    rows.push(row);
+    appendChildren(row);
+  };
+  const appendChildren = (row: SidebarThreadRowModel<T>) => {
+    if (traversedParentThreadIds.has(row.thread.id)) {
+      return;
+    }
+    traversedParentThreadIds.add(row.thread.id);
+    const childRows = childRowsByParentId.get(row.thread.id) ?? [];
+    for (const child of childRows) {
+      renderedChildThreadIds.add(child.row.thread.id);
+      if (child.visible) {
+        appendRow(child.row);
+      } else {
+        appendChildren(child.row);
+      }
+    }
+  };
+  for (const row of rootRows) {
+    appendRow(row);
+  }
+  for (const child of [...childRowsByParentId.values()].flat()) {
+    if (child.visible && !renderedChildThreadIds.has(child.row.thread.id)) {
+      appendRow(child.row);
+    }
+  }
+  rows.push(...orphanChildRows);
+  return rows;
 }
 
 export function getSidebarThreadIdsToPrewarm<TThreadId>(
@@ -466,6 +705,26 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
+export function resolveThreadRowIndentStyle(input: {
+  indentLevel: number;
+  flattenHierarchyChrome: boolean;
+}): React.CSSProperties | undefined {
+  if (input.flattenHierarchyChrome || input.indentLevel <= 0) {
+    return undefined;
+  }
+
+  return {
+    paddingLeft: `${1.25 + (input.indentLevel - 1) * 0.875}rem`,
+  };
+}
+
+export function resolveThreadListClassName(input: { hideThreadGroupRail: boolean }): string {
+  return cn(
+    "mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5",
+    input.hideThreadGroupRail && "mx-0 border-l-0 px-0 sm:mx-0 sm:px-0",
+  );
+}
+
 // ── Sidebar thread status model ─────────────────────────────────────
 // Five visual states, three colors: color is reserved for "act now"
 // (approval), "in motion" (working), and "broken" (failed). Ready is the
@@ -546,12 +805,8 @@ export function firstValidTimestamp(
 }
 
 // Sidebar sort: static order, newest anchor on top. Activity NEVER reorders
-// the list — a row holds its position between lifecycle transitions, so the
-// screen only moves when a thread enters or leaves the active list. The
-// anchor is creation time until an un-settle re-anchors it (see
-// activeThreadAnchorTimestampMs), so an un-settled thread surfaces at the
-// top instead of sinking back to its creation-order slot. Status (including
-// pending approval) is carried by each card's edge strip, not by position.
+// the list; an explicit un-settle is the lifecycle transition that re-anchors
+// a thread through its `unsettledAt` timestamp.
 export function sortThreadsForSidebar<
   T extends {
     readonly id: string;
@@ -589,51 +844,44 @@ export function searchSidebarThreadsByTitle<T extends { readonly title: string }
   return threads.filter((thread) => thread.title.toLowerCase().includes(normalizedQuery));
 }
 
-export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
-  items: readonly TItem[];
-  activeScopeKey: string | null;
-  query: string;
-  matches: (item: TItem, query: string) => boolean;
-}): readonly TItem[] {
-  const projectItems = input.items.filter((item) => item.value !== "all");
-  const query = input.query.trim();
-  if (query.length > 0) {
-    return projectItems.filter((item) => input.matches(item, query));
+type SettledTimestampInput = Pick<
+  SidebarThreadSummary,
+  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+>;
+
+/** The timestamp a settled row sorts and labels by: settledAt when stamped
+    (explicit settles), otherwise last activity — the same candidates
+    threadLastActivityAt feeds the auto-settle window (user message plus all
+    latestTurn stamps), so a thread whose last activity was a turn completion
+    doesn't sort by an older message time. updatedAt is the final net. */
+export function resolveSettledTimestamp(thread: SettledTimestampInput): string | null {
+  const settledAt = firstValidTimestamp(thread.settledAt);
+  if (settledAt !== null) return settledAt;
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    if (candidate == null) continue;
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed) && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
   }
-  return input.activeScopeKey === null ? projectItems : input.items;
-}
-
-export interface SidebarProjectScopeMenuState {
-  readonly open: boolean;
-  readonly query: string;
-}
-
-export type SidebarProjectScopeMenuAction =
-  | { readonly type: "query-changed"; readonly query: string }
-  | { readonly type: "open-changed"; readonly open: boolean }
-  | { readonly type: "project-settings-opened" };
-
-export function reduceSidebarProjectScopeMenuState(
-  state: SidebarProjectScopeMenuState,
-  action: SidebarProjectScopeMenuAction,
-): SidebarProjectScopeMenuState {
-  switch (action.type) {
-    case "query-changed":
-      return { ...state, query: action.query };
-    case "open-changed":
-      return { open: action.open, query: "" };
-    case "project-settings-opened":
-      return { open: false, query: "" };
-  }
+  return latest ?? firstValidTimestamp(thread.updatedAt);
 }
 
 // Settled rows are history, so they order by when the work ENDED, not when
 // the thread was created or last touched.
 export function sortSettledThreadsForSidebar<
-  T extends SettledThreadTimestampInput & { readonly id: string },
+  T extends SettledTimestampInput & { readonly id: string },
 >(threads: readonly T[]): T[] {
   const timestampMs = (thread: T) => {
-    const timestamp = resolveSettledThreadTimestamp(thread);
+    const timestamp = resolveSettledTimestamp(thread);
     return timestamp === null ? 0 : Date.parse(timestamp);
   };
   return [...threads].toSorted(
@@ -820,6 +1068,46 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
+export function filterVisibleSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id">,
+>(threads: readonly T[], optimisticallyArchivedThreadKeys: ReadonlySet<string>): T[] {
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      !optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+  );
+}
+
+export function filterVisibleSidebarThreadTree(
+  threads: readonly SidebarThreadSummary[],
+  optimisticallyArchivedThreadKeys: ReadonlySet<string>,
+): SidebarThreadSummary[] {
+  const hiddenThreadKeys = new Set(
+    threads
+      .filter(
+        (thread) =>
+          thread.archivedAt !== null ||
+          optimisticallyArchivedThreadKeys.has(sidebarThreadKey(thread)),
+      )
+      .map(sidebarThreadKey),
+  );
+  let didHideDescendant = true;
+  while (didHideDescendant) {
+    didHideDescendant = false;
+    for (const thread of threads) {
+      const threadKey = sidebarThreadKey(thread);
+      const parentKey = sidebarThreadParentKey(thread);
+      if (hiddenThreadKeys.has(threadKey) || !parentKey || !hiddenThreadKeys.has(parentKey))
+        continue;
+      hiddenThreadKeys.add(threadKey);
+      didHideDescendant = true;
+    }
+  }
+  return threads.filter((thread) => !hiddenThreadKeys.has(sidebarThreadKey(thread)));
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -913,6 +1201,7 @@ export function sortLogicalProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const groupKeyByProjectRef = new Map(
     projects.flatMap((project) =>
@@ -924,7 +1213,14 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
+      continue;
+    }
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -956,12 +1252,18 @@ export function sortScopedProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const scopedKey = (environmentId: string, projectId: string) =>
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);
