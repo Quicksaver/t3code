@@ -736,6 +736,7 @@ Provider and completion integration:
 - `ProviderService` and its fixtures retain both eager Magi `subscribeEvents` and core `uploadFeedback`. The WebSocket dispatcher arms first-message Magi before `dispatchFromClient`.
 - Codex runtime and adapter paths preserve Magi context usage, explicit compaction, and feedback. Provider-native collaboration does not become Magi, and Magi participant conversations cannot start nested runs. Claude automatic compaction reports into Magi; do not restore the removed simulated trigger.
 - `CheckpointReactor` retains participant Git and checkpoint handling but skips participant PR discovery and global invalidation. The owning root performs the single refresh.
+- `AntigravityAdapter` declares the shared ACP Magi profile and normalizes session start and turn input through `ProviderMagiProfile.ts`, like Cursor and Grok. `ProviderMagiConformance.ts` lists every built-in driver; an adapter without a declared `magi` capability makes each of its instances report "Provider has not passed Magi conformance." in the Magi roster.
 
 Client ownership:
 
@@ -761,6 +762,7 @@ When verifying Magi in a dev server, use these participant settings:
 - Codex: GPT-5.6 Luna, low reasoning, fast mode off
 - Claude: Sonnet 5, low reasoning, 200k context window
 - Cursor: Grok 4.6, low reasoning, fast mode off
+- Antigravity: Gemini 3.8 Flash Low
 
 ## Default Sidebar Archive Controls
 

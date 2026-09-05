@@ -37,6 +37,11 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import {
+  ACP_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -731,6 +736,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     withThreadLock(
       input.threadId,
       Effect.gen(function* () {
+        input = normalizeMagiSessionStartInput(input);
         if (!settings.enabled) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -969,6 +975,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     );
 
   const sendTurn: Adapter["sendTurn"] = Effect.fn("AntigravityAdapter.sendTurn")(function* (input) {
+    input = normalizeMagiSendTurnInput(input);
     const context = yield* requireSession(input.threadId);
     if (input.modelSelection && input.modelSelection.instanceId !== options.instanceId) {
       return yield* new ProviderAdapterValidationError({
@@ -1244,7 +1251,11 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
 
   return {
     provider: PROVIDER,
-    capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+    capabilities: {
+      sessionModelSwitch: "in-session",
+      supportsConversationRollback: false,
+      magi: ACP_MAGI_CAPABILITIES,
+    },
     startSession,
     sendTurn,
     interruptTurn,

@@ -9,7 +9,7 @@ import {
 } from "./ProviderMagiProfile.ts";
 
 export interface ProviderMagiConformanceCase {
-  readonly driver: "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
+  readonly driver: "codex" | "claudeAgent" | "cursor" | "grok" | "antigravity" | "opencode";
   readonly capabilities: ProviderMagiCapabilities;
 }
 
@@ -18,6 +18,7 @@ export const BUILT_IN_MAGI_CONFORMANCE_CASES: ReadonlyArray<ProviderMagiConforma
   { driver: "claudeAgent", capabilities: CLAUDE_MAGI_CAPABILITIES },
   { driver: "cursor", capabilities: ACP_MAGI_CAPABILITIES },
   { driver: "grok", capabilities: ACP_MAGI_CAPABILITIES },
+  { driver: "antigravity", capabilities: ACP_MAGI_CAPABILITIES },
   { driver: "opencode", capabilities: OPENCODE_MAGI_CAPABILITIES },
 ];
 
