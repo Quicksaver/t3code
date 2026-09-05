@@ -5,7 +5,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -13,7 +13,11 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isThreadArchiveBlocked,
+  pinOrderKeyBetween,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
@@ -40,6 +44,10 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import {
+  optimisticallyHideArchivedThread,
+  revealOptimisticallyArchivedThread,
+} from "../optimisticThreadArchiveStore";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -49,8 +57,26 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   },
 ) {
   override get message(): string {
-    return "Cannot archive a running thread.";
+    return "Cannot archive a thread while work is still active.";
   }
+}
+
+export async function resolveArchiveAfterNavigationFailure<
+  TNavigationFailure extends { readonly _tag: "Failure" },
+  TArchiveResult extends { readonly _tag: "Success" | "Failure" },
+>(input: {
+  readonly navigationFailure: TNavigationFailure;
+  readonly archivePromise: Promise<TArchiveResult>;
+  readonly onArchiveFailure: () => void;
+  readonly onArchiveSuccess: () => void;
+}): Promise<TNavigationFailure | TArchiveResult> {
+  const archiveResult = await input.archivePromise;
+  if (archiveResult._tag === "Failure") {
+    input.onArchiveFailure();
+    return archiveResult;
+  }
+  input.onArchiveSuccess();
+  return input.navigationFailure;
 }
 
 function collectLifecycleThreadIds(
@@ -69,19 +95,6 @@ function collectLifecycleThreadIds(
   return threadIds;
 }
 
-function withRootLast(threadIds: ReadonlySet<ThreadId>, rootThreadId: ThreadId): ThreadId[] {
-  return [...threadIds].sort((left, right) =>
-    left === rootThreadId ? 1 : right === rootThreadId ? -1 : 0,
-  );
-}
-
-function findThreadById<T extends Pick<Thread, "id">>(
-  threads: readonly T[],
-  threadId: ThreadId,
-): T | null {
-  return threads.find((thread) => thread.id === threadId) ?? null;
-}
-
 export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<ThreadSettlementUnsupportedError>()(
   "ThreadSettlementUnsupportedError",
   {
@@ -91,6 +104,18 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<Th
 ) {
   override get message(): string {
     return "This environment's server does not support settling yet. Update the server to use Settle.";
+  }
+}
+
+export class ThreadSettleBlockedError extends Schema.TaggedErrorClass<ThreadSettleBlockedError>()(
+  "ThreadSettleBlockedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This thread still needs attention. Resolve or interrupt it first, then try again.";
   }
 }
 
@@ -154,26 +179,6 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
-export async function requestThreadUnpinConfirmation(input: {
-  enabled: boolean;
-  title: string;
-  confirm: ((message: string) => Promise<boolean>) | null;
-}) {
-  const { confirm } = input;
-  if (!input.enabled || confirm === null) {
-    return AsyncResult.success(true);
-  }
-
-  return settlePromise(() =>
-    confirm(
-      [
-        `Unpin thread "${input.title}"?`,
-        "This will move the thread out of your pinned section.",
-      ].join("\n"),
-    ),
-  );
-}
-
 export function useThreadActions() {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
@@ -215,7 +220,6 @@ export function useThreadActions() {
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
-  const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const clearProjectDraftThreadById = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadById,
@@ -251,19 +255,7 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
-        const shell = readThreadShell(ref);
-        return shell === null ? [] : [shell];
-      });
-      const archivedThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
-      if (
-        threads.some(
-          (entry) =>
-            archivedThreadIds.has(entry.id) &&
-            entry.session?.status === "running" &&
-            entry.session.activeTurnId != null,
-        )
-      ) {
+      if (isThreadArchiveBlocked(thread)) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({
@@ -276,47 +268,61 @@ export function useThreadActions() {
 
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const shouldNavigateToDraft =
-        currentRouteThreadRef?.environmentId === threadRef.environmentId &&
-        archivedThreadIds.has(currentRouteThreadRef.threadId);
-
-      for (const archivedThreadId of withRootLast(archivedThreadIds, threadRef.threadId)) {
-        const archiveResult = await archiveThreadMutation({
-          environmentId: threadRef.environmentId,
-          input: { threadId: archivedThreadId },
-        });
-        if (archiveResult._tag === "Failure") {
-          return archiveResult;
-        }
-      }
-      const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
-      if (wokeAt !== null) {
-        markThreadVisited(scopedThreadKey(threadRef), wokeAt);
-      }
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      opts.onArchived?.();
-
+        currentRouteThreadRef?.threadId === threadRef.threadId &&
+        currentRouteThreadRef.environmentId === threadRef.environmentId;
+      optimisticallyHideArchivedThread(threadRef);
+      const archivePromise = archiveThreadMutation({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
       if (shouldNavigateToDraft) {
         const navigationResult = await settlePromise(() =>
           handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId)),
         );
         if (navigationResult._tag === "Failure") {
-          return navigationResult;
+          return resolveArchiveAfterNavigationFailure({
+            navigationFailure: navigationResult,
+            archivePromise,
+            onArchiveFailure: () => revealOptimisticallyArchivedThread(threadRef),
+            onArchiveSuccess: () => {
+              // The archive event is projected before acknowledgement, so it
+              // is now safe to release the optimistic tombstone without
+              // briefly restoring the still-live shell.
+              revealOptimisticallyArchivedThread(threadRef);
+              refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+              releaseComposerDraftUploads(threadRef);
+              opts.onArchived?.();
+            },
+          });
         }
-        return AsyncResult.success(undefined);
       }
 
-      return AsyncResult.success(undefined);
+      const archiveResult = await archivePromise;
+      if (archiveResult._tag === "Failure") {
+        revealOptimisticallyArchivedThread(threadRef);
+        return archiveResult;
+      }
+
+      // The domain event is published before the command acknowledgement, so
+      // the shell now owns visibility. Do not retain a local tombstone that
+      // could hide a later unarchive performed by another client.
+      revealOptimisticallyArchivedThread(threadRef);
+      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      releaseComposerDraftUploads(threadRef);
+      opts.onArchived?.();
+      return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
+    async (target: ScopedThreadRef, opts: { readonly refreshArchivedThreads?: boolean } = {}) => {
+      revealOptimisticallyArchivedThread(target);
       const result = await unarchiveThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
-      if (result._tag === "Success") {
+      if (result._tag === "Success" && opts.refreshArchivedThreads !== false) {
         refreshArchivedThreadsForEnvironment(target.environmentId);
       }
       return result;
@@ -325,7 +331,13 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
+    async (
+      target: ScopedThreadRef,
+      opts: {
+        deletedThreadKeys?: ReadonlySet<string>;
+        refreshArchivedThreads?: boolean;
+      } = {},
+    ) => {
       const resolved = resolveThreadTarget(target);
       if (!resolved) {
         // Thread not in main store (e.g. archived thread) — dispatch delete directly.
@@ -393,25 +405,23 @@ export function useThreadActions() {
         shouldDeleteWorktree = confirmationResult.value;
       }
 
-      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
-        const deletedThread = findThreadById(threads, deletedThreadId);
-        if (deletedThread?.session && deletedThread.session.status !== "stopped") {
-          await stopThreadSession({
-            environmentId: threadRef.environmentId,
-            input: { threadId: deletedThreadId },
-          });
-        }
-
-        await closeTerminal({
+      if (thread.session && thread.session.status !== "stopped") {
+        await stopThreadSession({
           environmentId: threadRef.environmentId,
-          input: { threadId: deletedThreadId, deleteHistory: true },
+          input: { threadId: threadRef.threadId },
         });
       }
 
+      await closeTerminal({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, deleteHistory: true },
+      });
+
+      const deletedThreadIds = deletedIds ?? new Set<ThreadId>();
       const currentRouteThreadRef = getCurrentRouteThreadRef();
       const activeDeletedThreadId =
         currentRouteThreadRef?.environmentId === threadRef.environmentId &&
-        deletedIds.has(currentRouteThreadRef.threadId)
+        deletedThreadIds.has(currentRouteThreadRef.threadId)
           ? currentRouteThreadRef.threadId
           : null;
       const shouldNavigateToFallback = activeDeletedThreadId !== null;
@@ -422,19 +432,19 @@ export function useThreadActions() {
         deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
-        const deleteResult = await deleteThreadMutation({
-          environmentId: threadRef.environmentId,
-          input: { threadId: deletedThreadId },
-        });
-        if (deleteResult._tag === "Failure") {
-          return deleteResult;
-        }
+      const deleteResult = await deleteThreadMutation({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
+      if (deleteResult._tag === "Failure") {
+        return deleteResult;
       }
-      refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-      for (const deletedThreadId of deletedIds) {
+      if (opts.refreshArchivedThreads !== false) {
+        refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      }
+      for (const deletedThreadId of targetThreadIds) {
         const deletedThreadRef = scopeThreadRef(threadRef.environmentId, deletedThreadId);
-        const deletedThread = findThreadById(threads, deletedThreadId);
+        const deletedThread = threads.find((entry) => entry.id === deletedThreadId);
         releaseComposerDraftUploads(deletedThreadRef);
         clearComposerDraftForThread(deletedThreadRef);
         if (deletedThread) {
@@ -483,7 +493,7 @@ export function useThreadActions() {
       }
 
       if (!shouldDeleteWorktree || !orphanedWorktreePath || !threadProject) {
-        return AsyncResult.success(undefined);
+        return deleteResult;
       }
 
       const removeResult = await removeWorktree({
@@ -525,7 +535,7 @@ export function useThreadActions() {
         );
         return cleanupFailure;
       }
-      return AsyncResult.success(undefined);
+      return deleteResult;
     },
     [
       clearComposerDraftForThread,
@@ -558,6 +568,19 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
+      // Settle may only target what effectiveSettled could classify as
+      // settled: not starting/running sessions, not threads waiting on
+      // approvals or user input. Anything else would hide live work.
+      if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadSettleBlockedError({
+              environmentId: resolved.threadRef.environmentId,
+              threadId: resolved.threadRef.threadId,
+            }),
+          ),
+        );
+      }
       const wokeAt = resolved
         ? threadWokeAt(resolved.thread, { now: new Date().toISOString() })
         : null;
@@ -648,26 +671,6 @@ export function useThreadActions() {
       });
     },
     [unpinThreadMutation],
-  );
-
-  const confirmAndUnpinThread = useCallback(
-    async (target: ScopedThreadRef) => {
-      const localApi = readLocalApi();
-      const resolved = resolveThreadTarget(target);
-      const confirmationResult = await requestThreadUnpinConfirmation({
-        enabled: confirmThreadUnpin,
-        title: resolved?.thread.title ?? "this thread",
-        confirm: localApi ? (message) => localApi.dialogs.confirm(message) : null,
-      });
-      if (confirmationResult._tag === "Failure") {
-        return confirmationResult;
-      }
-      if (!confirmationResult.value) {
-        return AsyncResult.success(undefined);
-      }
-      return unpinThread(target);
-    },
-    [confirmThreadUnpin, resolveThreadTarget, unpinThread],
   );
 
   const reorderPinnedThread = useCallback(
@@ -789,13 +792,11 @@ export function useThreadActions() {
       unsnoozeThread,
       pinThread,
       unpinThread,
-      confirmAndUnpinThread,
       reorderPinnedThread,
     }),
     [
       archiveThread,
       confirmAndDeleteThread,
-      confirmAndUnpinThread,
       deleteThread,
       pinThread,
       reorderPinnedThread,
