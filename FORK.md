@@ -6,7 +6,7 @@
 
 ## Upstream Baseline
 
-The fork integration boundary is the attached `base/main` control branch at exact commit `d5b94100863057fb4629f9ad4a35753d16917924`, with its Windows worktree at `E:\Projects\t3code.worktrees\base-main`. Every tracked feature and fix branch is based directly on `upstream/main`, reset without revert commits to that same control commit, and contains exactly one branch-owned commit above it.
+The fork integration boundary is the attached `base/main` control branch at exact commit `d5b94100863057fb4629f9ad4a35753d16917924`, with its Windows worktree at `E:\Projects\t3code.worktrees\base-main`. Every tracked feature and fix branch is based directly on `upstream/main`, reset without revert commits to that same control commit, and contains exactly one branch-owned implementation commit above it. Later `BRANCH_DETAILS.md`-only documentation commits may follow without changing the branch implementation diff.
 
 For diagnosing existing verification failures, obtain native control results through the main checkout's `scripts/worktree-baseline.ts` `ensure` command; agents must not install or run checks in the control worktree directly. The helper returns the cached manifest for the exact control commit and host/toolchain fingerprint or elects one caller to produce it while concurrent callers wait. A failure seen in a fork worktree is pre-existing only when the same failure appears in the same-host manifest. If it does not, fix it in the fork worktree that introduced or exposed it.
 
