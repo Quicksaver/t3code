@@ -16,6 +16,8 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  MagiParticipantId,
+  MagiRunId,
   type OrchestrationCommand,
   ProjectId,
   ProviderItemId,
@@ -129,6 +131,9 @@ function createProviderServiceHarness() {
       });
     },
     rollbackConversation: () => unsupported(),
+    subscribeEvents: PubSub.subscribe(runtimeEventPubSub).pipe(
+      Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
+    ),
     uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -231,6 +236,7 @@ describe("ProviderRuntimeIngestion", () => {
     serverSettings?: Partial<ServerSettings>;
     textGeneration?: Partial<TextGeneration["Service"]>;
     threadTitle?: string;
+    magiParticipant?: boolean;
   }) {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
@@ -293,6 +299,24 @@ describe("ProviderRuntimeIngestion", () => {
       },
       createdAt,
     });
+    if (options?.magiParticipant) {
+      await dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-magi-root-thread-create"),
+        threadId: ThreadId.make("root-thread"),
+        projectId: asProjectId("project-1"),
+        title: "Magi Root Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+    }
     await dispatch({
       type: "thread.create",
       commandId: CommandId.make("cmd-thread-create"),
@@ -307,6 +331,22 @@ describe("ProviderRuntimeIngestion", () => {
       runtimeMode: "approval-required",
       branch: null,
       worktreePath: null,
+      ...(options?.magiParticipant
+        ? {
+            parentRelation: {
+              kind: "magi" as const,
+              rootThreadId: ThreadId.make("root-thread"),
+              parentThreadId: ThreadId.make("root-thread"),
+              runId: MagiRunId.make("run-1"),
+              participantId: MagiParticipantId.make("participant-1"),
+              providerThreadId: "provider-participant-1",
+              depth: 1,
+              startedAt: createdAt,
+              completedAt: null,
+              status: "running" as const,
+            },
+          }
+        : {}),
       createdAt,
     });
     await dispatch({
@@ -337,11 +377,44 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       dispatch,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
+      readThreadDetail: (threadId: ThreadId) =>
+        Effect.runPromise(snapshotQuery.getThreadDetailById(threadId)),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
     };
   }
+
+  it("projects approval requests for hidden Magi participant threads", async () => {
+    const harness = await createHarness({ magiParticipant: true });
+    const threadId = asThreadId("thread-1");
+
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-magi-participant-approval"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-1"),
+      requestId: ApprovalRequestId.make("approval-1"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "Read repository metadata",
+      },
+    });
+    await harness.drain();
+
+    const detail = await harness.readThreadDetail(threadId);
+    expect(detail._tag).toBe("Some");
+    if (detail._tag === "Some") {
+      expect(detail.value.activities).toContainEqual(
+        expect.objectContaining({
+          id: "evt-magi-participant-approval",
+          kind: "approval.requested",
+        }),
+      );
+    }
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

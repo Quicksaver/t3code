@@ -1,14 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { WorkLogEntry } from "../../session-logic";
 import { MessageId, TurnId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
-  deriveToolWorkEntryHeading,
-  deriveWorkEntryDisplay,
-  deriveWorkEntryPreview,
-  shouldToggleWorkEntryRowFromKeyDown,
+  resolveMagiActivityPlacement,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -18,32 +14,6 @@ import {
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
-import {
-  buildSupplementalToolDetailBody,
-  deriveCommandOutputDisplay,
-  deriveExpandableWorkEntryDetails,
-  deriveFileChangeDisplayFiles,
-  filterChangedFilesWithoutInlineDiff,
-  getRenderableCommandOutputLines,
-  hasCommandWorkEntryDetails,
-  hasExpandableWorkEntryDetails,
-  hasFileChangeWorkEntryDetails,
-  hasRichWorkEntryDetails,
-  hasRenderableCommandOutput,
-} from "../../lib/workLogEntryDetails";
-
-let workLogEntrySequence = 0;
-
-function buildWorkLogEntry(overrides: Partial<WorkLogEntry>): WorkLogEntry {
-  const sequence = workLogEntrySequence++;
-  return {
-    id: `work-${sequence + 1}`,
-    createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, sequence)).toISOString(),
-    label: "Tool",
-    tone: "tool",
-    ...overrides,
-  };
-}
 
 describe("expanded tool group scrolling", () => {
   const entries = [{ id: "first" }, { id: "second" }];
@@ -190,31 +160,35 @@ describe("work entry labels", () => {
   it.each([
     ["preview_click", "Clicked in the preview browser"],
     ["task_status", "Got delegated task status"],
-  ] as const)("uses the completed presentation for a grouped legacy %s call", (tool, label) => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "browser-entry",
-          kind: "work",
-          createdAt: entry.createdAt,
-          entry: {
-            ...entry,
-            itemType: "mcp_tool_call",
-            toolData: { server: "t3-code", tool },
+  ] as const)(
+    "renders a settled legacy %s call directly with its completed presentation",
+    (tool, label) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "browser-entry",
+            kind: "work",
+            createdAt: entry.createdAt,
+            entry: {
+              ...entry,
+              itemType: "mcp_tool_call",
+              toolData: { server: "t3-code", tool },
+            },
           },
-        },
-      ],
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-    const summaryRow = rows.find((row) => row.kind === "work-toggle");
-    expect(summaryRow).toMatchObject({
-      hiddenCount: 1,
-      summary: label,
-    });
-  });
+        ],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+      const directRow = rows.find((row) => row.kind === "work");
+      expect(directRow).toMatchObject({
+        groupedEntries: [expect.objectContaining({ id: "tool-1" })],
+        isExpandedToolGroup: false,
+        displayLabel: label,
+      });
+    },
+  );
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {
@@ -225,6 +199,201 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("resolveMagiActivityPlacement", () => {
+  it("anchors the latest Magi summary after the user message that started it", () => {
+    const timelineEntries = [
+      {
+        id: "entry-user-1",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "First run",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-assistant-1",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-1" as never,
+          role: "assistant" as const,
+          text: "Result",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:05Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-user-2",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:01:00Z",
+        message: {
+          id: "user-2" as never,
+          role: "user" as const,
+          text: "Latest run",
+          turnId: null,
+          createdAt: "2026-01-01T00:01:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-assistant-2",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:01:10Z",
+        message: {
+          id: "assistant-2" as never,
+          role: "assistant" as const,
+          text: "Latest result",
+          turnId: null,
+          createdAt: "2026-01-01T00:01:10Z",
+          updatedAt: "2026-01-01T00:01:10Z",
+          streaming: false,
+        },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:01:01Z")).toEqual({
+      rowId: "entry-assistant-2",
+      position: "before",
+    });
+  });
+
+  it("falls back after the last row while active-run history hydrates", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "entry-user",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user" as never,
+            role: "user",
+            text: "Start",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(resolveMagiActivityPlacement(rows, null)).toEqual({
+      rowId: "entry-user",
+      position: "after",
+    });
+  });
+
+  it("keeps the Magi summary attached to its turn when images and compaction fold", () => {
+    const turnId = TurnId.make("turn-1");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "entry-user",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "Review this with Magi",
+            turnId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "entry-command",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "command",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId,
+            label: "Ran command",
+            itemType: "command_execution",
+            tone: "tool",
+          },
+        },
+        {
+          id: "entry-image",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "image",
+            createdAt: "2026-01-01T00:00:03Z",
+            turnId,
+            label: "Viewed image",
+            detail: "screenshots/result.png",
+            itemType: "image_view",
+            tone: "tool",
+          },
+        },
+        {
+          id: "entry-compaction",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "compaction",
+            createdAt: "2026-01-01T00:00:04Z",
+            turnId,
+            label: "Compacted context 899K → 19K tokens",
+            sourceActivityKind: "context-compaction",
+            tone: "info",
+          },
+        },
+        {
+          id: "entry-assistant",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Done",
+            turnId,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => [row.id, row.kind])).toEqual([
+      ["entry-user", "message"],
+      ["turn-fold:turn-1", "turn-fold"],
+      ["entry-assistant", "message"],
+    ]);
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:00:01Z")).toEqual({
+      rowId: "turn-fold:turn-1",
+      position: "before",
+    });
   });
 });
 
@@ -495,605 +664,6 @@ describe("resolveAssistantMessageCopyState", () => {
       text: "Created [report.xlsx](<outputs/report.xlsx>).\n\nHello World (Document template)",
       visible: true,
     });
-  });
-});
-
-describe("hasRenderableCommandOutput", () => {
-  it("hides nullish and empty command output streams", () => {
-    expect(hasRenderableCommandOutput(undefined)).toBe(false);
-    expect(hasRenderableCommandOutput(null)).toBe(false);
-    expect(hasRenderableCommandOutput("")).toBe(false);
-  });
-
-  it("renders command output streams when the provider emitted content", () => {
-    expect(hasRenderableCommandOutput("stdout\n")).toBe(true);
-    expect(hasRenderableCommandOutput("   ")).toBe(false);
-    expect(hasRenderableCommandOutput("\n\t\n")).toBe(false);
-  });
-
-  it("preserves intentional blank command output lines", () => {
-    expect(getRenderableCommandOutputLines("\nstdout\n   \n\t\nstderr\n")).toEqual([
-      "stdout",
-      "   ",
-      "\t",
-      "stderr",
-    ]);
-  });
-});
-
-describe("activity detail expansion", () => {
-  it("expands command entries and dynamic tool calls with command metadata", () => {
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "command_execution",
-          command: "vp test",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "dynamic_tool_call",
-          stdout: "passed",
-        }),
-      ),
-    ).toBe(true);
-  });
-
-  it("expands command entries that only have runtime metadata", () => {
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "command_execution",
-          exitCode: 0,
-          durationMs: 0,
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          exitCode: 0,
-          durationMs: 0,
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("falls back to command metadata when request kind alone is not enough", () => {
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          requestKind: "file-read",
-          command: "sed -n '1,20p' package.json",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          requestKind: "file-read",
-          stdout: '{ "name": "t3code" }',
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("does not treat file-change and collab-agent entries as command details", () => {
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "file_change",
-          command: "apply_patch",
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "collab_agent_tool_call",
-          command: "vp test",
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "collab_agent_tool_call",
-          requestKind: "command",
-          command: "vp test",
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("does not treat MCP calls with runtime metadata as command details", () => {
-    expect(
-      hasCommandWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "mcp_tool_call",
-          durationMs: 1234,
-          exitCode: 0,
-          toolData: {
-            server: "filesystem",
-            name: "read_file",
-            arguments: { path: "package.json" },
-          },
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("expands file-change entries and patch-carrying tool calls", () => {
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "file_change",
-          changedFiles: ["apps/web/src/session-logic.ts"],
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          requestKind: "file-change",
-          patch: "diff --git a/a b/a\n",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          patch: "diff --git a/a b/a\n",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "dynamic_tool_call",
-          patch: "diff --git a/a b/a\n",
-        }),
-      ),
-    ).toBe(true);
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          itemType: "collab_agent_tool_call",
-          requestKind: "file-change",
-          patch: "diff --git a/a b/a\n",
-        }),
-      ),
-    ).toBe(false);
-    expect(
-      hasFileChangeWorkEntryDetails(
-        buildWorkLogEntry({
-          requestKind: "file-read",
-          changedFiles: ["package.json"],
-        }),
-      ),
-    ).toBe(false);
-  });
-
-  it("reserves direct disclosures for rich command and file-change details", () => {
-    expect(
-      hasRichWorkEntryDetails(
-        buildWorkLogEntry({ itemType: "command_execution", command: "vp test" }),
-      ),
-    ).toBe(true);
-    expect(
-      hasRichWorkEntryDetails(
-        buildWorkLogEntry({ itemType: "file_change", changedFiles: ["package.json"] }),
-      ),
-    ).toBe(true);
-    expect(
-      hasRichWorkEntryDetails(
-        buildWorkLogEntry({ itemType: "mcp_tool_call", detail: "Found 3 issues" }),
-      ),
-    ).toBe(false);
-  });
-
-  it("keeps changed-file-only file-read entries in the generic detail fallback", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        requestKind: "file-read",
-        changedFiles: ["package.json"],
-        detail: "Read package metadata",
-      }),
-      undefined,
-    );
-
-    expect(details?.fileChange).toBeNull();
-    expect(details?.genericDetail).toContain("package.json");
-    expect(details?.genericDetail).toContain("Read package metadata");
-  });
-
-  it("keeps supplemental detail only when it adds distinct information", () => {
-    expect(
-      buildSupplementalToolDetailBody(
-        buildWorkLogEntry({
-          command: "vp test",
-          detail: "vp test",
-        }),
-        { dedupeRenderedCommandOutput: true },
-      ),
-    ).toBeNull();
-    expect(
-      buildSupplementalToolDetailBody(
-        buildWorkLogEntry({
-          stdout: "passed\n",
-          detail: "passed",
-        }),
-        { dedupeRenderedCommandOutput: true },
-      ),
-    ).toBeNull();
-    expect(
-      buildSupplementalToolDetailBody(
-        buildWorkLogEntry({
-          stdout: "line 1\r\n  line 2  \r\n\r\n",
-          detail: "line 1\nline 2",
-        }),
-        { dedupeRenderedCommandOutput: true },
-      ),
-    ).toBeNull();
-    expect(
-      buildSupplementalToolDetailBody(
-        buildWorkLogEntry({
-          stdout: "passed\n",
-          detail: "passed",
-        }),
-        { dedupeRenderedCommandOutput: false },
-      ),
-    ).toBe("passed");
-    expect(
-      buildSupplementalToolDetailBody(
-        buildWorkLogEntry({
-          stdout: "passed\n",
-          detail: "exit code 0",
-        }),
-        { dedupeRenderedCommandOutput: true },
-      ),
-    ).toBe("exit code 0");
-  });
-
-  it("checks command row expandability before deriving output details", () => {
-    const entry = buildWorkLogEntry({
-      itemType: "command_execution",
-      command: "vp test",
-      stdout: `${"passed\n".repeat(1000)}`,
-      detail: "passed",
-    });
-
-    expect(hasExpandableWorkEntryDetails(entry)).toBe(true);
-    expect(deriveExpandableWorkEntryDetails(entry, undefined)?.supplementalDetail).toBe("passed");
-  });
-
-  it("derives command details without React-local command stream decisions", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "command_execution",
-        command: "vp test",
-        rawCommand: "pnpm exec vp test",
-        stdout: "passed\n",
-        stderr: "warning\n",
-        output: "legacy output that should not render when streams exist",
-        exitCode: 0,
-        durationMs: 1234,
-        detail: "passed",
-      }),
-      undefined,
-    );
-
-    expect(details?.command).toEqual({
-      command: "vp test",
-      rawCommand: "pnpm exec vp test",
-      exitCodeLabel: "0",
-      durationLabel: "1.2s",
-      outputs: [
-        { title: "Stdout", value: "passed\n" },
-        { title: "Stderr", value: "warning\n", tone: "error" },
-      ],
-    });
-    expect(details?.fileChange).toBeNull();
-    expect(details?.supplementalDetail).toBeNull();
-    expect(details?.genericDetail).toBeNull();
-  });
-
-  it("derives legacy command output only when stdout and stderr are absent", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "command_execution",
-        command: "vp test",
-        output: "legacy output\n",
-      }),
-      undefined,
-    );
-
-    expect(details?.command?.outputs).toEqual([{ title: "Output", value: "legacy output\n" }]);
-  });
-
-  it("keeps unknown duration labels for nullish command durations", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "command_execution",
-        command: "vp test",
-        durationMs: null as never,
-      }),
-      undefined,
-    );
-
-    expect(details?.command?.durationLabel).toBe("unknown");
-  });
-
-  it("keeps exact zero millisecond command durations", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "command_execution",
-        command: "true",
-        durationMs: 0,
-      }),
-      undefined,
-    );
-
-    expect(details?.command?.durationLabel).toBe("0ms");
-  });
-
-  it("keeps collab-agent rows out of generic command and file detail derivation", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "collab_agent_tool_call",
-        requestKind: "command",
-        command: "vp test",
-        stdout: "passed",
-        patch: "diff --git a/a b/a\n",
-        changedFiles: ["a"],
-      }),
-      undefined,
-    );
-
-    expect(details?.command).toBeNull();
-    expect(details?.fileChange).toBeNull();
-    expect(details?.genericDetail).toContain("vp test");
-  });
-
-  it("keeps raw-command-only generic tool entries expandable", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "mcp_tool_call",
-        rawCommand: "node scripts/report.mjs --json",
-      }),
-      undefined,
-    );
-
-    expect(details?.command).toBeNull();
-    expect(details?.genericDetail).toBe("node scripts/report.mjs --json");
-  });
-
-  it("derives generic MCP detail fallback outside command and file detail rows", () => {
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "mcp_tool_call",
-        toolData: {
-          server: "filesystem",
-          name: "read_file",
-          arguments: { path: "package.json" },
-        },
-        detail: "Read package metadata",
-      }),
-      undefined,
-    );
-
-    expect(details?.command).toBeNull();
-    expect(details?.fileChange).toBeNull();
-    expect(details?.genericDetail).toContain("MCP call");
-    expect(details?.genericDetail).toContain("Read package metadata");
-  });
-
-  it("redacts and safely serializes MCP tool data", () => {
-    const sharedArguments = { path: "package.json" };
-    const toolData: Record<string, unknown> = {
-      server: "filesystem",
-      token: "secret-token",
-      nested: { apiKey: "secret-key" },
-      firstCall: { arguments: sharedArguments },
-      secondCall: { arguments: sharedArguments },
-    };
-    toolData.self = toolData;
-
-    const details = deriveExpandableWorkEntryDetails(
-      buildWorkLogEntry({
-        itemType: "mcp_tool_call",
-        toolData,
-      }),
-      undefined,
-    );
-
-    expect(details?.genericDetail).toContain('"self": "[Circular]"');
-    expect(details?.genericDetail).toContain('"firstCall"');
-    expect(details?.genericDetail).toContain('"secondCall"');
-    expect(details?.genericDetail).toContain('"path": "package.json"');
-    expect(details?.genericDetail).toContain("[redacted]");
-    expect(details?.genericDetail).not.toContain("secret-token");
-    expect(details?.genericDetail).not.toContain("secret-key");
-  });
-
-  it("keeps changed files not represented by inline diff paths", () => {
-    expect(
-      filterChangedFilesWithoutInlineDiff(
-        [
-          "/Users/example/t3code/apps/web/src/session-logic.ts",
-          "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
-        ],
-        ["apps/web/src/session-logic.ts"],
-      ),
-    ).toEqual(["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"]);
-  });
-
-  it("does not hide basename-only changed files for unrelated inline diff suffixes", () => {
-    expect(filterChangedFilesWithoutInlineDiff(["index.ts"], ["apps/web/src/index.ts"])).toEqual([
-      "index.ts",
-    ]);
-    expect(filterChangedFilesWithoutInlineDiff(["index.ts"], ["index.ts"])).toEqual([]);
-
-    expect(
-      filterChangedFilesWithoutInlineDiff(["src/index.ts"], ["apps/web/src/index.ts"]),
-    ).toEqual([]);
-  });
-
-  it("removes absolute root changed files represented by basename inline diffs", () => {
-    expect(
-      filterChangedFilesWithoutInlineDiff(
-        ["/Users/example/t3code/README.md", "/Users/example/t3code/docs/README.md"],
-        ["README.md"],
-        "/Users/example/t3code",
-      ),
-    ).toEqual(["/Users/example/t3code/docs/README.md"]);
-  });
-
-  it("derives changed-file display chips after inline diff paths are removed", () => {
-    expect(
-      deriveFileChangeDisplayFiles({
-        changedFiles: [
-          "/Users/example/t3code/apps/web/src/session-logic.ts",
-          "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
-        ],
-        inlineDiffPaths: ["apps/web/src/session-logic.ts"],
-        workspaceRoot: "/Users/example/t3code",
-      }),
-    ).toEqual([
-      {
-        path: "/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
-        displayPath: "t3code/apps/web/src/components/chat/MessagesTimeline.tsx",
-      },
-    ]);
-  });
-
-  it("derives command output tail display state", () => {
-    const value = Array.from({ length: 45 }, (_, index) => `line ${index + 1}`).join("\n");
-
-    expect(deriveCommandOutputDisplay({ value, showFull: false })).toEqual({
-      isTruncated: true,
-      visibleValue: Array.from({ length: 40 }, (_, index) => `line ${index + 6}`).join("\n"),
-      suffix: "last 40 of 45 lines",
-    });
-    expect(deriveCommandOutputDisplay({ value, showFull: true }).suffix).toBe("45 lines");
-  });
-
-  it("guards null output and invalid visible line counts", () => {
-    expect(
-      deriveCommandOutputDisplay({
-        value: null,
-        showFull: false,
-        maxVisibleLines: Number.NaN,
-      }),
-    ).toEqual({
-      isTruncated: false,
-      visibleValue: "",
-      suffix: "0 lines",
-    });
-    expect(
-      deriveCommandOutputDisplay({
-        value: "one\ntwo\nthree",
-        showFull: false,
-        maxVisibleLines: -1,
-      }),
-    ).toEqual({
-      isTruncated: true,
-      visibleValue: "three",
-      suffix: "last 1 of 3 lines",
-    });
-  });
-
-  it("derives work entry headings and compact previews", () => {
-    const workEntry = buildWorkLogEntry({
-      label: "Ran command complete",
-      command: "vp test",
-    });
-
-    expect(deriveToolWorkEntryHeading(workEntry)).toBe("Ran command");
-    expect(deriveWorkEntryPreview(workEntry, undefined)).toBe("vp test");
-    expect(
-      deriveWorkEntryPreview(
-        buildWorkLogEntry({
-          changedFiles: ["/Users/example/t3code/apps/web/src/session-logic.ts", "README.md"],
-        }),
-        "/Users/example/t3code",
-      ),
-    ).toBe("t3code/apps/web/src/session-logic.ts +1 more");
-    expect(
-      deriveWorkEntryPreview(
-        buildWorkLogEntry({
-          itemType: "file_change",
-          command: "apply_patch",
-          detail: "Updated files",
-          changedFiles: ["/Users/example/t3code/apps/web/src/components/chat/MessagesTimeline.tsx"],
-        }),
-        "/Users/example/t3code",
-      ),
-    ).toBe("t3code/apps/web/src/components/chat/MessagesTimeline.tsx");
-  });
-
-  it("derives compact work entry display text for expandable rows", () => {
-    expect(
-      deriveWorkEntryDisplay(
-        buildWorkLogEntry({
-          label: "Ran command complete",
-          command: "vp test",
-        }),
-        undefined,
-      ),
-    ).toEqual({
-      heading: "Ran command",
-      preview: "vp test",
-      displayText: "Ran command - vp test",
-    });
-
-    expect(
-      deriveWorkEntryDisplay(
-        buildWorkLogEntry({
-          label: "Ran command",
-          detail: "ran command completed",
-        }),
-        undefined,
-      ),
-    ).toEqual({
-      heading: "Ran command",
-      preview: null,
-      displayText: "Ran command",
-    });
-
-    expect(
-      deriveWorkEntryDisplay(
-        buildWorkLogEntry({
-          label: "Changed files",
-          itemType: "file_change",
-          command: "apply_patch",
-          detail: "Updated files",
-          changedFiles: ["/Users/example/t3code/apps/web/src/session-logic.ts"],
-        }),
-        "/Users/example/t3code",
-      ),
-    ).toEqual({
-      heading: "Changed files",
-      preview: "t3code/apps/web/src/session-logic.ts",
-      displayText: "Changed files - t3code/apps/web/src/session-logic.ts",
-    });
-  });
-
-  it("only toggles expandable work rows from row-level keyboard events", () => {
-    expect(shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: true })).toBe(
-      true,
-    );
-    expect(shouldToggleWorkEntryRowFromKeyDown({ key: " ", targetIsCurrentTarget: true })).toBe(
-      true,
-    );
-    expect(
-      shouldToggleWorkEntryRowFromKeyDown({ key: "Enter", targetIsCurrentTarget: false }),
-    ).toBe(false);
-    expect(
-      shouldToggleWorkEntryRowFromKeyDown({ key: "Escape", targetIsCurrentTarget: true }),
-    ).toBe(false);
   });
 });
 
@@ -1402,7 +972,7 @@ describe("deriveMessagesTimelineRows", () => {
       "user-entry",
       "turn-fold:turn-1",
       "assistant-first-entry",
-      "work-toggle:work-entry-1",
+      "work-entry-1",
       "assistant-final-entry",
     ]);
     expect(
@@ -2059,6 +1629,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.find((row) => row.kind === "work")).toMatchObject({
       groupedEntries: [{ id: "completed-command", command: "rg toolCall" }],
       isExpandedToolGroup: false,
+      displayLabel: "rg toolCall",
     });
   });
 
@@ -2109,6 +1680,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows.find((row) => row.kind === "work")).toMatchObject({
       groupedEntries: [{ id: "command-completed", toolCallId: "call-1" }],
       isExpandedToolGroup: false,
+      displayLabel: "rg toolCall",
     });
     expect(rows.some((row) => row.kind === "work-toggle")).toBe(false);
   });
@@ -2624,121 +2196,6 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,
     });
-  });
-
-  it("uses command detail eligibility for a settled single-row bypass", () => {
-    const deriveRows = (entry: WorkLogEntry) =>
-      deriveMessagesTimelineRows({
-        timelineEntries: [
-          {
-            id: "command-entry",
-            kind: "work",
-            createdAt: entry.createdAt,
-            entry,
-          },
-        ],
-        isWorking: false,
-        activeTurnStartedAt: null,
-        turnDiffSummaryByAssistantMessageId: new Map(),
-        revertTurnCountByUserMessageId: new Map(),
-      });
-
-    const detailedRows = deriveRows(
-      buildWorkLogEntry({
-        id: "detailed-command",
-        itemType: "command_execution",
-        label: "Ran command",
-        command: "vp test",
-      }),
-    );
-    const metadataOnlyRows = deriveRows(
-      buildWorkLogEntry({
-        id: "metadata-only-command",
-        itemType: "command_execution",
-        label: "Ran command",
-      }),
-    );
-
-    expect(detailedRows).toEqual([
-      expect.objectContaining({
-        kind: "work",
-        id: "command-entry",
-        groupedEntries: [expect.objectContaining({ id: "detailed-command" })],
-      }),
-    ]);
-    expect(metadataOnlyRows).toEqual([
-      expect.objectContaining({
-        kind: "work-toggle",
-        id: "work-toggle:command-entry",
-        hiddenCount: 1,
-        summary: "Ran command",
-      }),
-    ]);
-  });
-
-  it("preserves command and file disclosures inside an expanded tool group", () => {
-    const commandEntry = buildWorkLogEntry({
-      id: "command",
-      itemType: "command_execution",
-      label: "Ran command",
-      command: "vp test",
-    });
-    const fileEntry = buildWorkLogEntry({
-      id: "file",
-      itemType: "file_change",
-      label: "Changed files",
-      changedFiles: ["src/app.ts"],
-      patch:
-        "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new",
-    });
-    const baseInput = {
-      timelineEntries: [
-        {
-          id: "command-entry",
-          kind: "work" as const,
-          createdAt: commandEntry.createdAt,
-          entry: commandEntry,
-        },
-        {
-          id: "file-entry",
-          kind: "work" as const,
-          createdAt: fileEntry.createdAt,
-          entry: fileEntry,
-        },
-      ],
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    };
-
-    const collapsedRows = deriveMessagesTimelineRows(baseInput);
-    const expandedRows = deriveMessagesTimelineRows({
-      ...baseInput,
-      expandedWorkGroupIds: new Set(["work-group:command-entry"]),
-    });
-
-    expect(collapsedRows).toEqual([
-      expect.objectContaining({
-        kind: "work-toggle",
-        groupId: "work-group:command-entry",
-        summary: "Ran 1 command and changed 1 file",
-      }),
-    ]);
-    expect(expandedRows.map((row) => row.id)).toEqual([
-      "work-toggle:command-entry",
-      "work-group:command-entry:details",
-    ]);
-    expect(expandedRows.slice(1)).toEqual([
-      expect.objectContaining({
-        kind: "work",
-        isExpandedToolGroup: true,
-        groupedEntries: [
-          expect.objectContaining({ command: "vp test" }),
-          expect.objectContaining({ patch: expect.stringContaining("+new") }),
-        ],
-      }),
-    ]);
   });
 
   it("deduplicates integration sources and uses the first source icon for the group", () => {

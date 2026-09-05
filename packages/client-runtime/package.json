@@ -111,6 +111,10 @@
       "types": "./src/state/models.ts",
       "default": "./src/state/models.ts"
     },
+    "./state/magi": {
+      "types": "./src/state/magi.ts",
+      "default": "./src/state/magi.ts"
+    },
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"

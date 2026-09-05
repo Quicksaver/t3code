@@ -22,9 +22,11 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -172,6 +174,7 @@ export interface CodexSessionRuntimeOptions {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
   readonly appServerArgs?: ReadonlyArray<string>;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -184,6 +187,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -208,6 +213,7 @@ export interface CodexSessionRuntimeShape {
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly compact?: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly uploadFeedback: (
     reason?: string,
   ) => Effect.Effect<EffectCodexSchema.V2FeedbackUploadResponse, CodexSessionRuntimeError>;
@@ -273,6 +279,81 @@ export class CodexSessionRuntimeThreadIdMissingError extends Schema.TaggedErrorC
     return `Codex session is missing a provider thread id for ${this.threadId}`;
   }
 }
+
+interface PendingCodexCompaction {
+  readonly providerThreadId: string;
+  readonly barrier: Deferred.Deferred<void, CodexSessionRuntimeError>;
+}
+
+export interface CodexCompactionCoordinator {
+  readonly compact: (
+    providerThreadId: string,
+    request: Effect.Effect<void, CodexSessionRuntimeError>,
+  ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly complete: (providerThreadId: string) => Effect.Effect<void>;
+  readonly fail: (error: CodexSessionRuntimeError) => Effect.Effect<void>;
+}
+
+export const makeCodexCompactionCoordinator = (input?: {
+  readonly timeout?: Duration.Input;
+}): Effect.Effect<CodexCompactionCoordinator> =>
+  Effect.gen(function* () {
+    const timeout = input?.timeout ?? "2 minutes";
+    const pendingRef = yield* Ref.make<PendingCodexCompaction | null>(null);
+
+    const failPending = (pending: PendingCodexCompaction, error: CodexSessionRuntimeError) =>
+      Ref.modify(pendingRef, (current) =>
+        current?.barrier === pending.barrier ? [true, null] : [false, current],
+      ).pipe(
+        Effect.flatMap((removed) =>
+          removed ? Deferred.fail(pending.barrier, error).pipe(Effect.asVoid) : Effect.void,
+        ),
+      );
+
+    const fail = (error: CodexSessionRuntimeError) =>
+      Ref.getAndSet(pendingRef, null).pipe(
+        Effect.flatMap((pending) =>
+          pending ? Deferred.fail(pending.barrier, error).pipe(Effect.asVoid) : Effect.void,
+        ),
+      );
+
+    const complete = (providerThreadId: string) =>
+      Ref.modify(pendingRef, (current) =>
+        current?.providerThreadId === providerThreadId ? [current, null] : [null, current],
+      ).pipe(
+        Effect.flatMap((pending) =>
+          pending ? Deferred.succeed(pending.barrier, undefined).pipe(Effect.asVoid) : Effect.void,
+        ),
+      );
+
+    const compact: CodexCompactionCoordinator["compact"] = (providerThreadId, request) =>
+      Effect.gen(function* () {
+        const fresh: PendingCodexCompaction = {
+          providerThreadId,
+          barrier: yield* Deferred.make<void, CodexSessionRuntimeError>(),
+        };
+        const selected = yield* Ref.modify(pendingRef, (current) =>
+          current
+            ? [{ pending: current, created: false }, current]
+            : [{ pending: fresh, created: true }, fresh],
+        );
+        if (selected.created) {
+          yield* request.pipe(Effect.tapError((error) => failPending(selected.pending, error)));
+        }
+        const completed = yield* Deferred.await(selected.pending.barrier).pipe(
+          Effect.timeoutOption(timeout),
+        );
+        if (Option.isSome(completed)) return;
+
+        const timeoutError = CodexErrors.CodexAppServerRequestError.internalError(
+          "Codex compaction did not complete before its completion deadline.",
+        );
+        yield* failPending(selected.pending, timeoutError);
+        return yield* timeoutError;
+      });
+
+    return { compact, complete, fail };
+  });
 
 interface PendingApproval {
   readonly requestId: ApprovalRequestId;
@@ -533,11 +614,12 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
-function buildThreadStartParams(input: {
+export function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly magiParticipant?: boolean;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -547,6 +629,15 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    ...(input.magiParticipant
+      ? {
+          config: {
+            multi_agent_mode: {
+              custom: "Participant subagents are unavailable in this Magi session.",
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -608,6 +699,8 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
 }): Effect.Effect<
@@ -626,12 +719,14 @@ export function buildTurnStartParams(input: {
   }
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
-  const collaborationMode = buildCodexCollaborationMode({
-    ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
-    browserToolsAvailable: input.browserToolsAvailable ?? true,
-  });
+  const collaborationMode = input.magiParticipant
+    ? undefined
+    : buildCodexCollaborationMode({
+        ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
+        browserToolsAvailable: input.browserToolsAvailable ?? true,
+      });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
@@ -642,6 +737,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
     Effect.mapError((cause) =>
@@ -703,6 +799,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly magiParticipant?: boolean;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -710,6 +807,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.magiParticipant !== undefined ? { magiParticipant: input.magiParticipant } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -1178,6 +1276,7 @@ export const makeCodexSessionRuntime = (
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
+    const compactionCoordinator = yield* makeCodexCompactionCoordinator();
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1731,6 +1830,12 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
+        if (notification.method === "thread/compacted") {
+          const providerThreadId = readNotificationThreadId(notification);
+          if (providerThreadId !== undefined) {
+            yield* compactionCoordinator.complete(providerThreadId);
+          }
+        }
         const isMemoryConsolidationNotification =
           suppressMemoryConsolidationNotification(notification);
 
@@ -2290,6 +2395,9 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.magiParticipant !== undefined
+          ? { magiParticipant: options.magiParticipant }
+          : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2323,6 +2431,11 @@ export const makeCodexSessionRuntime = (
       }
       yield* settlePendingApprovals("cancel");
       yield* settlePendingUserInputs({});
+      yield* compactionCoordinator.fail(
+        CodexErrors.CodexAppServerRequestError.internalError(
+          "Codex session closed before compaction completed.",
+        ),
+      );
       yield* updateSession(sessionRef, {
         status: "closed",
         activeTurnId: undefined,
@@ -2368,6 +2481,10 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+            ...(options.magiParticipant !== undefined
+              ? { magiParticipant: options.magiParticipant }
+              : {}),
             // Derived from the session's own MCP configuration rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
@@ -2455,6 +2572,13 @@ export const makeCodexSessionRuntime = (
           });
           return parseThreadSnapshot(response);
         }),
+      compact: Effect.gen(function* () {
+        const providerThreadId = yield* readProviderThreadId;
+        return yield* compactionCoordinator.compact(
+          providerThreadId,
+          client.request("thread/compact/start", { threadId: providerThreadId }),
+        );
+      }),
       uploadFeedback: (reason) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;

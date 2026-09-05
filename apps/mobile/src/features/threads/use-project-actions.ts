@@ -5,6 +5,7 @@ import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   ThreadId,
+  type MagiRunConfig,
   type ModelSelection,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -43,6 +44,7 @@ export function useCreateProjectThread() {
       readonly interactionMode: ProviderInteractionMode;
       readonly initialMessageText: string;
       readonly initialAttachments: ReadonlyArray<DraftComposerAttachment>;
+      readonly magiArm?: MagiRunConfig;
       readonly onAttachmentsUploaded: (
         attachments: ReadonlyArray<DraftComposerAttachment>,
       ) => Promise<void>;
@@ -148,6 +150,7 @@ export function useCreateProjectThread() {
           worktreePath: input.worktreePath,
           startFromOrigin: input.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          ...(input.magiArm ? { magiArm: input.magiArm } : {}),
         }),
       });
       if (AsyncResult.isFailure(result)) {

@@ -1,7 +1,7 @@
 /**
- * Migration runner with an inline loader.
+ * Migration runner with inline core and Magi loaders.
  *
- * Uses Migrator.make with fromRecord to define migrations inline.
+ * Uses Migrator.make with fromRecord to define both manifests inline.
  * All migrations are statically imported - no dynamic file system loading.
  *
  * `runMigrations` is called by the SQLite persistence layer at startup, so the
@@ -9,6 +9,7 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
 // Import all migrations statically
@@ -45,37 +46,39 @@ import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
-import Migration0034 from "./Migrations/034_ProjectionThreadParentRelation.ts";
-import Migration0035 from "./Migrations/035_BackfillEmptyProjectionThreadRootIds.ts";
-import Migration0036 from "./Migrations/036_ProjectionThreadsSnoozed.ts";
-import Migration0037 from "./Migrations/037_ProjectionThreadTitleRegeneration.ts";
-import Migration0038 from "./Migrations/038_ProjectionThreadsPinned.ts";
-import Migration0039 from "./Migrations/039_ProjectionThreadLineageConvergence.ts";
-import Migration0040 from "./Migrations/040_ProjectionTurnsKeysetIndex.ts";
-import Migration0041 from "./Migrations/041_ProjectionThreadsPinOrderKey.ts";
-import Migration0042 from "./Migrations/042_ProjectionProjectsDefaultThreadEnvMode.ts";
-import Migration0043 from "./Migrations/043_ProjectionProjectFaviconPath.ts";
-import Migration0044 from "./Migrations/044_ProjectionThreadLineageConvergenceAfterProjectMigrations.ts";
-import Migration0045 from "./Migrations/045_AuthSessionClientConnection.ts";
-import Migration0046 from "./Migrations/046_ProjectionThreadLinkedPullRequest.ts";
-import Migration0047 from "./Migrations/047_ProjectionThreadsUnsettledAt.ts";
-import Migration0048 from "./Migrations/048_ClearAutomaticProjectModelDefaults.ts";
-import Migration0049 from "./Migrations/049_ProjectionProjectsAutoPull.ts";
-import Migration0050 from "./Migrations/050_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts";
-import Migration0051 from "./Migrations/051_RepairAutomaticSettlementTimestamps.ts";
-import Migration0052 from "./Migrations/052_ProjectionProjectIcon.ts";
+import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
+import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
+import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
+import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
+import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
+import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
+import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
+import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
+import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
+import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
+import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
+import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
+import MagiMigration0047 from "./Migrations/047_MagiProjections.ts";
+import Migration0048 from "./Migrations/048_MagiActiveConversationUniqueness.ts";
+import Migration0049 from "./Migrations/049_MagiProposalTerminology.ts";
+import Migration0050 from "./Migrations/050_MagiCoreMigrationCompatibility.ts";
+import CoreMigration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
+
+export const CORE_MIGRATION_TABLE = "effect_sql_migrations";
+export const MAGI_MIGRATION_TABLE = "effect_sql_magi_migrations";
 
 /**
- * Migration loader with all migrations defined inline.
+ * Migration loaders with every migration defined inline.
  *
  * Key format: "{id}_{name}" where:
  * - id: numeric migration ID (determines execution order)
  * - name: descriptive name for the migration
  *
- * Uses Migrator.fromRecord which parses the key format and
- * returns migrations sorted by ID.
+ * Each ledger has its own numeric sequence. Migrator.fromRecord parses the key
+ * format and returns migrations sorted by ID within that ledger.
  */
-export const migrationEntries = [
+export const coreMigrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -109,33 +112,45 @@ export const migrationEntries = [
   [31, "AuthAuthorizationScopes", Migration0031],
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
-  [34, "ProjectionThreadParentRelation", Migration0034],
-  [35, "BackfillEmptyProjectionThreadRootIds", Migration0035],
-  [36, "ProjectionThreadsSnoozed", Migration0036],
-  [37, "ProjectionThreadTitleRegeneration", Migration0037],
-  [38, "ProjectionThreadsPinned", Migration0038],
-  [39, "ProjectionThreadLineageConvergence", Migration0039],
-  [40, "ProjectionTurnsKeysetIndex", Migration0040],
-  [41, "ProjectionThreadsPinOrderKey", Migration0041],
-  [42, "ProjectionProjectsDefaultThreadEnvMode", Migration0042],
-  [43, "ProjectionProjectFaviconPath", Migration0043],
-  [44, "ProjectionThreadLineageConvergenceAfterProjectMigrations", Migration0044],
-  [45, "AuthSessionClientConnection", Migration0045],
-  [46, "ProjectionThreadLinkedPullRequest", Migration0046],
-  [47, "ProjectionThreadsUnsettledAt", Migration0047],
-  [48, "ClearAutomaticProjectModelDefaults", Migration0048],
-  [49, "ProjectionProjectsAutoPull", Migration0049],
-  [50, "ProjectionThreadLineageConvergenceAfterUpstreamTail", Migration0050],
-  [51, "RepairAutomaticSettlementTimestamps", Migration0051],
-  [52, "ProjectionProjectIcon", Migration0052],
+  [34, "ProjectionThreadsSnoozed", Migration0034],
+  [35, "ProjectionThreadTitleRegeneration", Migration0035],
+  [36, "ProjectionThreadsPinned", Migration0036],
+  [37, "ProjectionTurnsKeysetIndex", Migration0037],
+  [38, "ProjectionThreadsPinOrderKey", Migration0038],
+  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
+  [40, "ProjectionProjectFaviconPath", Migration0040],
+  [41, "AuthSessionClientConnection", Migration0041],
+  [42, "ProjectionThreadLinkedPullRequest", Migration0042],
+  [43, "ProjectionThreadsUnsettledAt", Migration0043],
+  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
+  [45, "ProjectionProjectsAutoPull", Migration0045],
+  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [47, "ProjectionProjectIcon", CoreMigration0047],
 ] as const;
 
-export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+export const magiMigrationEntries = [
+  [47, "MagiProjections", MagiMigration0047],
+  [48, "MagiActiveConversationUniqueness", Migration0048],
+  [49, "MagiProposalTerminology", Migration0049],
+  [50, "MagiCoreMigrationCompatibility", Migration0050],
+] as const;
 
-export const makeMigrationLoader = (throughId?: number) =>
+export const migrationManifest = coreMigrationEntries.map(([id, name]) => [id, name] as const);
+export const magiMigrationManifest = magiMigrationEntries.map(([id, name]) => [id, name] as const);
+
+export const makeCoreMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
-      migrationEntries
+      coreMigrationEntries
+        .filter(([id]) => throughId === undefined || id <= throughId)
+        .map(([id, name, migration]) => [`${id}_${name}`, migration]),
+    ),
+  );
+
+export const makeMagiMigrationLoader = (throughId?: number) =>
+  Migrator.fromRecord(
+    Object.fromEntries(
+      magiMigrationEntries
         .filter(([id]) => throughId === undefined || id <= throughId)
         .map(([id, name, migration]) => [`${id}_${name}`, migration]),
     ),
@@ -147,6 +162,33 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+const normalizeLegacyMagiMigrationLedger = Effect.fn("normalizeLegacyMagiMigrationLedger")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const tables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = ${CORE_MIGRATION_TABLE}
+    `;
+    if (tables.length === 0) {
+      return;
+    }
+
+    // These are the complete, frozen set of Magi names written by historical
+    // shared-ledger builds. New Magi migrations use the separate Magi ledger
+    // and must not extend this cleanup list.
+    yield* sql`
+      DELETE FROM ${sql(CORE_MIGRATION_TABLE)}
+      WHERE name IN (
+        'MagiProjections',
+        'MagiActiveConversationUniqueness',
+        'MagiProposalTerminology',
+        'MagiCoreMigrationCompatibility'
+      )
+    `;
+  },
+);
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -154,8 +196,9 @@ export interface RunMigrationsOptions {
 /**
  * Run all pending migrations.
  *
- * Creates the migrations tracking table (effect_sql_migrations) if it doesn't exist,
- * then runs any migrations with ID greater than the latest recorded migration.
+ * Moves historical Magi records out of the core ledger, then runs core and Magi
+ * migrations against independent tracking tables. This lets both manifests use
+ * their own numeric sequence without causing future core migrations to be skipped.
  *
  * Returns array of [id, name] tuples for migrations that were run.
  *
@@ -164,7 +207,16 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  yield* normalizeLegacyMagiMigrationLedger();
+  const coreMigrations = yield* run({
+    loader: makeCoreMigrationLoader(toMigrationInclusive),
+    table: CORE_MIGRATION_TABLE,
+  });
+  const magiMigrations = yield* run({
+    loader: makeMagiMigrationLoader(toMigrationInclusive),
+    table: MAGI_MIGRATION_TABLE,
+  });
+  const executedMigrations = [...coreMigrations, ...magiMigrations];
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

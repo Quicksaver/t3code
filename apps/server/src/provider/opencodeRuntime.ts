@@ -480,7 +480,41 @@ export function toOpenCodeFileParts(input: {
   return parts;
 }
 
-export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): PermissionRuleset {
+export function buildOpenCodePermissionRules(
+  runtimeMode: RuntimeMode,
+  magi?: { readonly readOnly: true },
+): PermissionRuleset {
+  if (magi) {
+    if (runtimeMode === "full-access") {
+      return [
+        { permission: "*", pattern: "*", action: "allow" },
+        { permission: "task", pattern: "*", action: "deny" },
+        { permission: "agent", pattern: "*", action: "deny" },
+      ];
+    }
+    return [
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "read", pattern: "*", action: "allow" },
+      { permission: "glob", pattern: "*", action: "allow" },
+      { permission: "grep", pattern: "*", action: "allow" },
+      { permission: "codesearch", pattern: "*", action: "allow" },
+      { permission: "edit", pattern: "*", action: "ask" },
+      { permission: "task", pattern: "*", action: "deny" },
+      { permission: "agent", pattern: "*", action: "deny" },
+      {
+        permission: "webfetch",
+        pattern: "*",
+        action: "ask",
+      },
+      {
+        permission: "websearch",
+        pattern: "*",
+        action: "ask",
+      },
+      { permission: "question", pattern: "*", action: "deny" },
+    ];
+  }
+
   if (runtimeMode === "full-access") {
     return [
       { permission: "*", pattern: "*", action: "allow" },

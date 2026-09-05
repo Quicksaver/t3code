@@ -1,11 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ModelSelection as ModelSelectionSchema,
+  MagiRunConfig as MagiRunConfigSchema,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
   type EnvironmentId,
   type ModelSelection,
+  type MagiRunConfig,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -59,6 +61,7 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  readonly magiArm?: MagiRunConfig;
 }
 
 export interface ComposerDraftContent {
@@ -94,6 +97,7 @@ const ComposerDraftSchema = Schema.Struct({
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
+  magiArm: Schema.optional(MagiRunConfigSchema),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -181,7 +185,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.magiArm === undefined
   );
 }
 
@@ -974,6 +979,21 @@ export function updateComposerDraftSettings(
   });
 }
 
+export function setComposerDraftMagiArm(draftKey: string, config: MagiRunConfig | null): void {
+  updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    const { magiArm: _magiArm, ...withoutMagiArm } = existing;
+    const draft: ComposerDraft =
+      config === null ? withoutMagiArm : { ...withoutMagiArm, magiArm: config };
+    if (isEmptyDraft(draft)) {
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    }
+    return { ...current, [draftKey]: draft };
+  });
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -988,6 +1008,7 @@ export function clearComposerDraftContentState(
   }
   const {
     importedShareIds: _importedShareIds,
+    magiArm: _magiArm,
     modelSelection,
     workspaceSelection,
     ...retained
@@ -1054,6 +1075,7 @@ export function copyComposerDraftContentState(
       text: source.text,
       attachments: source.attachments,
       ...(source.importedShareIds ? { importedShareIds: source.importedShareIds } : {}),
+      ...(source.magiArm ? { magiArm: source.magiArm } : {}),
     },
   };
 }

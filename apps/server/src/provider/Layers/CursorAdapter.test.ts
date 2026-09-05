@@ -891,6 +891,73 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       }),
   );
 
+  it.effect("inherits full-access ACP permissions for Magi participants", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-magi-read-only-deny");
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath, { T3_ACP_EMIT_TOOL_CALLS: "1" }),
+      );
+      yield* serverSettings.updateSettings({
+        providers: { cursor: { binaryPath: wrapperPath } },
+      });
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        control: { executionProfile: "magi-read-only" },
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "attempt a mutating tool call",
+        attachments: [],
+        control: { executionProfile: "magi-read-only" },
+      });
+      yield* Fiber.interrupt(runtimeEventsFiber);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            !("method" in entry) &&
+            typeof entry.result === "object" &&
+            entry.result !== null &&
+            "outcome" in entry.result &&
+            typeof entry.result.outcome === "object" &&
+            entry.result.outcome !== null &&
+            "outcome" in entry.result.outcome &&
+            entry.result.outcome.outcome === "selected" &&
+            "optionId" in entry.result.outcome &&
+            entry.result.outcome.optionId === "allow-always",
+        ),
+      );
+      assert.notInclude(
+        runtimeEvents
+          .filter((event) => String(event.threadId) === String(threadId))
+          .map((event) => event.type),
+        "request.opened",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("segments assistant messages around ACP tool activity in full-access mode", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;

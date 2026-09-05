@@ -2,8 +2,10 @@ import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
@@ -11,6 +13,9 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { MagiGetOptionsTool } from "./toolkits/magi/tools.ts";
+import { PreviewStandardToolkitHandlersLive } from "./toolkits/preview/handlers.ts";
+import { PreviewStandardToolkit } from "./toolkits/preview/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -34,6 +39,7 @@ const client = McpSchema.McpServerClient.of({
   },
   getClient: Effect.die("unused"),
 });
+const decodeUnknownJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const TestLayer = McpHttpServer.PreviewToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(PreviewAutomationBroker.layer.pipe(Layer.provide(NodeServices.layer))),
@@ -51,6 +57,13 @@ it("normalizes empty successful notification responses to accepted", () => {
   expect(resultResponse.status).toBe(200);
 });
 
+it("normalizes empty-object tool inputs for strict MCP clients", () => {
+  expect(McpHttpServer.getMcpToolInputSchema(MagiGetOptionsTool)).toEqual({
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  });
+});
 it.effect("returns bounded structural preview snapshot failures", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -147,6 +160,105 @@ it.effect("terminates HTTP MCP sessions with DELETE", () =>
         ),
       });
       expect(reusedSessionResponse.status).toBe(404);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("keeps independently composed HTTP MCP tool registries isolated", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const makeRegistration = (name: string) =>
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const server = yield* McpServer.McpServer;
+            yield* server.addTool({
+              tool: new McpSchema.Tool({
+                name,
+                inputSchema: { type: "object", additionalProperties: false },
+              }),
+              annotations: Context.empty(),
+              handle: () =>
+                Effect.succeed(
+                  new McpSchema.CallToolResult({
+                    isError: false,
+                    content: [{ type: "text", text: name }],
+                  }),
+                ),
+            });
+          }),
+        );
+      const previewRegistration = McpServer.toolkit(PreviewStandardToolkit).pipe(
+        Layer.provide(PreviewStandardToolkitHandlersLive),
+      );
+      const makeEndpoint = (
+        path: "/mcp/one" | "/mcp/two",
+        name: string,
+        registration: Layer.Layer<never, never, McpServer.McpServer>,
+      ) =>
+        registration.pipe(
+          Layer.provideMerge(
+            McpServer.layerHttp({
+              name,
+              version: "1.0.0",
+              path,
+              protocols: [McpProtocol.v2025_06_18],
+            }),
+          ),
+        );
+      yield* HttpRouter.serve(
+        Layer.merge(
+          McpHttpServer.isolateMcpServerLayer(makeEndpoint("/mcp/one", "one", previewRegistration)),
+          McpHttpServer.isolateMcpServerLayer(
+            makeEndpoint("/mcp/two", "two", makeRegistration("two")),
+          ),
+        ),
+        { disableListenLog: true, disableLogger: true },
+      ).pipe(Layer.build);
+      const httpClient = yield* HttpClient.HttpClient;
+
+      const listTools = Effect.fnUntraced(function* (path: "/mcp/one" | "/mcp/two") {
+        const initializeResponse = yield* httpClient.post(path, {
+          headers: { accept: "application/json, text/event-stream" },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"mcp-test","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+        const sessionId = initializeResponse.headers["mcp-session-id"];
+        expect(sessionId).not.toBeNull();
+        const listResponse = yield* httpClient.post(path, {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-session-id": sessionId!,
+            "mcp-protocol-version": "2025-06-18",
+          },
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+            "application/json",
+          ),
+        });
+        const bodyText = yield* listResponse.text;
+        if (bodyText.length === 0) {
+          throw new Error(
+            `MCP tool list returned an empty body for ${path} (${listResponse.status})`,
+          );
+        }
+        const jsonText = bodyText
+          .split("\n")
+          .find((line) => line.startsWith("data:"))
+          ?.slice("data:".length)
+          .trim();
+        const body = (yield* decodeUnknownJson(jsonText ?? bodyText)) as {
+          readonly result?: { readonly tools?: ReadonlyArray<{ readonly name?: string }> };
+        };
+        return body.result?.tools?.map(({ name }) => name) ?? [];
+      });
+
+      const previewTools = yield* listTools("/mcp/one");
+      expect(previewTools).toContain("preview_status");
+      expect(previewTools).toContain("preview_navigate");
+      expect(previewTools).not.toContain("two");
+      expect(yield* listTools("/mcp/two")).toEqual(["two"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

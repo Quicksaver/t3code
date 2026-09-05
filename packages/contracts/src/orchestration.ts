@@ -24,6 +24,30 @@ import {
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+const OrchestrationMagiRunId = TrimmedNonEmptyString.pipe(Schema.brand("MagiRunId"));
+const OrchestrationActiveMagiRunSummary = Schema.Struct({
+  runId: OrchestrationMagiRunId,
+  source: Schema.Literals(["user-arm", "agent-tool"]),
+  state: Schema.Literals([
+    "initializing",
+    "awaiting-main-tool",
+    "deliberating",
+    "awaiting-arbitration",
+    "awaiting-actions",
+    "awaiting-next-turn",
+    "awaiting-main-approval",
+    "awaiting-main-input",
+    "awaiting-action-reconciliation",
+    "paused",
+    "cancelling",
+    "succeeded",
+    "turn-limit-reached",
+    "cancelled",
+    "failed",
+  ]),
+  completedMagiTurns: NonNegativeInt,
+});
+
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",
@@ -457,6 +481,20 @@ const OrchestrationLatestTurnState = Schema.Literals([
 ]);
 export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
 
+export const OrchestrationThreadParentRelation = Schema.Struct({
+  kind: Schema.Literal("magi"),
+  rootThreadId: ThreadId,
+  parentThreadId: ThreadId,
+  runId: OrchestrationMagiRunId,
+  participantId: TrimmedNonEmptyString.pipe(Schema.brand("MagiParticipantId")),
+  providerThreadId: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  startedAt: IsoDateTime,
+  completedAt: Schema.NullOr(IsoDateTime),
+  status: Schema.Literals(["running", "completed", "errored", "interrupted", "stopped"]),
+});
+export type OrchestrationThreadParentRelation = typeof OrchestrationThreadParentRelation.Type;
+
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
   state: OrchestrationLatestTurnState,
@@ -515,6 +553,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
@@ -642,6 +681,7 @@ export const OrchestrationThreadShell = Schema.Struct({
       }),
     ),
   ),
+  activeMagiRun: Schema.optional(Schema.NullOr(OrchestrationActiveMagiRunSummary)),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -997,10 +1037,28 @@ const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 
+// Mirrored at this boundary to avoid the intentional orchestration -> magi ->
+// orchestration import cycle. The canonical MagiRunConfig decoder performs
+// the detailed validation when the server consumes the draft arm.
+const ThreadTurnStartBootstrapMagiArm = Schema.Struct({
+  participants: Schema.Array(
+    Schema.Struct({
+      participantId: TrimmedNonEmptyString.pipe(Schema.brand("MagiParticipantId")),
+      modelSelection: ModelSelection,
+      personalityId: Schema.NullOr(TrimmedNonEmptyString.pipe(Schema.brand("MagiPersonalityId"))),
+      weight: Schema.Int,
+    }),
+  ).check(Schema.isMaxLength(9)),
+  consensusThresholdPercent: Schema.Int,
+  magiTurnLimit: Schema.NullOr(NonNegativeInt),
+});
+
 const ThreadTurnStartBootstrap = Schema.Struct({
   createThread: Schema.optional(ThreadTurnStartBootstrapCreateThread),
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
   runSetupScript: Schema.optional(Schema.Boolean),
+  /** Client-local draft arm promoted atomically with the first message. */
+  magiArm: Schema.optional(ThreadTurnStartBootstrapMagiArm),
 });
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
@@ -1935,6 +1993,7 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
+    reason: Schema.optional(TrimmedNonEmptyString),
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
   },

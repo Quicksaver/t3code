@@ -456,6 +456,41 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
   }),
 );
 
+it.effect("bounds bootstrap Magi rosters at nine participants", () =>
+  Effect.gen(function* () {
+    const command = (participantCount: number) => ({
+      type: "thread.turn.start" as const,
+      commandId: `cmd-turn-magi-${participantCount}`,
+      threadId: "thread-1",
+      message: {
+        messageId: `msg-magi-${participantCount}`,
+        role: "user" as const,
+        text: "review",
+        attachments: [],
+      },
+      bootstrap: {
+        magiArm: {
+          participants: Array.from({ length: participantCount }, (_, index) => ({
+            participantId: `participant-${index}`,
+            modelSelection: { provider: "codex", model: "gpt-5.6-sol" },
+            personalityId: null,
+            weight: 1,
+          })),
+          consensusThresholdPercent: 50,
+          magiTurnLimit: null,
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const accepted = yield* decodeThreadTurnStartCommand(command(9));
+    const rejected = yield* Effect.exit(decodeThreadTurnStartCommand(command(10)));
+
+    assert.strictEqual(accepted.bootstrap?.magiArm?.participants.length, 9);
+    assert.strictEqual(rejected._tag, "Failure");
+  }),
+);
+
 it.effect("decodes thread.created runtime mode for historical events", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadCreatedPayload({

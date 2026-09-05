@@ -10,7 +10,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { usePrimarySessionState } from "~/environments/primary";
 import { primaryServerConfigAtom } from "~/state/server";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
-import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
+import { isEnvironmentSettingsAvailable } from "./EnvironmentSettingsPanel.logic";
 import { filterAvailableSettingsSearchItems } from "./settingsSearch";
 
 export function useAvailableSettingsSearchItems() {
@@ -31,7 +31,7 @@ export function useAvailableSettingsSearchItems() {
         hasCloudPublicConfig: hasCloudPublicConfig(),
         hasPrimaryEnvironment: primaryEnvironmentId !== null,
         hasProviderSettingsEnvironment: environments.some((environment) =>
-          isProviderSettingsEnvironmentAvailable({
+          isEnvironmentSettingsAvailable({
             connectionPhase: environment.connection.phase,
             hasServerConfig: environment.serverConfig !== null,
           }),

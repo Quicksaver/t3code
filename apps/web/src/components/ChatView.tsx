@@ -175,6 +175,8 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
+import { MagiPanel } from "./magi/MagiPanel";
+import { useMagiRunHistory } from "./magi/useMagiRunHistory";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -1507,6 +1509,9 @@ function ChatViewContent(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerMagiArm = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.magiArm ?? null,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1518,6 +1523,7 @@ function ChatViewContent(props: ChatViewProps) {
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
   });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftMagiArm = useComposerDraftStore((store) => store.setMagiArm);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -1974,6 +1980,10 @@ function ChatViewContent(props: ChatViewProps) {
   const rightPanelControlsAtRoot = rightPanelControlsOwner === "root";
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
+  const magiHistory = useMagiRunHistory({
+    threadRef: activeThreadRef ?? routeThreadRef,
+    expanded: rightPanelOpen && activeRightPanelSurface?.kind === "magi",
+  });
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
     activePreviewMiniPlayer?.tabId ?? null,
     renderedRightPanelSurface,
@@ -3807,6 +3817,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addMagiSurface = useCallback(() => {
+    if (!activeThreadRef || (!isServerThread && !isLocalDraftThread)) return;
+    useRightPanelStore.getState().open(activeThreadRef, "magi");
+  }, [activeThreadRef, isLocalDraftThread, isServerThread]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -5028,6 +5042,10 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
   );
+  // Settled state of the open thread, resolved exactly like the sidebar
+  // partition (same shell, same capability gate, same PR auto-settle input)
+  // so the banner and the sidebar row never disagree.
+  const latestMagiRun = magiHistory?.runs[0] ?? activeThreadShell?.activeMagiRun ?? null;
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
       return null;
@@ -6231,6 +6249,7 @@ function ChatViewContent(props: ChatViewProps) {
           ]
         : sendContextPreviewAnnotations;
     const promptForSend = promptRef.current;
+    const magiArmSnapshot = composerMagiArm;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -6730,6 +6749,7 @@ function ChatViewContent(props: ChatViewProps) {
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
+                    ...(magiArmSnapshot ? { magiArm: magiArmSnapshot } : {}),
                   }
                 : {}),
               ...(baseBranchForWorktree
@@ -6864,6 +6884,7 @@ function ChatViewContent(props: ChatViewProps) {
         setComposerDraftElementContexts(composerDraftTarget, composerElementContextsSnapshot);
         setComposerDraftPreviewAnnotations(composerDraftTarget, composerPreviewAnnotationsSnapshot);
         setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+        if (magiArmSnapshot) setComposerDraftMagiArm(composerDraftTarget, magiArmSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
           prompt: promptForSend,
@@ -7703,6 +7724,22 @@ function ChatViewContent(props: ChatViewProps) {
           ? { onStateChange: handlePullRequestTabStatusChange }
           : {})}
       />
+    ) : renderedRightPanelSurface?.kind === "magi" ? (
+      <MagiPanel
+        environmentId={activeThreadRef.environmentId}
+        threadId={activeThreadRef.threadId}
+        isVisible={rightPanelOpen}
+        activeRun={activeThreadShell?.activeMagiRun ?? null}
+        history={magiHistory}
+        providers={providerStatuses}
+        settings={settings}
+        {...(isLocalDraftThread
+          ? {
+              draftArm: composerMagiArm,
+              onDraftArmChange: (config) => setComposerDraftMagiArm(composerDraftTarget, config),
+            }
+          : {})}
+      />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel
         model={agentPanelModel}
@@ -7869,6 +7906,8 @@ function ChatViewContent(props: ChatViewProps) {
                 onCiteAssistantText={citeAssistantText}
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
+                latestMagiRun={latestMagiRun}
+                onOpenMagi={addMagiSurface}
                 key={activeThread.id}
                 isWorking={isWorking}
                 isPreparingWorktree={isPreparingWorktree}
@@ -8259,12 +8298,17 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
+          onAddMagi={addMagiSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          magiAvailable={
+            serverConfig?.environment.capabilities.magi === true &&
+            (isServerThread || isLocalDraftThread)
+          }
           liveAgentCount={agentPanelModel.liveCount}
         >
           {rightPanelContent}
@@ -8309,12 +8353,17 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
+            onAddMagi={addMagiSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            magiAvailable={
+              serverConfig?.environment.capabilities.magi === true &&
+              (isServerThread || isLocalDraftThread)
+            }
             liveAgentCount={agentPanelModel.liveCount}
           >
             {rightPanelContent}

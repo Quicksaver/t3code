@@ -2215,6 +2215,69 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("inherits full-access ACP permissions for Magi participants", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-magi-read-only-deny");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        control: { executionProfile: "magi-read-only" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "attempt a mutating tool call",
+        attachments: [],
+        control: { executionProfile: "magi-read-only" },
+      });
+      yield* Fiber.interrupt(eventsFiber);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            !("method" in entry) &&
+            typeof entry.result === "object" &&
+            entry.result !== null &&
+            "outcome" in entry.result &&
+            typeof entry.result.outcome === "object" &&
+            entry.result.outcome !== null &&
+            "outcome" in entry.result.outcome &&
+            entry.result.outcome.outcome === "selected" &&
+            "optionId" in entry.result.outcome &&
+            entry.result.outcome.optionId === "allow-always",
+        ),
+      );
+      assert.notInclude(
+        runtimeEvents
+          .filter((event) => String(event.threadId) === String(threadId))
+          .map((event) => event.type),
+        "request.opened",
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("handles xAI ask_user_question extension requests", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-xai-ask-user-question");

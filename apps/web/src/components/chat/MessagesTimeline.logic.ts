@@ -363,6 +363,50 @@ export type MessagesTimelineRow =
       createdAt: string | null;
     };
 
+export interface MagiActivityPlacement {
+  readonly rowId: string;
+  readonly position: "before" | "after";
+}
+
+/** Keep the one latest Magi summary attached to the turn that launched it,
+ * just like a subagent spawn row. The run starts after its initiating user
+ * message, so the next timeline row is the stable insertion point. */
+export function resolveMagiActivityPlacement(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  startedAt: string | null,
+): MagiActivityPlacement | null {
+  if (rows.length === 0) return null;
+  const startedAtMs = startedAt === null ? Number.NaN : Date.parse(startedAt);
+  if (Number.isFinite(startedAtMs)) {
+    let initiatingUserIndex = -1;
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index]!;
+      if (
+        row.kind === "message" &&
+        row.message.role === "user" &&
+        Date.parse(row.createdAt) <= startedAtMs
+      ) {
+        initiatingUserIndex = index;
+      }
+    }
+    if (initiatingUserIndex >= 0) {
+      const next = rows[initiatingUserIndex + 1];
+      return next
+        ? { rowId: next.id, position: "before" }
+        : { rowId: rows[initiatingUserIndex]!.id, position: "after" };
+    }
+
+    const next = rows.find((row) => {
+      if (row.createdAt === null) return false;
+      const createdAtMs = Date.parse(row.createdAt);
+      return Number.isFinite(createdAtMs) && createdAtMs >= startedAtMs;
+    });
+    if (next) return { rowId: next.id, position: "before" };
+  }
+
+  return { rowId: rows.at(-1)!.id, position: "after" };
+}
+
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];

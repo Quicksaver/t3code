@@ -883,6 +883,7 @@ export function useThreadOutboxDrain(): void {
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          ...(queuedMessage.magiArm ? { magiArm: queuedMessage.magiArm } : {}),
         }),
       });
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);

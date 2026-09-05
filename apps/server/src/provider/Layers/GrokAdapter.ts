@@ -80,6 +80,11 @@ import {
   XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
+import {
+  ACP_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -947,6 +952,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          input = normalizeMagiSessionStartInput(input);
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -1473,6 +1479,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
+        input = normalizeMagiSendTurnInput(input);
         const prepared = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {
@@ -2095,6 +2102,21 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
+    const getContextUsage: NonNullable<GrokAdapterShape["getContextUsage"]> = (threadId) =>
+      requireSession(threadId).pipe(Effect.as(null));
+
+    const compactSession: NonNullable<GrokAdapterShape["compactSession"]> = (threadId) =>
+      requireSession(threadId).pipe(
+        Effect.flatMap(
+          () =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/compact",
+              detail: "Grok ACP does not expose native session compaction.",
+            }),
+        ),
+      );
+
     const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -2127,12 +2149,14 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", magi: ACP_MAGI_CAPABILITIES },
       startSession,
       sendTurn,
       interruptTurn,
       readThread,
       rollbackThread,
+      getContextUsage,
+      compactSession,
       respondToRequest,
       respondToUserInput,
       stopSession,
