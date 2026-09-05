@@ -18,6 +18,7 @@ Merge guidance:
 
 - Keep the upstream terminal, element, and preview parsers in `apps/web/src/lib`. `apps/web/src/components/chat/userMessageContext.ts` composes them rather than replacing them.
 - Preserve the top-level review-comment segmentation in `userMessageContext.ts`. Review tags found inside generated context bodies are content, not review cards.
+- Keep timeline review-comment and inline file-change diffs on the lightweight `FileDiff` renderer. `AnnotatableCodeView` remains the full diff-panel review-comment surface unless the timeline gains equivalent review-comment authoring behavior.
 - Keep `UserTimelineRow` in `MessagesTimeline.tsx` responsible for attachments, row actions, and renderer inputs. Keep context-part layout and leaf rendering in `UserMessageContentParts.tsx` rather than adding it back to the timeline.
 - When upstream changes user-message layout or review-comment rendering, preserve the ordered `contentParts` handoff between `UserTimelineRow` and `UserMessageContentParts`. Moving review parsing below generated-context parsing causes review tags inside terminal, element, or preview bodies to become cards.
 - Keep parser context-order and raw-tag regressions in `userMessageContext.test.ts`, and renderer integration cases in `MessagesTimeline.test.tsx`, when resolving changes to `userMessageContext.ts`, `UserTimelineRow`, `UserMessageContentParts`, or its leaf renderers.
