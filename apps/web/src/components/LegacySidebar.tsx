@@ -94,7 +94,6 @@ import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
 import { previewEnvironment } from "../state/preview";
-import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import {
   legacyProjectCwdPreferenceKey,
   resolveProjectExpanded,
@@ -114,7 +113,6 @@ import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
-import { filterStandaloneSubagentConversations } from "../subagentControls";
 
 import { useThreadActions } from "../hooks/useThreadActions";
 import { projectEnvironment } from "../state/projects";
@@ -176,11 +174,11 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { openCommandPalette } from "../commandPaletteBus";
 import {
-  filterVisibleSidebarThreads,
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
-  canUseSelectedRootThreadLifecycleActions,
+  formatArchiveSkippedDescription,
   getSidebarThreadIdsToPrewarm,
+  isThreadArchiveBlocked,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
@@ -216,12 +214,6 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import {
-  buildLegacySidebarThreadContextMenuItems,
-  canDispatchLegacySidebarBulkLifecycleAction,
-  canUseLegacySidebarThreadLifecycleActions,
-  shouldShowLegacySidebarInlineArchive,
-} from "./LegacySidebar.logic";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -467,13 +459,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [discoveredPorts, navigateToThread, openPreview, threadRef],
   );
-  const isThreadRunning =
-    thread.session?.status === "running" && thread.session.activeTurnId != null;
-  const canUseLifecycleActions = canUseLegacySidebarThreadLifecycleActions(thread);
-  const canShowInlineArchive = shouldShowLegacySidebarInlineArchive({
-    thread,
-    isRunning: isThreadRunning,
-  });
+  const isArchiveBlocked = isThreadArchiveBlocked(thread);
   const threadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
@@ -504,18 +490,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       visibleGitStatus?.sourceControlProvider,
   );
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
-  const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && canShowInlineArchive;
+  const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isArchiveBlocked;
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
-    : !isThreadRunning
+    : !isArchiveBlocked
       ? "pointer-events-none transition-opacity duration-150 max-sm:pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
   }, [setConfirmingArchiveThreadKey, threadKey]);
-  useEffect(() => {
-    if (!canUseLifecycleActions) clearConfirmingArchive();
-  }, [canUseLifecycleActions, clearConfirmingArchive]);
   const handleMouseLeave = useCallback(() => {
     clearConfirmingArchive();
   }, [clearConfirmingArchive]);
@@ -689,32 +672,29 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      if (!canUseLifecycleActions) return;
       clearConfirmingArchive();
       void attemptArchiveThread(threadRef);
     },
-    [attemptArchiveThread, canUseLifecycleActions, clearConfirmingArchive, threadRef],
+    [attemptArchiveThread, clearConfirmingArchive, threadRef],
   );
   const handleStartArchiveConfirmation = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      if (!canUseLifecycleActions) return;
       setConfirmingArchiveThreadKey(threadKey);
       requestAnimationFrame(() => {
         confirmArchiveButtonRefs.current.get(threadKey)?.focus();
       });
     },
-    [canUseLifecycleActions, confirmArchiveButtonRefs, setConfirmingArchiveThreadKey, threadKey],
+    [confirmArchiveButtonRefs, setConfirmingArchiveThreadKey, threadKey],
   );
   const handleArchiveImmediateClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      if (!canUseLifecycleActions) return;
       void attemptArchiveThread(threadRef);
     },
-    [attemptArchiveThread, canUseLifecycleActions, threadRef],
+    [attemptArchiveThread, threadRef],
   );
   const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
 
@@ -855,7 +835,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               >
                 Confirm
               </button>
-            ) : canShowInlineArchive ? (
+            ) : !isArchiveBlocked ? (
               appSettingsConfirmThreadArchive ? (
                 <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   <button
@@ -1244,9 +1224,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   });
   const openPrLink = useOpenPrLink();
   const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
-  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
-    (state) => state.threadKeys,
-  );
   const sidebarThreadByKey = useMemo(
     () =>
       new Map(
@@ -1337,7 +1314,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      filterVisibleSidebarThreads(projectThreads, optimisticallyArchivedThreadKeys),
+      projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -1350,7 +1327,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [optimisticallyArchivedThreadKeys, projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1855,58 +1832,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     async (position: { x: number; y: number }) => {
       const api = readLocalApi();
       if (!api) return;
-      const readSelectedThreadEntries = () => {
-        const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
-        const entries = threadKeys.flatMap((threadKey) => {
-          const threadRef = parseScopedThreadKey(threadKey);
-          const thread = threadRef ? readThreadShell(threadRef) : null;
-          return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
-        });
-        const threadByKey = new Map(
-          entries.map(({ threadKey, thread }) => [threadKey, thread] as const),
-        );
-        return { entries, threadByKey, threadKeys };
-      };
-      const {
-        entries: selectedThreadEntries,
-        threadByKey,
-        threadKeys,
-      } = readSelectedThreadEntries();
+      const threadKeys = [...useThreadSelectionStore.getState().selectedThreadKeys];
       if (threadKeys.length === 0) return;
-      const initialThreadKeys = new Set(threadKeys);
       const count = threadKeys.length;
-      const canUseLifecycleActions = canUseSelectedRootThreadLifecycleActions(
-        threadKeys,
-        threadByKey,
-      );
-      const readDispatchableLifecycleSelection = () => {
-        const selection = readSelectedThreadEntries();
-        if (
-          canDispatchLegacySidebarBulkLifecycleAction({
-            initialThreadKeys,
-            currentThreadKeys: selection.threadKeys,
-            currentThreadByKey: selection.threadByKey,
-          })
-        ) {
-          return selection;
-        }
-        toastManager.add({
-          type: "warning",
-          title: "Selected threads changed",
-          description: "Review the selected threads and try again.",
-        });
-        return null;
-      };
-      const hasRunningThread = selectedThreadEntries.some(
-        ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
+      const selectedThreadEntries = threadKeys.flatMap((threadKey) => {
+        const threadRef = parseScopedThreadKey(threadKey);
+        const thread = threadRef ? readThreadShell(threadRef) : null;
+        return threadRef && thread ? [{ threadKey, threadRef, thread }] : [];
+      });
+      const hasArchiveBlockedThread = selectedThreadEntries.some(({ thread }) =>
+        isThreadArchiveBlocked(thread),
       );
 
       const clicked = await api.contextMenu.show(
-        buildMultiSelectThreadContextMenuItems({
-          count,
-          hasRunningThread,
-          canUseLifecycleActions,
-        }),
+        buildMultiSelectThreadContextMenuItems({ count, hasArchiveBlockedThread }),
         position,
       );
 
@@ -1919,7 +1858,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "archive") {
-        if (!canUseLifecycleActions) return;
         if (appSettingsConfirmThreadArchive) {
           const confirmed = await api.dialogs.confirm(
             `Archive ${count} thread${count === 1 ? "" : "s"}?`,
@@ -1927,11 +1865,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           if (!confirmed) return;
         }
 
-        const dispatchSelection = readDispatchableLifecycleSelection();
-        if (!dispatchSelection) return;
         const archiveOutcome = await archiveSelectedThreadEntries({
-          entries: dispatchSelection.entries,
+          entries: selectedThreadEntries,
           archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+          canArchive: ({ threadRef }) => !isThreadArchiveBlocked(readThreadShell(threadRef)),
         });
         for (const failure of archiveOutcome.followupFailures) {
           if (isAtomCommandInterrupted(failure)) continue;
@@ -1944,8 +1881,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
+        removeFromSelection(archiveOutcome.archivedThreadKeys);
         if (archiveOutcome.mutationFailure) {
-          removeFromSelection(archiveOutcome.archivedThreadKeys);
           if (!isAtomCommandInterrupted(archiveOutcome.mutationFailure)) {
             const error = squashAtomCommandFailure(archiveOutcome.mutationFailure);
             toastManager.add(
@@ -1956,14 +1893,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }),
             );
           }
-          return;
         }
-        removeFromSelection(dispatchSelection.threadKeys);
+        if (archiveOutcome.skippedThreadKeys.length > 0) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title:
+                archiveOutcome.archivedThreadKeys.length === 0
+                  ? "No threads archived"
+                  : "Some threads were not archived",
+              description: formatArchiveSkippedDescription(archiveOutcome.skippedThreadKeys.length),
+            }),
+          );
+        }
         return;
       }
 
       if (clicked !== "delete") return;
-      if (!canUseLifecycleActions) return;
 
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
@@ -1976,10 +1922,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!confirmed) return;
       }
 
-      const dispatchSelection = readDispatchableLifecycleSelection();
-      if (!dispatchSelection) return;
-      const deletedThreadKeys = new Set(dispatchSelection.threadKeys);
-      for (const { threadRef } of dispatchSelection.entries) {
+      const deletedThreadKeys = new Set(threadKeys);
+      for (const { threadRef } of selectedThreadEntries) {
         const result = await deleteThread(threadRef, {
           deletedThreadKeys,
         });
@@ -1997,7 +1941,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           return;
         }
       }
-      removeFromSelection(dispatchSelection.threadKeys);
+      removeFromSelection(threadKeys);
     },
     [
       appSettingsConfirmThreadArchive,
@@ -2092,8 +2036,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
-      const latestThread = sidebarThreadByKeyRef.current.get(scopedThreadKey(threadRef)) ?? null;
-      if (!canUseLegacySidebarThreadLifecycleActions(latestThread)) return;
       const result = await archiveThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -2255,7 +2197,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
       const clicked = await api.contextMenu.show(
-        buildLegacySidebarThreadContextMenuItems(thread),
+        [
+          ...(thread.branch
+            ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
+            : []),
+          { id: "rename", label: "Rename thread" },
+          { id: "mark-unread", label: "Mark unread" },
+          { id: "copy-path", label: "Copy Path" },
+          { id: "copy-thread-id", label: "Copy Thread ID" },
+          { id: "project-settings", label: "Project settings" },
+          { id: "delete", label: "Delete", destructive: true, icon: "trash" },
+        ],
         position,
       );
 
@@ -2320,13 +2272,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
       if (clicked !== "delete") return;
-      const canDeleteNow = () =>
-        canUseLegacySidebarThreadLifecycleActions(
-          sidebarThreadByKeyRef.current.get(threadKey) ?? null,
-        );
-      if (!canDeleteNow()) {
-        return;
-      }
       if (appSettingsConfirmThreadDelete) {
         const confirmed = await api.dialogs.confirm(
           [
@@ -2338,9 +2283,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!confirmed) {
           return;
         }
-      }
-      if (!canDeleteNow()) {
-        return;
       }
       const result = await deleteThread(threadRef);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -3163,9 +3105,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 export default function LegacySidebar() {
   const projects = useProjects();
   const sidebarThreads = useThreadShells();
-  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
-    (state) => state.threadKeys,
-  );
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
@@ -3174,9 +3113,6 @@ export default function LegacySidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
-  const subagentConversationVisibilityEnabled = useClientSettings(
-    (s) => s.subagentConversationVisibilityEnabled,
-  );
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -3298,11 +3234,6 @@ export default function LegacySidebar() {
       ),
     [sidebarThreads],
   );
-  const navigableSidebarThreads = useMemo(
-    () =>
-      filterStandaloneSubagentConversations(sidebarThreads, subagentConversationVisibilityEnabled),
-    [sidebarThreads, subagentConversationVisibilityEnabled],
-  );
   // Resolve the active route's project key to a logical key so it matches the
   // sidebar's grouped project entries.
   const activeRouteProjectKey = useMemo(() => {
@@ -3322,7 +3253,7 @@ export default function LegacySidebar() {
   // are displayed together.
   const threadsByProjectKey = useMemo(() => {
     const next = new Map<string, SidebarThreadSummary[]>();
-    for (const thread of navigableSidebarThreads) {
+    for (const thread of sidebarThreads) {
       const physicalKey =
         projectPhysicalKeyByScopedRef.get(
           scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
@@ -3336,7 +3267,7 @@ export default function LegacySidebar() {
       }
     }
     return next;
-  }, [navigableSidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
+  }, [sidebarThreads, physicalToLogicalKey, projectPhysicalKeyByScopedRef]);
   const getCurrentSidebarShortcutContext = useCallback(
     () => ({
       terminalFocus: isTerminalFocused(),
@@ -3445,8 +3376,8 @@ export default function LegacySidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => filterVisibleSidebarThreads(sidebarThreads, optimisticallyArchivedThreadKeys),
-    [optimisticallyArchivedThreadKeys, sidebarThreads],
+    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
+    [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
     const sortableProjects = sidebarProjects.map((project) => ({
@@ -3484,9 +3415,8 @@ export default function LegacySidebar() {
     () =>
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
-          filterVisibleSidebarThreads(
-            threadsByProjectKey.get(project.projectKey) ?? [],
-            optimisticallyArchivedThreadKeys,
+          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
+            (thread) => thread.archivedAt === null,
           ),
           sidebarThreadSortOrder,
         );
@@ -3522,7 +3452,6 @@ export default function LegacySidebar() {
       sidebarThreadSortOrder,
       sidebarThreadPreviewCount,
       expandedThreadListsByProject,
-      optimisticallyArchivedThreadKeys,
       projectExpandedById,
       routeThreadKey,
       sortedProjects,

@@ -1,11 +1,10 @@
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { ContextMenuItem, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   activeThreadAnchorTimestampMs,
-  getLatestThreadSortTimestamp,
+  getThreadSortTimestamp,
   resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
@@ -16,16 +15,25 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
-import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
 
-export { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
+export {
+  buildMultiSelectThreadContextMenuItems,
+  filterArchivableSidebarThreads,
+} from "./SidebarArchiveControls.logic";
+export {
+  archiveSelectedThreadEntries,
+  formatArchiveSkippedDescription,
+  isThreadArchiveBlocked,
+} from "./threadArchive.logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // Visible sidebar rows are prewarmed into the thread-detail cache so opening a
-// nearby thread usually reuses an already-hot subscription.
-// Each prewarmed thread holds a live, fully hydrated detail subscription, so
-// keep the bound deliberately small; cold opens still use cached snapshots.
+// nearby thread usually reuses an already-hot subscription. Each prewarmed
+// thread holds a live, fully hydrated detail subscription (all messages and
+// activities, growing as agents work) for as long as the row stays visible,
+// so this limit is a direct renderer-heap and server-load multiplier — keep
+// it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // A small buffer keeps the next few rows warm without leasing every row that
 // content-visibility leaves mounted below the scroll viewport.
@@ -78,11 +86,13 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
   if (value !== null) return value;
   return key !== null && retained.current?.key === key ? retained.current.value : null;
 }
+
 // The list already reaches its destination through sortable transforms while
 // the pointer is down. dnd-kit's default also animates the committed DOM order
 // after release, replaying the same movement across every affected row.
 export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
+
 type SidebarProject = {
   id: string;
   title: string;
@@ -95,9 +105,8 @@ type ScopedSidebarProject = SidebarProject & {
 };
 
 type ScopedSidebarThread = ThreadSortInput & {
-  id: ThreadId;
-  environmentId: EnvironmentId;
-  projectId: ProjectId;
+  environmentId: string;
+  projectId: string;
   archivedAt: string | null;
 };
 
@@ -110,60 +119,6 @@ type LogicalSidebarProject = SidebarProject & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
-
-export async function archiveSelectedThreadEntries<
-  TEntry extends { readonly threadKey: string },
-  TResult extends { readonly _tag: "Success" | "Failure" },
->(input: {
-  entries: readonly TEntry[];
-  archive: (entry: TEntry, onArchived: () => void) => Promise<TResult>;
-}): Promise<{
-  archivedThreadKeys: readonly string[];
-  mutationFailure: Extract<TResult, { readonly _tag: "Failure" }> | null;
-  followupFailures: readonly Extract<TResult, { readonly _tag: "Failure" }>[];
-}> {
-  const archivedThreadKeys: string[] = [];
-  const followupFailures: Extract<TResult, { readonly _tag: "Failure" }>[] = [];
-
-  for (const entry of input.entries) {
-    let didArchive = false;
-    const result = await input.archive(entry, () => {
-      didArchive = true;
-    });
-    if (didArchive || result._tag === "Success") {
-      archivedThreadKeys.push(entry.threadKey);
-    }
-    if (result._tag === "Success") continue;
-    const failure = result as Extract<TResult, { readonly _tag: "Failure" }>;
-    if (didArchive) {
-      followupFailures.push(failure);
-      continue;
-    }
-    return { archivedThreadKeys, mutationFailure: failure, followupFailures };
-  }
-
-  return { archivedThreadKeys, mutationFailure: null, followupFailures };
-}
-
-export function buildMultiSelectThreadContextMenuItems(input: {
-  count: number;
-  hasRunningThread: boolean;
-  canUseLifecycleActions: boolean;
-}): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
-  return [
-    { id: "mark-unread", label: `Mark unread (${input.count})` },
-    ...(input.canUseLifecycleActions
-      ? [
-          {
-            id: "archive" as const,
-            label: `Archive (${input.count})`,
-            disabled: input.hasRunningThread,
-          },
-          { id: "delete" as const, label: `Delete (${input.count})`, destructive: true },
-        ]
-      : []),
-  ];
-}
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
@@ -317,16 +272,6 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
-}
-
-export function canUseSelectedRootThreadLifecycleActions(
-  threadKeys: readonly string[],
-  threadByKey: ReadonlyMap<string, Pick<SidebarThreadSummary, "parentRelation">>,
-): boolean {
-  return threadKeys.every((threadKey) => {
-    const thread = threadByKey.get(threadKey);
-    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
-  });
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -875,18 +820,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   };
 }
 
-export function filterVisibleSidebarThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id">,
->(threads: readonly T[], optimisticallyArchivedThreadKeys: ReadonlySet<string>): T[] {
-  return threads.filter(
-    (thread) =>
-      thread.archivedAt === null &&
-      !optimisticallyArchivedThreadKeys.has(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-  );
-}
-
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -919,7 +852,10 @@ export function getProjectSortTimestamp(
   sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (projectThreads.length > 0) {
-    return getLatestThreadSortTimestamp(projectThreads, sortOrder);
+    return projectThreads.reduce(
+      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
+      Number.NEGATIVE_INFINITY,
+    );
   }
 
   if (sortOrder === "created_at") {
@@ -977,7 +913,6 @@ export function sortLogicalProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
-  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const groupKeyByProjectRef = new Map(
     projects.flatMap((project) =>
@@ -989,14 +924,7 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (
-      thread.archivedAt !== null ||
-      optimisticallyArchivedThreadKeys.has(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      )
-    ) {
-      continue;
-    }
+    if (thread.archivedAt !== null) continue;
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -1028,18 +956,12 @@ export function sortScopedProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
-  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const scopedKey = (environmentId: string, projectId: string) =>
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (
-      thread.archivedAt !== null ||
-      optimisticallyArchivedThreadKeys.has(
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      )
-    ) {
+    if (thread.archivedAt !== null) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);
