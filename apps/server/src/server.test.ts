@@ -929,7 +929,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PortScanner.PortDiscovery)({
             scan: () => Effect.succeed([]),
             subscribe: () => Effect.void,
-            retain: Effect.void,
+            retain: () => Effect.void,
             registerTerminalProcesses: () => Effect.void,
             unregisterTerminal: () => Effect.void,
           }),
