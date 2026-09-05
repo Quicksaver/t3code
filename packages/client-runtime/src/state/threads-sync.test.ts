@@ -7,6 +7,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadDetailSnapshot,
   type OrchestrationThreadStreamItem,
 } from "@t3tools/contracts";
@@ -294,6 +295,58 @@ const titleUpdated = (title: string, sequence = 2): OrchestrationThreadStreamIte
     },
   },
 });
+
+const commandActivityEvent = (
+  phase: "updated" | "completed",
+  sequence: number,
+): OrchestrationThreadStreamItem => {
+  const completed = phase === "completed";
+  const activity: OrchestrationThreadActivity = {
+    id: EventId.make(`event-command-${phase}`),
+    tone: "tool",
+    kind: `tool.${phase}`,
+    summary: completed ? "Ran command" : "Running command",
+    payload: {
+      itemType: "command_execution",
+      toolCallId: "command-1",
+      status: completed ? "completed" : "inProgress",
+      title: completed ? "Ran command" : "Running command",
+      data: {
+        item: {
+          type: "commandExecution",
+          command: "vp test run focused.test.ts",
+          aggregatedOutput: completed
+            ? "first output line\nsecond output line"
+            : "first output line",
+          ...(completed ? { status: "completed" } : {}),
+        },
+      },
+    },
+    turnId: TurnId.make("turn-1"),
+    sequence,
+    createdAt: "2026-04-01T01:00:00.000Z",
+  };
+
+  return {
+    kind: "event",
+    event: {
+      eventId: activity.id,
+      sequence,
+      occurredAt: "2026-04-01T01:00:00.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      aggregateKind: "thread",
+      aggregateId: THREAD_ID,
+      type: "thread.activity-appended",
+      payload: {
+        threadId: THREAD_ID,
+        activity,
+      },
+    },
+  };
+};
 
 const deleted = (): OrchestrationThreadStreamItem => ({
   kind: "event",
@@ -656,6 +709,86 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
       expect((yield* Ref.get(harness.latest)).status).toBe("synchronizing");
+    }),
+  );
+
+  it.effect("preserves command lifecycle activities across replacement sessions", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD, completionMarker: true });
+      yield* Queue.offer(
+        harness.inputs,
+        commandActivityEvent("updated", CACHED_SNAPSHOT_SEQUENCE + 1),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.activities[0]?.kind === "tool.updated",
+      );
+
+      yield* harness.replaceSession;
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(harness.subscriptionCount)) >= 2) break;
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE + 1);
+      const synchronizing = yield* Ref.get(harness.latest);
+      expect(synchronizing.status).toBe("synchronizing");
+      expect(Option.getOrThrow(synchronizing.data).activities).toMatchObject([
+        {
+          id: "event-command-updated",
+          kind: "tool.updated",
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "command-1",
+            status: "inProgress",
+            data: {
+              item: {
+                command: "vp test run focused.test.ts",
+                aggregatedOutput: "first output line",
+              },
+            },
+          },
+        },
+      ]);
+
+      yield* Queue.offer(
+        harness.inputs,
+        commandActivityEvent("completed", CACHED_SNAPSHOT_SEQUENCE + 2),
+      );
+      yield* Queue.offer(harness.inputs, synchronized());
+      const completed = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.activities.some((activity) => activity.kind === "tool.completed"),
+      );
+
+      const activities = Option.getOrThrow(completed.data).activities;
+      expect(activities.map(({ id, kind }) => ({ id, kind }))).toEqual([
+        { id: EventId.make("event-command-updated"), kind: "tool.updated" },
+        { id: EventId.make("event-command-completed"), kind: "tool.completed" },
+      ]);
+      expect(activities[0]?.payload).toMatchObject({
+        toolCallId: "command-1",
+        status: "inProgress",
+        data: { item: { aggregatedOutput: "first output line" } },
+      });
+      expect(activities[1]?.payload).toMatchObject({
+        toolCallId: "command-1",
+        status: "completed",
+        data: {
+          item: {
+            aggregatedOutput: "first output line\nsecond output line",
+            status: "completed",
+          },
+        },
+      });
     }),
   );
 
