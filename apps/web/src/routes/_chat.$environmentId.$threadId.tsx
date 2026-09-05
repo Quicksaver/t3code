@@ -17,6 +17,7 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
+  classifyThreadDetail,
   useEnvironmentThreadRefs,
   useThreadDetailWhenReady,
   useThreadShell,
@@ -53,10 +54,10 @@ function ChatThreadRouteView() {
     clientSettingsHydrated,
     subagentConversationVisibilityEnabled,
   });
-  const detailReadiness = {
+  const detailReadiness = classifyThreadDetail({
     hasLocalDraft: draftThreadExists,
     hasServerShell: serverThreadShell !== null,
-  };
+  });
   const detailThreadRef = canLoadConversation ? threadRef : null;
   const serverThreadDetail = useThreadDetailWhenReady(detailThreadRef, detailReadiness);
   const serverThreadStatus = useThreadStatusWhenReady(detailThreadRef, detailReadiness);

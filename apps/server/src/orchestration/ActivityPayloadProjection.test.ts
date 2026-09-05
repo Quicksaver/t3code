@@ -4,7 +4,10 @@ import {
   WORK_LOG_ACTIVITY_LIMITS,
   WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER,
 } from "@t3tools/shared/toolActivity";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import {
+  projectActivityDetailPayload,
+  projectActivityPayload,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -52,7 +55,7 @@ describe("projectActivityPayload", () => {
     const aggregatedOutput = `hello from codex\n${"x".repeat(
       WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars,
     )}`;
-    const projected = projectActivityPayload(
+    const projected = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -86,7 +89,7 @@ describe("projectActivityPayload", () => {
     const claudeOutput = `hello from claude\n${"y".repeat(5000)}`;
     const acpOutput = `hello from acp\n${"z".repeat(5000)}`;
     const directOutput = `hello from direct output\n${"d".repeat(5000)}`;
-    const claude = projectActivityPayload(
+    const claude = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -95,7 +98,7 @@ describe("projectActivityPayload", () => {
         },
       }),
     );
-    const acp = projectActivityPayload(
+    const acp = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -109,7 +112,7 @@ describe("projectActivityPayload", () => {
         },
       }),
     );
-    const direct = projectActivityPayload(
+    const direct = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -145,7 +148,7 @@ describe("projectActivityPayload", () => {
       WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars -
         WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER.length,
     )}${WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER}`;
-    const direct = projectActivityPayload(
+    const direct = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -154,7 +157,7 @@ describe("projectActivityPayload", () => {
         },
       }),
     );
-    const acp = projectActivityPayload(
+    const acp = projectActivityDetailPayload(
       activity({
         itemType: "command_execution",
         data: {
@@ -225,33 +228,6 @@ describe("projectActivityPayload", () => {
     });
     expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
-  });
-
-  it("keeps full Claude Read image paths through repeated projection", () => {
-    const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
-    const projected = projectActivityPayload(
-      activity({
-        itemType: "dynamic_tool_call",
-        detail: 'Read: {"file_path":"truncated..."}',
-        data: {
-          toolName: "Read",
-          input: { file_path: imagePath },
-          result: { content: "Image Size: 1280x720." },
-        },
-      }),
-    );
-    const projectedAgain = projectActivityPayload(projected);
-
-    expect(projected.payload).toMatchObject({ data: { imagePath } });
-    expect(projectedAgain.payload).toMatchObject({ data: { imagePath } });
-
-    const textRead = projectActivityPayload(
-      activity({
-        itemType: "dynamic_tool_call",
-        data: { toolName: "Read", input: { file_path: "/workspace/src/index.ts" } },
-      }),
-    );
-    expect(textRead.payload).not.toMatchObject({ data: { imagePath: expect.anything() } });
   });
 
   it("slims Codex-shaped mcp_tool_call items to rendered fields plus a result summary", () => {

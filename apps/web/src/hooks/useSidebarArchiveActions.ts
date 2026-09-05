@@ -6,6 +6,7 @@ import type { useThreadActions } from "./useThreadActions";
 import { readThreadShell } from "../state/entities";
 import { canArchiveSettledSidebarThread } from "../components/SidebarArchiveControls.logic";
 import { isThreadArchiveBlocked } from "../components/threadArchive.logic";
+import { canUseRootThreadLifecycleActions } from "../components/threadActionMenu.logic";
 import { useThreadArchiveActions, type ThreadArchiveEntry } from "./useThreadArchiveActions";
 
 export type SidebarArchiveEntry = ThreadArchiveEntry;
@@ -40,7 +41,10 @@ export function useSidebarArchiveActions({
           const count = ownedEntries.length;
           return `Archive ${count} thread${count === 1 ? "" : "s"}?`;
         },
-        canArchive: ({ threadRef }) => !isThreadArchiveBlocked(readThreadShell(threadRef)),
+        canArchive: ({ threadRef }) => {
+          const thread = readThreadShell(threadRef);
+          return canUseRootThreadLifecycleActions(thread) && !isThreadArchiveBlocked(thread);
+        },
       }),
     [archiveCoordinatedEntries],
   );
@@ -65,12 +69,14 @@ export function useSidebarArchiveActions({
             },
             canArchive: ({ threadKey, threadRef }) => {
               const thread = readThreadShell(threadRef);
-              return canArchiveSettledSidebarThread({
-                threadKey,
-                settledThreadKeys: settledThreadKeysRef.current,
-                session: thread?.session,
-                backgroundLiveness: thread?.backgroundLiveness,
-              });
+              return (
+                canArchiveSettledSidebarThread({
+                  threadKey,
+                  settledThreadKeys: settledThreadKeysRef.current,
+                  session: thread?.session,
+                  backgroundLiveness: thread?.backgroundLiveness,
+                }) && canUseRootThreadLifecycleActions(thread)
+              );
             },
           },
         );

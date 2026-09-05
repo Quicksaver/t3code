@@ -120,6 +120,7 @@ function testSession(
         ? ({ threadResumeCompletionMarker: true } as never)
         : ({} as never),
     ),
+    subscribeServerConfig: () => Stream.empty,
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,

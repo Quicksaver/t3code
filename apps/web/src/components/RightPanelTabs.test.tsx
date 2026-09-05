@@ -223,6 +223,22 @@ describe("RightPanelTabs add-surface actions", () => {
     expect(actions.find((action) => action.id === "agents")?.badgeCount).toBe(3);
     expect(actions.find((action) => action.id === "source-control")?.badgeCount).toBe(0);
   });
+
+  it("places Magi before Version Control in the menu and routes its callback", () => {
+    const onAddMagi = vi.fn();
+    const actions = buildAddSurfaceActions(
+      { ...actionProps(), magiAvailable: true, onAddMagi },
+      "menu",
+    );
+    const magi = actions.find((action) => action.id === "magi");
+
+    expect(actions.at(-2)?.id).toBe("magi");
+    expect(actions.at(-1)?.id).toBe("source-control");
+    expect(magi?.shortcut).toBe("M");
+    expect(magi?.instancePolicy).toBe("singleton");
+    magi?.onClick();
+    expect(onAddMagi).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("surface shortcuts", () => {

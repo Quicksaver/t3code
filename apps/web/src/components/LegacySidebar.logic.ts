@@ -2,7 +2,7 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 
 import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
 
-type LegacySidebarParentRelation = { readonly kind: "root" | "subagent" } | null | undefined;
+type LegacySidebarParentRelation = { readonly kind: string } | null | undefined;
 
 type LegacySidebarLifecycleShell = {
   readonly branch?: string | null | undefined;

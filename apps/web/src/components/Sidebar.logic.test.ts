@@ -2,45 +2,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
   animatePinnedLayoutChanges,
-  archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
-  buildSidebarV2ThreadContextMenuSlots,
-  composeSidebarV2ThreadContextMenuItems,
-  shouldShowSidebarV2SettledHeader,
-  buildSidebarThreadRows,
-  canUseRootThreadLifecycleActions,
-  canUseSelectedRootThreadLifecycleActions,
   createThreadJumpHintVisibilityController,
-  filterArchivableSidebarThreads,
-  filterSidebarThreadsByProjectScope,
-  filterVisibleSidebarThreadTree,
   filterVisibleSidebarThreads,
-  getCompletedArchiveThreadKeys,
+  filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
-  isContextualSubagentSidebarThread,
   resolveAdjacentThreadId,
+  reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
-  isRootSidebarThread,
-  isThreadSessionRunning,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
-  resolveSidebarOptionsMenuVisibility,
-  resolveSidebarStageBadgeLabel,
-  resolveSidebarTriggerVisibilityClassName,
-  resolveThreadListClassName,
   resolveThreadRowClassName,
-  resolveThreadRowIndentStyle,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
-  SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
   formatWorkingDurationLabel,
@@ -56,33 +38,19 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
-  withCoordinatedThreadArchiveEntries,
 } from "./Sidebar.logic";
-import {
-  activeSidebarThreadAncestorKeys,
-  collectSearchableSidebarThreads,
-  flattenExpandedSidebarThreadTree,
-  resolveSidebarSubagentCount,
-  rootSidebarThreads,
-  sidebarSubagentDescendantCounts,
-  sidebarThreadKey,
-  visibleSidebarThreads,
-} from "./SidebarSubagents.logic";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
   ProjectId,
-  ProviderItemId,
   ProviderInstanceId,
   ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
-  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
@@ -164,340 +132,39 @@ describe("shouldNavigateAfterProjectRemoval", () => {
   });
 });
 
-describe("archiveSelectedThreadEntries", () => {
-  const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
-  const success = { _tag: "Success" } as const;
-  const failure = { _tag: "Failure" } as const;
-
-  it("records every entry after full success", async () => {
-    const outcome = await archiveSelectedThreadEntries({
-      entries,
-      archive: async (_entry, onArchived) => {
-        onArchived();
-        return success;
-      },
-    });
-
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one", "two", "three"],
-      skippedThreadKeys: [],
-      mutationFailure: null,
-      followupFailures: [],
-    });
-  });
-
-  it("stops at a mutation failure and retains prior successes", async () => {
-    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
-      if (entry.threadKey === "two") return failure;
-      onArchived();
-      return success;
-    });
-    const outcome = await archiveSelectedThreadEntries({ entries, archive });
-
-    expect(archive).toHaveBeenCalledTimes(2);
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one"],
-      skippedThreadKeys: [],
-      mutationFailure: failure,
-      followupFailures: [],
-    });
-  });
-
-  it("continues after a post-archive failure", async () => {
-    const archive = vi.fn(async (entry: (typeof entries)[number], onArchived: () => void) => {
-      onArchived();
-      return entry.threadKey === "two" ? failure : success;
-    });
-    const outcome = await archiveSelectedThreadEntries({ entries, archive });
-
-    expect(archive).toHaveBeenCalledTimes(3);
-    expect(outcome).toEqual({
-      archivedThreadKeys: ["one", "two", "three"],
-      skippedThreadKeys: [],
-      mutationFailure: null,
-      followupFailures: [failure],
-    });
-  });
-
-  it("reports completed entries before a later archive throws", async () => {
-    const onArchived = vi.fn();
-
-    await expect(
-      archiveSelectedThreadEntries({
-        entries,
-        archive: async (entry, markArchived) => {
-          if (entry.threadKey === "two") throw new Error("archive failed");
-          markArchived();
-          return success;
-        },
-        onArchived,
+describe("buildBulkTitleRegenerationContextMenuItem", () => {
+  it("counts only threads that can start a new regeneration", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 4,
+        actionableCount: 3,
       }),
-    ).rejects.toThrow("archive failed");
-
-    expect(onArchived).toHaveBeenCalledTimes(1);
-    expect(onArchived).toHaveBeenCalledWith(entries[0]);
-  });
-
-  it("re-checks eligibility before each batch mutation", async () => {
-    const archive = vi.fn(async (_entry, markArchived: () => void) => {
-      markArchived();
-      return success;
-    });
-    const outcome = await archiveSelectedThreadEntries({
-      entries,
-      archive,
-      canArchive: (entry) => entry.threadKey !== "two",
-    });
-
-    expect(archive).toHaveBeenCalledTimes(2);
-    expect(archive).toHaveBeenNthCalledWith(1, entries[0], expect.any(Function));
-    expect(archive).toHaveBeenNthCalledWith(2, entries[2], expect.any(Function));
-    expect(outcome.archivedThreadKeys).toEqual(["one", "three"]);
-    expect(outcome.skippedThreadKeys).toEqual(["two"]);
-  });
-
-  it("reports when every entry becomes ineligible before mutation", async () => {
-    const archive = vi.fn(async (_entry, markArchived: () => void) => {
-      markArchived();
-      return success;
-    });
-    const outcome = await archiveSelectedThreadEntries({
-      entries,
-      archive,
-      canArchive: () => false,
-    });
-
-    expect(archive).not.toHaveBeenCalled();
-    expect(outcome).toEqual({
-      archivedThreadKeys: [],
-      skippedThreadKeys: ["one", "two", "three"],
-      mutationFailure: null,
-      followupFailures: [],
+    ).toEqual({
+      id: "regenerate-title",
+      label: "Regenerate titles (3)",
     });
   });
-});
 
-describe("withCoordinatedThreadArchiveEntries", () => {
-  const entries = [{ threadKey: "one" }, { threadKey: "two" }] as const;
-
-  it("waits for owners and omits entries they successfully archived", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let finishFirstFlow: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries: [entries[0]],
-      reservations,
-      run: async () =>
-        new Promise<readonly string[]>((resolve) => {
-          finishFirstFlow = () => resolve(["one"]);
-        }),
-    });
-
-    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
-    const secondRun = vi.fn(async () => ["two"]);
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-    await Promise.resolve();
-    expect(secondRun).not.toHaveBeenCalled();
-
-    finishFirstFlow?.();
-    await expect(firstFlow).resolves.toEqual(["one"]);
-    await expect(secondFlow).resolves.toEqual(["two"]);
-    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
-    expect(reservations.size).toBe(0);
-  });
-
-  it("retries entries when their owner cancels without archiving", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let cancelFirstFlow: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries: [entries[0]],
-      reservations,
-      run: async () =>
-        new Promise<readonly string[]>((resolve) => {
-          cancelFirstFlow = () => resolve([]);
-        }),
-    });
-    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
-    const secondRun = vi.fn(async () => ["one", "two"]);
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-
-    cancelFirstFlow?.();
-    await expect(firstFlow).resolves.toEqual([]);
-    await expect(secondFlow).resolves.toEqual(["one", "two"]);
-    expect(secondRun).toHaveBeenCalledWith(entries, expect.any(Function));
-    expect(reservations.size).toBe(0);
-  });
-
-  it("releases reservations when the archive flow fails", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-
-    await expect(
-      withCoordinatedThreadArchiveEntries({
-        entries,
-        reservations,
-        run: async () => {
-          throw new Error("archive failed");
-        },
+  it("shows a disabled progress item when every supported thread is pending", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 2,
+        actionableCount: 0,
       }),
-    ).rejects.toThrow("archive failed");
-    expect(reservations.size).toBe(0);
+    ).toEqual({
+      id: "regenerate-title",
+      label: "Regenerating… (2)",
+      disabled: true,
+    });
   });
 
-  it("reserves uncontested siblings while waiting for an owner", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let finishFirstFlow: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries: [entries[0]],
-      reservations,
-      run: async () =>
-        new Promise<readonly string[]>((resolve) => {
-          finishFirstFlow = () => resolve(["one"]);
-        }),
-    });
-    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
-
-    let finishSecondFlow: (() => void) | undefined;
-    const secondRun = vi.fn(
-      async () =>
-        new Promise<readonly string[]>((resolve) => {
-          finishSecondFlow = () => resolve(["two"]);
-        }),
-    );
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-    await vi.waitFor(() => expect(reservations.has("two")).toBe(true));
-
-    const thirdRun = vi.fn(async () => ["two"]);
-    const thirdFlow = withCoordinatedThreadArchiveEntries({
-      entries: [entries[1]],
-      reservations,
-      run: thirdRun,
-    });
-    await Promise.resolve();
-    expect(thirdRun).not.toHaveBeenCalled();
-
-    finishFirstFlow?.();
-    await expect(firstFlow).resolves.toEqual(["one"]);
-    await vi.waitFor(() =>
-      expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function)),
-    );
-    expect(thirdRun).not.toHaveBeenCalled();
-
-    finishSecondFlow?.();
-    await expect(secondFlow).resolves.toEqual(["two"]);
-    await expect(thirdFlow).resolves.toEqual([]);
-    expect(thirdRun).not.toHaveBeenCalled();
-    expect(reservations.size).toBe(0);
-  });
-
-  it("publishes completed archives when a flow later throws", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let failFirstFlow: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: async (_ownedEntries, onArchived) => {
-        onArchived("one");
-        await new Promise<void>((_resolve, reject) => {
-          failFirstFlow = () => reject(new Error("archive failed"));
-        });
-        return [];
-      },
-    });
-    await vi.waitFor(() => expect(reservations.size).toBe(2));
-
-    const secondRun = vi.fn(async () => ["two"]);
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-    failFirstFlow?.();
-
-    await expect(firstFlow).rejects.toThrow("archive failed");
-    await expect(secondFlow).resolves.toEqual(["two"]);
-    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
-    expect(reservations.size).toBe(0);
-  });
-
-  it("publishes intentional skips when a later archive throws", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let failArchive: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: async (ownedEntries, onCompleted) => {
-        const outcome = await archiveSelectedThreadEntries({
-          entries: ownedEntries,
-          canArchive: (entry) => entry.threadKey !== "one",
-          archive: async () =>
-            new Promise<never>((_resolve, reject) => {
-              failArchive = () => reject(new Error("archive failed"));
-            }),
-          onArchived: (entry) => onCompleted(entry.threadKey),
-          onSkipped: (entry) => onCompleted(entry.threadKey),
-        });
-        return getCompletedArchiveThreadKeys(outcome);
-      },
-    });
-    await vi.waitFor(() => expect(reservations.size).toBe(2));
-
-    const secondRun = vi.fn(async () => ["two"]);
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-    failArchive?.();
-
-    await expect(firstFlow).rejects.toThrow("archive failed");
-    await expect(secondFlow).resolves.toEqual(["two"]);
-    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
-    expect(reservations.size).toBe(0);
-  });
-
-  it("does not retry entries an owner intentionally skipped", async () => {
-    const reservations = new Map<string, Promise<ReadonlySet<string>>>();
-    let finishEligibilityCheck: (() => void) | undefined;
-    const firstFlow = withCoordinatedThreadArchiveEntries({
-      entries: [entries[0]],
-      reservations,
-      run: async (ownedEntries) => {
-        await new Promise<void>((resolve) => {
-          finishEligibilityCheck = resolve;
-        });
-        const outcome = await archiveSelectedThreadEntries({
-          entries: ownedEntries,
-          archive: vi.fn(async () => ({ _tag: "Success" }) as const),
-          canArchive: () => false,
-        });
-        return getCompletedArchiveThreadKeys(outcome);
-      },
-    });
-    await vi.waitFor(() => expect(reservations.has("one")).toBe(true));
-
-    const secondRun = vi.fn(async () => ["two"]);
-    const secondFlow = withCoordinatedThreadArchiveEntries({
-      entries,
-      reservations,
-      run: secondRun,
-    });
-    finishEligibilityCheck?.();
-
-    await expect(firstFlow).resolves.toEqual(["one"]);
-    await expect(secondFlow).resolves.toEqual(["two"]);
-    expect(secondRun).toHaveBeenCalledWith([entries[1]], expect.any(Function));
-    expect(reservations.size).toBe(0);
+  it("omits the action when no selected environment supports it", () => {
+    expect(
+      buildBulkTitleRegenerationContextMenuItem({
+        supportedCount: 0,
+        actionableCount: 0,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -508,13 +175,13 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
-  it("disables bulk archive when a selected thread has active work", () => {
+  it("disables bulk archive when a selected thread cannot be archived", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 
-  it("omits archive and delete actions when the selection contains subagent threads", () => {
+  it("hides lifecycle actions when a selected row is not a lifecycle root", () => {
     expect(
       buildMultiSelectThreadContextMenuItems({
         count: 2,
@@ -522,50 +189,6 @@ describe("buildMultiSelectThreadContextMenuItems", () => {
         canUseLifecycleActions: false,
       }),
     ).toEqual([{ id: "mark-unread", label: "Mark unread (2)" }]);
-  });
-});
-
-describe("resolveSidebarStageBadgeLabel", () => {
-  it("returns Nightly for nightly primary server versions", () => {
-    expect(
-      resolveSidebarStageBadgeLabel({
-        primaryServerVersion: "0.0.28-nightly.20260616.12",
-        fallbackStageLabel: "Alpha",
-      }),
-    ).toBe("Nightly");
-  });
-
-  it("returns the fallback label for stable primary server versions", () => {
-    expect(
-      resolveSidebarStageBadgeLabel({
-        primaryServerVersion: "0.0.27",
-        fallbackStageLabel: "Alpha",
-      }),
-    ).toBe("Alpha");
-  });
-
-  it("returns the fallback label when the primary server version is missing", () => {
-    expect(
-      resolveSidebarStageBadgeLabel({
-        primaryServerVersion: null,
-        fallbackStageLabel: "Dev",
-      }),
-    ).toBe("Dev");
-  });
-
-  it("returns the fallback label for malformed nightly prerelease versions", () => {
-    expect(
-      resolveSidebarStageBadgeLabel({
-        primaryServerVersion: "0.0.28-nightly.20260616",
-        fallbackStageLabel: "Alpha",
-      }),
-    ).toBe("Alpha");
-  });
-});
-
-describe("resolveSidebarTriggerVisibilityClassName", () => {
-  it("keeps the upstream desktop breakpoint behavior", () => {
-    expect(resolveSidebarTriggerVisibilityClassName()).toBe(SIDEBAR_TRIGGER_DESKTOP_HIDDEN_CLASS);
   });
 });
 
@@ -688,530 +311,6 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
-  });
-});
-
-function makeSidebarThread(
-  overrides: Partial<SidebarThreadSummary> & Pick<SidebarThreadSummary, "id" | "projectId">,
-): SidebarThreadSummary {
-  return {
-    environmentId: localEnvironmentId,
-    title: "Thread",
-    createdAt: "2026-03-09T10:00:00.000Z",
-    updatedAt: "2026-03-09T10:00:00.000Z",
-    archivedAt: null,
-    latestUserMessageAt: null,
-    latestTurn: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-    interactionMode: DEFAULT_INTERACTION_MODE,
-    session: null,
-    branch: null,
-    worktreePath: null,
-    ...overrides,
-  } as SidebarThreadSummary;
-}
-
-function makeSubagentSidebarThread(input: {
-  id: string;
-  parentThreadId: string;
-  rootThreadId?: string;
-  parentActivitySequence?: number;
-  status?: "running" | "completed";
-}): SidebarThreadSummary {
-  return makeSidebarThread({
-    id: ThreadId.make(input.id),
-    projectId: ProjectId.make("project"),
-    parentRelation: {
-      kind: "subagent",
-      rootThreadId: ThreadId.make(input.rootThreadId ?? input.parentThreadId),
-      parentThreadId: ThreadId.make(input.parentThreadId),
-      parentTurnId: TurnId.make(`turn-${input.parentThreadId}`),
-      parentItemId: ProviderItemId.make(`item-${input.id}`),
-      parentActivitySequence: input.parentActivitySequence ?? 0,
-      providerThreadId: `provider-${input.id}`,
-      titleSeed: input.id,
-      depth: 1,
-      startedAt: "2026-03-09T10:00:00.000Z",
-      completedAt: input.status === "completed" ? "2026-03-09T10:01:00.000Z" : null,
-      status: input.status ?? "running",
-    },
-  });
-}
-
-describe("sidebar v2 subagent trees", () => {
-  const root = makeSidebarThread({
-    id: ThreadId.make("root-thread"),
-    projectId: ProjectId.make("project"),
-  });
-  const child = makeSubagentSidebarThread({
-    id: "child-thread",
-    parentThreadId: "root-thread",
-  });
-  const grandchild = makeSubagentSidebarThread({
-    id: "grandchild-thread",
-    parentThreadId: "child-thread",
-    rootThreadId: "root-thread",
-  });
-
-  it("counts all descendants at every depth", () => {
-    const counts = sidebarSubagentDescendantCounts({
-      allThreads: [root, child, grandchild],
-    });
-
-    expect(counts.get(sidebarThreadKey(root))).toBe(2);
-    expect(counts.get(sidebarThreadKey(child))).toBe(1);
-    expect(counts.has(sidebarThreadKey(grandchild))).toBe(false);
-  });
-
-  it("uses live native-agent counts when child conversation shells are absent", () => {
-    expect(resolveSidebarSubagentCount({ descendantCount: 0, activeSubagentCount: 2 })).toBe(2);
-    expect(resolveSidebarSubagentCount({ descendantCount: 3, activeSubagentCount: 2 })).toBe(3);
-    expect(resolveSidebarSubagentCount({ descendantCount: 0 })).toBe(0);
-  });
-
-  it("reveals each level only after its own indicator is expanded", () => {
-    const threads = [root, child, grandchild];
-    const render = (expandedThreadKeys: ReadonlySet<string>) =>
-      flattenExpandedSidebarThreadTree({
-        allThreads: threads,
-        roots: [root],
-        expandedThreadKeys,
-      }).map(({ thread, depth }) => [thread.id, depth]);
-
-    expect(render(new Set())).toEqual([[root.id, 0]]);
-    expect(render(new Set([sidebarThreadKey(root)]))).toEqual([
-      [root.id, 0],
-      [child.id, 1],
-    ]);
-    expect(render(new Set([sidebarThreadKey(root), sidebarThreadKey(child)]))).toEqual([
-      [root.id, 0],
-      [child.id, 1],
-      [grandchild.id, 2],
-    ]);
-  });
-
-  it("does not expand subagents just because their parent conversation is active", () => {
-    const threads = [root, child, grandchild];
-    const activeRootKey = sidebarThreadKey(root);
-
-    expect(activeSidebarThreadAncestorKeys(threads, activeRootKey)).toEqual(new Set());
-    expect(
-      flattenExpandedSidebarThreadTree({
-        allThreads: threads,
-        roots: [root],
-        expandedThreadKeys: new Set(),
-        alwaysExpandedThreadKeys: activeSidebarThreadAncestorKeys(threads, activeRootKey),
-      }).map(({ thread, depth }) => [thread.id, depth]),
-    ).toEqual([[root.id, 0]]);
-  });
-
-  it("hides every descendant while an archived root is optimistic", () => {
-    expect(
-      filterVisibleSidebarThreadTree([root, child, grandchild], new Set([sidebarThreadKey(root)])),
-    ).toEqual([]);
-  });
-
-  it("counts a running descendant through a hidden terminal parent", () => {
-    const terminalChild = makeSubagentSidebarThread({
-      id: "terminal-child",
-      parentThreadId: "root-thread",
-      status: "completed",
-    });
-    const runningGrandchild = makeSubagentSidebarThread({
-      id: "running-grandchild",
-      parentThreadId: "terminal-child",
-      rootThreadId: "root-thread",
-    });
-    const threads = [root, terminalChild, runningGrandchild];
-    const visible = visibleSidebarThreads(threads, null);
-    const visibleThreadKeys = new Set(visible.map(sidebarThreadKey));
-    const counts = sidebarSubagentDescendantCounts({
-      allThreads: threads,
-      visibleThreadKeys,
-    });
-    const expanded = flattenExpandedSidebarThreadTree({
-      allThreads: threads,
-      roots: [root],
-      expandedThreadKeys: new Set([sidebarThreadKey(root)]),
-      visibleThreadKeys,
-    });
-
-    expect(counts.get(sidebarThreadKey(root))).toBe(1);
-    expect(expanded.map(({ thread, depth }) => [thread.id, depth])).toEqual([
-      [root.id, 0],
-      [runningGrandchild.id, 2],
-    ]);
-  });
-
-  it("keeps recursive subagents inside a grouped project scope", () => {
-    const groupedRoot = makeSidebarThread({
-      id: ThreadId.make("grouped-root"),
-      projectId: ProjectId.make("project-stale"),
-      parentRelation: {
-        kind: "root",
-        rootThreadId: ThreadId.make("grouped-root"),
-      },
-    });
-    const terminalChild = makeSidebarThread({
-      id: ThreadId.make("grouped-terminal-child"),
-      projectId: ProjectId.make("project-canonical"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: groupedRoot.id,
-        parentThreadId: groupedRoot.id,
-        parentTurnId: TurnId.make("turn-grouped-root"),
-        parentItemId: ProviderItemId.make("item-grouped-terminal-child"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-grouped-terminal-child",
-        titleSeed: "Grouped terminal child",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:01:00.000Z",
-        status: "completed",
-      },
-    });
-    const otherRoot = makeSidebarThread({
-      id: ThreadId.make("other-root"),
-      projectId: ProjectId.make("project-other"),
-    });
-    const scopedThreads = filterSidebarThreadsByProjectScope(
-      [groupedRoot, terminalChild, otherRoot],
-      new Set([`${localEnvironmentId}:project-stale`, `${localEnvironmentId}:project-canonical`]),
-    );
-    const structuralThreads = filterVisibleSidebarThreadTree(scopedThreads, new Set());
-    const visibleThreads = visibleSidebarThreads(
-      structuralThreads,
-      sidebarThreadKey(terminalChild),
-    );
-    const visibleThreadKeys = new Set(visibleThreads.map(sidebarThreadKey));
-    const roots = rootSidebarThreads(visibleThreads, structuralThreads);
-
-    expect(structuralThreads.map((thread) => thread.id)).toEqual([
-      groupedRoot.id,
-      terminalChild.id,
-    ]);
-    expect(roots.map((thread) => thread.id)).toEqual([groupedRoot.id]);
-    expect(
-      sidebarSubagentDescendantCounts({
-        allThreads: structuralThreads,
-        visibleThreadKeys,
-      }).get(sidebarThreadKey(groupedRoot)),
-    ).toBe(1);
-    expect(
-      flattenExpandedSidebarThreadTree({
-        allThreads: structuralThreads,
-        roots,
-        expandedThreadKeys: new Set([sidebarThreadKey(groupedRoot)]),
-        visibleThreadKeys,
-      }).map(({ thread, depth }) => [thread.id, depth]),
-    ).toEqual([
-      [groupedRoot.id, 0],
-      [terminalChild.id, 1],
-    ]);
-  });
-
-  it("shows the exact open terminal subagent without counting it as running", () => {
-    const terminalChild = makeSubagentSidebarThread({
-      id: "terminal-child",
-      parentThreadId: "root-thread",
-      status: "completed",
-    });
-    const openGrandchild = makeSubagentSidebarThread({
-      id: "open-grandchild",
-      parentThreadId: "terminal-child",
-      rootThreadId: "root-thread",
-      status: "completed",
-    });
-    const threads = [root, terminalChild, openGrandchild];
-    const openGrandchildKey = sidebarThreadKey(openGrandchild);
-    const visibleThreadKeys = new Set(
-      visibleSidebarThreads(threads, openGrandchildKey).map(sidebarThreadKey),
-    );
-    const runningThreadKeys = new Set(visibleSidebarThreads(threads, null).map(sidebarThreadKey));
-
-    expect(
-      sidebarSubagentDescendantCounts({
-        allThreads: threads,
-        visibleThreadKeys: runningThreadKeys,
-      }).has(sidebarThreadKey(root)),
-    ).toBe(false);
-    expect(
-      flattenExpandedSidebarThreadTree({
-        allThreads: threads,
-        roots: [root],
-        expandedThreadKeys: new Set(),
-        alwaysExpandedThreadKeys: activeSidebarThreadAncestorKeys(threads, openGrandchildKey),
-        visibleThreadKeys,
-      }).map(({ thread, depth }) => [thread.id, depth]),
-    ).toEqual([
-      [root.id, 0],
-      [openGrandchild.id, 2],
-    ]);
-  });
-});
-
-describe("buildBulkTitleRegenerationContextMenuItem", () => {
-  it("counts only threads that can start a new regeneration", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 4,
-        actionableCount: 3,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerate titles (3)",
-    });
-  });
-
-  it("shows a disabled progress item when every supported thread is pending", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 2,
-        actionableCount: 0,
-      }),
-    ).toEqual({
-      id: "regenerate-title",
-      label: "Regenerating… (2)",
-      disabled: true,
-    });
-  });
-
-  it("omits the action when no selected environment supports it", () => {
-    expect(
-      buildBulkTitleRegenerationContextMenuItem({
-        supportedCount: 0,
-        actionableCount: 0,
-      }),
-    ).toBeNull();
-  });
-});
-
-describe("buildSidebarV2ThreadContextMenuSlots", () => {
-  it("offers archive for active and settled root threads", () => {
-    const activeSlots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-    const settledSlots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: true,
-      isArchiveBlocked: false,
-    });
-
-    expect(activeSlots.lifecycleItems.map((item) => item.id)).toEqual(["settle", "archive"]);
-    expect(settledSlots.lifecycleItems.map((item) => item.id)).toEqual(["unsettle", "archive"]);
-    expect(activeSlots.renameItem.id).toBe("rename");
-    expect(activeSlots.markUnreadItem.id).toBe("mark-unread");
-    expect(activeSlots.destructiveItems).toEqual([
-      { id: "delete", label: "Delete", destructive: true, icon: "trash" },
-    ]);
-  });
-
-  it("keeps archive visible but disabled while a root thread is running", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isArchiveBlocked: true,
-    });
-
-    expect(slots.lifecycleItems.find((item) => item.id === "archive")).toMatchObject({
-      disabled: true,
-    });
-  });
-
-  it("omits root lifecycle actions for nested subagents", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: false,
-      supportsSettlement: false,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-
-    expect(slots.lifecycleItems).toEqual([]);
-    expect(slots.renameItem).toEqual({ id: "rename", label: "Rename thread" });
-    expect(slots.markUnreadItem).toEqual({ id: "mark-unread", label: "Mark unread" });
-    expect(slots.destructiveItems).toEqual([]);
-  });
-
-  it("composes upstream actions around the fork-owned slots", () => {
-    const slots = buildSidebarV2ThreadContextMenuSlots({
-      canUseLifecycleActions: true,
-      supportsSettlement: true,
-      isSettled: false,
-      isArchiveBlocked: false,
-    });
-
-    const items = composeSidebarV2ThreadContextMenuItems({
-      pinningItems: [],
-      slots,
-      leadingItems: [{ id: "new-thread-on-branch", label: "New thread on branch" }],
-      snoozeItems: [{ id: "snooze", label: "Snooze" }],
-      titleRegenerationItems: [{ id: "regenerate-title", label: "Regenerate title" }],
-      copyItems: [
-        { id: "copy-path", label: "Copy path" },
-        { id: "copy-branch", label: "Copy branch" },
-      ],
-    });
-
-    expect(items.map((item) => item.id)).toEqual([
-      "new-thread-on-branch",
-      "settle",
-      "archive",
-      "snooze",
-      "rename",
-      "regenerate-title",
-      "mark-unread",
-      "copy-path",
-      "copy-branch",
-      "delete",
-    ]);
-  });
-});
-
-describe("shouldShowSidebarV2SettledHeader", () => {
-  it("shows above the first settled row even when the list starts settled", () => {
-    expect(shouldShowSidebarV2SettledHeader({ isSettled: true, previousIsSettled: false })).toBe(
-      true,
-    );
-  });
-
-  it("hides for active rows and later settled rows", () => {
-    expect(shouldShowSidebarV2SettledHeader({ isSettled: false, previousIsSettled: false })).toBe(
-      false,
-    );
-    expect(shouldShowSidebarV2SettledHeader({ isSettled: true, previousIsSettled: true })).toBe(
-      false,
-    );
-  });
-});
-
-describe("sidebar thread lifecycle guards", () => {
-  it("allows root lifecycle actions only for non-subagent threads", () => {
-    const root = makeSidebarThread({
-      id: ThreadId.make("root-thread"),
-      projectId: ProjectId.make("project"),
-    });
-    const runningChild = makeSidebarThread({
-      id: ThreadId.make("running-child"),
-      projectId: ProjectId.make("project"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-running"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-running-child",
-        titleSeed: "Running child",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-    const terminalChild = makeSidebarThread({
-      id: ThreadId.make("terminal-child"),
-      projectId: ProjectId.make("project"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-terminal"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-thread-terminal-child",
-        titleSeed: "Terminal child",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:02:00.000Z",
-        status: "completed",
-      },
-    });
-
-    expect(canUseRootThreadLifecycleActions(root)).toBe(true);
-    expect(canUseRootThreadLifecycleActions(runningChild)).toBe(false);
-    expect(canUseRootThreadLifecycleActions(terminalChild)).toBe(false);
-    expect(canUseRootThreadLifecycleActions(null)).toBe(true);
-  });
-
-  it("fails closed for selected lifecycle actions with unresolved threads", () => {
-    const root = makeSidebarThread({
-      id: ThreadId.make("root-thread"),
-      projectId: ProjectId.make("project"),
-    });
-    const runningChild = makeSidebarThread({
-      id: ThreadId.make("running-child"),
-      projectId: ProjectId.make("project"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-running"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-running-child",
-        titleSeed: "Running child",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-    const threadByKey = new Map([
-      [`${localEnvironmentId}:${root.id}`, root],
-      [`${localEnvironmentId}:${runningChild.id}`, runningChild],
-    ]);
-
-    expect(
-      canUseSelectedRootThreadLifecycleActions([`${localEnvironmentId}:${root.id}`], threadByKey),
-    ).toBe(true);
-    expect(
-      canUseSelectedRootThreadLifecycleActions(
-        [`${localEnvironmentId}:${root.id}`, `${localEnvironmentId}:missing-thread`],
-        threadByKey,
-      ),
-    ).toBe(false);
-    expect(
-      canUseSelectedRootThreadLifecycleActions(
-        [`${localEnvironmentId}:${runningChild.id}`],
-        threadByKey,
-      ),
-    ).toBe(false);
-  });
-
-  it("filters running and nested threads from archive batches", () => {
-    const root = makeSidebarThread({
-      id: ThreadId.make("root-thread"),
-      projectId: ProjectId.make("project"),
-    });
-    const running = makeSidebarThread({
-      id: ThreadId.make("running-thread"),
-      projectId: ProjectId.make("project"),
-      session: {
-        threadId: ThreadId.make("running-thread"),
-        status: "running",
-        providerName: "Codex",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: DEFAULT_RUNTIME_MODE,
-        activeTurnId: TurnId.make("turn-running"),
-        lastError: null,
-        updatedAt: "2026-03-09T10:00:00.000Z",
-      },
-    });
-    const nested = makeSubagentSidebarThread({
-      id: "nested-thread",
-      parentThreadId: "root-thread",
-      status: "completed",
-    });
-
-    expect(isThreadSessionRunning(running.session)).toBe(true);
-    expect(filterArchivableSidebarThreads([root, running, nested])).toEqual([root]);
   });
 });
 
@@ -1482,289 +581,6 @@ describe("getVisibleSidebarThreadIds", () => {
   });
 });
 
-describe("isRootSidebarThread", () => {
-  it("keeps root threads and hides subagent child threads from root sidebar lists", () => {
-    expect(isRootSidebarThread(makeThread())).toBe(true);
-    expect(
-      isRootSidebarThread(
-        makeThread({
-          id: ThreadId.make("thread-subagent"),
-          parentRelation: {
-            kind: "subagent",
-            rootThreadId: ThreadId.make("thread-root"),
-            parentThreadId: ThreadId.make("thread-root"),
-            parentTurnId: TurnId.make("turn-root"),
-            parentItemId: ProviderItemId.make("item-root"),
-            parentActivitySequence: 0,
-            providerThreadId: "provider-thread-subagent",
-            titleSeed: "Inspect auth flow",
-            depth: 1,
-            startedAt: "2026-03-09T10:00:00.000Z",
-            completedAt: null,
-            status: "running",
-          },
-        }),
-      ),
-    ).toBe(false);
-  });
-});
-
-describe("isContextualSubagentSidebarThread", () => {
-  it("shows subagents only when they are active or running", () => {
-    const child = makeThread({
-      id: ThreadId.make("thread-subagent"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: ThreadId.make("thread-root"),
-        parentThreadId: ThreadId.make("thread-root"),
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-root"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-subagent",
-        titleSeed: "Inspect auth flow",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:02:00.000Z",
-        status: "completed",
-      },
-    });
-
-    expect(isContextualSubagentSidebarThread(child, null)).toBe(false);
-    expect(isContextualSubagentSidebarThread(child, child.id)).toBe(true);
-    expect(
-      isContextualSubagentSidebarThread(
-        {
-          ...child,
-          parentRelation: {
-            ...child.parentRelation!,
-            status: "running",
-          },
-        },
-        null,
-      ),
-    ).toBe(true);
-  });
-});
-
-describe("buildSidebarThreadRows", () => {
-  it("nests active and running subagents under their parent without showing completed inactive ones", () => {
-    const root = makeThread({ id: ThreadId.make("thread-root") });
-    const activeChild = makeThread({
-      id: ThreadId.make("thread-active-child"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-active"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-active-child",
-        titleSeed: "Inspect auth flow",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:02:00.000Z",
-        status: "completed",
-      },
-    });
-    const runningChild = makeThread({
-      id: ThreadId.make("thread-running-child"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-running"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-thread-running-child",
-        titleSeed: "Check tests",
-        depth: 1,
-        startedAt: "2026-03-09T10:01:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-    const inactiveChild = makeThread({
-      id: ThreadId.make("thread-inactive-child"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-inactive"),
-        parentActivitySequence: 2,
-        providerThreadId: "provider-thread-inactive-child",
-        titleSeed: "Summarize docs",
-        depth: 1,
-        startedAt: "2026-03-09T10:02:00.000Z",
-        completedAt: "2026-03-09T10:03:00.000Z",
-        status: "completed",
-      },
-    });
-
-    expect(
-      buildSidebarThreadRows([root, activeChild, runningChild, inactiveChild], activeChild.id),
-    ).toEqual([
-      { thread: root, indentLevel: 0 },
-      { thread: activeChild, indentLevel: 1 },
-      { thread: runningChild, indentLevel: 1 },
-    ]);
-  });
-
-  it("shows only the exact open terminal subagent through hidden terminal ancestors", () => {
-    const root = makeThread({ id: ThreadId.make("thread-root") });
-    const terminalParent = makeThread({
-      id: ThreadId.make("thread-terminal-parent"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-parent"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-terminal-parent",
-        titleSeed: "Inspect auth flow",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:02:00.000Z",
-        status: "completed",
-      },
-    });
-    const activeGrandchild = makeThread({
-      id: ThreadId.make("thread-active-grandchild"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: terminalParent.id,
-        parentTurnId: TurnId.make("turn-child"),
-        parentItemId: ProviderItemId.make("item-grandchild"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-thread-active-grandchild",
-        titleSeed: "Check nested route",
-        depth: 2,
-        startedAt: "2026-03-09T10:03:00.000Z",
-        completedAt: "2026-03-09T10:04:00.000Z",
-        status: "completed",
-      },
-    });
-
-    expect(
-      buildSidebarThreadRows([root, terminalParent, activeGrandchild], activeGrandchild.id),
-    ).toEqual([
-      { thread: root, indentLevel: 0 },
-      { thread: activeGrandchild, indentLevel: 2 },
-    ]);
-  });
-
-  it("keeps running descendants under hidden terminal ancestors before unrelated roots", () => {
-    const root = makeThread({ id: ThreadId.make("thread-root") });
-    const unrelatedRoot = makeThread({ id: ThreadId.make("thread-unrelated-root") });
-    const terminalParent = makeThread({
-      id: ThreadId.make("thread-terminal-parent"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        parentTurnId: TurnId.make("turn-root"),
-        parentItemId: ProviderItemId.make("item-parent"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-terminal-parent",
-        titleSeed: "Inspect auth flow",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: "2026-03-09T10:02:00.000Z",
-        status: "completed",
-      },
-    });
-    const runningGrandchild = makeThread({
-      id: ThreadId.make("thread-running-grandchild"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: root.id,
-        parentThreadId: terminalParent.id,
-        parentTurnId: TurnId.make("turn-child"),
-        parentItemId: ProviderItemId.make("item-grandchild"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-thread-running-grandchild",
-        titleSeed: "Check nested route",
-        depth: 2,
-        startedAt: "2026-03-09T10:03:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-
-    expect(
-      buildSidebarThreadRows([root, unrelatedRoot, terminalParent, runningGrandchild], null),
-    ).toEqual([
-      { thread: root, indentLevel: 0 },
-      { thread: runningGrandchild, indentLevel: 2 },
-      { thread: unrelatedRoot, indentLevel: 0 },
-    ]);
-  });
-
-  it("bounds malformed cyclic subagent lineage without duplicating rows", () => {
-    const first = makeThread({
-      id: ThreadId.make("thread-cycle-first"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: ThreadId.make("thread-root"),
-        parentThreadId: ThreadId.make("thread-cycle-second"),
-        parentTurnId: TurnId.make("turn-cycle-second"),
-        parentItemId: ProviderItemId.make("item-cycle-first"),
-        parentActivitySequence: 0,
-        providerThreadId: "provider-thread-cycle-first",
-        titleSeed: "First",
-        depth: 1,
-        startedAt: "2026-03-09T10:00:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-    const second = makeThread({
-      id: ThreadId.make("thread-cycle-second"),
-      parentRelation: {
-        kind: "subagent",
-        rootThreadId: ThreadId.make("thread-root"),
-        parentThreadId: first.id,
-        parentTurnId: TurnId.make("turn-cycle-first"),
-        parentItemId: ProviderItemId.make("item-cycle-second"),
-        parentActivitySequence: 1,
-        providerThreadId: "provider-thread-cycle-second",
-        titleSeed: "Second",
-        depth: 2,
-        startedAt: "2026-03-09T10:01:00.000Z",
-        completedAt: null,
-        status: "running",
-      },
-    });
-
-    expect(buildSidebarThreadRows([first, second], first.id)).toEqual([
-      { thread: first, indentLevel: 1 },
-      { thread: second, indentLevel: 2 },
-    ]);
-  });
-});
-
-describe("resolveThreadRowIndentStyle", () => {
-  it("increases row indentation for each visible subagent generation", () => {
-    expect(resolveThreadRowIndentStyle({ indentLevel: 0, flattenHierarchyChrome: false })).toBe(
-      undefined,
-    );
-    expect(resolveThreadRowIndentStyle({ indentLevel: 1, flattenHierarchyChrome: false })).toEqual({
-      paddingLeft: "1.25rem",
-    });
-    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: false })).toEqual({
-      paddingLeft: "2.125rem",
-    });
-  });
-
-  it("suppresses hierarchy indentation when chrome is flattened", () => {
-    expect(resolveThreadRowIndentStyle({ indentLevel: 2, flattenHierarchyChrome: true })).toBe(
-      undefined,
-    );
-  });
-});
-
 describe("isContextMenuPointerDown", () => {
   it("treats secondary-button presses as context menu gestures on all platforms", () => {
     expect(
@@ -1887,94 +703,66 @@ describe("searchSidebarThreadsByTitle", () => {
   });
 });
 
-describe("collectSearchableSidebarThreads", () => {
-  it("preserves lifecycle root order while collecting every descendant depth", () => {
-    const activeRoot = makeSidebarThread({
-      id: ThreadId.make("active-root"),
-      projectId: ProjectId.make("project"),
+describe("filterSidebarProjectScopeItems", () => {
+  const items = [
+    { value: "all", label: "All projects" },
+    { value: "alpha", label: "Alpha workspace" },
+    { value: "beta", label: "Beta tools" },
+  ] as const;
+  const filter = (activeScopeKey: string | null, query: string) =>
+    filterSidebarProjectScopeItems({
+      items,
+      activeScopeKey,
+      query,
+      matches: (item, candidate) =>
+        item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
     });
-    const activeChild = makeSubagentSidebarThread({
-      id: "active-child",
-      parentThreadId: "active-root",
-      rootThreadId: "active-root",
-    });
-    const activeGrandchild = makeSubagentSidebarThread({
-      id: "active-grandchild",
-      parentThreadId: "active-child",
-      rootThreadId: "active-root",
-    });
-    const snoozedRoot = makeSidebarThread({
-      id: ThreadId.make("snoozed-root"),
-      projectId: ProjectId.make("project"),
-    });
-    const snoozedChild = makeSubagentSidebarThread({
-      id: "snoozed-child",
-      parentThreadId: "snoozed-root",
-      rootThreadId: "snoozed-root",
-    });
-    const settledRoot = makeSidebarThread({
-      id: ThreadId.make("settled-root"),
-      projectId: ProjectId.make("project"),
-    });
-    const allThreads = [
-      settledRoot,
-      activeGrandchild,
-      snoozedChild,
-      activeRoot,
-      snoozedRoot,
-      activeChild,
-    ];
 
-    expect(
-      collectSearchableSidebarThreads({
-        allThreads,
-        activeRoots: [activeRoot],
-        snoozedRoots: [snoozedRoot],
-        settledRoots: [settledRoot],
-      }).map((thread) => thread.id),
-    ).toEqual([
-      ThreadId.make("active-root"),
-      ThreadId.make("active-child"),
-      ThreadId.make("active-grandchild"),
-      ThreadId.make("snoozed-root"),
-      ThreadId.make("snoozed-child"),
-      ThreadId.make("settled-root"),
-    ]);
+  it("omits the reset row when the sidebar is already unscoped", () => {
+    expect(filter(null, "")).toEqual(items.slice(1));
   });
 
-  it("keeps descendants searchable across grouped-project member references", () => {
-    const root = makeSidebarThread({
-      id: ThreadId.make("group-root"),
-      projectId: ProjectId.make("project-stale"),
-    });
-    const child = makeSubagentSidebarThread({
-      id: "group-child",
-      parentThreadId: "group-root",
-      rootThreadId: "group-root",
-    });
-    const canonicalChild = {
-      ...child,
-      projectId: ProjectId.make("project-canonical"),
-    };
-    const outsideRoot = makeSidebarThread({
-      id: ThreadId.make("outside-root"),
-      projectId: ProjectId.make("project-outside"),
-    });
-    const structuralThreads = filterSidebarThreadsByProjectScope(
-      [root, canonicalChild, outsideRoot],
-      new Set([`${localEnvironmentId}:project-stale`, `${localEnvironmentId}:project-canonical`]),
-    );
-    const visibleThreadKeys = new Set(structuralThreads.map(sidebarThreadKey));
+  it("shows the reset row first while a project scope is active", () => {
+    expect(filter("alpha", "")).toEqual(items);
+  });
 
+  it("hides the reset row while filtering an active scope", () => {
+    expect(filter("alpha", "all")).toEqual([]);
+  });
+
+  it("returns matching projects in source order and supports no-match results", () => {
+    expect(filter(null, "WORK")).toEqual([items[1]]);
+    expect(filter(null, "missing")).toEqual([]);
+  });
+});
+
+describe("reduceSidebarProjectScopeMenuState", () => {
+  const queriedOpenState = { open: true, query: "alpha" };
+
+  it("clears the query when the combobox closes through onOpenChange", () => {
     expect(
-      collectSearchableSidebarThreads({
-        allThreads: structuralThreads,
-        activeRoots: rootSidebarThreads(structuralThreads, structuralThreads),
-        snoozedRoots: [],
-        settledRoots: [],
-        visibleThreadKeys,
-      }).map((thread) => thread.id),
-    ).toEqual([ThreadId.make("group-root"), ThreadId.make("group-child")]);
+      reduceSidebarProjectScopeMenuState(queriedOpenState, {
+        type: "open-changed",
+        open: false,
+      }),
+    ).toEqual({ open: false, query: "" });
+  });
+
+  it("clears the query when project settings closes the combobox", () => {
+    expect(
+      reduceSidebarProjectScopeMenuState(queriedOpenState, {
+        type: "project-settings-opened",
+      }),
+    ).toEqual({ open: false, query: "" });
+  });
+
+  it("keeps the popup open while the query changes", () => {
+    expect(
+      reduceSidebarProjectScopeMenuState(
+        { open: true, query: "" },
+        { type: "query-changed", query: "beta" },
+      ),
+    ).toEqual({ open: true, query: "beta" });
   });
 });
 
@@ -2158,46 +946,6 @@ describe("sortPinnedThreadsForSidebar", () => {
     ]);
 
     expect(sorted.map((thread) => thread.id)).toEqual(["a", "b"]);
-  });
-
-  it("sorts roots before flattening their expanded subagent lineages", () => {
-    const laterRoot = {
-      ...makeSidebarThread({
-        id: ThreadId.make("a-later-root"),
-        projectId: ProjectId.make("project"),
-      }),
-      pinOrderKey: "z",
-    };
-    const laterChild = makeSubagentSidebarThread({
-      id: "later-child",
-      parentThreadId: "a-later-root",
-    });
-    const earlierRoot = {
-      ...makeSidebarThread({
-        id: ThreadId.make("z-earlier-root"),
-        projectId: ProjectId.make("project"),
-      }),
-      pinOrderKey: "a",
-    };
-    const earlierChild = makeSubagentSidebarThread({
-      id: "earlier-child",
-      parentThreadId: "z-earlier-root",
-    });
-    const allThreads = [laterRoot, laterChild, earlierRoot, earlierChild];
-    const orderedRoots = sortPinnedThreadsForSidebar([laterRoot, earlierRoot]);
-
-    expect(
-      flattenExpandedSidebarThreadTree({
-        allThreads,
-        roots: orderedRoots,
-        expandedThreadKeys: new Set(orderedRoots.map(sidebarThreadKey)),
-      }).map(({ thread, depth }) => [thread.id, depth]),
-    ).toEqual([
-      [earlierRoot.id, 0],
-      [earlierChild.id, 1],
-      [laterRoot.id, 0],
-      [laterChild.id, 1],
-    ]);
   });
 });
 
@@ -2458,42 +1206,6 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-sidebar-row-active");
     expect(className).toContain("hover:bg-sidebar-row-active");
-  });
-});
-
-describe("resolveThreadListClassName", () => {
-  it("keeps the project grouping rail for normal multi-project sidebars", () => {
-    const className = resolveThreadListClassName({ hideThreadGroupRail: false });
-
-    expect(className).not.toContain("border-l-0");
-  });
-
-  it("removes the project grouping rail when requested", () => {
-    const className = resolveThreadListClassName({ hideThreadGroupRail: true });
-
-    expect(className).toContain("border-l-0");
-    expect(className).toContain("mx-0");
-    expect(className).toContain("px-0");
-    expect(className).toContain("sm:mx-0");
-    expect(className).toContain("sm:px-0");
-  });
-});
-
-describe("resolveSidebarOptionsMenuVisibility", () => {
-  it("keeps sidebar options visible when project chrome is shown", () => {
-    expect(resolveSidebarOptionsMenuVisibility({ hideProjectChrome: false })).toEqual({
-      showButton: true,
-      showProjectOptions: true,
-      showThreadOptions: true,
-    });
-  });
-
-  it("keeps sidebar options visible with only thread options when project chrome is hidden", () => {
-    expect(resolveSidebarOptionsMenuVisibility({ hideProjectChrome: true })).toEqual({
-      showButton: true,
-      showProjectOptions: false,
-      showThreadOptions: true,
-    });
   });
 });
 

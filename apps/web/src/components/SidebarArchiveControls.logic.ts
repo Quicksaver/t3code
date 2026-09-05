@@ -1,5 +1,6 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { isThreadArchiveBlocked, type ThreadArchiveState } from "./threadArchive.logic";
+import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
 
 export function shouldRenderSidebarArchiveAll(input: {
   archivableCount: number;
@@ -11,15 +12,20 @@ export function shouldRenderSidebarArchiveAll(input: {
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasArchiveBlockedThread: boolean;
+  canUseLifecycleActions?: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
   return [
     { id: "mark-unread", label: `Mark unread (${input.count})` },
-    {
-      id: "archive",
-      label: `Archive (${input.count})`,
-      disabled: input.hasArchiveBlockedThread,
-    },
-    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+    ...(input.canUseLifecycleActions === false
+      ? []
+      : [
+          {
+            id: "archive" as const,
+            label: `Archive (${input.count})`,
+            disabled: input.hasArchiveBlockedThread,
+          },
+          { id: "delete" as const, label: `Delete (${input.count})`, destructive: true },
+        ]),
   ];
 }
 
@@ -38,8 +44,12 @@ export function canArchiveSettledSidebarThread(input: {
   );
 }
 
-export function filterArchivableSidebarThreads<T extends ThreadArchiveState>(
-  threads: readonly T[],
-): T[] {
-  return threads.filter((thread) => !isThreadArchiveBlocked(thread));
+export function filterArchivableSidebarThreads<
+  T extends ThreadArchiveState & {
+    readonly parentRelation?: { readonly kind: string } | null | undefined;
+  },
+>(threads: readonly T[]): T[] {
+  return threads.filter(
+    (thread) => canUseRootThreadLifecycleActions(thread) && !isThreadArchiveBlocked(thread),
+  );
 }

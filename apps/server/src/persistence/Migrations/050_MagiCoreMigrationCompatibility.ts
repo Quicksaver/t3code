@@ -1,9 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import ClearAutomaticProjectModelDefaults from "./044_ClearAutomaticProjectModelDefaults.ts";
-import ProjectionProjectsAutoPull from "./045_ProjectionProjectsAutoPull.ts";
-import RepairAutomaticSettlementTimestamps from "./046_RepairAutomaticSettlementTimestamps.ts";
+import ClearAutomaticProjectModelDefaults from "./048_ClearAutomaticProjectModelDefaults.ts";
+import ProjectionProjectsAutoPull from "./049_ProjectionProjectsAutoPull.ts";
+import RepairAutomaticSettlementTimestamps from "./051_RepairAutomaticSettlementTimestamps.ts";
 import MagiProjections from "./047_MagiProjections.ts";
 import MagiActiveConversationUniqueness from "./048_MagiActiveConversationUniqueness.ts";
 import MagiProposalTerminology from "./049_MagiProposalTerminology.ts";

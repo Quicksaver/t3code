@@ -195,6 +195,10 @@
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"
     },
+    "./state/thread-activities": {
+      "types": "./src/state/threadActivityHttp.ts",
+      "default": "./src/state/threadActivityHttp.ts"
+    },
     "./state/vcs": {
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"

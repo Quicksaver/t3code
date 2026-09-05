@@ -5,9 +5,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import Migration0044 from "./044_ClearAutomaticProjectModelDefaults.ts";
-import Migration0045 from "./045_ProjectionProjectsAutoPull.ts";
-import Migration0046 from "./046_RepairAutomaticSettlementTimestamps.ts";
+import Migration0044 from "./048_ClearAutomaticProjectModelDefaults.ts";
+import Migration0045 from "./049_ProjectionProjectsAutoPull.ts";
+import Migration0046 from "./051_RepairAutomaticSettlementTimestamps.ts";
 import Migration0047 from "./047_MagiProjections.ts";
 import Migration0048 from "./048_MagiActiveConversationUniqueness.ts";
 import Migration0049 from "./049_MagiProposalTerminology.ts";
@@ -286,7 +286,7 @@ interleavedManifestLayer("050 compatibility with an interleaved historical manif
         { migration_id: 44, name: "ClearAutomaticProjectModelDefaults" },
         { migration_id: 45, name: "ProjectionProjectsAutoPull" },
         { migration_id: 46, name: "RepairAutomaticSettlementTimestamps" },
-        { migration_id: 47, name: "ProjectionProjectIcon" },
+        { migration_id: 47, name: "ThreadStorageLifecycleCompatibility" },
       ]);
       const magiRows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
         SELECT migration_id, name

@@ -16,6 +16,7 @@ import {
   WORK_LOG_COMMAND_ELAPSED_SECONDS_KEYS,
   WORK_LOG_COMMAND_EXIT_CODE_KEYS,
   WORK_LOG_COMMAND_ITEM_CONTENT_KEYS,
+  WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY,
   WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER,
   WORK_LOG_COMMAND_STDERR_KEYS,
   WORK_LOG_COMMAND_STDOUT_KEYS,
@@ -35,6 +36,7 @@ export interface ParsedWorkLogActivityPayload extends ExtractedToolActivityPrese
   readonly stderr: string | null;
   readonly exitCode: number | null;
   readonly durationMs: number | null;
+  readonly commandOutputAvailable: boolean;
   readonly patch: string | null;
   readonly changedFiles: ReadonlyArray<string>;
   readonly title: string | null;
@@ -89,6 +91,7 @@ export function parseWorkLogActivityPayload(
     ...command,
     ...commandResult,
     ...extractToolActivityPresentation(payload),
+    commandOutputAvailable: data?.[WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY] === true,
     viewedImagePath: asTrimmedString(data?.imagePath),
     patch: extractToolPatch(payload),
     changedFiles: extractChangedFiles(payload),

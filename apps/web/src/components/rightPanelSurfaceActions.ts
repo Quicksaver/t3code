@@ -6,6 +6,7 @@ import {
   GitPullRequest,
   Globe2,
   type LucideIcon,
+  Network,
   TerminalSquare,
 } from "lucide-react";
 
@@ -16,7 +17,8 @@ export type AddPanelSurfaceId =
   | "files"
   | "diff"
   | "pull-request"
-  | "agents";
+  | "agents"
+  | "magi";
 
 export type AddPanelSurfacePlacement = "empty-state" | "menu";
 export type AddPanelSurfaceInstancePolicy = "singleton" | "multiple";
@@ -29,6 +31,7 @@ export interface AddPanelSurfaceActionProps {
   readonly onAddSourceControl: () => void;
   readonly onAddPullRequest: () => void;
   readonly onAddAgents: () => void;
+  readonly onAddMagi?: () => void;
   readonly browserAvailable: boolean;
   readonly terminalAvailable: boolean;
   readonly diffAvailable: boolean;
@@ -36,6 +39,7 @@ export interface AddPanelSurfaceActionProps {
   readonly sourceControlAvailable: boolean;
   readonly pullRequestAvailable: boolean;
   readonly agentsAvailable: boolean;
+  readonly magiAvailable?: boolean;
   readonly liveAgentCount: number;
 }
 
@@ -48,6 +52,7 @@ type AvailabilityKey = keyof Pick<
   | "sourceControlAvailable"
   | "pullRequestAvailable"
   | "agentsAvailable"
+  | "magiAvailable"
 >;
 
 type ActivationKey = keyof Pick<
@@ -59,6 +64,7 @@ type ActivationKey = keyof Pick<
   | "onAddSourceControl"
   | "onAddPullRequest"
   | "onAddAgents"
+  | "onAddMagi"
 >;
 
 interface AddPanelSurfaceDescriptor {
@@ -92,7 +98,7 @@ export const ADD_PANEL_SURFACE_DESCRIPTORS = [
     availability: "sourceControlAvailable",
     activation: "onAddSourceControl",
     instancePolicy: "singleton",
-    order: { "empty-state": 0, menu: 6 },
+    order: { "empty-state": 0, menu: 7 },
     disabledReason: "Version Control is only available when a project is open in a Git repository.",
     unavailableHint: "Available for Git repositories.",
     badge: null,
@@ -181,6 +187,20 @@ export const ADD_PANEL_SURFACE_DESCRIPTORS = [
     unavailableHint: "Available from a thread.",
     badge: "live-agents",
   },
+  {
+    id: "magi",
+    label: "Magi",
+    description: "Configure or inspect consensus runs.",
+    icon: Network,
+    shortcut: "M",
+    availability: "magiAvailable",
+    activation: "onAddMagi",
+    instancePolicy: "singleton",
+    order: { "empty-state": 7, menu: 6 },
+    disabledReason: "Magi is not available for this conversation.",
+    unavailableHint: "Available for Magi-capable conversations.",
+    badge: null,
+  },
 ] as const satisfies readonly AddPanelSurfaceDescriptor[];
 
 export interface AddPanelSurfaceAction {
@@ -208,10 +228,10 @@ export function buildAddSurfaceActions(
     icon: descriptor.icon,
     shortcut: descriptor.shortcut,
     instancePolicy: descriptor.instancePolicy,
-    available: props[descriptor.availability],
+    available: props[descriptor.availability] === true,
     disabledReason: descriptor.disabledReason,
     unavailableHint: descriptor.unavailableHint,
-    onClick: props[descriptor.activation],
+    onClick: props[descriptor.activation] ?? (() => undefined),
     badgeCount: descriptor.badge === "live-agents" ? props.liveAgentCount : 0,
     order: descriptor.order[placement],
   }))

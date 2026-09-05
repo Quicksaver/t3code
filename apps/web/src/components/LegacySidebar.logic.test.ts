@@ -19,6 +19,10 @@ const subagent = {
   branch: "feature/subagent",
   parentRelation: { kind: "subagent" as const },
 };
+const magi = {
+  branch: "feature/magi",
+  parentRelation: { kind: "magi" as const },
+};
 
 const menuIds = (thread: Parameters<typeof buildLegacySidebarThreadContextMenuItems>[0]) =>
   buildLegacySidebarThreadContextMenuItems(thread).map((item) => item.id);
@@ -66,6 +70,8 @@ describe("Legacy Sidebar single-thread lifecycle permissions", () => {
       "copy-thread-id",
       "project-settings",
     ]);
+    expect(canUseLegacySidebarThreadLifecycleActions(magi)).toBe(false);
+    expect(shouldShowLegacySidebarInlineArchive({ thread: magi, isRunning: false })).toBe(false);
   });
 
   it("fails closed when the shell is stale or unresolved", () => {

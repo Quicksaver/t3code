@@ -481,20 +481,6 @@ const OrchestrationLatestTurnState = Schema.Literals([
 ]);
 export type OrchestrationLatestTurnState = typeof OrchestrationLatestTurnState.Type;
 
-export const OrchestrationThreadParentRelation = Schema.Struct({
-  kind: Schema.Literal("magi"),
-  rootThreadId: ThreadId,
-  parentThreadId: ThreadId,
-  runId: OrchestrationMagiRunId,
-  participantId: TrimmedNonEmptyString.pipe(Schema.brand("MagiParticipantId")),
-  providerThreadId: TrimmedNonEmptyString,
-  depth: NonNegativeInt,
-  startedAt: IsoDateTime,
-  completedAt: Schema.NullOr(IsoDateTime),
-  status: Schema.Literals(["running", "completed", "errored", "interrupted", "stopped"]),
-});
-export type OrchestrationThreadParentRelation = typeof OrchestrationThreadParentRelation.Type;
-
 export const OrchestrationLatestTurn = Schema.Struct({
   turnId: TurnId,
   state: OrchestrationLatestTurnState,
@@ -520,6 +506,18 @@ export const OrchestrationThreadParentRelation = Schema.Union([
     parentActivitySequence: NonNegativeInt,
     providerThreadId: TrimmedNonEmptyString,
     titleSeed: Schema.NullOr(TrimmedNonEmptyString),
+    depth: NonNegativeInt,
+    startedAt: IsoDateTime,
+    completedAt: Schema.NullOr(IsoDateTime),
+    status: Schema.Literals(["running", "completed", "errored", "interrupted", "stopped"]),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("magi"),
+    rootThreadId: ThreadId,
+    parentThreadId: ThreadId,
+    runId: OrchestrationMagiRunId,
+    participantId: TrimmedNonEmptyString.pipe(Schema.brand("MagiParticipantId")),
+    providerThreadId: TrimmedNonEmptyString,
     depth: NonNegativeInt,
     startedAt: IsoDateTime,
     completedAt: Schema.NullOr(IsoDateTime),
@@ -586,7 +584,6 @@ export const OrchestrationThread = Schema.Struct({
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
-  parentRelation: Schema.optional(OrchestrationThreadParentRelation),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -789,6 +786,11 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
    * behavior. Live events are unaffected either way.
    */
   turnLimit: Schema.optionalKey(PositiveInt),
+  /**
+   * Requests compact command activities whose output is fetched through the
+   * thread activity detail endpoint. Absent preserves output for older clients.
+   */
+  compactCommandOutput: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 

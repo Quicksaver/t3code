@@ -1,5 +1,7 @@
 import {
+  EventId,
   type EnvironmentId,
+  type OrchestrationThreadActivity,
   type ScopedThreadRef,
   type ToolActivityIcon,
 } from "@t3tools/contracts";
@@ -16,12 +18,17 @@ import {
   createContext,
   memo,
   use,
+  useCallback,
   useId,
+  useMemo,
+  useRef,
   useState,
   type ContextType,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { FileDiff } from "@pierre/diffs/react";
+import type { FileDiffMetadata, Hunk } from "@pierre/diffs/types";
 import {
   BotIcon,
   BrainIcon,
@@ -40,20 +47,45 @@ import {
   ZapIcon,
 } from "lucide-react";
 import {
+  deriveWorkLogEntries,
+  mergeDeferredCommandOutput,
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadActivityEnvironment } from "../../state/threadActivities";
+import {
+  buildFileDiffRenderKey,
+  createChangedFileDiffPathMatcher,
+  getRenderablePatch,
+  resolveDiffThemeName,
+  resolveFileDiffPath,
+} from "../../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
+import {
+  deriveCommandOutputDisplay,
+  deriveExpandableWorkEntryDetails,
+  deriveFileChangeDisplayFiles,
+  hasExpandableWorkEntryDetails,
+  hasRenderableCommandOutputDetail,
+  type DerivedCommandWorkEntryDetails,
+  type DerivedExpandableWorkEntryDetails,
+  type DerivedFileChangeWorkEntryDetails,
+} from "../../lib/workLogEntryDetails";
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { DiffStatLabel } from "./DiffStatLabel";
 import { T3Wordmark } from "../T3Wordmark";
 import { cn } from "~/lib/utils";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   liveWorkEntryLabel,
+  deriveWorkEntryDisplay,
+  shouldToggleWorkEntryRowFromKeyDown,
   toolGroupAction,
-  workEntryDisplayLabel,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
@@ -682,6 +714,238 @@ function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   return workToneIcon(workEntry.tone).iconName;
 }
 
+function ToolDetailBlock(props: {
+  title: string;
+  children: ReactNode;
+  mono?: boolean;
+  tone?: "default" | "error";
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55">
+        {props.title}
+      </p>
+      <div
+        className={cn(
+          "max-h-80 overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-[11px] leading-5 text-foreground/78",
+          props.mono && "font-mono whitespace-pre-wrap wrap-break-word",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+        )}
+      >
+        {props.children}
+      </div>
+    </div>
+  );
+}
+
+function ToolEntryDetails({ details }: { details: DerivedExpandableWorkEntryDetails }) {
+  if (details.command || details.fileChange) {
+    return (
+      <>
+        {details.command ? <CommandEntryDetails details={details.command} /> : null}
+        {details.fileChange ? <FileChangeEntryDetails details={details.fileChange} /> : null}
+        {details.supplementalDetail ? (
+          <GenericToolEntryDetails value={details.supplementalDetail} />
+        ) : null}
+      </>
+    );
+  }
+  return details.genericDetail ? <GenericToolEntryDetails value={details.genericDetail} /> : null;
+}
+
+function CommandEntryDetails({ details }: { details: DerivedCommandWorkEntryDetails }) {
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {details.command && (
+        <ToolDetailBlock title="Command" mono>
+          {details.command}
+        </ToolDetailBlock>
+      )}
+      {details.rawCommand && (
+        <ToolDetailBlock title="Raw command" mono>
+          {details.rawCommand}
+        </ToolDetailBlock>
+      )}
+      <div className="flex flex-wrap gap-1.5 text-[10px] text-muted-foreground/70">
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Exit code {details.exitCodeLabel}
+        </span>
+        <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5">
+          Duration {details.durationLabel}
+        </span>
+      </div>
+      {details.outputs.map((output) => (
+        <CommandOutputBlock
+          key={output.title}
+          title={output.title}
+          value={output.value}
+          {...(output.tone ? { tone: output.tone } : {})}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CommandOutputBlock(props: { title: string; value: string; tone?: "default" | "error" }) {
+  const [showFull, setShowFull] = useState(false);
+  const outputDisplay = useMemo(
+    () => deriveCommandOutputDisplay({ value: props.value, showFull }),
+    [props.value, showFull],
+  );
+  const isTruncated = outputDisplay.isTruncated;
+  const toggleLabel = `${showFull ? "Collapse" : "Expand"} ${props.title}`;
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className={cn(
+          "flex items-center gap-1 text-[9px] font-medium uppercase tracking-[0.14em] text-muted-foreground/55 transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+          isTruncated ? "cursor-pointer hover:text-foreground/75" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => isTruncated && setShowFull((value) => !value)}
+      >
+        <span>{props.title}</span>
+        <span className="normal-case tracking-normal">({outputDisplay.suffix})</span>
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "block max-h-80 w-full overflow-auto rounded-md border border-border/55 bg-background/80 px-2 py-1.5 text-left font-mono text-[11px] leading-5 whitespace-pre-wrap wrap-break-word text-foreground/78",
+          props.tone === "error" &&
+            "border-rose-500/20 bg-rose-500/5 text-rose-800 dark:text-rose-200",
+          isTruncated ? "cursor-pointer" : "cursor-default",
+        )}
+        disabled={!isTruncated}
+        aria-expanded={isTruncated ? showFull : undefined}
+        aria-label={isTruncated ? toggleLabel : `${props.title} output`}
+        onClick={() => isTruncated && setShowFull((value) => !value)}
+      >
+        {outputDisplay.visibleValue}
+      </button>
+    </div>
+  );
+}
+
+function FileChangeEntryDetails({ details }: { details: DerivedFileChangeWorkEntryDetails }) {
+  const ctx = use(WorkActivityRowsCtx);
+  const renderablePatch = getRenderablePatch(
+    details.patch,
+    `tool-file-change:${details.id}:${ctx.resolvedTheme}`,
+  );
+  const hasInlineDiff = renderablePatch?.kind === "files";
+  const displayFiles = deriveFileChangeDisplayFiles({
+    changedFiles: details.changedFiles,
+    inlineDiffPaths: hasInlineDiff ? renderablePatch.files.map(resolveFileDiffPath) : [],
+    workspaceRoot: ctx.workspaceRoot,
+  });
+  return (
+    <div className="mt-2 ms-2 space-y-2 border-s border-border/45 ps-3 pt-0.5">
+      {displayFiles.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {displayFiles.map((file) => (
+            <Tooltip key={`${details.id}:expanded-file:${file.path}`}>
+              <TooltipTrigger
+                render={
+                  <span className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75" />
+                }
+              >
+                {file.displayPath}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{file.displayPath}</TooltipPopup>
+            </Tooltip>
+          ))}
+        </div>
+      )}
+      {hasInlineDiff &&
+        renderablePatch.files.map((fileDiff) => (
+          <FileDiff
+            key={buildFileDiffRenderKey(fileDiff)}
+            fileDiff={fileDiff}
+            renderCustomHeader={(renderedFileDiff) => (
+              <InlineFileDiffHeader
+                fileDiff={renderedFileDiff}
+                changedFiles={details.changedFiles}
+                workspaceRoot={ctx.workspaceRoot}
+              />
+            )}
+            options={{
+              collapsed: false,
+              diffStyle: "unified",
+              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              preferredHighlighter: PREFERRED_HIGHLIGHTER,
+            }}
+          />
+        ))}
+      {renderablePatch?.kind === "raw" && (
+        <ToolDetailBlock title={renderablePatch.reason} mono>
+          {renderablePatch.text}
+        </ToolDetailBlock>
+      )}
+    </div>
+  );
+}
+
+function GenericToolEntryDetails({ value }: { value: string }) {
+  return (
+    <div className="mt-2 ms-2 border-s border-border/45 ps-3 pt-0.5">
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
+function InlineFileDiffHeader({
+  fileDiff,
+  changedFiles,
+  workspaceRoot,
+}: {
+  fileDiff: FileDiffMetadata;
+  changedFiles: ReadonlyArray<string> | undefined;
+  workspaceRoot: string | undefined;
+}) {
+  const displayPath = resolveInlineFileDiffDisplayPath(fileDiff, changedFiles, workspaceRoot);
+  const additions = countDiffHunkChangedLines(fileDiff.hunks, "additionLines");
+  const deletions = countDiffHunkChangedLines(fileDiff.hunks, "deletionLines");
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border/55 bg-background/80 px-2 py-1 text-[11px]">
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate font-mono text-foreground/85" />}>
+          {displayPath}
+        </TooltipTrigger>
+        <TooltipPopup side="top">{displayPath}</TooltipPopup>
+      </Tooltip>
+      <span className="shrink-0">
+        <DiffStatLabel additions={additions} deletions={deletions} />
+      </span>
+    </div>
+  );
+}
+
+function resolveInlineFileDiffDisplayPath(
+  fileDiff: FileDiffMetadata,
+  changedFiles: ReadonlyArray<string> | undefined,
+  workspaceRoot: string | undefined,
+): string {
+  const rawPath = resolveFileDiffPath(fileDiff);
+  const matchesDiffPath = createChangedFileDiffPathMatcher(rawPath);
+  const matchedChangedFile = changedFiles?.find(matchesDiffPath);
+  return formatWorkspaceRelativePath(matchedChangedFile ?? rawPath, workspaceRoot);
+}
+
+function countDiffHunkChangedLines(
+  hunks: ReadonlyArray<Hunk>,
+  lineCountKey: "additionLines" | "deletionLines",
+): number {
+  let count = 0;
+  for (const hunk of hunks) count += hunk[lineCountKey];
+  return count;
+}
+
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
 /**
@@ -788,12 +1052,65 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   displayLabel?: string | undefined;
 }) {
   const { workEntry, workspaceRoot, isExpandedToolGroupEntry, displayLabel } = props;
-  const { threadRef, onImageExpand } = use(WorkActivityRowsCtx);
+  const ctx = use(WorkActivityRowsCtx);
+  const { threadRef, onImageExpand } = ctx;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
-  const toggleExpanded = () => {
+
+  const requestedCommandOutputActivityIds = useMemo(
+    () => workEntry.commandOutputActivityIds ?? [workEntry.id],
+    [workEntry.commandOutputActivityIds, workEntry.id],
+  );
+  const detailCacheKey = `${threadRef?.environmentId ?? ""}\0${threadRef?.threadId ?? ""}\0${workEntry.id}`;
+  const deferredDetailCacheRef = useRef<{
+    key: string;
+    activitiesById: Map<string, OrchestrationThreadActivity>;
+  }>({ key: detailCacheKey, activitiesById: new Map() });
+  if (deferredDetailCacheRef.current.key !== detailCacheKey) {
+    deferredDetailCacheRef.current = { key: detailCacheKey, activitiesById: new Map() };
+  }
+  const missingCommandOutputActivityIds = requestedCommandOutputActivityIds.filter(
+    (activityId) => !deferredDetailCacheRef.current.activitiesById.has(activityId),
+  );
+  const deferredCommandOutputQuery = useEnvironmentQuery(
+    expanded &&
+      workEntry.commandOutputAvailable === true &&
+      threadRef !== null &&
+      missingCommandOutputActivityIds.length > 0
+      ? threadActivityEnvironment.details({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            activityIds: missingCommandOutputActivityIds.map((activityId) =>
+              EventId.make(activityId),
+            ),
+          },
+        })
+      : null,
+  );
+  if (deferredCommandOutputQuery.data !== null) {
+    for (const detailActivity of deferredCommandOutputQuery.data.activities) {
+      deferredDetailCacheRef.current.activitiesById.set(detailActivity.id, detailActivity);
+    }
+  }
+  const detailActivities = requestedCommandOutputActivityIds.flatMap((activityId) => {
+    const detailActivity = deferredDetailCacheRef.current.activitiesById.get(activityId);
+    return detailActivity === undefined ? [] : [detailActivity];
+  });
+  const detailedWorkEntry = useMemo(
+    () => mergeDeferredCommandOutput(workEntry, detailActivities),
+    [detailActivities, workEntry],
+  );
+  const hasDerivedCommandDetail = useMemo(
+    () =>
+      detailActivities.length === 0 ||
+      hasRenderableCommandOutputDetail(deriveWorkLogEntries(detailActivities)),
+    [detailActivities],
+  );
+
+  const toggleExpanded = useCallback(() => {
     const next = !expanded;
     if (groupView) {
       groupView.onToggleEntry();
@@ -801,7 +1118,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       else groupView.state.expandedEntries.delete(workEntry.id);
     }
     setExpanded(next);
-  };
+  }, [expanded, groupView, workEntry.id]);
+
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator = workEntryDisplayIndicatesToolFailure(workEntry);
@@ -814,7 +1132,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const { displayText: activityDisplayText } = deriveWorkEntryDisplay(workEntry, workspaceRoot);
+  const previewText = displayLabel ?? toolPresentation?.displayName ?? activityDisplayText;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -823,25 +1143,28 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           workspaceRoot,
         })
       : null;
+  const canExpand = useMemo(
+    () =>
+      workEntry.commandOutputAvailable === true ||
+      hasExpandableWorkEntryDetails(detailedWorkEntry) ||
+      viewedImage !== null,
+    [detailedWorkEntry, viewedImage, workEntry.commandOutputAvailable],
+  );
+  const details = useMemo(
+    () => (expanded ? deriveExpandableWorkEntryDetails(detailedWorkEntry, workspaceRoot) : null),
+    [detailedWorkEntry, expanded, workspaceRoot],
+  );
   const commandMatchesVisibleLabel = workEntry.command?.trim() === previewText.trim();
-  const canExpand =
-    (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
-    Boolean(
-      (!commandMatchesVisibleLabel &&
-        (workEntryRawCommand(workEntry) || workEntry.command?.trim())) ||
-      workEntry.detail?.trim() ||
-      workEntry.changedFiles?.length ||
-      viewedImage,
-    );
-  const expandedBody = expanded
-    ? buildToolCallExpandedBody(
-        workEntry,
-        workspaceRoot,
-        previewText,
-        viewedImage ? viewedImagePath : null,
-      )
-    : null;
-  // Reserve destructive row styling for severe failures, not routine tool errors.
+  const hasRichDetails = Boolean(details?.command || details?.fileChange);
+  const expandedBody =
+    expanded && !hasRichDetails
+      ? buildToolCallExpandedBody(
+          detailedWorkEntry,
+          workspaceRoot,
+          previewText,
+          viewedImage ? viewedImagePath : null,
+        )
+      : null;
   const iconWrapperClass = cn(
     "flex size-6 shrink-0 items-center justify-center",
     showWarningIndicator
@@ -868,11 +1191,16 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     ? {
         role: "button" as const,
         tabIndex: 0 as const,
-        "aria-label": accessibleDisplayText,
+        "aria-label": `${expanded ? "Collapse" : "Expand"} ${accessibleDisplayText}`,
         "aria-expanded": expanded,
         onClick: toggleExpanded,
         onKeyDown: (e: KeyboardEvent<HTMLDivElement>) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (
+            shouldToggleWorkEntryRowFromKeyDown({
+              key: e.key,
+              targetIsCurrentTarget: e.currentTarget === e.target,
+            })
+          ) {
             e.preventDefault();
             toggleExpanded();
           }
@@ -888,6 +1216,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
+      data-tool-entry-expanded={expanded ? "true" : "false"}
       {...rowToggleProps}
     >
       <div className="flex select-none items-center gap-1.5 transition-[opacity,translate] duration-200">
@@ -959,13 +1288,57 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           />
         </div>
       ) : null}
-      {expanded && canExpand && expandedBody ? (
+      {expanded && canExpand && hasRichDetails && details ? (
+        <div className="cursor-default" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          <ToolEntryDetails details={details} />
+        </div>
+      ) : null}
+      {expanded && canExpand && !hasRichDetails && expandedBody ? (
         <div
           className="mt-1 ms-7 cursor-default rounded-md bg-muted/40 px-3 py-2"
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
           <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+        </div>
+      ) : null}
+      {expanded && workEntry.commandOutputAvailable === true ? (
+        <div className="cursor-default" onClick={stopRowToggle} onPointerDown={stopRowToggle}>
+          {deferredCommandOutputQuery.isPending ? (
+            <div className="mt-2 ms-7 text-[11px] text-muted-foreground/65" role="status">
+              Loading command output…
+            </div>
+          ) : null}
+          {deferredCommandOutputQuery.error ? (
+            <div className="mt-2 ms-7 flex items-center gap-2 text-[11px] text-destructive">
+              <span>Couldn’t load command output.</span>
+              <button
+                type="button"
+                className="text-info-foreground underline underline-offset-2"
+                onClick={deferredCommandOutputQuery.refresh}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {deferredCommandOutputQuery.data !== null &&
+          deferredCommandOutputQuery.data.failedActivityIds.length > 0 ? (
+            <div className="mt-2 ms-7 flex items-center gap-2 text-[11px] text-destructive">
+              <span>Some command output couldn’t be loaded.</span>
+              <button
+                type="button"
+                className="text-info-foreground underline underline-offset-2"
+                onClick={deferredCommandOutputQuery.refresh}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {deferredCommandOutputQuery.data !== null && !hasDerivedCommandDetail ? (
+            <div className="mt-2 ms-7 text-[11px] text-destructive">
+              No command output was returned.
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
   getComposerDraft: vi.fn(),
-  releaseAttachmentUploads: vi.fn(),
+  releaseDraftAttachments: vi.fn(),
 }));
 
 vi.mock("../composerDraftStore", () => ({
@@ -15,7 +15,7 @@ vi.mock("../composerDraftStore", () => ({
 }));
 
 vi.mock("./attachmentUploadQueue", () => ({
-  releaseAttachmentUploads: mocks.releaseAttachmentUploads,
+  releaseDraftAttachments: mocks.releaseDraftAttachments,
 }));
 
 import { releaseComposerDraftUploads } from "./composerDraftUploads";
@@ -23,19 +23,20 @@ import { releaseComposerDraftUploads } from "./composerDraftUploads";
 describe("releaseComposerDraftUploads", () => {
   beforeEach(() => {
     mocks.getComposerDraft.mockReset();
-    mocks.releaseAttachmentUploads.mockReset();
+    mocks.releaseDraftAttachments.mockReset();
   });
 
-  it("releases every pending draft image upload", () => {
+  it("releases every pending draft attachment upload", () => {
     const images = [{ id: "image-1" }, { id: "image-2" }];
-    mocks.getComposerDraft.mockReturnValue({ images });
+    const files = [{ id: "file-1" }];
+    mocks.getComposerDraft.mockReturnValue({ images, files });
 
     releaseComposerDraftUploads({
       environmentId: EnvironmentId.make("environment-1"),
       threadId: ThreadId.make("thread-1"),
     });
 
-    expect(mocks.releaseAttachmentUploads).toHaveBeenCalledWith(images);
+    expect(mocks.releaseDraftAttachments).toHaveBeenCalledWith([...images, ...files]);
   });
 
   it("does nothing when the thread has no composer draft", () => {
@@ -46,6 +47,6 @@ describe("releaseComposerDraftUploads", () => {
       threadId: ThreadId.make("thread-1"),
     });
 
-    expect(mocks.releaseAttachmentUploads).not.toHaveBeenCalled();
+    expect(mocks.releaseDraftAttachments).not.toHaveBeenCalled();
   });
 });

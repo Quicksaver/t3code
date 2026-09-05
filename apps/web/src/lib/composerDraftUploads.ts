@@ -4,6 +4,13 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type ComposerThreadTarget, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 
+export function releaseComposerDraftUploads(target: ScopedThreadRef | DraftId): void {
+  const draft = useComposerDraftStore.getState().getComposerDraft(target);
+  if (draft) {
+    releaseDraftAttachments([...draft.images, ...draft.files]);
+  }
+}
+
 /**
  * Discards every composer record represented by the target, releasing each
  * record's uploads before clearing its draft references. A server thread can

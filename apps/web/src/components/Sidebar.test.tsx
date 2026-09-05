@@ -30,12 +30,7 @@ vi.mock("./ThreadStatusIndicators", async (importOriginal) => ({
   useLinkedThreadPullRequest: () => null,
 }));
 
-import {
-  SidebarHomeButton,
-  SidebarThreadRow,
-  SubagentCountButton,
-  SubagentRunningTooltipRow,
-} from "./Sidebar";
+import { SidebarThreadRow, SubagentCountButton, SubagentRunningTooltipRow } from "./Sidebar";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -53,6 +48,7 @@ function makeSettledPinnedThread(): SidebarThreadSummary {
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    linkedPullRequest: null,
     latestTurn: null,
     createdAt: "2026-08-27T08:00:00.000Z",
     updatedAt: "2026-08-27T09:00:00.000Z",
@@ -67,17 +63,6 @@ function makeSettledPinnedThread(): SidebarThreadSummary {
     hasActionableProposedPlan: false,
   };
 }
-
-describe("SidebarHomeButton", () => {
-  it("renders the app wordmark as a button without an href", () => {
-    const html = renderToStaticMarkup(<SidebarHomeButton aria-label="Go to threads" />);
-
-    expect(html).toContain("<button");
-    expect(html).toContain('type="button"');
-    expect(html).not.toContain("<a ");
-    expect(html).not.toContain("href=");
-  });
-});
 
 describe("SubagentCountButton", () => {
   it("renders a running count that opens the Agents panel without disclosure", () => {
@@ -117,7 +102,6 @@ describe("SidebarThreadRow", () => {
         variant="slim"
         variantAction="unsettle"
         settlementSupported
-        autoSettleOnMerge={false}
         snoozeSupported={false}
         pinningSupported
         isPinned
@@ -127,10 +111,13 @@ describe("SidebarThreadRow", () => {
         openPullRequestsInRightPanel={false}
         jumpLabel={null}
         currentEnvironmentId={localEnvironmentId}
+        environmentMachine="server"
         environmentLabel={null}
         projectCwd={null}
         projectFaviconPath={null}
+        projectIcon={null}
         projectTitle="Project"
+        projectDisplayName="Project"
         providerEntryByInstanceId={new Map()}
         timestampFormat="locale"
         onThreadClick={vi.fn()}
@@ -149,8 +136,8 @@ describe("SidebarThreadRow", () => {
         onUnsnooze={vi.fn()}
         onUnpin={vi.fn()}
         onAcknowledgeWoke={vi.fn()}
+        trailingDecoration={null}
         subagentCount={0}
-        onOpenSubagents={vi.fn()}
         changeRequestSnapshot={null}
         onChangeRequestSnapshot={vi.fn()}
       />,

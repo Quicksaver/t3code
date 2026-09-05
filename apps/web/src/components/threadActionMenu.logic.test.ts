@@ -145,6 +145,7 @@ describe("root lifecycle action permissions", () => {
     expect(canUseRootThreadLifecycleActions({})).toBe(true);
     expect(canUseRootThreadLifecycleActions({ parentRelation: { kind: "root" } })).toBe(true);
     expect(canUseRootThreadLifecycleActions({ parentRelation: { kind: "subagent" } })).toBe(false);
+    expect(canUseRootThreadLifecycleActions({ parentRelation: { kind: "magi" } })).toBe(false);
   });
 
   it("recognizes every root lifecycle action returned by native menus", () => {

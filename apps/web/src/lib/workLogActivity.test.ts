@@ -111,6 +111,27 @@ describe("parseWorkLogActivityPayload", () => {
       stderr: `warning${WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER}`,
     });
   });
+
+  it("recognizes command output that must be loaded after expansion", () => {
+    const parsed = parseWorkLogActivityPayload(
+      {
+        itemType: "command_execution",
+        data: {
+          command: "vp test",
+          commandOutputAvailable: true,
+        },
+      },
+      { heading: "Ran command" },
+    );
+
+    expect(parsed).toMatchObject({
+      command: "vp test",
+      commandOutputAvailable: true,
+      output: null,
+      stdout: null,
+      stderr: null,
+    });
+  });
 });
 
 describe("cumulative activity snapshots", () => {

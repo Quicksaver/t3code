@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../src/persistence/ConversationDataSavingsMigrations.ts";
+import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
 
@@ -145,7 +145,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`UPDATE effect_sql_magi_migrations
-            SET name = 'SomebodyElsesMagiMigration' WHERE migration_id = 47`;
+            SET name = 'SomebodyElsesMagiMigration' WHERE migration_id = 48`;
         }),
       );
 
@@ -155,7 +155,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       ).pipe(Effect.flip);
       assert.equal(error._tag, "MigrateDevDbSlotCollisionError");
       if (error._tag === "MigrateDevDbSlotCollisionError") {
-        assert.equal(error.slot, 47);
+        assert.equal(error.slot, 48);
         assert.equal(error.appliedName, "SomebodyElsesMagiMigration");
       }
     }),

@@ -27,6 +27,7 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  EventId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -36,6 +37,7 @@ import {
   DispatchResult,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
+  OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
 import {
@@ -94,6 +96,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "client_session_revoke_failed",
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
+  "orchestration_thread_activity_failed",
   "orchestration_dispatch_failed",
   "internal_error",
 ]);
@@ -191,7 +194,10 @@ export class EnvironmentInternalError extends Schema.TaggedErrorClass<Environmen
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "thread_activity_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedErrorClass<EnvironmentResourceNotFoundError>()(
@@ -494,6 +500,11 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
+const EnvironmentOrchestrationThreadActivityParams = Schema.Struct({
+  threadId: ThreadId,
+  activityId: EventId,
+});
+
 // Query-string window for windowed thread snapshots (GET payloads must encode
 // to strings). Both fields optional: omitting them keeps the full-snapshot
 // behavior, so pagination stays opt-in per request.
@@ -502,6 +513,9 @@ const EnvironmentOrchestrationThreadSnapshotQuery = {
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),
   beforeCursor: Schema.optional(TrimmedNonEmptyString),
+  // String literal because HTTP query parameters arrive encoded as strings.
+  // Absence preserves embedded output for clients predating activity detail.
+  compactCommandOutput: Schema.optional(Schema.Literal("true")),
 };
 
 export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
@@ -527,6 +541,18 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       success: OrchestrationThreadDetailSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "threadActivity",
+      "/api/orchestration/threads/:threadId/activities/:activityId",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentOrchestrationThreadActivityParams,
+        success: OrchestrationThreadActivity,
+        error: EnvironmentOrchestrationThreadSnapshotErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.post("dispatch", "/api/orchestration/dispatch", {

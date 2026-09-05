@@ -603,20 +603,25 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       yield* sql`
         INSERT INTO projection_threads (
           thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
-          branch, worktree_path, magi_root_thread_id, magi_parent_thread_id,
+          branch, worktree_path, parent_kind, root_thread_id, parent_thread_id,
+          provider_thread_id, subagent_depth, subagent_started_at, subagent_status,
+          magi_root_thread_id, magi_parent_thread_id,
           magi_provider_thread_id, magi_started_at, magi_status, magi_run_id,
           magi_participant_id, created_at, updated_at, deleted_at
         ) VALUES
           (
             'magi-shell-root', 'magi-shell-project', 'Root',
             '{"instanceId":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, NULL, 'root', 'magi-shell-root', NULL, NULL, 0, NULL, NULL,
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL,
             '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', NULL
           ),
           (
             'magi-shell-participant', 'magi-shell-project', 'Participant',
             '{"instanceId":"codex","model":"gpt-5-codex"}', 'approval-required', 'default',
-            NULL, NULL, 'magi-shell-root', 'magi-shell-root', 'provider-participant',
+            NULL, NULL, 'magi', 'magi-shell-root', 'magi-shell-root',
+            'provider-participant', 1, '2026-08-21T00:00:00.000Z', 'running',
+            'magi-shell-root', 'magi-shell-root', 'provider-participant',
             '2026-08-21T00:00:00.000Z', 'running',
             'run-1', 'participant-1', '2026-08-21T00:00:00.000Z',
             '2026-08-21T00:00:00.000Z', NULL
@@ -2601,6 +2606,30 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         FROM activity_rows
       `;
 
+      const lazyFailedCommand = yield* snapshotQuery.getThreadActivityById(
+        threadW,
+        asEventId("activity-0011"),
+      );
+      assert.equal(lazyFailedCommand._tag, "Some");
+      if (lazyFailedCommand._tag === "Some") {
+        const payload = lazyFailedCommand.value.payload as {
+          readonly data: {
+            readonly item: { readonly aggregatedOutput: string };
+            readonly rawOutput: unknown;
+          };
+        };
+        assert.equal(lazyFailedCommand.value.id, asEventId("activity-0011"));
+        assert.match(payload.data.item.aggregatedOutput, /^failed command\nwwww/);
+        assert.deepStrictEqual(payload.data.rawOutput, { stdout: "failed output" });
+      }
+      assert.equal(
+        (yield* snapshotQuery.getThreadActivityById(
+          ThreadId.make("thread-a"),
+          asEventId("activity-0011"),
+        ))._tag,
+        "None",
+      );
+
       const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
       assert.equal(fullDetail._tag, "Some");
       if (fullDetail._tag === "Some") {
@@ -2705,32 +2734,49 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         fullSnapshot._tag === "Some" &&
         windowWithPinnedRequests._tag === "Some"
       ) {
-        const projectedFullSnapshot = projectThreadDetailSnapshot(fullSnapshot.value);
-        const projectedRawBaseline = projectThreadDetailSnapshot({
-          snapshotSequence: fullSnapshot.value.snapshotSequence,
-          thread: detailWithPinnedRequests.value,
+        const projectedFullSnapshot = projectThreadDetailSnapshot(fullSnapshot.value, {
+          compactCommandOutput: true,
         });
+        const projectedRawBaseline = projectThreadDetailSnapshot(
+          {
+            snapshotSequence: fullSnapshot.value.snapshotSequence,
+            thread: detailWithPinnedRequests.value,
+          },
+          {
+            compactCommandOutput: true,
+          },
+        );
         assert.deepStrictEqual(projectedFullSnapshot, projectedRawBaseline);
 
         const rawActivitiesById = new Map(
           detailWithPinnedRequests.value.activities.map((activity) => [activity.id, activity]),
         );
-        const projectedWindowSnapshot = projectThreadDetailSnapshot(windowWithPinnedRequests.value);
-        const projectedWindowBaseline = projectThreadDetailSnapshot({
-          ...windowWithPinnedRequests.value,
-          thread: {
-            ...windowWithPinnedRequests.value.thread,
-            activities: windowWithPinnedRequests.value.thread.activities.map(
-              (activity) => rawActivitiesById.get(activity.id) ?? activity,
-            ),
+        const projectedWindowSnapshot = projectThreadDetailSnapshot(
+          windowWithPinnedRequests.value,
+          {
+            compactCommandOutput: true,
           },
-        });
+        );
+        const projectedWindowBaseline = projectThreadDetailSnapshot(
+          {
+            ...windowWithPinnedRequests.value,
+            thread: {
+              ...windowWithPinnedRequests.value.thread,
+              activities: windowWithPinnedRequests.value.thread.activities.map(
+                (activity) => rawActivitiesById.get(activity.id) ?? activity,
+              ),
+            },
+          },
+          {
+            compactCommandOutput: true,
+          },
+        );
         assert.deepStrictEqual(projectedWindowSnapshot, projectedWindowBaseline);
 
         const projectedIds = new Set(
           projectedFullSnapshot.thread.activities.map((activity) => activity.id),
         );
-        assert.equal(projectedIds.has(asEventId("activity-0002")), false);
+        assert.equal(projectedIds.has(asEventId("activity-0002")), true);
         assert.equal(projectedIds.has(asEventId("activity-0003")), false);
         assert.equal(projectedIds.has(asEventId("activity-0070")), true);
 
@@ -2743,10 +2789,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
           data: {
             item: {
               command: "vp test run",
-              aggregatedOutput: "failed command",
             },
             files: [{ path: "apps/server/src/failed.ts" }],
-            rawOutput: { content: "failed output" },
+            commandOutputAvailable: true,
           },
         });
       }
