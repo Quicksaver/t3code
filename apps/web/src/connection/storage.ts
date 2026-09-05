@@ -34,7 +34,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -42,7 +42,11 @@ const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 5;
+// Thread snapshots written before v5 may retain stale copies of archived
+// conversations, while snapshots written before v6 may embed large command
+// outputs. Both are disposable caches, so one eviction at the latest boundary
+// covers direct upgrades as well as clients that already ran v5.
+const THREAD_CACHE_EVICTION_DATABASE_VERSION = 6;
 
 const StoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
@@ -141,7 +145,7 @@ export function upgradeConnectionDatabase(
     database.createObjectStore(VCS_REFS_STORE_NAME);
   }
 
-  if (oldVersion > 0 && oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
+  if (oldVersion > 0 && oldVersion < THREAD_CACHE_EVICTION_DATABASE_VERSION) {
     transaction?.objectStore(THREAD_STORE_NAME).clear();
   }
 }

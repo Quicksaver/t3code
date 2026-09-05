@@ -448,7 +448,7 @@ Expected behavior:
 - Generic activity detail is suppressed when it merely repeats the displayed command or raw command. For lifecycle rows without provider ids, the final collapse identity prefers detail, then command, then raw command, so distinct no-id commands remain distinct without unstable position-based keys.
 - Known shell wrappers are stripped only when their boundary quotes match. Otherwise the serialized wrapper text remains intact.
 - Expanded changed-file pills and inline diff headers use the shared styled tooltip instead of native `title` attributes, preserving readable full paths for pointer and keyboard users.
-- The web connection database v6 upgrade clears only disposable cached thread-detail snapshots, preventing pre-lazy-output caches from hydrating legacy embedded command output after an upgrade.
+- The standalone file-command-activity branch applies its disposable thread-detail cache eviction as web connection database v5 directly after `base/main` v4. On the integrated fork, Archive already owns v5, so the activity eviction moves to v6; direct upgrades across both boundaries clear the cache once, while v5 clients run the v6 eviction. This prevents pre-lazy-output caches from hydrating legacy embedded command output without downgrading profiles that have already opened v6.
 
 Provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging live in the directly tested `apps/web/src/lib/workLogActivity.ts` module. `apps/web/src/session-logic.ts` retains timeline ordering, lifecycle collapse, subagent-row composition, and the public work-log API.
 
