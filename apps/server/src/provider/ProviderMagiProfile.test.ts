@@ -21,6 +21,7 @@ describe("provider Magi execution profile", () => {
     ["Claude", CLAUDE_MAGI_CAPABILITIES],
     ["Cursor ACP", ACP_MAGI_CAPABILITIES],
     ["Grok ACP", ACP_MAGI_CAPABILITIES],
+    ["Antigravity ACP", ACP_MAGI_CAPABILITIES],
     ["OpenCode", OPENCODE_MAGI_CAPABILITIES],
   ])("declares a complete capability record for %s", (_name, capabilities) => {
     expect(capabilities.controlTools).not.toBe("unsupported");

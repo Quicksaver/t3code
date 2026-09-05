@@ -31,6 +31,7 @@ import {
   parseSessionUpdateEvent,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
+import { ACP_MAGI_CAPABILITIES, MAGI_PARTICIPANT_PRE_PROMPT } from "../ProviderMagiProfile.ts";
 import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -1268,6 +1269,41 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       }).pipe(Effect.flip);
       expect(missing._tag).toBe("AcpRequestError");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("wraps Magi participant turns in the shared control envelope", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      expect(h.adapter.capabilities.magi).toEqual(ACP_MAGI_CAPABILITIES);
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        control: { executionProfile: "magi-read-only" },
+      });
+      const sending = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "Assess the candidate.",
+          control: {
+            executionProfile: "magi-read-only",
+            instructions: "Return the requested schema.",
+          },
+        })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      const text = prompt.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+      expect(text).toContain(MAGI_PARTICIPANT_PRE_PROMPT);
+      expect(text).toContain("Return the requested schema.");
+      expect(text.indexOf(MAGI_PARTICIPANT_PRE_PROMPT)).toBeLessThan(
+        text.indexOf("Assess the candidate."),
+      );
+      yield* Deferred.succeed(prompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(sending);
+      yield* h.waitForEvent((event) => event.type === "turn.completed");
+    }),
   );
 
   it.effect("does not launch a process for a disabled instance or invalid resume cursor", () =>

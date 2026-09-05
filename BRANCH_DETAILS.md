@@ -50,6 +50,11 @@ when an occupied port forces a shift.
   agents.
 - `apps/server/src/provider/Layers/ClaudeAdapter.ts` reports Claude's core automatic compaction to
   Magi. A branch-specific simulated Claude compact trigger is redundant and must not be restored.
+- `apps/server/src/provider/Layers/AntigravityAdapter.ts` declares the shared ACP Magi profile and
+  normalizes session start and turn input through `ProviderMagiProfile.ts`, like Cursor and Grok.
+  `ProviderMagiConformance.ts` lists every built-in driver; an adapter without a declared `magi`
+  capability makes each of its instances report "Provider has not passed Magi conformance." in the
+  Magi settings roster.
 - `apps/server/src/orchestration/Layers/CheckpointReactor.ts` keeps local git status and checkpoint
   handling for Magi participant completions but skips pull-request discovery and global list
   invalidation. Participants share the root checkout and cannot own its pull request; the root turn
