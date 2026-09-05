@@ -16,11 +16,11 @@ const opaqueResult = {
   nested: { selectedSuggestionId: "suggestion_opaque" },
 };
 
-layer("049 Magi proposal terminology", (it) => {
+layer("050 Magi proposal terminology", (it) => {
   it.effect("renames legacy tables, columns, payload keys, and generated ids", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 48 });
+      yield* runMigrations({ toMigrationInclusive: 49 });
       yield* sql`ALTER TABLE projection_magi_proposals RENAME TO projection_magi_suggestions`;
       yield* sql`ALTER TABLE projection_magi_suggestions RENAME COLUMN proposal_id TO suggestion_id`;
       yield* sql`ALTER TABLE projection_magi_suggestions RENAME COLUMN proposal_json TO suggestion_json`;
@@ -103,7 +103,7 @@ layer("049 Magi proposal terminology", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 50 });
 
       const tables = yield* sql<{ readonly name: string }>`
         SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'projection_magi_%suggest%'

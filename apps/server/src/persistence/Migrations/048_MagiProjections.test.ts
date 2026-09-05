@@ -8,15 +8,15 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("047 Magi projections", (it) => {
+layer("048 Magi projections", (it) => {
   it.effect("migrates pre-Magi threads without inventing active state", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 46 });
+      yield* runMigrations({ toMigrationInclusive: 47 });
       const before = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
       assert.isFalse(before.some((column) => column.name === "active_magi_run_json"));
 
-      yield* runMigrations({ toMigrationInclusive: 47 });
+      yield* runMigrations({ toMigrationInclusive: 48 });
       const after = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
       assert.isTrue(after.some((column) => column.name === "active_magi_run_json"));
 

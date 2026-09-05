@@ -144,7 +144,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         source,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`UPDATE effect_sql_magi_migrations
+          yield* sql`UPDATE effect_sql_migrations
             SET name = 'SomebodyElsesMagiMigration' WHERE migration_id = 48`;
         }),
       );

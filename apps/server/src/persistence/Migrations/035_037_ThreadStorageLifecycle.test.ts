@@ -420,6 +420,9 @@ upstreamPinningMigrationLayer("038 thread storage upstream pinning convergence",
         [45, "ProjectionProjectsDefaultThreadEnvMode"],
         [46, "ProjectionProjectFaviconPath"],
         [47, "ThreadStorageLifecycleCompatibility"],
+        [48, "MagiProjections"],
+        [49, "MagiActiveConversationUniqueness"],
+        [50, "MagiProposalTerminology"],
         [51, "MagiThreadColdArchiveGlue"],
         [52, "AuthSessionClientConnection"],
         [53, "ProjectionThreadLinkedPullRequest"],
@@ -429,10 +432,7 @@ upstreamPinningMigrationLayer("038 thread storage upstream pinning convergence",
         [57, "ProjectionThreadLineageConvergenceAfterUpstreamTail"],
         [58, "RepairAutomaticSettlementTimestamps"],
         [59, "ProjectionProjectIcon"],
-        [47, "MagiProjections"],
-        [48, "MagiActiveConversationUniqueness"],
-        [49, "MagiProposalTerminology"],
-        [50, "MagiCoreMigrationCompatibility"],
+        [60, "MagiCoreMigrationCompatibility"],
       ]);
 
       const rows = yield* sql<{
@@ -542,7 +542,6 @@ currentUpstreamHistoryLayer("047 current-upstream compatibility", (it) => {
         [45, "ProjectionProjectsDefaultThreadEnvMode"],
         [46, "ProjectionProjectFaviconPath"],
         [47, "ThreadStorageLifecycleCompatibility"],
-        [47, "MagiProjections"],
       ]);
 
       const manifests = yield* sql<{ readonly threadId: string; readonly status: string }>`

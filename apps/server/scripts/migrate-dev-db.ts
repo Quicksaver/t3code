@@ -38,13 +38,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
-import {
-  CORE_MIGRATION_TABLE,
-  MAGI_MIGRATION_TABLE,
-  magiMigrationManifest,
-  migrationManifest,
-  runMigrations,
-} from "../src/persistence/Migrations.ts";
+import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<MigrateDevDbNotInWorktreeError>()(
@@ -452,10 +446,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     // Verify while the snapshot is still the only thing touched: a slot
     // collision must abort before the old worktree db gets replaced with a
     // schema whose colliding migration was silently skipped.
-    yield* Effect.all([
-      verifyMigrationManifest(CORE_MIGRATION_TABLE, migrationManifest),
-      verifyMigrationManifest(MAGI_MIGRATION_TABLE, magiMigrationManifest),
-    ]).pipe(
+    yield* verifyMigrationManifest("effect_sql_migrations", migrationManifest).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       Effect.catchTags({
         SqlError: (cause) =>

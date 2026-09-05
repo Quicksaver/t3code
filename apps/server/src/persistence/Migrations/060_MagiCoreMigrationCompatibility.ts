@@ -4,14 +4,13 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import ClearAutomaticProjectModelDefaults from "./048_ClearAutomaticProjectModelDefaults.ts";
 import ProjectionProjectsAutoPull from "./049_ProjectionProjectsAutoPull.ts";
 import RepairAutomaticSettlementTimestamps from "./051_RepairAutomaticSettlementTimestamps.ts";
-import MagiProjections from "./047_MagiProjections.ts";
-import MagiActiveConversationUniqueness from "./048_MagiActiveConversationUniqueness.ts";
-import MagiProposalTerminology from "./049_MagiProposalTerminology.ts";
+import MagiProjections from "./048_MagiProjections.ts";
+import MagiActiveConversationUniqueness from "./049_MagiActiveConversationUniqueness.ts";
+import MagiProposalTerminology from "./050_MagiProposalTerminology.ts";
 
-// Older Magi builds recorded these migrations in the core ledger at ids later
-// assigned to core migrations. Ledger normalization now lets the missing core
-// work run first. Reapply that work and every idempotent Magi migration at the
-// end of the separate Magi ledger so all historical schemas converge.
+// Reapply every idempotent migration affected by fork-only development
+// histories, then collapse any experimental Magi ledger into the canonical
+// migration table.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const authSessionColumns = yield* sql<{ readonly name: string }>`
@@ -56,4 +55,13 @@ export default Effect.gen(function* () {
   yield* MagiProjections;
   yield* MagiActiveConversationUniqueness;
   yield* MagiProposalTerminology;
+
+  yield* sql`
+    INSERT OR IGNORE INTO effect_sql_migrations (migration_id, name)
+    VALUES
+      (48, 'MagiProjections'),
+      (49, 'MagiActiveConversationUniqueness'),
+      (50, 'MagiProposalTerminology')
+  `;
+  yield* sql`DROP TABLE IF EXISTS effect_sql_magi_migrations`;
 });

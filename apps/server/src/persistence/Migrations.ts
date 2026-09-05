@@ -60,10 +60,9 @@ import Migration0044 from "./Migrations/044_ProjectionThreadsPinOrderKey.ts";
 import Migration0045 from "./Migrations/045_ProjectionProjectsDefaultThreadEnvMode.ts";
 import Migration0046 from "./Migrations/046_ProjectionProjectFaviconPath.ts";
 import Migration0047 from "./Migrations/047_ThreadStorageLifecycleCompatibility.ts";
-import MagiMigration0047 from "./Migrations/047_MagiProjections.ts";
-import MagiMigration0048 from "./Migrations/048_MagiActiveConversationUniqueness.ts";
-import MagiMigration0049 from "./Migrations/049_MagiProposalTerminology.ts";
-import MagiMigration0050 from "./Migrations/050_MagiCoreMigrationCompatibility.ts";
+import Migration0048 from "./Migrations/048_MagiProjections.ts";
+import Migration0049 from "./Migrations/049_MagiActiveConversationUniqueness.ts";
+import Migration0050 from "./Migrations/050_MagiProposalTerminology.ts";
 import Migration0051 from "./Migrations/051_MagiThreadColdArchiveGlue.ts";
 import Migration0052 from "./Migrations/052_AuthSessionClientConnection.ts";
 import Migration0053 from "./Migrations/053_ProjectionThreadLinkedPullRequest.ts";
@@ -73,6 +72,7 @@ import Migration0056 from "./Migrations/049_ProjectionProjectsAutoPull.ts";
 import Migration0057 from "./Migrations/050_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts";
 import Migration0058 from "./Migrations/051_RepairAutomaticSettlementTimestamps.ts";
 import Migration0059 from "./Migrations/052_ProjectionProjectIcon.ts";
+import Migration0060 from "./Migrations/060_MagiCoreMigrationCompatibility.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -84,10 +84,7 @@ import Migration0059 from "./Migrations/052_ProjectionProjectIcon.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-export const CORE_MIGRATION_TABLE = "effect_sql_migrations";
-export const MAGI_MIGRATION_TABLE = "effect_sql_magi_migrations";
-
-export const coreMigrationEntries = [
+export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -135,6 +132,9 @@ export const coreMigrationEntries = [
   [45, "ProjectionProjectsDefaultThreadEnvMode", Migration0045],
   [46, "ProjectionProjectFaviconPath", Migration0046],
   [47, "ThreadStorageLifecycleCompatibility", Migration0047],
+  [48, "MagiProjections", Migration0048],
+  [49, "MagiActiveConversationUniqueness", Migration0049],
+  [50, "MagiProposalTerminology", Migration0050],
   [51, "MagiThreadColdArchiveGlue", Migration0051],
   [52, "AuthSessionClientConnection", Migration0052],
   [53, "ProjectionThreadLinkedPullRequest", Migration0053],
@@ -144,31 +144,15 @@ export const coreMigrationEntries = [
   [57, "ProjectionThreadLineageConvergenceAfterUpstreamTail", Migration0057],
   [58, "RepairAutomaticSettlementTimestamps", Migration0058],
   [59, "ProjectionProjectIcon", Migration0059],
+  [60, "MagiCoreMigrationCompatibility", Migration0060],
 ] as const;
 
-export const magiMigrationEntries = [
-  [47, "MagiProjections", MagiMigration0047],
-  [48, "MagiActiveConversationUniqueness", MagiMigration0048],
-  [49, "MagiProposalTerminology", MagiMigration0049],
-  [50, "MagiCoreMigrationCompatibility", MagiMigration0050],
-] as const;
+export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
-export const migrationManifest = coreMigrationEntries.map(([id, name]) => [id, name] as const);
-export const magiMigrationManifest = magiMigrationEntries.map(([id, name]) => [id, name] as const);
-
-export const makeCoreMigrationLoader = (throughId?: number) =>
+export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
-      coreMigrationEntries
-        .filter(([id]) => throughId === undefined || id <= throughId)
-        .map(([id, name, migration]) => [`${id}_${name}`, migration]),
-    ),
-  );
-
-export const makeMagiMigrationLoader = (throughId?: number) =>
-  Migrator.fromRecord(
-    Object.fromEntries(
-      magiMigrationEntries
+      migrationEntries
         .filter(([id]) => throughId === undefined || id <= throughId)
         .map(([id, name, migration]) => [`${id}_${name}`, migration]),
     ),
@@ -237,26 +221,25 @@ const normalizeDivergentMigrationHistory = Effect.fn("normalizeDivergentMigratio
   },
 );
 
-const normalizeLegacyMagiMigrationLedger = Effect.fn("normalizeLegacyMagiMigrationLedger")(
+const normalizeLegacyMagiMigrationHistory = Effect.fn("normalizeLegacyMagiMigrationHistory")(
   function* () {
     const sql = yield* SqlClient.SqlClient;
     const tables = yield* sql<{ readonly name: string }>`
       SELECT name
       FROM sqlite_master
-      WHERE type = 'table' AND name = ${CORE_MIGRATION_TABLE}
+      WHERE type = 'table' AND name = 'effect_sql_migrations'
     `;
     if (tables.length === 0) {
       return;
     }
 
     yield* sql`
-      DELETE FROM ${sql(CORE_MIGRATION_TABLE)}
-      WHERE name IN (
-        'MagiProjections',
-        'MagiActiveConversationUniqueness',
-        'MagiProposalTerminology',
-        'MagiCoreMigrationCompatibility'
-      )
+      DELETE FROM effect_sql_migrations
+      WHERE
+        (name = 'MagiProjections' AND migration_id <> 48) OR
+        (name = 'MagiActiveConversationUniqueness' AND migration_id <> 49) OR
+        (name = 'MagiProposalTerminology' AND migration_id <> 50) OR
+        (name = 'MagiCoreMigrationCompatibility' AND migration_id <> 60)
     `;
   },
 );
@@ -275,16 +258,8 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   yield* normalizeDivergentMigrationHistory();
-  yield* normalizeLegacyMagiMigrationLedger();
-  const coreMigrations = yield* run({
-    loader: makeCoreMigrationLoader(toMigrationInclusive),
-    table: CORE_MIGRATION_TABLE,
-  });
-  const magiMigrations = yield* run({
-    loader: makeMagiMigrationLoader(toMigrationInclusive),
-    table: MAGI_MIGRATION_TABLE,
-  });
-  const executedMigrations = [...coreMigrations, ...magiMigrations];
+  yield* normalizeLegacyMagiMigrationHistory();
+  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")

@@ -9,13 +9,13 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("048 Magi active conversation uniqueness", (it) => {
+layer("049 Magi active conversation uniqueness", (it) => {
   it.effect(
     "allows one active run per exact conversation while allowing sibling conversations",
     () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 48 });
+        yield* runMigrations({ toMigrationInclusive: 49 });
         const insert = (runId: string, rootThreadId: string, state: string) => sql`
         INSERT INTO projection_magi_runs (
           run_id,
