@@ -6,7 +6,7 @@
 
 ## Upstream Baseline
 
-The fork integration boundary is the attached `base/main` control branch at exact commit `d5b94100863057fb4629f9ad4a35753d16917924`, with its Windows worktree at `E:\Projects\t3code.worktrees\base-main`. Every tracked feature and fix branch is based directly on `upstream/main`, reset without revert commits to that same control commit, and contains exactly one branch-owned implementation commit above it. Later `BRANCH_DETAILS.md`-only documentation commits may follow without changing the branch implementation diff.
+The fork integration boundary is the attached `base/main` control branch, with its Windows worktree at `E:\Projects\t3code.worktrees\base-main`. It advances only by fast-forward to the selected `upstream/main` commit. Each worktree update squashes the assigned branch, including `base/fork`, on its old upstream base, then rebases it onto that control commit while preserving upstream tracking. The completed branch carries one combined customization commit, including follow-up fixes and documentation, directly above the control commit, or equals it if no customizations remain. Customization commits stay on their assigned branches.
 
 For diagnosing existing verification failures, obtain native control results through the main checkout's `scripts/worktree-baseline.ts` `ensure` command; agents must not install or run checks in the control worktree directly. The helper returns the cached manifest for the exact control commit and host/toolchain fingerprint or elects one caller to produce it while concurrent callers wait. A failure seen in a fork worktree is pre-existing only when the same failure appears in the same-host manifest. If it does not, fix it in the fork worktree that introduced or exposed it.
 
@@ -14,18 +14,18 @@ For diagnosing existing verification failures, obtain native control results thr
 
 **Worktree branch:** `none`
 
-`AGENTS.md` points implementation and evaluation work at this file. A task that only orchestrates worktree subagents follows its invoked skill instructions without loading unrelated documentation. Each feature or fix worktree keeps its branch-only contract in `BRANCH_DETAILS.md`; `fork/main` consolidates that material here and must not track the branch-specific `BRANCH_DETAILS.md` files themselves.
+`AGENTS.md` points implementation and evaluation work at this file. A task that only orchestrates worktree subagents follows its invoked skill instructions without loading unrelated documentation. Each feature or fix worktree keeps its branch-only contract in `BRANCH_DETAILS.md`; local `main` consolidates that material here and must not track the branch-specific `BRANCH_DETAILS.md` files themselves.
 
-Fork assembly is incremental. Apply one branch-owned commit at a time, complete any required integration glue for that commit, and update the affected `FORK.md` sections before applying the next branch commit. Do not defer those documentation updates to an end-of-series cleanup. A branch documentation change that affects the integrated result must be reflected here during the same step.
+Recreate only local `main` for each assembly. All other branches and worktrees are read-only inputs. `fork/main` is a separate worktree branch rebased like the others during worktree updates. Rewind `main` to its latest upstream base, fast-forward to `base/main`, then apply all `base/fork` commits or fast-forward `main` to `base/fork` when equivalent. Cherry-pick each remaining worktree branch's single commit onto `main` in turn. Complete its integration glue, focused validation, and affected `FORK.md` updates on `main` before applying the next branch. Reassess these notes against current branch implementations and documentation. Keep documentation with the glue it describes, in the cherry-pick commit for conflict resolutions or in the same follow-up integration commit for subsequent work.
 
 The repository-local orchestration skills divide responsibilities as follows:
 
 - `$worktrees` is the worker contract for exact-worktree execution, same-host control comparison, runtime leases, cross-host source transfer, Android and iOS isolation, and owned teardown.
 - `$spawn-worktree` dispatches one worker to one absolute worktree path with only its branch task and required skills. It requires the worker to read that worktree's `BRANCH_DETAILS.md`, supervises runtime ownership without leaking orchestration context into the child prompt, and performs exact-worktree lease cleanup only after the worker is terminal.
 - `$spawn-worktrees` inventories active non-`main` worktrees and dispatches through `$spawn-worktree`, explicitly excluding the `base/main` control worktree from worker tasks.
-- `$update-worktree` merges the control boundary into one feature or fix branch, assesses only the interaction between incoming upstream work and that branch's customizations, adapts and documents the branch, and keeps all commits local.
+- `$update-worktree` squashes and rebases one assigned branch at the control boundary, assesses only the interaction between incoming upstream work and that branch's customizations, and folds adaptations and documentation into its single local commit.
 - `$update-worktrees` first fetches upstream and fast-forwards a clean attached `base/main` to the selected `upstream/main` boundary. Only after verifying that exact control state does it dispatch the individual branch updates; it does not mutate the other worktrees itself.
-- `$pick-from-worktrees` inventories each branch's upstream merges and non-upstream commits, brings the shared upstream range into the integration branch, preserves direct branch commit boundaries where possible, and records integration glue and `FORK.md` corrections separately.
+- `$pick-from-worktrees` rebuilds only local `main` from the control boundary and `base/fork`, then applies each remaining worktree branch with its integration glue and `FORK.md` updates before proceeding to the next. Other branches are read-only throughout this workflow.
 - `$comments-from-worktrees` delegates each branch's pull-request comments through `$piz-comments`, then invokes `$pick-from-worktrees` when fixes were produced. `$update-prs` delegates pull-request publication through `$piz-pr` without doing branch work in the orchestrator.
 - `$update-unattended` sequences the full maintenance run: update all worktrees, integrate them, push tracked branches, synchronize the Windows and Mac checkouts, and build the configured Windows, macOS, and Android artifacts. Its per-platform command recipes remain authoritative in that skill.
 
@@ -335,7 +335,7 @@ cd apps/mobile
 pnpm dlx eas-cli@latest upload -p android --build-path ./build/android/t3-code-preview.apk --non-interactive
 ```
 
-This branch carries local conversation-rendering and orchestration changes that are not assumed to exist upstream. Keep this file current when changing local behavior so future merges can preserve the intended UX, and so these patches can be removed when upstream covers the same behavior.
+This branch carries local conversation-rendering and orchestration changes that are not assumed to exist upstream. Keep this file current when changing local behavior so future upstream updates can preserve the intended UX, and so these patches can be removed when upstream covers the same behavior.
 
 ## Repeated Steering And Reliable Stop
 
@@ -448,13 +448,13 @@ Expected behavior:
 - Generic activity detail is suppressed when it merely repeats the displayed command or raw command. For lifecycle rows without provider ids, the final collapse identity prefers detail, then command, then raw command, so distinct no-id commands remain distinct without unstable position-based keys.
 - Known shell wrappers are stripped only when their boundary quotes match. Otherwise the serialized wrapper text remains intact.
 - Expanded changed-file pills and inline diff headers use the shared styled tooltip instead of native `title` attributes, preserving readable full paths for pointer and keyboard users.
-- The web connection database v6 upgrade clears only disposable cached thread-detail snapshots, preventing pre-lazy-output caches from hydrating legacy embedded command output after an upgrade.
+- The standalone file-command-activity branch applies its disposable thread-detail cache eviction as web connection database v5 directly after `base/main` v4. On the integrated fork, Archive already owns v5, so the activity eviction moves to v6; direct upgrades across both boundaries clear the cache once, while v5 clients run the v6 eviction. This prevents pre-lazy-output caches from hydrating legacy embedded command output without downgrading profiles that have already opened v6.
 
 Provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging live in the directly tested `apps/web/src/lib/workLogActivity.ts` module. `apps/web/src/session-logic.ts` retains timeline ordering, lifecycle collapse, subagent-row composition, and the public work-log API.
 
 The desktop identity regression fixture derives its legacy macOS user-data probe through the injected host path service. This keeps the unchanged identity behavior testable on both Windows and POSIX hosts instead of embedding a POSIX-only expected path.
 
-When reconciling `MessagesTimeline.tsx`, preserve both the expandable activity-row behavior and the `hideEmptyPlaceholder` handling used by the draft hero. Neither concern supersedes the other during upstream merges.
+When reconciling `MessagesTimeline.tsx`, preserve both the expandable activity-row behavior and the `hideEmptyPlaceholder` handling used by the draft hero. Neither concern supersedes the other during upstream updates.
 
 Primary files:
 
@@ -674,9 +674,9 @@ Focused regression coverage lives in `apps/server/src/provider/providerMaintenan
 
 **Worktree branch:** `feat/subagent-threading-work`
 
-The Codex subagent-threading work is integrated on `fork/main`; the active worktree remains its maintenance owner. Treat Codex subagent lineage, child-thread projection, the default Sidebar's running-descendant/live-task counter and Agents-panel navigation, Legacy Sidebar and mobile lineage rows, child-thread output isolation, child stop behavior, provider-control failure isolation, parent metadata ingestion, and related tests as part of the fork's customization set during upstream merges.
+The Codex subagent-threading work is integrated on `fork/main`; the active worktree remains its maintenance owner. Treat Codex subagent lineage, child-thread projection, the default Sidebar's running-descendant/live-task counter and Agents-panel navigation, Legacy Sidebar and mobile lineage rows, child-thread output isolation, child stop behavior, provider-control failure isolation, parent metadata ingestion, and related tests as part of the fork's customization set during upstream updates.
 
-Upstream's native observability and the fork's persisted child routing are complementary. Preserve `CodexAdapter`'s `collabAgent/*` to `task.*` mapping when resolving upstream merges, then layer the fork's child-message routing and output isolation around it. `CodexSessionRuntime` must keep both outputs from registered child activity: the synthetic `collabAgent/*` event for the Agents roster and the original lifecycle event routed to the deterministic local child thread with `subagentChildren`/`parentCollab` metadata. Dropping either output breaks one of the two consumer surfaces. Focused adapter and runtime coverage must exercise both outputs so the Agents roster and persisted child navigation cannot regress independently.
+Upstream's native observability and the fork's persisted child routing are complementary. Preserve `CodexAdapter`'s `collabAgent/*` to `task.*` mapping when reconciling upstream changes, then layer the fork's child-message routing and output isolation around it. `CodexSessionRuntime` must keep both outputs from registered child activity: the synthetic `collabAgent/*` event for the Agents roster and the original lifecycle event routed to the deterministic local child thread with `subagentChildren`/`parentCollab` metadata. Dropping either output breaks one of the two consumer surfaces. Focused adapter and runtime coverage must exercise both outputs so the Agents roster and persisted child navigation cannot regress independently.
 
 Thread archive/delete lifecycle behavior is enforced server-side in the orchestration decider and documented in `SUBAGENTS.md`. The sidebar treats those operations as root-thread lifecycle actions, hiding the row actions for subagent children and failing closed when a selected thread key no longer resolves before multi-select delete.
 
@@ -810,7 +810,7 @@ Primary files:
 
 **Worktree branch:** `feat/version-control-panel-work`
 
-The first-class Version Control panel is integrated on `fork/main`; the active worktree remains its maintenance owner. Treat the Version Control singleton right-panel surface, its native mobile screen, live VCS status watcher, Actionable and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, compare-base semantics, review-patch construction, and Version Control panel RPC/contracts as part of the fork's customization set during upstream merges. The native screen reuses the server-authoritative panel RPCs and shared branch/change presentation rules, and is opened from the mobile Git action menu through the explicit `Version Control` action.
+The first-class Version Control panel is integrated on `fork/main`; the active worktree remains its maintenance owner. Treat the Version Control singleton right-panel surface, its native mobile screen, live VCS status watcher, Actionable and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, compare-base semantics, review-patch construction, and Version Control panel RPC/contracts as part of the fork's customization set during upstream updates. The native screen reuses the server-authoritative panel RPCs and shared branch/change presentation rules, and is opened from the mobile Git action menu through the explicit `Version Control` action.
 
 Web branch deletion, discard, remote removal, and stash-drop confirmations use the shared themed confirmation dialog, preserving the existing destructive copy and action labels without invoking browser-native confirmation UI. Creating a branch from a commit likewise uses the themed dialog and retains typed input through mutation failures.
 
@@ -943,7 +943,7 @@ Expected behavior:
 - `apps/mobile/app.config.ts` uses EAS project id `c65ac46d-6488-49af-b61e-ab9bef78f96e`.
 - `apps/mobile/app.config.ts` uses OTA updates URL `https://u.expo.dev/c65ac46d-6488-49af-b61e-ab9bef78f96e`, matching the local EAS project id.
 
-Important merge rule:
+Upstream update rule:
 
 If upstream changes the mobile EAS project metadata, preserve the local `quicksaver` owner, project id, and matching OTA updates URL unless this branch intentionally switches back to the upstream Expo organization or to a new local EAS project. Re-check this triplet before resolving conflicts in `apps/mobile/app.config.ts`, because mixing upstream and fork values can make local builds fail authorization or route OTA updates to the wrong Expo project.
 
@@ -981,7 +981,7 @@ cd apps/mobile
 T3CODE_IOS_PERSONAL_TEAM=1 T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.quicksaver.t3code.dev vp run ios:dev
 ```
 
-Important merge rule:
+Upstream update rule:
 
 If upstream changes the mobile Apple team id or Personal Team build path, preserve team `6JGX8M7Z3L`, the `com.quicksaver.t3code.dev` local development bundle id, and the reduced-capability Personal Team behavior unless the fork intentionally moves to another Apple team. Keep this ownership override separate from Version Control panel documentation and behavior.
 
@@ -989,9 +989,9 @@ Primary file:
 
 - `apps/mobile/app.config.ts`
 
-## Merge Guidance
+## Upstream Update Guidance
 
-When merging from upstream, keep these local behaviors unless upstream has an equivalent implementation:
+When updating from upstream, keep these local behaviors unless upstream has an equivalent implementation:
 
 1. Command and file-change activities stay readable as compact expandable rows. Preserve count-aware settled grouping, one disclosure per expanded row, generic fallback, live-member expansion, and the exclusion of metadata-only and collab-agent markers from rich disclosures.
 2. Codex subagent threading work, including its sole synthetic-shell constructor, distinct read/write parent-relation mappers, complete projection replay, and authoritative child and root provider-control cleanup, remains preserved unless `upstream/main` has an equivalent UI-aware architecture; use `SUBAGENTS.md` as the source of truth.
