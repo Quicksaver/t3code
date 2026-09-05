@@ -1,41 +1,20 @@
 import {
-  ANTIGRAVITY_DEFAULT_MODEL,
-  type AssetCreateUrlInput,
-  type AssetCreateUrlResult,
-  type ChatFileAttachment,
   type EnvironmentId,
+  type EnvironmentApi,
   isProviderDriverKind,
+  type KeybindingCommand,
   ProjectId,
-  type MessageId,
   type ModelSelection,
-  type ProviderInteractionMode,
-  ProviderDriverKind,
-  type ProviderInstanceId,
+  type ProviderDriverKind,
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import {
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import { videoMimeType } from "@t3tools/shared/video";
-import {
-  appendCodexArtifactTemplateUsePrompt,
-  codexArtifactTemplateUsePrompt,
-  type CodexArtifactTemplate,
-} from "@t3tools/client-runtime/codex-artifact-templates";
-import {
-  type ChatMessage,
-  isImageAttachment,
-  type SessionPhase,
-  type Thread,
-  type ThreadShell,
-  type TurnDiffSummary,
-} from "../types";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ProjectedSubagentLifecycle } from "@t3tools/client-runtime/state/subagentRuntime";
+import { type ChatMessage, type Thread, type ThreadShell } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -46,15 +25,6 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
-import type { ComposerSubmissionIntent } from "../composer-logic";
-import type { TimelineEntry } from "../session-logic";
-import type { DesktopPreviewOverlay } from "../previewStateStore";
-import type { RightPanelSurface } from "../rightPanelStore";
-import {
-  NO_PROVIDER_MODEL_SELECTION,
-  resolveSelectableProviderInstanceEntry,
-  type ProviderInstanceEntry,
-} from "../providerInstances";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -63,159 +33,74 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
-export function agentControlledBrowserCloseConfirmation(
-  surfaces: readonly RightPanelSurface[],
-  desktopByTabId: Readonly<Record<string, Pick<DesktopPreviewOverlay, "controller"> | undefined>>,
-): string | null {
-  const activeBrowserCount = surfaces.filter(
-    (surface) =>
-      surface.kind === "preview" &&
-      surface.resourceId !== null &&
-      desktopByTabId[surface.resourceId]?.controller === "agent",
-  ).length;
-  if (activeBrowserCount === 0) return null;
-  if (activeBrowserCount === 1) {
-    return [
-      "Close browser while the agent is using it?",
-      "The agent is actively controlling this browser. Closing it may interrupt the current browser action.",
-    ].join("\n");
+const TERMINAL_KEYBINDING_COMMANDS = new Set<KeybindingCommand>([
+  "terminal.toggle",
+  "terminal.split",
+  "terminal.new",
+  "terminal.close",
+]);
+type CloseTerminalSessionApi = {
+  readonly terminal: Pick<EnvironmentApi["terminal"], "clear" | "write"> &
+    Partial<Pick<EnvironmentApi["terminal"], "close">>;
+};
+
+export function isTerminalKeybindingCommand(command: KeybindingCommand): boolean {
+  return TERMINAL_KEYBINDING_COMMANDS.has(command);
+}
+
+export function isTerminalUiAvailable(input: {
+  readonly enableTerminal: boolean;
+  readonly hasActiveProject: boolean;
+}): boolean {
+  return input.enableTerminal && input.hasActiveProject;
+}
+
+export function terminalThreadRefsToCloseWhenDisabled(input: {
+  readonly enableTerminal: boolean;
+  readonly openTerminalThreadKeys: readonly string[];
+}): ScopedThreadRef[] {
+  if (input.enableTerminal) {
+    return [];
   }
-  return [
-    `Close ${activeBrowserCount} browsers while the agent is using them?`,
-    "The agent is actively controlling these browsers. Closing them may interrupt the current browser actions.",
-  ].join("\n");
+  return input.openTerminalThreadKeys.map(parseScopedThreadKey).filter(isScopedThreadRef);
 }
 
-export function shouldRenderPreviewMiniPlayer(
-  miniPlayerTabId: string | null,
-  renderedRightPanelSurface: RightPanelSurface | null,
-): boolean {
-  return (
-    miniPlayerTabId !== null &&
-    !(
-      renderedRightPanelSurface?.kind === "preview" &&
-      renderedRightPanelSurface.resourceId === miniPlayerTabId
-    )
-  );
-}
-
-export function shouldOpenProactivePullRequest(
-  previousTargetKey: string | null | undefined,
-  targetKey: string | null,
-): boolean {
-  return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
-}
-
-export function shouldOpenProactiveTurnDiff(input: {
-  previousRunningTurnId: TurnId | null | undefined;
-  runningTurnId: TurnId | null;
-  settledTurnId: TurnId | null;
-  turnCompleted: boolean;
-}): boolean {
-  return (
-    input.previousRunningTurnId !== undefined &&
-    input.previousRunningTurnId !== null &&
-    input.runningTurnId === null &&
-    input.turnCompleted &&
-    input.settledTurnId === input.previousRunningTurnId
-  );
-}
-
-export function codexArtifactTemplatePromptToAppend(
-  currentDraft: string,
-  template: CodexArtifactTemplate,
-): string | null {
-  return appendCodexArtifactTemplateUsePrompt(currentDraft, template) === currentDraft
-    ? null
-    : codexArtifactTemplateUsePrompt(template);
-}
-
-export function shouldDockDraftHeroForSubmission(input: {
-  isDraftHeroState: boolean;
-  activeThreadKey: string | null;
-  submissionIntent: ComposerSubmissionIntent;
-}): boolean {
-  return (
-    input.submissionIntent === "foreground" &&
-    input.isDraftHeroState &&
-    input.activeThreadKey !== null
-  );
-}
-
-export function shouldReleaseTimelineAnchorForToolActivity(input: {
-  anchorMessageId: MessageId | null;
-  liveFollowEnabled: boolean;
-  runningTurnId: TurnId | null;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-}): boolean {
-  if (input.anchorMessageId === null || !input.liveFollowEnabled || input.runningTurnId === null) {
-    return false;
-  }
-
-  return input.timelineEntries.some((timelineEntry) => {
-    if (timelineEntry.kind !== "work" || timelineEntry.entry.turnId !== input.runningTurnId) {
-      return false;
+export function closeTerminalSession(input: {
+  readonly api: CloseTerminalSessionApi;
+  readonly threadId: ThreadId;
+  readonly terminalId?: string;
+  readonly isFinalTerminal?: boolean;
+}): void {
+  const fallbackExitWrite = () => {
+    if (!input.terminalId) {
+      return Promise.resolve();
     }
+    return input.api.terminal
+      .write({ threadId: input.threadId, terminalId: input.terminalId, data: "exit\n" })
+      .catch(() => undefined);
+  };
+  const terminalClose = input.api.terminal.close;
 
-    const entry = timelineEntry.entry;
-    return (
-      entry.tone === "tool" ||
-      entry.itemType !== undefined ||
-      entry.requestKind !== undefined ||
-      (entry.command?.trim().length ?? 0) > 0
-    );
-  });
+  if (typeof terminalClose === "function") {
+    void (async () => {
+      if (input.terminalId && input.isFinalTerminal) {
+        await input.api.terminal
+          .clear({ threadId: input.threadId, terminalId: input.terminalId })
+          .catch(() => undefined);
+      }
+      await terminalClose({
+        threadId: input.threadId,
+        ...(input.terminalId ? { terminalId: input.terminalId } : {}),
+        deleteHistory: true,
+      });
+    })().catch(() => fallbackExitWrite());
+  } else {
+    void fallbackExitWrite();
+  }
 }
 
-export function toolGroupConsumesUpwardNavigation(target: EventTarget | null): boolean {
-  const elementTarget = target instanceof Element ? target : null;
-  const group = elementTarget?.closest<HTMLElement>("[data-tool-group-scroll]");
-  if (!group) return false;
-
-  // A nested result or the group itself can consume an upward scroll.
-  for (let element = elementTarget; element; element = element.parentElement) {
-    if (element.scrollTop > 0) {
-      const overflowY = getComputedStyle(element).overflowY;
-      if (overflowY === "auto" || overflowY === "scroll") return true;
-    }
-    if (element === group) break;
-  }
-  return false;
-}
-
-export function resolveDraftHeroState(input: {
-  isLocalDraftThread: boolean;
-  hasTimelineEntries: boolean;
-  isWorking: boolean;
-  draftHeroDockRequested: boolean;
-  backgroundSubmissionPending: boolean;
-}): boolean {
-  if (input.backgroundSubmissionPending) {
-    return true;
-  }
-  return (
-    input.isLocalDraftThread &&
-    !input.hasTimelineEntries &&
-    !input.isWorking &&
-    !input.draftHeroDockRequested
-  );
-}
-
-export function resolveDraftPromotionNavigationTarget(input: {
-  serverThreadRef: ScopedThreadRef | null;
-  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
-  backgroundSubmissionPending: boolean;
-}): ScopedThreadRef | null {
-  if (input.backgroundSubmissionPending) {
-    return null;
-  }
-  const sessionStatus = input.serverThread?.session?.status;
-  const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
-  const startupStopped =
-    sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
-  // Keep local preparation feedback mounted until the server can render the
-  // running turn or its startup error on the canonical thread route.
-  return turnStarted || startupStopped ? input.serverThreadRef : null;
+function isScopedThreadRef(threadRef: ScopedThreadRef | null): threadRef is ScopedThreadRef {
+  return threadRef !== null;
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
@@ -238,6 +123,83 @@ export function startNewThreadForProject(
   void handleNewThread(projectRef);
 
   return true;
+}
+
+export interface AgentChildConversation {
+  readonly threadRef: ScopedThreadRef;
+  readonly title: string;
+}
+
+type ConversationVisibilityThreadShell = Pick<ThreadShell, "environmentId" | "parentRelation">;
+
+/**
+ * Child conversation detail is deliberately gated at the subscription
+ * boundary. Shells stay available for agent progress, lineage, and archive
+ * behavior even when standalone child conversations are disabled.
+ */
+export function canLoadStandaloneThreadConversation(input: {
+  readonly threadShell: ConversationVisibilityThreadShell | null;
+  readonly hasLocalDraft: boolean;
+  readonly clientSettingsHydrated: boolean;
+  readonly subagentConversationVisibilityEnabled: boolean;
+}): boolean {
+  if (input.hasLocalDraft) return true;
+  if (!input.threadShell) return false;
+  return (
+    input.threadShell.parentRelation?.kind !== "magi" &&
+    (input.threadShell.parentRelation?.kind !== "subagent" ||
+      (input.clientSettingsHydrated && input.subagentConversationVisibilityEnabled))
+  );
+}
+
+export function resolveDisabledSubagentParentThreadRef(input: {
+  readonly threadShell: ConversationVisibilityThreadShell | null;
+  readonly clientSettingsHydrated: boolean;
+  readonly subagentConversationVisibilityEnabled: boolean;
+}): ScopedThreadRef | null {
+  const relation = input.threadShell?.parentRelation;
+  if (
+    !input.clientSettingsHydrated ||
+    (input.subagentConversationVisibilityEnabled && relation?.kind === "subagent") ||
+    (relation?.kind !== "subagent" && relation?.kind !== "magi") ||
+    !input.threadShell
+  ) {
+    return null;
+  }
+  return scopeThreadRef(input.threadShell.environmentId, relation.parentThreadId);
+}
+
+type AgentConversationThreadShell = Pick<
+  ThreadShell,
+  "environmentId" | "id" | "title" | "parentRelation"
+>;
+
+export function deriveAgentChildConversationByProviderId(input: {
+  activeThread: Pick<ThreadShell, "environmentId" | "id" | "parentRelation"> | null | undefined;
+  threadShells: ReadonlyArray<AgentConversationThreadShell>;
+  enabled?: boolean;
+}): ReadonlyMap<string, AgentChildConversation> {
+  const conversations = new Map<string, AgentChildConversation>();
+  if (!input.activeThread || input.enabled === false) return conversations;
+
+  const rootThreadId =
+    input.activeThread.parentRelation?.kind === "subagent"
+      ? input.activeThread.parentRelation.rootThreadId
+      : input.activeThread.id;
+  for (const shell of input.threadShells) {
+    const relation = shell.parentRelation;
+    if (
+      shell.environmentId === input.activeThread.environmentId &&
+      relation?.kind === "subagent" &&
+      relation.rootThreadId === rootThreadId
+    ) {
+      conversations.set(relation.providerThreadId, {
+        threadRef: scopeThreadRef(shell.environmentId, shell.id),
+        title: shell.title,
+      });
+    }
+  }
+  return conversations;
 }
 
 export function resolveThreadMetadataUpdateForNextTurn(input: {
@@ -308,6 +270,38 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
   };
 }
 
+/**
+ * Child lifecycle stays available independently of the standalone-child UI
+ * preference. The Agents panel needs it to settle parent activity rows even
+ * when child conversation navigation is disabled.
+ */
+export function deriveAgentChildLifecycleByProviderId(input: {
+  activeThread: Pick<ThreadShell, "environmentId" | "id" | "parentRelation"> | null | undefined;
+  threadShells: ReadonlyArray<AgentConversationThreadShell>;
+}): ReadonlyMap<string, ProjectedSubagentLifecycle> {
+  const lifecycles = new Map<string, ProjectedSubagentLifecycle>();
+  if (!input.activeThread) return lifecycles;
+
+  const rootThreadId =
+    input.activeThread.parentRelation?.kind === "subagent"
+      ? input.activeThread.parentRelation.rootThreadId
+      : input.activeThread.id;
+  for (const shell of input.threadShells) {
+    const relation = shell.parentRelation;
+    if (
+      shell.environmentId === input.activeThread.environmentId &&
+      relation?.kind === "subagent" &&
+      relation.rootThreadId === rootThreadId
+    ) {
+      lifecycles.set(relation.providerThreadId, {
+        status: relation.status,
+        completedAt: relation.completedAt,
+      });
+    }
+  }
+  return lifecycles;
+}
+
 export function shouldWriteThreadErrorToCurrentServerThread(input: {
   activeServerThread:
     | {
@@ -365,163 +359,25 @@ export function isLatestRequestSequence(input: {
 
 export const shouldApplySourceControlMetadataUpdateResult = isLatestRequestSequence;
 
-export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
+export function buildThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "latestTurn" | "parentRelation" | "session">,
+): {
   threadId: ThreadId;
   turnId?: TurnId;
 } {
+  const parentRelation = thread.parentRelation;
+  if (parentRelation?.kind === "subagent") {
+    if (parentRelation.status === "running" && thread.latestTurn?.state === "running") {
+      return { threadId: thread.id, turnId: thread.latestTurn.turnId };
+    }
+    return { threadId: thread.id };
+  }
+
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
   };
-}
-
-/** Use the same enabled instance for the composer, provider status, and chat actions. */
-export function resolveComposerProviderSelection(input: {
-  entries: ReadonlyArray<ProviderInstanceEntry>;
-  candidateInstanceIds: ReadonlyArray<ProviderInstanceId | null | undefined>;
-  lockedProvider: ProviderDriverKind | null;
-  lockedInstanceId: ProviderInstanceId | null | undefined;
-}) {
-  const requestedInstanceId = input.candidateInstanceIds.find(
-    (candidate) => candidate != null && candidate !== NO_PROVIDER_MODEL_SELECTION.instanceId,
-  );
-  const requestedDriverKind =
-    input.lockedProvider ??
-    input.entries.find((entry) => entry.instanceId === requestedInstanceId)?.driverKind ??
-    input.entries[0]?.driverKind ??
-    ProviderDriverKind.make("unconfigured");
-  const lockedContinuationGroupKey = input.lockedProvider
-    ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
-        ?.continuationGroupKey ?? null)
-    : null;
-  // Missing metadata must not move Antigravity history into another Google profile.
-  const requiresExactInstance =
-    input.lockedProvider === "antigravity" &&
-    input.lockedInstanceId != null &&
-    lockedContinuationGroupKey === null;
-  const compatibleEntries = input.entries.filter(
-    (entry) =>
-      (!input.lockedProvider || entry.driverKind === input.lockedProvider) &&
-      (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey) &&
-      (!requiresExactInstance || entry.instanceId === input.lockedInstanceId),
-  );
-  const selectedProviderEntry =
-    input.candidateInstanceIds
-      .map((candidate) =>
-        compatibleEntries.find(
-          (entry) => entry.instanceId === candidate && entry.enabled && entry.isAvailable,
-        ),
-      )
-      .find((entry) => entry !== undefined) ??
-    resolveSelectableProviderInstanceEntry(
-      compatibleEntries.filter((entry) => entry.driverKind === requestedDriverKind),
-      undefined,
-    ) ??
-    resolveSelectableProviderInstanceEntry(compatibleEntries, undefined);
-  const unavailableProviderInstanceId = selectedProviderEntry
-    ? undefined
-    : input.lockedProvider
-      ? (input.lockedInstanceId ?? requestedInstanceId)
-      : requestedInstanceId;
-  return {
-    selectedProviderEntry,
-    requestedDriverKind,
-    lockedContinuationGroupKey,
-    unavailableProviderInstanceId,
-  };
-}
-
-/** Keep restored drafts and every plan control on the selected instance's supported mode. */
-export function resolveComposerInteractionMode(input: {
-  planModeEnabled: boolean;
-  provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
-  interactionMode: ProviderInteractionMode;
-}): { enabled: boolean; interactionMode: ProviderInteractionMode } {
-  const enabled =
-    input.planModeEnabled &&
-    input.provider != null &&
-    input.provider.showInteractionModeToggle !== false;
-  return {
-    enabled,
-    interactionMode: enabled ? input.interactionMode : "default",
-  };
-}
-
-export function getAntigravitySendBlockReason(
-  provider:
-    | Pick<ServerProvider, "driver" | "installed" | "auth" | "models" | "status">
-    | null
-    | undefined,
-  model: string,
-): string | null {
-  if (provider?.driver !== "antigravity") return null;
-  if (!provider.installed) {
-    return "Install Antigravity in provider settings before sending.";
-  }
-  if (provider.auth.status === "unauthenticated") {
-    return "Sign in to Antigravity in provider settings before sending.";
-  }
-  const slug = model.trim();
-  if (slug.length === 0) return "Choose an Antigravity model before sending.";
-  // A restart clears the account status and catalog. Session startup checks
-  // saved credentials and validates the model before sending the prompt.
-  if (provider.auth.status === "unknown") return null;
-  if (provider.models.length === 0) {
-    return "Refresh Antigravity models in provider settings before sending.";
-  }
-  // A saved model that left the catalog is kept in the picker as unavailable
-  // so the user sees what the thread used. The server rejects it at turn
-  // start, so block here unless the provider is in an error state, where a
-  // retry with the same model is the right move.
-  if (
-    provider.status === "ready" &&
-    slug !== ANTIGRAVITY_DEFAULT_MODEL &&
-    !provider.models.some((entry) => entry.slug === slug || entry.aliases?.includes(slug))
-  ) {
-    return "That Antigravity model is no longer available. Choose another model.";
-  }
-  return null;
-}
-
-export function buildRevertTurnCountByUserMessageId(input: {
-  supportsConversationRollback: boolean;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
-}) {
-  const byUserMessageId = new Map<MessageId, number>();
-  if (!input.supportsConversationRollback) {
-    return byUserMessageId;
-  }
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
-    const entry = input.timelineEntries[index];
-    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
-      continue;
-    }
-
-    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
-      const nextEntry = input.timelineEntries[nextIndex];
-      if (!nextEntry || nextEntry.kind !== "message") {
-        continue;
-      }
-      if (nextEntry.message.role === "user") {
-        break;
-      }
-      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-      if (!summary) {
-        continue;
-      }
-      const turnCount =
-        summary.checkpointTurnCount ?? input.inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (typeof turnCount !== "number") {
-        break;
-      }
-      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-      break;
-    }
-  }
-  return byUserMessageId;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {
@@ -578,40 +434,12 @@ export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   URL.revokeObjectURL(previewUrl);
 }
 
-/** Signs an attachment URL without reading its bytes, so video playback can request byte ranges. */
-export async function resolveFileAttachmentUrl(input: {
-  attachment: ChatFileAttachment;
-  environmentId: EnvironmentId;
-  httpBaseUrl: string;
-  createAssetUrl: (input: {
-    environmentId: EnvironmentId;
-    input: AssetCreateUrlInput;
-  }) => Promise<AtomCommandResult<AssetCreateUrlResult, unknown>>;
-}): Promise<string> {
-  const { attachment } = input;
-  const result = await input.createAssetUrl({
-    environmentId: input.environmentId,
-    input: {
-      resource: {
-        _tag: "attachment",
-        attachmentId: attachment.id,
-        fileName: attachment.name,
-        mimeType: videoMimeType(attachment) ?? attachment.mimeType,
-      },
-    },
-  });
-  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-  const url = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
-  if (url === null) throw new Error("The environment returned an invalid attachment URL.");
-  return url;
-}
-
 export function revokeUserMessagePreviewUrls(message: ChatMessage): void {
   if (message.role !== "user" || !message.attachments) {
     return;
   }
   for (const attachment of message.attachments) {
-    if (!isImageAttachment(attachment)) {
+    if (attachment.type !== "image") {
       continue;
     }
     revokeBlobPreviewUrl(attachment.previewUrl);
@@ -624,7 +452,7 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   }
   const previewUrls: string[] = [];
   for (const attachment of message.attachments) {
-    if (!isImageAttachment(attachment)) continue;
+    if (attachment.type !== "image") continue;
     if (!attachment.previewUrl || !attachment.previewUrl.startsWith("blob:")) continue;
     previewUrls.push(attachment.previewUrl);
   }
@@ -658,24 +486,6 @@ export function resolveSendEnvMode(input: {
   isGitRepo: boolean;
 }): DraftThreadEnvMode {
   return input.isGitRepo ? input.requestedEnvMode : "local";
-}
-
-export function resolveBackgroundDraftWorkspaceOptions(input: {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  startFromOrigin: boolean;
-}): {
-  envMode: DraftThreadEnvMode;
-  branch: string | null;
-  worktreePath: null;
-  startFromOrigin: boolean;
-} {
-  return {
-    envMode: input.envMode,
-    branch: input.branch,
-    worktreePath: null,
-    startFromOrigin: input.envMode === "worktree" && input.startFromOrigin,
-  };
 }
 
 export function cloneComposerImageForRetry(
@@ -773,20 +583,15 @@ export function shouldShowBranchMismatchBanner(input: {
   return input.composerHasContent || input.wasShownForCurrentMismatch;
 }
 
-export function shouldShowPlanFollowUpPrompt(input: {
-  pendingUserInputCount: number;
-  interactionMode: ProviderInteractionMode;
-  latestTurnSettled: boolean;
-  hasActionableProposedPlan: boolean;
-  hasComposerAttachments: boolean;
-}): boolean {
-  return (
-    input.pendingUserInputCount === 0 &&
-    input.interactionMode === "plan" &&
-    input.latestTurnSettled &&
-    input.hasActionableProposedPlan &&
-    !input.hasComposerAttachments
-  );
+export function resolveDraftPromotionNavigationTarget(input: {
+  serverThreadRef: ScopedThreadRef | null;
+  serverThreadStarted: boolean;
+  backgroundSubmissionPending: boolean;
+}): ScopedThreadRef | null {
+  if (input.backgroundSubmissionPending) {
+    return null;
+  }
+  return input.serverThreadStarted ? input.serverThreadRef : null;
 }
 
 // Session-scoped (module-level so it survives ChatView remounts, e.g. route
@@ -807,18 +612,9 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+// Thread and composer values are instance routing keys, while session provider
+// names are driver kinds. Resolve both through the streamed instance registry
+// so custom instances lock to their implementing driver on every client.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
@@ -841,7 +637,6 @@ export function deriveLockedProvider(input: {
       : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
 }
-
 export function getStartedThreadModelChangeBlockReason(input: {
   providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "requiresNewThreadForModelChange">>;
   hasStartedSession: boolean;
@@ -923,129 +718,4 @@ export async function waitForStartedServerThread(
       finish(false);
     }, timeoutMs);
   });
-}
-
-export interface LocalDispatchSnapshot {
-  startedAt: string;
-  preparingWorktree: boolean;
-  submissionIntent: ComposerSubmissionIntent;
-  latestUserMessageId: ChatMessage["id"] | null;
-  latestTurnTurnId: TurnId | null;
-  latestTurnRequestedAt: string | null;
-  latestTurnStartedAt: string | null;
-  latestTurnCompletedAt: string | null;
-  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
-  sessionUpdatedAt: string | null;
-  latestTurnStartFailureId: string | null;
-}
-
-export function latestTurnStartFailureId(
-  activeThread: Thread | undefined,
-  latestUserMessageId: ChatMessage["id"] | null,
-): string | null {
-  if (latestUserMessageId === null) return null;
-  return (
-    activeThread?.activities.findLast((activity) => {
-      if (activity.kind !== "provider.turn.start.failed") return false;
-      const payload =
-        typeof activity.payload === "object" && activity.payload !== null
-          ? (activity.payload as { readonly requestId?: unknown })
-          : null;
-      return payload?.requestId === latestUserMessageId;
-    })?.id ?? null
-  );
-}
-
-export function createLocalDispatchSnapshot(
-  activeThread: Thread | undefined,
-  options?: {
-    preparingWorktree?: boolean;
-    submissionIntent?: ComposerSubmissionIntent;
-  },
-): LocalDispatchSnapshot {
-  const latestTurn = activeThread?.latestTurn ?? null;
-  const session = activeThread?.session ?? null;
-  const latestUserMessage = activeThread?.messages.findLast((message) => message.role === "user");
-  return {
-    startedAt: new Date().toISOString(),
-    preparingWorktree: Boolean(options?.preparingWorktree),
-    submissionIntent: options?.submissionIntent ?? "foreground",
-    latestUserMessageId: latestUserMessage?.id ?? null,
-    latestTurnTurnId: latestTurn?.turnId ?? null,
-    latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
-    latestTurnStartedAt: latestTurn?.startedAt ?? null,
-    latestTurnCompletedAt: latestTurn?.completedAt ?? null,
-    sessionStatus: session?.status ?? null,
-    sessionUpdatedAt: session?.updatedAt ?? null,
-    latestTurnStartFailureId: latestTurnStartFailureId(activeThread, latestUserMessage?.id ?? null),
-  };
-}
-
-export function hasServerAcknowledgedLocalDispatch(input: {
-  localDispatch: LocalDispatchSnapshot | null;
-  phase: SessionPhase;
-  latestTurn: Thread["latestTurn"] | null;
-  latestUserMessageId: ChatMessage["id"] | null;
-  session: Thread["session"] | null;
-  hasPendingApproval: boolean;
-  hasPendingUserInput: boolean;
-  latestTurnStartFailureId?: string | null;
-  threadError: string | null | undefined;
-}): boolean {
-  if (!input.localDispatch) {
-    return false;
-  }
-  if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
-    return true;
-  }
-  if (
-    input.latestTurnStartFailureId !== undefined &&
-    input.latestTurnStartFailureId !== null &&
-    input.latestTurnStartFailureId !== input.localDispatch.latestTurnStartFailureId
-  ) {
-    return true;
-  }
-  if (input.phase === "connecting") {
-    return false;
-  }
-
-  const latestTurn = input.latestTurn ?? null;
-  const session = input.session ?? null;
-  const latestUserMessageChanged =
-    input.localDispatch.latestUserMessageId !== input.latestUserMessageId;
-  const latestTurnChanged =
-    input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
-    input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
-    input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
-
-  if (input.phase === "running") {
-    // Steering adds a user message to the current running turn without
-    // necessarily changing any of the turn timestamps. Treat that projected
-    // message as the server acknowledgment so the composer does not remain
-    // stuck in its local "Sending" state until the turn settles.
-    if (latestUserMessageChanged) {
-      return true;
-    }
-    if (!latestTurnChanged) {
-      return false;
-    }
-    if (latestTurn?.startedAt === null || latestTurn === null) {
-      return false;
-    }
-    if (
-      session?.activeTurnId !== null &&
-      session?.activeTurnId !== undefined &&
-      latestTurn?.turnId !== session.activeTurnId
-    ) {
-      return false;
-    }
-    return true;
-  }
-
-  return (
-    latestTurnChanged ||
-    input.localDispatch.sessionStatus !== (session?.status ?? null) ||
-    input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
-  );
 }
