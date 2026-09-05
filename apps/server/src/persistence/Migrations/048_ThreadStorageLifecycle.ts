@@ -2,18 +2,14 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 /**
- * Registers already-archived threads for conversion to cold storage.
- *
- * The migration deliberately only creates durable work records. Compression
- * and filesystem I/O are performed by the background lifecycle worker after
- * startup so a large existing archive cannot hold the schema migration or UI
- * thread hostage.
+ * Creates the complete cold-storage lifecycle schema and queues existing
+ * archived and deleted threads for background processing.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS thread_archive_manifests (
+    CREATE TABLE thread_archive_manifests (
       thread_id TEXT PRIMARY KEY,
       root_thread_id TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -27,12 +23,12 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_thread_archive_manifests_root_status
+    CREATE INDEX idx_thread_archive_manifests_root_status
     ON thread_archive_manifests(root_thread_id, status, archived_at, thread_id)
   `;
 
   yield* sql`
-    CREATE TABLE IF NOT EXISTS thread_storage_maintenance (
+    CREATE TABLE thread_storage_maintenance (
       task TEXT PRIMARY KEY,
       status TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -41,12 +37,22 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    INSERT OR IGNORE INTO thread_storage_maintenance (task, status, updated_at)
+    INSERT INTO thread_storage_maintenance (task, status, updated_at)
     VALUES ('compact-legacy-thread-storage', 'pending', CURRENT_TIMESTAMP)
   `;
 
   yield* sql`
-    INSERT OR IGNORE INTO thread_archive_manifests (
+    CREATE TABLE thread_cleanup_queue (
+      thread_id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    )
+  `;
+
+  yield* sql`
+    INSERT INTO thread_archive_manifests (
       thread_id,
       root_thread_id,
       status,
@@ -64,5 +70,12 @@ export default Effect.gen(function* () {
     FROM projection_threads
     WHERE archived_at IS NOT NULL
       AND deleted_at IS NULL
+  `;
+
+  yield* sql`
+    INSERT INTO thread_cleanup_queue (thread_id, reason, created_at)
+    SELECT thread_id, 'deleted', CURRENT_TIMESTAMP
+    FROM projection_threads
+    WHERE deleted_at IS NOT NULL
   `;
 });
