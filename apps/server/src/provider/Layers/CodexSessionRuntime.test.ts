@@ -1,12 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 
-import { it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
-import * as TestClock from "effect/testing/TestClock";
-import { describe } from "vite-plus/test";
+import { describe, it } from "@effect/vitest";
 import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
@@ -23,7 +19,6 @@ import {
   describeMcpElicitation,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
-  makeCodexCompactionCoordinator,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
   toMcpElicitationResponse,
@@ -45,90 +40,6 @@ describe("CodexSessionRuntimeIdentifierGenerationError", () => {
       "Failed to generate Codex App Server identifier for provider-event.",
     );
   });
-});
-
-describe("Codex compaction coordination", () => {
-  it.effect("only accepts completion for the requested provider thread", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* makeCodexCompactionCoordinator({ timeout: "1 second" });
-      const requestStarted = yield* Deferred.make<void>();
-      const compacting = yield* coordinator
-        .compact("root-thread", Deferred.succeed(requestStarted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(requestStarted);
-
-      yield* coordinator.complete("foreign-thread");
-      NodeAssert.equal(compacting.pollUnsafe(), undefined);
-      yield* coordinator.complete("root-thread");
-      yield* Fiber.join(compacting);
-    }),
-  );
-
-  it.effect("fails every coalesced waiter when the request fails", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* makeCodexCompactionCoordinator({ timeout: "1 second" });
-      const requestStarted = yield* Deferred.make<void>();
-      const releaseRequest = yield* Deferred.make<void>();
-      const requestCount = { value: 0 };
-      const requestError = CodexErrors.CodexAppServerRequestError.internalError("compact failed");
-      const first = yield* coordinator
-        .compact(
-          "root-thread",
-          Effect.sync(() => {
-            requestCount.value += 1;
-          }).pipe(
-            Effect.andThen(Deferred.succeed(requestStarted, undefined)),
-            Effect.andThen(Deferred.await(releaseRequest)),
-            Effect.andThen(Effect.fail(requestError)),
-          ),
-        )
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(requestStarted);
-      const second = yield* coordinator
-        .compact(
-          "root-thread",
-          Effect.sync(() => {
-            requestCount.value += 1;
-          }).pipe(Effect.andThen(Effect.fail(requestError))),
-        )
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      yield* Deferred.succeed(releaseRequest, undefined);
-
-      NodeAssert.strictEqual(yield* Effect.flip(Fiber.join(first)), requestError);
-      NodeAssert.strictEqual(yield* Effect.flip(Fiber.join(second)), requestError);
-      NodeAssert.equal(requestCount.value, 1);
-    }),
-  );
-
-  it.effect("fails a missing compaction notification instead of hanging", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* makeCodexCompactionCoordinator({ timeout: "10 millis" });
-      const compacting = yield* coordinator
-        .compact("root-thread", Effect.void)
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("11 millis");
-      const error = yield* Effect.flip(Fiber.join(compacting));
-
-      NodeAssert.match(error.message, /did not complete/);
-    }),
-  );
-
-  it.effect("fails a pending compaction when the session closes", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* makeCodexCompactionCoordinator({ timeout: "1 second" });
-      const requestStarted = yield* Deferred.make<void>();
-      const compacting = yield* coordinator
-        .compact("root-thread", Deferred.succeed(requestStarted, undefined).pipe(Effect.asVoid))
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(requestStarted);
-      const closeError = CodexErrors.CodexAppServerRequestError.internalError("session closed");
-
-      yield* coordinator.fail(closeError);
-      NodeAssert.strictEqual(yield* Effect.flip(Fiber.join(compacting)), closeError);
-    }),
-  );
 });
 
 function makeThreadOpenResponse(
