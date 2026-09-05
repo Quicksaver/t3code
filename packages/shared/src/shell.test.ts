@@ -8,6 +8,7 @@ import {
   extractPathFromShellOutput,
   CommandAvailability,
   type CommandAvailabilityChecker,
+  formatDisplayCommand,
   isCommandAvailable,
   listLoginShellCandidates,
   mergePathEntries,
@@ -24,6 +25,58 @@ import {
   WindowsShellEnvironment,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
+
+describe("formatDisplayCommand", () => {
+  it("keeps simple POSIX command tokens readable", () => {
+    expect(
+      formatDisplayCommand(
+        "npm",
+        ["install", "-g", "--allow-scripts=@openai/codex", "@openai/codex@latest"],
+        "linux",
+      ),
+    ).toBe("npm install -g --allow-scripts=@openai/codex @openai/codex@latest");
+  });
+
+  it("quotes the executable and every unsafe POSIX argument", () => {
+    expect(
+      formatDisplayCommand(
+        "/opt/Codex Tool's/codex",
+        ["update", "two words", "$HOME", "can't", "", "C:\\temp", "value; rm -rf /"],
+        "darwin",
+      ),
+    ).toBe(
+      `'/opt/Codex Tool'"'"'s/codex' update 'two words' '$HOME' 'can'"'"'t' '' 'C:\\temp' 'value; rm -rf /'`,
+    );
+  });
+
+  it("keeps simple PowerShell command tokens readable", () => {
+    expect(
+      formatDisplayCommand(
+        "npm",
+        ["install", "-g", "--allow-scripts=@openai/codex", "@openai/codex@latest"],
+        "win32",
+      ),
+    ).toBe("npm install -g --allow-scripts=@openai/codex @openai/codex@latest");
+  });
+
+  it("quotes the executable and every unsafe PowerShell argument", () => {
+    expect(
+      formatDisplayCommand(
+        "C:\\Program Files\\Codex's\\codex.exe",
+        ["update", "two words", "$env:HOME", "can't", "", "value; calc"],
+        "win32",
+      ),
+    ).toBe(
+      "& 'C:\\Program Files\\Codex''s\\codex.exe' update 'two words' '$env:HOME' 'can''t' '' 'value; calc'",
+    );
+  });
+
+  it("quotes comma-containing PowerShell executable paths", () => {
+    expect(formatDisplayCommand("C:\\Tools\\Codex,2\\codex.exe", ["update"], "win32")).toBe(
+      "& 'C:\\Tools\\Codex,2\\codex.exe' update",
+    );
+  });
+});
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
