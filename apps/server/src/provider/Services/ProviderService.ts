@@ -17,6 +17,7 @@ import type {
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderRuntimeEvent,
+  ProviderContextUsage,
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
@@ -29,6 +30,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type { ProviderServiceError } from "../Errors.ts";
@@ -106,6 +108,14 @@ export interface ProviderServiceShape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderServiceError>;
 
+  /** Read provider-native context usage for the active logical session. */
+  readonly getContextUsage?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderContextUsage | null, ProviderServiceError>;
+
+  /** Request same-session native compaction and wait for its completion barrier. */
+  readonly compactSession?: (threadId: ThreadId) => Effect.Effect<void, ProviderServiceError>;
+
   /**
    * Reject unsupported rewind before files change, without resuming the session.
    */
@@ -120,6 +130,15 @@ export interface ProviderServiceShape {
     readonly threadId: ThreadId;
     readonly numTurns: number;
   }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Acquire a canonical runtime-event subscription immediately.
+   *
+   * Unlike `streamEvents`, the returned stream already owns its PubSub
+   * subscription. Callers can therefore establish an event barrier before
+   * starting an operation whose first events may be emitted synchronously.
+   */
+  readonly subscribeEvents: Effect.Effect<Stream.Stream<ProviderRuntimeEvent>, never, Scope.Scope>;
 
   /**
    * Upload a thread and return the provider's shareable feedback identifier.

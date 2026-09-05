@@ -1,4 +1,11 @@
-import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  EnvironmentId,
+  MagiRunId,
+  MessageId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -233,6 +240,33 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders Magi summary metadata without loading run detail", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestMagiRun={{
+          runId: MagiRunId.make("magi-run-1"),
+          rootThreadId: ThreadId.make("thread-1"),
+          source: "user-arm",
+          title: { state: "generated", title: "Review" },
+          state: "succeeded",
+          objective: "Review the change",
+          completedMagiTurns: 2,
+          participantCount: 3,
+          tokenCount: 234,
+          startedAt: "2026-03-17T19:12:29.000Z",
+          completedAt: "2026-03-17T19:12:35.000Z",
+        }}
+        timelineEntries={[buildUserTimelineEntry("Review this change")]}
+      />,
+    );
+
+    expect(markup).toContain("Magi reached consensus");
+    expect(markup).toContain("3 participants");
+    expect(markup).toContain("Σ 234");
+    expect(markup).toContain("2 turns");
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),

@@ -21,6 +21,8 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  ProviderContextUsage,
+  ProviderMagiCapabilities,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -32,6 +34,7 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly magi?: ProviderMagiCapabilities;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */
   readonly promptlessTurnContinuation?: boolean;
@@ -125,6 +128,17 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /** Current provider-native context usage for one logical session. */
+  readonly getContextUsage?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderContextUsage | null, TError>;
+
+  /**
+   * Compact the same native session and resolve only after its completion
+   * barrier. Adapters whose capability is automatic or unsupported reject it.
+   */
+  readonly compactSession?: (threadId: ThreadId) => Effect.Effect<void, TError>;
 
   /**
    * Upload a thread to the provider when the adapter supports feedback.

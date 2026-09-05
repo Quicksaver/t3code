@@ -17,6 +17,7 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   TurnId,
+  ActiveMagiRunSummary,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,17 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  magiRootThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  magiParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  magiRunId: Schema.optional(Schema.NullOr(Schema.String)),
+  magiParticipantId: Schema.optional(Schema.NullOr(Schema.String)),
+  magiProviderThreadId: Schema.optional(Schema.NullOr(Schema.String)),
+  magiStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  magiCompletedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  magiStatus: Schema.optional(
+    Schema.NullOr(Schema.Literals(["running", "completed", "errored", "interrupted", "stopped"])),
+  ),
+  activeMagiRun: Schema.optional(Schema.NullOr(ActiveMagiRunSummary)),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,

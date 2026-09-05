@@ -42,6 +42,7 @@ import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/re
 import { scopedThreadKey } from "../../lib/scopedEntities";
 
 import { AppText as Text } from "../../components/AppText";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import {
   ComposerAttachmentStrip,
@@ -53,6 +54,7 @@ import { ComposerEditor, type ComposerEditorHandle } from "../../components/Comp
 import {
   ComposerActionButton,
   ComposerInlineControl,
+  ComposerToolbarButton,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -128,6 +130,7 @@ export interface ThreadComposerProps {
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onReconnectEnvironment: () => void;
+  readonly onOpenMagi?: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
@@ -800,6 +803,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   </View>
                 )}
                 <View className="shrink-0 flex-row items-center">
+                  {props.onOpenMagi ? (
+                    <ComposerToolbarButton
+                      accessibilityLabel="Open Magi"
+                      iconNode={<MagiConsensusIcon size={18} />}
+                      onPress={props.onOpenMagi}
+                      showChevron={false}
+                    />
+                  ) : null}
                   <ComposerDictationPrimaryAction
                     state={voiceInput.state}
                     presentation={voicePresentation}

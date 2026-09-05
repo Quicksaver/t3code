@@ -13,10 +13,9 @@
  *      Auth sessions, pairing links, command receipts, and provider
  *      runtime rows are dropped — pair a fresh browser against dev.
  *   3. Runs migrations on the result. Because the clone carries the real
- *      `effect_sql_migrations` table, this proves a new migration applies
- *      on top of the real applied set, and the slot check below catches
- *      the silent failure where two branches claim the same
- *      `Migrations/NNN_` id (the second one's CREATE TABLE is skipped).
+ *      migration ledgers, this proves new migrations apply on top of the
+ *      real applied set. The slot check below catches the silent failure
+ *      where two changes claim the same id in one ledger.
  *
  * The event log (`orchestration_events`) is pruned per stream while
  * `sqlite_sequence` and `projection_state` carry over untouched, so new
@@ -37,7 +36,13 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Command, Flag } from "effect/unstable/cli";
 
-import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
+import {
+  CORE_MIGRATION_TABLE,
+  MAGI_MIGRATION_TABLE,
+  magiMigrationManifest,
+  migrationManifest,
+  runMigrations,
+} from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedErrorClass<MigrateDevDbNotInWorktreeError>()(
@@ -332,15 +337,16 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
   };
 });
 
-/** Compare this checkout's migration registry against what the cloned
- * database recorded: same slot under a different name means the migration
- * was skipped, not applied. */
-const verifyMigrationSlots = Effect.fn("verifyMigrationSlots")(function* () {
+/** Compare one migration registry against what the cloned database recorded. */
+const verifyMigrationManifest = Effect.fn("verifyMigrationManifest")(function* (
+  table: string,
+  manifest: ReadonlyArray<readonly [number, string]>,
+) {
   const sql = yield* SqlClient.SqlClient;
   const applied = yield* sql<{ migration_id: number; name: string }>`
-    SELECT migration_id, name FROM effect_sql_migrations`;
+    SELECT migration_id, name FROM ${sql(table)}`;
   const appliedById = new Map(applied.map((row) => [Number(row.migration_id), row.name]));
-  for (const [slot, codeName] of migrationManifest) {
+  for (const [slot, codeName] of manifest) {
     const appliedName = appliedById.get(slot);
     if (appliedName !== undefined && appliedName !== codeName) {
       return yield* new MigrateDevDbSlotCollisionError({ slot, codeName, appliedName });
@@ -444,7 +450,10 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     // Verify while the snapshot is still the only thing touched: a slot
     // collision must abort before the old worktree db gets replaced with a
     // schema whose colliding migration was silently skipped.
-    yield* verifyMigrationSlots().pipe(
+    yield* Effect.all([
+      verifyMigrationManifest(CORE_MIGRATION_TABLE, migrationManifest),
+      verifyMigrationManifest(MAGI_MIGRATION_TABLE, magiMigrationManifest),
+    ]).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       Effect.catchTags({
         SqlError: (cause) =>

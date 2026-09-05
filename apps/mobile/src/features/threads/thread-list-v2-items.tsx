@@ -16,6 +16,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
@@ -417,6 +418,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selectedBackgroundColor = theme["--color-user-bubble"];
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
+  const threadAccessibilityLabel = thread.activeMagiRun
+    ? `${thread.title}, Magi active`
+    : thread.title;
 
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
@@ -686,6 +690,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
+        {thread.activeMagiRun ? (
+          <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
+        ) : null}
         <Text
           className={cn(
             "flex-1 text-sm font-t3-medium",
@@ -816,7 +823,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -856,7 +863,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane ? undefined : "bg-screen"}
@@ -894,6 +901,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>
+          ) : null}
+          {thread.activeMagiRun ? (
+            <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
           ) : null}
           <View className="min-w-0 flex-1">
             <Text

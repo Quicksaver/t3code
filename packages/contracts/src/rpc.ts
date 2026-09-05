@@ -91,6 +91,27 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  MagiArmThreadInput,
+  MagiArmThreadResult,
+  MagiDisarmThreadInput,
+  MagiDiagnosticsInput,
+  MagiDiagnosticsResult,
+  MagiGetOptionsInput,
+  MagiGetOptionsResult,
+  MagiGetArmInput,
+  MagiGetArmResult,
+  MagiGetRunDetailInput,
+  MagiListRunsInput,
+  MagiListRunsResult,
+  MagiReconcileActionsInput,
+  MagiResetSettingsInput,
+  MagiRunCommandInput,
+  MagiRunDetail,
+  MagiSettings,
+  MagiSettingsPatch,
+  MagiValidationError,
+} from "./magi.ts";
+import {
   PullRequestActionInput,
   PullRequestActivity,
   PullRequestCommentInput,
@@ -367,6 +388,22 @@ export const WS_METHODS = {
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
+export const MAGI_WS_METHODS = {
+  getOptions: "magi.getOptions",
+  getSettings: "magi.getSettings",
+  updateSettings: "magi.updateSettings",
+  resetSettings: "magi.resetSettings",
+  armThread: "magi.armThread",
+  getArm: "magi.getArm",
+  disarmThread: "magi.disarmThread",
+  cancelRun: "magi.cancelRun",
+  continueRun: "magi.continueRun",
+  reconcileActions: "magi.reconcileActions",
+  listRuns: "magi.listRuns",
+  getRunDetail: "magi.getRunDetail",
+  exportDiagnostics: "magi.exportDiagnostics",
+} as const;
+
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
   success: ServerUpsertKeybindingResult,
@@ -510,6 +547,80 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiGetOptionsRpc = Rpc.make(MAGI_WS_METHODS.getOptions, {
+  payload: MagiGetOptionsInput,
+  success: MagiGetOptionsResult,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiGetSettingsRpc = Rpc.make(MAGI_WS_METHODS.getSettings, {
+  payload: Schema.Struct({}),
+  success: MagiSettings,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsMagiUpdateSettingsRpc = Rpc.make(MAGI_WS_METHODS.updateSettings, {
+  payload: MagiSettingsPatch,
+  success: MagiSettings,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiResetSettingsRpc = Rpc.make(MAGI_WS_METHODS.resetSettings, {
+  payload: MagiResetSettingsInput,
+  success: MagiSettings,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiArmThreadRpc = Rpc.make(MAGI_WS_METHODS.armThread, {
+  payload: MagiArmThreadInput,
+  success: MagiArmThreadResult,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiGetArmRpc = Rpc.make(MAGI_WS_METHODS.getArm, {
+  payload: MagiGetArmInput,
+  success: MagiGetArmResult,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiDisarmThreadRpc = Rpc.make(MAGI_WS_METHODS.disarmThread, {
+  payload: MagiDisarmThreadInput,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiCancelRunRpc = Rpc.make(MAGI_WS_METHODS.cancelRun, {
+  payload: MagiRunCommandInput,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiContinueRunRpc = Rpc.make(MAGI_WS_METHODS.continueRun, {
+  payload: MagiRunCommandInput,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiReconcileActionsRpc = Rpc.make(MAGI_WS_METHODS.reconcileActions, {
+  payload: MagiReconcileActionsInput,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiListRunsRpc = Rpc.make(MAGI_WS_METHODS.listRuns, {
+  payload: MagiListRunsInput,
+  success: MagiListRunsResult,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiGetRunDetailRpc = Rpc.make(MAGI_WS_METHODS.getRunDetail, {
+  payload: MagiGetRunDetailInput,
+  success: MagiRunDetail,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiExportDiagnosticsRpc = Rpc.make(MAGI_WS_METHODS.exportDiagnostics, {
+  payload: MagiDiagnosticsInput,
+  success: MagiDiagnosticsResult,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1196,6 +1307,19 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsMagiGetOptionsRpc,
+  WsMagiGetSettingsRpc,
+  WsMagiUpdateSettingsRpc,
+  WsMagiResetSettingsRpc,
+  WsMagiArmThreadRpc,
+  WsMagiGetArmRpc,
+  WsMagiDisarmThreadRpc,
+  WsMagiCancelRunRpc,
+  WsMagiContinueRunRpc,
+  WsMagiReconcileActionsRpc,
+  WsMagiListRunsRpc,
+  WsMagiGetRunDetailRpc,
+  WsMagiExportDiagnosticsRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

@@ -17,6 +17,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
@@ -457,7 +458,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
-  const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
+  const baseAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
+  const threadAccessibilityLabel = thread.activeMagiRun
+    ? `${baseAccessibilityLabel}, Magi active`
+    : baseAccessibilityLabel;
   const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
     Boolean(part),
   );
@@ -584,6 +588,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
           <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
             <View className="flex-row items-center justify-between gap-2">
+              {thread.activeMagiRun ? <MagiConsensusIcon size={16} /> : null}
               <Text className="flex-1 text-lg font-t3-bold text-foreground" numberOfLines={1}>
                 {thread.title}
               </Text>
@@ -637,6 +642,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       >
         <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
+            {thread.activeMagiRun ? (
+              <MagiConsensusIcon
+                size={15}
+                color={selected ? String(selectedForegroundColor) : undefined}
+              />
+            ) : null}
             <Text
               className={cn(
                 "flex-1 text-base font-t3-medium",

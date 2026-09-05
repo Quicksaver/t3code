@@ -5,17 +5,19 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  MagiParticipantId,
+  MagiRunId,
   ProjectId,
   ThreadId,
   TurnId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -26,6 +28,10 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import {
+  ProjectionMagiRepository,
+  type PersistedMagiRun,
+} from "../../persistence/Services/ProjectionMagi.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
@@ -327,6 +333,342 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 });
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-magi-delete-fallback-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("retains durable Magi cleanup state when root cancellation is unavailable", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const magiRepository = yield* ProjectionMagiRepository;
+        const rootThreadId = ThreadId.make("magi-delete-fallback-root");
+        const runId = MagiRunId.make("magi-delete-fallback-run");
+        const now = "2026-08-24T00:00:00.000Z";
+        const participants = ["one", "two"].map((suffix) => ({
+          participantId: MagiParticipantId.make(`participant-${suffix}`),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.6-sol",
+          },
+          personalityId: null,
+          weight: 1,
+        }));
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-magi-delete-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("magi-delete-project"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-delete-project"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-delete-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("magi-delete-project"),
+            title: "Magi delete project",
+            workspaceRoot: "/tmp/magi-delete-project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-magi-delete-thread"),
+          aggregateKind: "thread",
+          aggregateId: rootThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-delete-thread"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-delete-thread"),
+          metadata: {},
+          payload: {
+            threadId: rootThreadId,
+            projectId: ProjectId.make("magi-delete-project"),
+            title: "Magi delete root",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.6-sol",
+            },
+            runtimeMode: "approval-required",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        const run = {
+          detail: {
+            summary: {
+              runId,
+              rootThreadId,
+              source: "agent-tool",
+              title: { state: "generated", title: "Deletion fallback" },
+              state: "awaiting-arbitration",
+              objective: "Retain cleanup state",
+              completedMagiTurns: 0,
+              startedAt: now,
+              completedAt: null,
+            },
+            config: {
+              participants,
+              consensusThresholdPercent: 50,
+              magiTurnLimit: null,
+            },
+            totalWeight: 2,
+            requiredWeight: 1,
+            activity: {
+              runId,
+              source: "agent-tool",
+              state: "awaiting-arbitration",
+              completedMagiTurns: 0,
+              magiTurnLimit: null,
+              totalWeight: 2,
+              leadingAgreementWeight: null,
+              leadingAgreementLabel: null,
+              requiredWeight: 1,
+            },
+            participants: participants.map((participant, index) => ({
+              participantId: participant.participantId,
+              modelSelection: participant.modelSelection,
+              personality: null,
+              weight: participant.weight,
+              state: "pending" as const,
+              childThreadId: ThreadId.make(`magi-delete-participant-${index}`),
+            })),
+            settlements: [],
+            candidate: null,
+            actions: [],
+            issuedActionBatch: null,
+          },
+          initiatingReferenceId: "magi-delete-reference",
+          initiatingInstruction: "Review deletion fallback",
+          focusedObjective: "Retain cleanup state",
+          arbitratorPrompt: "Arbitrate impartially",
+          participantTimeoutMinutes: 20,
+          protocol: {
+            members: participants.map((participant, index) => ({
+              participant,
+              personality: null,
+              threadId: ThreadId.make(`magi-delete-participant-${index}`),
+              state: "pending" as const,
+            })),
+            turns: [],
+            pendingContextArtifacts: [],
+            appliedDecisions: [],
+            unresolvedDisagreements: [],
+            proposals: [],
+            decisionSets: [],
+            actions: [],
+            reconciliations: [],
+            stateBeforePause: null,
+            pendingBatch: null,
+          },
+          updatedAt: now,
+          mainTurnId: null,
+          mainMessageId: null,
+        } satisfies PersistedMagiRun;
+        yield* magiRepository.putRun(run);
+
+        yield* eventStore.append({
+          type: "thread.deleted",
+          eventId: EventId.make("evt-magi-delete-root"),
+          aggregateKind: "thread",
+          aggregateId: rootThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-delete-root"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-delete-root"),
+          metadata: {},
+          payload: { threadId: rootThreadId, deletedAt: now },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        assert.isTrue(Option.isSome(yield* magiRepository.getRun(runId)));
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-magi-lineage-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("recovers Magi participant lineage beyond the default replay limit", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = "2026-08-21T00:00:00.000Z";
+        const rootThreadId = ThreadId.make("magi-root");
+        const participantThreadId = ThreadId.make("magi-participant");
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-magi-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("magi-project"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-project"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("magi-project"),
+            title: "Magi project",
+            workspaceRoot: "/tmp/magi-project",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-magi-root"),
+          aggregateKind: "thread",
+          aggregateId: rootThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-root"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-root"),
+          metadata: {},
+          payload: {
+            threadId: rootThreadId,
+            projectId: ProjectId.make("magi-project"),
+            title: "Root",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+
+        const sequenceRows = yield* sql<{ readonly maxSequence: number | null }>`
+          SELECT MAX(sequence) AS "maxSequence" FROM orchestration_events
+        `;
+        const sequenceBeforeBacklog = sequenceRows[0]?.maxSequence ?? 0;
+        yield* Effect.forEach(
+          Array.from({ length: 1_000 }, (_, index) => index),
+          (index) => {
+            const eventId = EventId.make(`evt-magi-lineage-backlog-${index}`);
+            const commandId = CommandId.make(`cmd-magi-lineage-backlog-${index}`);
+            return eventStore.append({
+              type: "project.created",
+              eventId,
+              aggregateKind: "project",
+              aggregateId: ProjectId.make("magi-lineage-backlog"),
+              occurredAt: now,
+              commandId,
+              causationEventId: null,
+              correlationId: CorrelationId.make(commandId),
+              metadata: {},
+              payload: {
+                projectId: ProjectId.make("magi-lineage-backlog"),
+                title: `Magi lineage backlog ${index}`,
+                workspaceRoot: "/tmp/magi-lineage-backlog",
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: now,
+                updatedAt: now,
+              },
+            });
+          },
+          { discard: true },
+        );
+        const participantEvent = yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-magi-participant"),
+          aggregateKind: "thread",
+          aggregateId: participantThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-magi-participant"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-magi-participant"),
+          metadata: {},
+          payload: {
+            threadId: participantThreadId,
+            projectId: ProjectId.make("magi-project"),
+            title: "Participant",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            parentRelation: {
+              kind: "magi",
+              rootThreadId,
+              parentThreadId: rootThreadId,
+              runId: MagiRunId.make("run-1"),
+              participantId: MagiParticipantId.make("participant-1"),
+              providerThreadId: "provider-participant-1",
+              depth: 1,
+              startedAt: now,
+              completedAt: null,
+              status: "running",
+            },
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        assert.equal(participantEvent.sequence, sequenceBeforeBacklog + 1_001);
+
+        yield* Effect.forEach(
+          Object.values(ORCHESTRATION_PROJECTOR_NAMES),
+          (projector) =>
+            projector === ORCHESTRATION_PROJECTOR_NAMES.threads
+              ? Effect.void
+              : sql`
+                  UPDATE projection_state
+                  SET
+                    last_applied_sequence = ${participantEvent.sequence},
+                    updated_at = ${now}
+                  WHERE projector = ${projector}
+                `,
+          { discard: true },
+        );
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly magiRootThreadId: string;
+          readonly magiParentThreadId: string | null;
+          readonly magiRunId: string | null;
+          readonly magiParticipantId: string | null;
+        }>`
+          SELECT
+            magi_root_thread_id AS "magiRootThreadId",
+            magi_parent_thread_id AS "magiParentThreadId",
+            magi_run_id AS "magiRunId",
+            magi_participant_id AS "magiParticipantId"
+          FROM projection_threads
+          WHERE thread_id = 'magi-participant'
+        `;
+        assert.deepEqual(rows, [
+          {
+            magiRootThreadId: "magi-root",
+            magiParentThreadId: "magi-root",
+            magiRunId: "run-1",
+            magiParticipantId: "participant-1",
+          },
+        ]);
+      }),
+    );
+  },
+);
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(
   "OrchestrationProjectionPipeline",

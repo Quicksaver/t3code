@@ -17,6 +17,7 @@ import {
   type OrchestrationProposedPlan,
   type OrchestrationThread,
   type OrchestrationThreadActivity,
+  type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
   RuntimeRequestId,
 } from "@t3tools/contracts";
@@ -1019,9 +1020,25 @@ const make = Effect.gen(function* () {
   });
 
   const resolveThreadShell = Effect.fn("resolveThreadShell")(function* (threadId: ThreadId) {
-    return yield* projectionSnapshotQuery
+    const projected = yield* projectionSnapshotQuery
       .getThreadShellById(threadId)
       .pipe(Effect.map(Option.getOrUndefined));
+    if (projected) {
+      return projected;
+    }
+    const hidden = yield* projectionSnapshotQuery
+      .getThreadDetailById(threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (hidden?.parentRelation?.kind === "magi") {
+      return {
+        ...hidden,
+        latestUserMessageAt: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasActionableProposedPlan: false,
+      } satisfies OrchestrationThreadShell;
+    }
+    return undefined;
   });
 
   const rememberAssistantMessageId = (threadId: ThreadId, turnId: TurnId, messageId: MessageId) =>

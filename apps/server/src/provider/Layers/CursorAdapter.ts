@@ -76,6 +76,11 @@ import {
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import {
+  ACP_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -487,6 +492,7 @@ export function makeCursorAdapter(
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          input = normalizeMagiSessionStartInput(input);
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -924,6 +930,7 @@ export function makeCursorAdapter(
 
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
+        input = normalizeMagiSendTurnInput(input);
         const ctx = yield* requireSession(input.threadId);
         // A sendTurn while a prompt is in flight is a steer: the agent folds
         // the new prompt into the ongoing work, so the active turn id is
@@ -1176,6 +1183,21 @@ export function makeCursorAdapter(
         return { threadId, turns: ctx.turns };
       });
 
+    const getContextUsage: NonNullable<CursorAdapterShape["getContextUsage"]> = (threadId) =>
+      requireSession(threadId).pipe(Effect.as(null));
+
+    const compactSession: NonNullable<CursorAdapterShape["compactSession"]> = (threadId) =>
+      requireSession(threadId).pipe(
+        Effect.flatMap(
+          () =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/compact",
+              detail: "Cursor ACP does not expose native session compaction.",
+            }),
+        ),
+      );
+
     const stopSession: CursorAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -1211,12 +1233,14 @@ export function makeCursorAdapter(
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session" },
+      capabilities: { sessionModelSwitch: "in-session", magi: ACP_MAGI_CAPABILITIES },
       startSession,
       sendTurn,
       interruptTurn,
       readThread,
       rollbackThread,
+      getContextUsage,
+      compactSession,
       respondToRequest,
       respondToUserInput,
       stopSession,

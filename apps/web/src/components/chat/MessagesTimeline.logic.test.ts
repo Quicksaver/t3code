@@ -4,6 +4,7 @@ import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
+  resolveMagiActivityPlacement,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -198,6 +199,201 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("resolveMagiActivityPlacement", () => {
+  it("anchors the latest Magi summary after the user message that started it", () => {
+    const timelineEntries = [
+      {
+        id: "entry-user-1",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "First run",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-assistant-1",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-1" as never,
+          role: "assistant" as const,
+          text: "Result",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:05Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-user-2",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:01:00Z",
+        message: {
+          id: "user-2" as never,
+          role: "user" as const,
+          text: "Latest run",
+          turnId: null,
+          createdAt: "2026-01-01T00:01:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "entry-assistant-2",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:01:10Z",
+        message: {
+          id: "assistant-2" as never,
+          role: "assistant" as const,
+          text: "Latest result",
+          turnId: null,
+          createdAt: "2026-01-01T00:01:10Z",
+          updatedAt: "2026-01-01T00:01:10Z",
+          streaming: false,
+        },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:01:01Z")).toEqual({
+      rowId: "entry-assistant-2",
+      position: "before",
+    });
+  });
+
+  it("falls back after the last row while active-run history hydrates", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "entry-user",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user" as never,
+            role: "user",
+            text: "Start",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(resolveMagiActivityPlacement(rows, null)).toEqual({
+      rowId: "entry-user",
+      position: "after",
+    });
+  });
+
+  it("keeps the Magi summary attached to its turn when images and compaction fold", () => {
+    const turnId = TurnId.make("turn-1");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "entry-user",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "Review this with Magi",
+            turnId,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "entry-command",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "command",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId,
+            label: "Ran command",
+            itemType: "command_execution",
+            tone: "tool",
+          },
+        },
+        {
+          id: "entry-image",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "image",
+            createdAt: "2026-01-01T00:00:03Z",
+            turnId,
+            label: "Viewed image",
+            detail: "screenshots/result.png",
+            itemType: "image_view",
+            tone: "tool",
+          },
+        },
+        {
+          id: "entry-compaction",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "compaction",
+            createdAt: "2026-01-01T00:00:04Z",
+            turnId,
+            label: "Compacted context 899K → 19K tokens",
+            sourceActivityKind: "context-compaction",
+            tone: "info",
+          },
+        },
+        {
+          id: "entry-assistant",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Done",
+            turnId,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => [row.id, row.kind])).toEqual([
+      ["entry-user", "message"],
+      ["turn-fold:turn-1", "turn-fold"],
+      ["entry-assistant", "message"],
+    ]);
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:00:01Z")).toEqual({
+      rowId: "turn-fold:turn-1",
+      position: "before",
+    });
   });
 });
 
