@@ -1,5 +1,68 @@
 import type { ToolLifecycleItemType } from "@t3tools/contracts";
 
+export const WORK_LOG_ACTIVITY_LIMITS = {
+  maxSearchDepth: 4,
+  maxPatches: 4,
+  maxChangedFiles: 12,
+  maxPatchChars: 200_000,
+  maxCommandOutputChars: 200_000,
+} as const;
+
+export const WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER = "\n… output truncated";
+
+export const WORK_LOG_COMMAND_STDOUT_KEYS = ["stdout"] as const;
+export const WORK_LOG_COMMAND_STDERR_KEYS = ["stderr"] as const;
+export const WORK_LOG_COMMAND_CONTENT_KEYS = ["content", "output", "text", "result"] as const;
+export const WORK_LOG_COMMAND_ITEM_CONTENT_KEYS = [
+  "aggregatedOutput",
+  ...WORK_LOG_COMMAND_CONTENT_KEYS,
+] as const;
+export const WORK_LOG_COMMAND_RESULT_TEXT_KEYS = [
+  ...WORK_LOG_COMMAND_STDOUT_KEYS,
+  ...WORK_LOG_COMMAND_STDERR_KEYS,
+  ...WORK_LOG_COMMAND_CONTENT_KEYS,
+] as const;
+
+export const WORK_LOG_COMMAND_EXIT_CODE_KEYS = ["exitCode", "code"] as const;
+export const WORK_LOG_COMMAND_DURATION_MS_KEYS = ["durationMs", "elapsedMs"] as const;
+export const WORK_LOG_COMMAND_ELAPSED_SECONDS_KEYS = ["elapsedSeconds"] as const;
+export const WORK_LOG_COMMAND_RESULT_NUMBER_KEYS = [
+  ...WORK_LOG_COMMAND_EXIT_CODE_KEYS,
+  ...WORK_LOG_COMMAND_DURATION_MS_KEYS,
+  ...WORK_LOG_COMMAND_ELAPSED_SECONDS_KEYS,
+] as const;
+
+export const WORK_LOG_PATCH_KEYS = ["patch", "diff", "unifiedDiff"] as const;
+export const WORK_LOG_PATH_KEYS = [
+  "path",
+  "filePath",
+  "relativePath",
+  "filename",
+  "newPath",
+  "oldPath",
+] as const;
+export const WORK_LOG_PATCH_CONTAINER_KEYS = [
+  "item",
+  "result",
+  "input",
+  "data",
+  "changes",
+  "files",
+  "edits",
+  "patch",
+  "patches",
+  "operations",
+] as const;
+
+export function looksLikeUnifiedDiff(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith("diff --git ") ||
+    /^--- [^\r\n]+\r?\n\+\+\+ /u.test(trimmed) ||
+    /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/u.test(trimmed)
+  );
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

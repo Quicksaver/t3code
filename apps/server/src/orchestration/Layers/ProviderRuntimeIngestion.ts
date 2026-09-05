@@ -849,30 +849,33 @@ export function runtimeEventToActivities(
       // payload reaches a client. Persist the projected form for non-terminal
       // updates; `item.completed` below still persists the full payload.
       return [
-        projectActivityPayload({
-          id: event.eventId,
-          createdAt: event.createdAt,
-          tone: "tool",
-          kind: "tool.updated",
-          summary: event.payload.title ?? "Tool updated",
-          payload: {
-            itemType: event.payload.itemType,
-            ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
-            ...(event.payload.status ? { status: event.payload.status } : {}),
-            ...(event.payload.title ? { title: event.payload.title } : {}),
-            ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
-            ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
-            ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
-            ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
-            ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
-            ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
-            ...(event.payload.parentToolUseId
-              ? { parentToolUseId: event.payload.parentToolUseId }
-              : {}),
+        projectActivityPayload(
+          {
+            id: event.eventId,
+            createdAt: event.createdAt,
+            tone: "tool",
+            kind: "tool.updated",
+            summary: event.payload.title ?? "Tool updated",
+            payload: {
+              itemType: event.payload.itemType,
+              ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
+              ...(event.payload.status ? { status: event.payload.status } : {}),
+              ...(event.payload.title ? { title: event.payload.title } : {}),
+              ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+              ...(event.payload.toolSurface ? { toolSurface: event.payload.toolSurface } : {}),
+              ...(event.payload.toolIcon ? { toolIcon: event.payload.toolIcon } : {}),
+              ...(event.payload.toolSource ? { toolSource: event.payload.toolSource } : {}),
+              ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
+              ...(event.payload.agentId ? { agentId: event.payload.agentId } : {}),
+              ...(event.payload.parentToolUseId
+                ? { parentToolUseId: event.payload.parentToolUseId }
+                : {}),
+            },
+            turnId: toTurnId(event.turnId) ?? null,
+            ...maybeSequence,
           },
-          turnId: toTurnId(event.turnId) ?? null,
-          ...maybeSequence,
-        }),
+          { preserveCommandDetails: false },
+        ),
       ];
     }
 
