@@ -10,11 +10,11 @@ const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
 const MODEL_SELECTION = '{"instanceId":"codex","model":"gpt-5.6-sol"}';
 
-layer("051_RepairAutomaticSettlementTimestamps", (it) => {
+layer("058_RepairAutomaticSettlementTimestamps", (it) => {
   it.effect("repairs automatic stamps and leaves manual settlement alone", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 57 });
 
       yield* sql`
         INSERT INTO projection_threads (
@@ -164,7 +164,7 @@ layer("051_RepairAutomaticSettlementTimestamps", (it) => {
       const eventsBefore =
         yield* sql`SELECT payload_json FROM orchestration_events ORDER BY event_id`;
 
-      yield* runMigrations({ toMigrationInclusive: 51 });
+      yield* runMigrations({ toMigrationInclusive: 58 });
 
       const threads = yield* sql<{
         readonly threadId: string;

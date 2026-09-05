@@ -67,11 +67,11 @@ import Migration0051 from "./Migrations/051_MagiThreadColdArchiveGlue.ts";
 import Migration0052 from "./Migrations/052_AuthSessionClientConnection.ts";
 import Migration0053 from "./Migrations/053_ProjectionThreadLinkedPullRequest.ts";
 import Migration0054 from "./Migrations/054_ProjectionThreadsUnsettledAt.ts";
-import Migration0055 from "./Migrations/048_ClearAutomaticProjectModelDefaults.ts";
-import Migration0056 from "./Migrations/049_ProjectionProjectsAutoPull.ts";
-import Migration0057 from "./Migrations/050_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts";
-import Migration0058 from "./Migrations/051_RepairAutomaticSettlementTimestamps.ts";
-import Migration0059 from "./Migrations/052_ProjectionProjectIcon.ts";
+import Migration0055 from "./Migrations/055_ClearAutomaticProjectModelDefaults.ts";
+import Migration0056 from "./Migrations/056_ProjectionProjectsAutoPull.ts";
+import Migration0057 from "./Migrations/057_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts";
+import Migration0058 from "./Migrations/058_RepairAutomaticSettlementTimestamps.ts";
+import Migration0059 from "./Migrations/059_ProjectionProjectIcon.ts";
 import Migration0060 from "./Migrations/060_MagiCoreMigrationCompatibility.ts";
 
 /**

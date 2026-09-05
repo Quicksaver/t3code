@@ -16,10 +16,10 @@ import ProjectionProjectFaviconPath from "./046_ProjectionProjectFaviconPath.ts"
 import AuthSessionClientConnection from "./045_AuthSessionClientConnection.ts";
 import ProjectionThreadLinkedPullRequest from "./046_ProjectionThreadLinkedPullRequest.ts";
 import ProjectionThreadsUnsettledAt from "./047_ProjectionThreadsUnsettledAt.ts";
-import ClearAutomaticProjectModelDefaults from "./048_ClearAutomaticProjectModelDefaults.ts";
-import ProjectionProjectsAutoPull from "./049_ProjectionProjectsAutoPull.ts";
-import RepairAutomaticSettlementTimestamps from "./051_RepairAutomaticSettlementTimestamps.ts";
-import ProjectionProjectIcon from "./052_ProjectionProjectIcon.ts";
+import ClearAutomaticProjectModelDefaults from "./055_ClearAutomaticProjectModelDefaults.ts";
+import ProjectionProjectsAutoPull from "./056_ProjectionProjectsAutoPull.ts";
+import RepairAutomaticSettlementTimestamps from "./058_RepairAutomaticSettlementTimestamps.ts";
+import ProjectionProjectIcon from "./059_ProjectionProjectIcon.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
