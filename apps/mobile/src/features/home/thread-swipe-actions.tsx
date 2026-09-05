@@ -33,6 +33,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/AppText";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
 
 // Wide enough for the longest action label ("Unarchive").
 const ACTION_ITEM_WIDTH = 58;
@@ -219,7 +220,9 @@ export function useSwipeableScrollGate(options?: {
 }
 
 export function ThreadSwipeable(props: {
-  readonly backgroundColor: ColorValue;
+  /** Defaults to the themed card surface. Override for rows rendered directly
+   * on screen or drawer surfaces. */
+  readonly backgroundColor?: ColorValue;
   readonly children: (close: () => void) => ReactNode;
   /** Uses action visuals that fit inside compact 44pt rows. The press target
    * still spans the row's full height and width. */
@@ -256,6 +259,8 @@ export function ThreadSwipeable(props: {
   >["simultaneousWithExternalGesture"];
   readonly threadTitle: string;
 }) {
+  const cardColor = useUniwindTheme()["--color-card"];
+  const backgroundColor = props.backgroundColor ?? cardColor;
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const fullSwipeArmedRef = useRef(false);
   const hasSecondaryAction = props.secondaryAction !== null;
@@ -284,8 +289,8 @@ export function ThreadSwipeable(props: {
     <ReanimatedSwipeable
       ref={swipeableRef}
       animationOptions={THREAD_SWIPE_SPRING}
-      childrenContainerStyle={{ backgroundColor: props.backgroundColor }}
-      containerStyle={[{ backgroundColor: props.backgroundColor }, props.containerStyle]}
+      childrenContainerStyle={{ backgroundColor }}
+      containerStyle={[{ backgroundColor }, props.containerStyle]}
       dragOffsetFromRightEdge={8}
       enabled={props.enabled !== false && gateEnabled}
       enableTrackpadTwoFingerGesture={props.enableTrackpadSwipe ?? true}
@@ -327,7 +332,7 @@ export function ThreadSwipeable(props: {
       overshootRight
       renderRightActions={(_progress, translation, methods) => (
         <ThreadSwipeActions
-          backgroundColor={props.backgroundColor}
+          backgroundColor={backgroundColor}
           compact={props.compactActions === true}
           fullSwipeAction={fullSwipeAction}
           fullSwipeThreshold={fullSwipeThreshold}

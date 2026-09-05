@@ -8,6 +8,7 @@ This is a living glossary for T3 Code. It explains what common terms mean in thi
 
 - [Project and workspace](#project-and-workspace)
 - [Thread timeline](#thread-timeline)
+- [Thread lifecycle](#thread-lifecycle)
 - [Orchestration](#orchestration)
 - [Provider runtime](#provider-runtime)
 - [Checkpointing](#checkpointing)
@@ -42,6 +43,27 @@ A single user-to-assistant work cycle inside a thread. It starts with user input
 #### Activity
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
+
+### Thread lifecycle
+
+#### Settled
+
+A live thread that no longer needs attention in the active sidebar list. A thread can settle
+manually or automatically, remains available in the sidebar's **Settled** section, and returns to
+the active list when it is un-settled or new work begins. Each environment's server decides
+automatic settlement eligibility and timing from its durable thread state and settlement settings;
+clients do not decide automatic eligibility, though they can update those settings or send explicit
+settle and un-settle commands. Unlike [Archive](#archive), settling keeps the thread in the live
+thread list and preserves its history. See [ThreadSettlementPolicy.ts][28] and
+[Organizing threads][29].
+
+#### Archive
+
+A reversible action that moves a thread out of the live thread list without deleting its conversation
+history. Unlike a [settled](#settled) thread, an archived thread is available only from the Archive
+screen until it is unarchived or deleted. It has an archive timestamp in
+[the orchestration contracts][1]. Unarchiving restores it to the active thread list; deleting it
+permanently clears the thread and its history. See the [Archive user guide][27].
 
 ### Orchestration
 
@@ -175,6 +197,8 @@ ships T3 Code already matching it.
 - If you see `receipt`, think "async milestone signal, for tests".
 - If you see `checkpoint`, think "workspace snapshot for diff/restore".
 - If you see `quiesced`, think "all relevant follow-up work has gone idle".
+- If you see `settled`, think "live thread that remains in the Settled section".
+- If you see `archive`, think "move a thread out of the live list without deleting its history".
 
 ## Related Docs
 
@@ -182,6 +206,7 @@ ships T3 Code already matching it.
 - [Provider architecture][16]
 - [Permission modes][18]
 - [Workspace layout][2]
+- [Archive user guide][27]
 
 [1]: ../../packages/contracts/src/orchestration.ts
 [2]: ./workspace-layout.md
@@ -209,3 +234,6 @@ ships T3 Code already matching it.
 [24]: ./overview.md
 [25]: ../../apps/server/src/environmentTheme.ts
 [26]: ../user/environment-theme.md
+[27]: ../user/archive.md
+[28]: ../../apps/server/src/orchestration/ThreadSettlementPolicy.ts
+[29]: ../user/thread-sidebar.md
