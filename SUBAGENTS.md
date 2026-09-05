@@ -67,11 +67,11 @@ type OrchestrationThreadParentRelation =
     };
 ```
 
-`apps/server/src/persistence/Migrations/034_ProjectionThreadParentRelation.ts` idempotently adds the explicit projection columns and parent/root indexes. `apps/server/src/persistence/Migrations/035_BackfillEmptyProjectionThreadRootIds.ts` invokes that schema migration before ensuring the settled-thread columns and repairing empty root ids that could remain in already-created projection rows. This is the convergence path for databases whose recorded numeric migration 34 is `ProjectionThreadsSnoozed`, because the migrator skips every migration at or below the latest recorded id. `apps/server/src/persistence/Migrations/036_ProjectionThreadsSnoozed.ts` idempotently ensures the snooze columns when migration 34 is instead `ProjectionThreadParentRelation`. Projection reads, shells, detail snapshots, reducers, and shell/detail merges preserve `parentRelation`. Shell-stream refetch/coalescing and WebSocket RPC delivery also retain the complete relation.
+`apps/server/src/persistence/Migrations/048_ProjectionThreadParentRelation.ts` applies the complete lineage schema directly after the `base/main` migration tail. It adds every parent, root, provider, title-seed, depth, timing, and status column, backfills existing threads as roots, and creates both relation indexes. Projection reads, shells, detail snapshots, reducers, and shell/detail merges preserve `parentRelation`. Shell-stream refetch/coalescing and WebSocket RPC delivery also retain the complete relation.
 
 `mapThreadParentRelationFields(...)` in `apps/server/src/orchestration/Layers/ProjectionPipeline.ts` maps root defaults and subagent lineage columns for both `thread.created` and `thread.meta-updated`. Projection bootstrap reads every unapplied event instead of stopping at the event store's default 1,000-event window, so a child beyond that boundary still rebuilds with its root, direct parent, depth, timing, provider identity, and terminal status. `ProjectionPipeline.test.ts` holds that contract with a completed depth-two child placed after 1,000 earlier events.
 
-`apps/server/src/persistence/Migrations.ts` records lineage and its compatibility repairs at IDs 34-39, turn-keyset and pin-order migrations at IDs 40 and 41, project default-thread-environment and favicon migrations at IDs 42 and 43, and `044_ProjectionThreadLineageConvergenceAfterProjectMigrations.ts` as a second idempotent lineage convergence. Auth-session connection, linked pull request, unsettled timestamp, automatic project-model cleanup, and project auto-pull occupy IDs 45-49 under matching `045_...` through `049_...` filenames. `050_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts` repeats the idempotent convergence above the customized tail, covering supported ledgers that reached ID 38, the project-migration boundary, or migration ID 45 without the lineage columns. `051_RepairAutomaticSettlementTimestamps.ts` and `052_ProjectionProjectIcon.ts` carry the automatic-settlement repair and project-icon schema without reusing IDs 46 and 47 in that ledger.
+The branch defines only migration 48 above `base/main`. Intermediate branch-only migration histories belong to `fork/main`, where already-run development builds require explicit compatibility work.
 
 Normal root/default projection upserts do not overwrite an existing subagent relation. Create and metadata-update commands reject missing parents and cyclic ancestry.
 
@@ -155,12 +155,7 @@ Focused coverage lives in:
 - `apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts`
 - `apps/server/src/orchestration/decider.delete.test.ts`
 - `apps/server/test/ActivityPayloadProjection.test.ts`
-- `apps/server/src/persistence/Migrations/016_CanonicalizeModelSelections.test.ts`
-- `apps/server/src/persistence/Migrations/035_BackfillEmptyProjectionThreadRootIds.test.ts`
-- `apps/server/src/persistence/Migrations/042_ProjectionProjectsDefaultThreadEnvMode.test.ts`
-- `apps/server/src/persistence/Migrations/043_ProjectionProjectFaviconPath.test.ts`
-- `apps/server/src/persistence/Migrations/051_RepairAutomaticSettlementTimestamps.test.ts`
-- `apps/server/src/persistence/Migrations/052_ProjectionProjectIcon.test.ts`
+- `apps/server/src/persistence/Migrations/048_ProjectionThreadParentRelation.test.ts`
 - `apps/server/src/provider/Layers/AntigravityAdapter.test.ts`
 - `apps/server/src/server.test.ts`
 - `apps/web/src/components/LegacySidebar.logic.test.ts`
