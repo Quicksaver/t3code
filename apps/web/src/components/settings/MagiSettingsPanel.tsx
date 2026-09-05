@@ -70,9 +70,14 @@ export function EnvironmentMagiSettings({
   const queryAtom = magiEnvironment.settings({ environmentId, input: {} });
   const result = useAtomValue(queryAtom);
   const remote = Option.getOrNull(AsyncResult.value(result));
-  const [arbitratorPrompt, setArbitratorPrompt] = useState("");
-  const [personalities, setPersonalities] = useState<ReadonlyArray<MagiPersonality>>([]);
-  const [showRunDetailsAndDiagnostics, setShowRunDetailsAndDiagnostics] = useState(false);
+  const [previousRemote, setPreviousRemote] = useState(remote);
+  const [arbitratorPrompt, setArbitratorPrompt] = useState(remote?.arbitratorPrompt ?? "");
+  const [personalities, setPersonalities] = useState<ReadonlyArray<MagiPersonality>>(
+    remote?.personalities ?? [],
+  );
+  const [showRunDetailsAndDiagnostics, setShowRunDetailsAndDiagnostics] = useState(
+    remote?.showRunDetailsAndDiagnostics ?? false,
+  );
   const [selectedPersonalityId, setSelectedPersonalityId] = useState<MagiPersonalityId | null>(
     null,
   );
@@ -84,18 +89,6 @@ export function EnvironmentMagiSettings({
   const update = useAtomCommand(magiEnvironment.updateSettings, { reportFailure: false });
   const reset = useAtomCommand(magiEnvironment.resetSettings, { reportFailure: false });
 
-  useEffect(() => {
-    if (!remote) return;
-    setArbitratorPrompt(remote.arbitratorPrompt);
-    setPersonalities(remote.personalities);
-    setShowRunDetailsAndDiagnostics(remote.showRunDetailsAndDiagnostics);
-    setSelectedPersonalityId((current) =>
-      current && remote.personalities.some((personality) => personality.id === current)
-        ? current
-        : (remote.personalities[0]?.id ?? null),
-    );
-  }, [remote]);
-
   useEffect(
     () => () => {
       if (promptSaveTimerRef.current) clearTimeout(promptSaveTimerRef.current);
@@ -103,6 +96,20 @@ export function EnvironmentMagiSettings({
     },
     [],
   );
+
+  if (remote !== previousRemote) {
+    setPreviousRemote(remote);
+    if (remote) {
+      setArbitratorPrompt(remote.arbitratorPrompt);
+      setPersonalities(remote.personalities);
+      setShowRunDetailsAndDiagnostics(remote.showRunDetailsAndDiagnostics);
+      setSelectedPersonalityId((current) =>
+        current && remote.personalities.some((personality) => personality.id === current)
+          ? current
+          : (remote.personalities[0]?.id ?? null),
+      );
+    }
+  }
 
   const save = async (patch: Parameters<typeof update>[0]["input"]) => {
     const saved = await update({ environmentId, input: patch });

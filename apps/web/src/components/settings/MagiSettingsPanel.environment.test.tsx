@@ -172,4 +172,36 @@ describe("EnvironmentMagiSettings routing", () => {
     ).toBeNull();
     expect(visitElements(panel, (element) => element.props.inert === true)).not.toBeNull();
   });
+
+  it("keeps local instructions until a new settings snapshot arrives", () => {
+    vi.useFakeTimers();
+    try {
+      const instructions = (panel: ReactElement<Record<string, unknown>>) =>
+        visitElements(panel, (element) => element.props["aria-label"] === "Skeptic instructions");
+      const editor = instructions(renderLoadedPanel());
+      if (!editor) throw new Error("Missing participant instructions editor");
+      (editor.props.onChange as (event: { target: { value: string } }) => void)({
+        target: { value: "Check the evidence first." },
+      });
+
+      renderPanel();
+      expect(instructions(renderPanel())?.props.value).toBe("Check the evidence first.");
+
+      atoms.settings = {
+        ...DEFAULT_MAGI_SETTINGS,
+        personalities: [
+          {
+            id: firstPersonalityId,
+            name: "Skeptic",
+            prompt: "Instructions from the server.",
+            included: true,
+          },
+        ],
+      };
+      expect(instructions(renderLoadedPanel())?.props.value).toBe("Instructions from the server.");
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
 });
