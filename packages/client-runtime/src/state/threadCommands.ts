@@ -1,12 +1,16 @@
 import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 import { WS_METHODS } from "@t3tools/contracts";
 
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
+import { evictCachedThread } from "./threadCache.ts";
 import {
   type ArchiveThreadInput,
   type CreateThreadInput,
@@ -74,8 +78,24 @@ export type {
   UpdateThreadMetadataInput,
 } from "../operations/commands.ts";
 
+export const archiveThreadAndEvictCache = Effect.fn(
+  "EnvironmentCommands.archiveThreadAndEvictCache",
+)(function* (input: ArchiveThreadInput) {
+  return yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const result = yield* restore(archiveThread(input));
+      const supervisor = yield* EnvironmentSupervisor;
+      const cache = yield* EnvironmentCacheStore;
+      // The shell/detail event paths also evict. This acknowledgement-side
+      // eviction closes the route-teardown race when those events arrive late.
+      yield* evictCachedThread(cache, supervisor.target.environmentId, input.threadId);
+      return result;
+    }),
+  );
+});
+
 export function createThreadEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | EnvironmentCacheStore | Crypto.Crypto | R, E>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -98,7 +118,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     archive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:archive",
-      execute: (input: ArchiveThreadInput) => archiveThread(input),
+      execute: (input: ArchiveThreadInput) => archiveThreadAndEvictCache(input),
       scheduler,
       concurrency,
     }),
