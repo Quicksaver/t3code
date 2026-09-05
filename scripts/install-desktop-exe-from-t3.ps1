@@ -280,10 +280,19 @@ function Start-InstallerHandoff {
         $encodedCommand
       ) -join " "
     )
+  $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $currentPrincipal = [Security.Principal.WindowsPrincipal]::new($currentIdentity)
+  $runLevel = if (
+    $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  ) {
+    "Highest"
+  } else {
+    "Limited"
+  }
   $principal = New-ScheduledTaskPrincipal `
-    -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) `
+    -UserId $currentIdentity.Name `
     -LogonType Interactive `
-    -RunLevel Limited
+    -RunLevel $runLevel
   $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
     -AllowStartIfOnBatteries `
