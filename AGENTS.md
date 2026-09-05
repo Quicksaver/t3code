@@ -162,5 +162,6 @@ This main checkout is a fork of the original `upstream` branch.
 - When performing or evaluating implementation work in this checkout, study `FORK.md` before acting.
 - Otherwise, when the task is only to orchestrate worktree subagents, follow only the referenced instructions instead without reading any additional documentation files.
 - The information about each customization line of work recorded in `FORK.md` is synced to each branch's own `BRANCH_DETAILS.md` file.
+- After creating a worktree on Windows, run the `Setup Worktree (Windows)` T3 task in that worktree before doing any other work there.
 - A feature or fix branch applies migrations directly after the `base/main` migration tail. Use the next migration number and fold the branch's final schema and data work into that migration; branch-only intermediate states are not part of its upstream merge history.
 - `fork/main` may have already run intermediate development migrations. Before integrating or renumbering branch migrations there, inspect the applied database ledger and schema, preserve every published fork migration, and add only the migration work that the running database has not applied. All server migrations share `effect_sql_migrations`; feature-specific ledgers are not used.
