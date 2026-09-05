@@ -550,7 +550,7 @@ Focused regression coverage lives in `apps/server/src/provider/providerMaintenan
 
 The Codex subagent-threading work is integrated on `main`; the active worktree remains its maintenance owner. Treat Codex subagent lineage, child-thread projection, the default Sidebar's running-descendant/live-task counter and Agents-panel navigation, Legacy Sidebar and mobile lineage rows, child-thread output isolation, child stop behavior, provider-control failure isolation, parent metadata ingestion, and related tests as part of the fork's customization set during upstream merges.
 
-Upstream's native observability and the fork's persisted child routing are complementary. Preserve `CodexAdapter`'s `collabAgent/*` to `task.*` mapping when resolving upstream merges, then layer the fork's child-message routing and output isolation around it. `CodexSessionRuntime` must keep both outputs from registered child activity: the synthetic `collabAgent/*` event for the Agents roster and the original lifecycle event routed to the deterministic local child thread with `subagentChildren`/`parentCollab` metadata. Dropping the latter leaves visible provider rows without persisted titles or navigation even when the opt-in preference is enabled. Merge `54965976d` dropped the adapter mapper while taking upstream through `45d9aa90`; merge `d88230d45` preserved the earlier omission even though its upstream parent still contained the mapping. The parallel `split/subagent-threading-work` merge `b2d9919d7` is the known-good resolution for that boundary. Focused adapter and runtime coverage must exercise both outputs so one surface cannot pass while the other regresses.
+Upstream's native observability and the fork's persisted child routing are complementary. Preserve `CodexAdapter`'s `collabAgent/*` to `task.*` mapping when resolving upstream merges, then layer the fork's child-message routing and output isolation around it. `CodexSessionRuntime` must keep both outputs from registered child activity: the synthetic `collabAgent/*` event for the Agents roster and the original lifecycle event routed to the deterministic local child thread with `subagentChildren`/`parentCollab` metadata. Dropping the latter leaves visible provider rows without persisted titles or navigation even when the opt-in preference is enabled. Merge `54965976d` dropped the adapter mapper while taking upstream through `45d9aa90`; merge `d88230d45` preserved the earlier omission even though its upstream parent still contained the mapping. The parallel `feat/subagent-threading-work` merge `b2d9919d7` is the known-good resolution for that boundary. Focused adapter and runtime coverage must exercise both outputs so one surface cannot pass while the other regresses.
 
 Thread archive/delete lifecycle behavior is enforced server-side in the orchestration decider and documented in `SUBAGENTS.md`. The sidebar treats those operations as root-thread lifecycle actions, hiding the row actions for subagent children and failing closed when a selected thread key no longer resolves before multi-select delete.
 
@@ -733,7 +733,7 @@ Focused regression coverage lives in `packages/client-runtime/src/state/vcs.test
 
 **Worktree branch:** `none`
 
-The fork previously tested lower-power conversation rendering safeguards, but they are intentionally inactive in the current implementation. Commit `41ca48494b46da7213bb28f4bc0621bb58fbf7c7` introduced them; the implementation has since been reversed while retaining this documentation and the measurements in `POWER_CONSUMPTION.md` for future reference.
+The fork previously tested lower-power conversation rendering safeguards, but they are intentionally inactive in the current implementation. Commit `41ca48494b46da7213bb28f4bc0621bb58fbf7c7` introduced them; the implementation has since been reversed while retaining this summary for future reference.
 
 Inactive behavior retained here as a reference:
 
@@ -745,8 +745,6 @@ Primary files:
 
 - `apps/web/src/components/ChatMarkdown.tsx`
 - `apps/web/src/index.css`
-
-`POWER_CONSUMPTION.md` is the evidence log for measurements, discarded hypotheses, and validation details. Keep those historical diagnostics there rather than duplicating them in this merge-maintenance summary.
 
 ## Mobile EAS Project Ownership
 
@@ -837,7 +835,7 @@ When merging from upstream, keep these local behaviors unless upstream has an eq
 25. Mobile Thread List v2 preserves contextual lineage and navigation-only terminal descendants while keeping lifecycle actions root-only.
 26. Archive waiters receive intentional eligibility skips before later failures and treat them as completed ownership outcomes, while failed, cancelled, and unattempted work remains retryable; active Archive-all batches keep their disabled affordance mounted through optimistic row removal.
 27. Mobile Git checkout failures remain visible and retryable, while interrupt-only outcomes stay silent.
-28. The documented finite working-indicator and deferred streaming Shiki safeguards are currently inactive; retain their historical measurements in `POWER_CONSUMPTION.md` for future evaluation.
+28. The documented finite working-indicator and deferred streaming Shiki safeguards are currently inactive; retain this summary for future evaluation.
 29. Codex CLI updates use npm only for detected npm installations, preserve other recognized package-manager commands, and fall back to `codex update` for install-script and otherwise unclassified installations.
 
 ## Retirement Criteria
