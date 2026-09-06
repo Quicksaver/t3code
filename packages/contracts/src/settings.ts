@@ -869,6 +869,23 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const SourceControlProviderSettings = Schema.Struct({
+  showCommitAuthorAvatar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SourceControlProviderSettings = typeof SourceControlProviderSettings.Type;
+
+export const SourceControlSettings = Schema.Struct({
+  providers: Schema.Struct({
+    github: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gitlab: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    "azure-devops": SourceControlProviderSettings.pipe(
+      Schema.withDecodingDefault(Effect.succeed({})),
+    ),
+    bitbucket: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type SourceControlSettings = typeof SourceControlSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -888,6 +905,7 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+export const DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL = Duration.minutes(5);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
@@ -908,6 +926,7 @@ export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfil
 
 export const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  sourceControlAllRemotesFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorIdleInterval: Schema.optionalKey(Schema.DurationFromMillis),
@@ -919,6 +938,12 @@ export const BackgroundActivityOverrides = Schema.Struct({
 });
 export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
+const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT = {
+  schemaVersion: 1,
+  profile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
+  overrides: {},
+} as const;
+
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
   profile: BackgroundActivityProfileSelection.pipe(
@@ -926,8 +951,11 @@ export const BackgroundActivitySettings = Schema.Struct({
   ),
   baseProfile: Schema.optionalKey(BackgroundActivityProfile),
   overrides: BackgroundActivityOverrides.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT)));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
+export const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS: BackgroundActivitySettings = Schema.decodeSync(
+  BackgroundActivitySettings,
+)(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT);
 
 export const ServerSettings = Schema.Struct({
   // Legacy token-by-token assistant output. Deliberately a fresh key (was
@@ -1060,6 +1088,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  sourceControl: SourceControlSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
@@ -1224,6 +1253,10 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const SourceControlProviderSettingsPatch = Schema.Struct({
+  showCommitAuthorAvatar: Schema.optionalKey(Schema.Boolean),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableLegacyTokenStreaming: Schema.optionalKey(Schema.Boolean),
@@ -1275,6 +1308,18 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   magi: Schema.optionalKey(MagiSettingsPatch),
+  sourceControl: Schema.optionalKey(
+    Schema.Struct({
+      providers: Schema.optionalKey(
+        Schema.Struct({
+          github: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          gitlab: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          "azure-devops": Schema.optionalKey(SourceControlProviderSettingsPatch),
+          bitbucket: Schema.optionalKey(SourceControlProviderSettingsPatch),
+        }),
+      ),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
