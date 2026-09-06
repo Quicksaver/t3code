@@ -16,10 +16,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
 import { deriveLatestContextWindowSnapshot } from "../../web/src/lib/contextWindow.ts";
-import { deriveWorkLogEntries } from "../../web/src/session-logic.ts";
+import { deriveWorkLogEntries, mergeDeferredCommandOutput } from "../../web/src/session-logic.ts";
 import {
   projectActivityEvent,
   projectActivityPayload,
+  projectActivityDetailPayload,
+  projectActivityPayloadForClient,
   projectThreadDetailSnapshot,
 } from "../src/orchestration/ActivityPayloadProjection.ts";
 
@@ -45,6 +47,48 @@ function makeActivity(
     createdAt: "2026-07-27T00:00:00.000Z",
   };
 }
+
+describe("negotiated command details", () => {
+  it("keeps persisted output available to legacy clients and loads compact output on demand", () => {
+    const persisted = projectActivityPayload(
+      makeActivity("lazy", "command_execution", {
+        command: "echo hello",
+        rawOutput: { stdout: "hello\n" },
+      }),
+    );
+    const compact = projectActivityPayloadForClient(persisted, true);
+    expect(activityData(compact)).toMatchObject({ commandOutputAvailable: true });
+    expect(JSON.stringify(compact)).not.toContain("hello\\n");
+    expect(activityData(projectActivityPayloadForClient(persisted, false))).toMatchObject({
+      rawOutput: { stdout: "hello\n" },
+    });
+    const [entry] = deriveWorkLogEntries([compact]);
+    expect(entry?.commandOutputActivityIds).toEqual([persisted.id]);
+    expect(
+      mergeDeferredCommandOutput(entry!, [projectActivityDetailPayload(persisted)]),
+    ).toMatchObject({
+      id: entry!.id,
+      stdout: "hello\n",
+      toolLifecycleStatus: entry!.toolLifecycleStatus,
+    });
+  });
+
+  it("does not advertise discarded cumulative update output as fetchable", () => {
+    const updated = projectActivityPayload(
+      {
+        ...makeActivity("update", "command_execution", {
+          command: "echo hello",
+          rawOutput: { stdout: "hello\n" },
+        }),
+        kind: "tool.updated",
+      },
+      { preserveCommandDetails: false },
+    );
+    expect(
+      activityData(projectActivityPayloadForClient(updated, true)).commandOutputAvailable,
+    ).toBeUndefined();
+  });
+});
 
 function activityPayload(activity: OrchestrationThreadActivity): Record<string, unknown> {
   const payload = activity.payload;

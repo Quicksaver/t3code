@@ -47,6 +47,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
   readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
   readonly window?: ThreadSnapshotWindow;
+  readonly compactCommandOutput?: boolean;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -62,6 +63,7 @@ export const fetchEnvironmentThreadSnapshot = Effect.fn(
           ...(input.window?.beforeCursor !== undefined
             ? { beforeCursor: input.window.beforeCursor }
             : {}),
+          ...(input.compactCommandOutput === true ? { compactCommandOutput: "true" as const } : {}),
         },
         headers,
       }),
@@ -85,6 +87,7 @@ export class ThreadSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
       threadId: ThreadId,
       window?: ThreadSnapshotWindow,
+      compactCommandOutput?: boolean,
     ) => Effect.Effect<
       Option.Option<OrchestrationThreadDetailSnapshot>,
       EnvironmentResourceNotFoundError
@@ -106,13 +109,19 @@ export const threadSnapshotLoaderLayer: Layer.Layer<
     const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
     const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
     return ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId, window?: ThreadSnapshotWindow) =>
+      load: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        window?: ThreadSnapshotWindow,
+        compactCommandOutput?: boolean,
+      ) =>
         fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
           signer,
           remoteAuthorization,
           ...(window !== undefined ? { window } : {}),
+          ...(compactCommandOutput === true ? { compactCommandOutput: true } : {}),
         }).pipe(
           Effect.map(Option.some<OrchestrationThreadDetailSnapshot>),
           Effect.provideService(HttpClient.HttpClient, httpClient),

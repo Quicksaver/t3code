@@ -196,6 +196,7 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  options: { readonly compactCommandOutput?: boolean } = {},
 ) {
   const supervisor = yield* EnvironmentSupervisor;
   const cache = yield* EnvironmentCacheStore;
@@ -301,6 +302,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // Whether the connected server accepts windowed reads; set per subscription
   // from the session config. Gates loadOlderTurns so a reconnect to a
   // pre-pagination server never sends unsupported window parameters.
+  const activityDetailSupported = yield* Ref.make(false);
   const paginationSupported = yield* Ref.make(false);
   // An older page whose thread watermark is ahead of the live state, parked
   // until the subscription catches up (see mergeOlderPage's caller). At most
@@ -692,11 +694,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       turnLimit: OLDER_THREAD_PAGE_USER_TURN_LIMIT,
       beforeCursor: page.beforeCursor,
     };
-    const response = yield* snapshotLoader.load(prepared, threadId, window).pipe(
-      Effect.catchTags({
-        EnvironmentResourceNotFoundError: handleHttpThreadNotFound,
-      }),
-    );
+    const response = yield* snapshotLoader
+      .load(prepared, threadId, window, yield* Ref.get(activityDetailSupported))
+      .pipe(Effect.catchTags({ EnvironmentResourceNotFoundError: handleHttpThreadNotFound }));
     // Staleness check and merge run under the same lock as stream-item
     // application, so a revert/snapshot cannot land between them (TOCTOU
     // review finding) — anything that rewrites history bumps the epoch
@@ -793,6 +793,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               ({}) as {
                 threadResumeCompletionMarker?: boolean;
                 threadSnapshotPagination?: boolean;
+                threadActivityDetail?: boolean;
               },
           ),
         );
@@ -801,6 +802,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // servers reject unknown query params, and a windowed WS fallback to
         // such a server would silently hide history.
         const supportsPagination = config.threadSnapshotPagination === true;
+        const supportsActivityDetail =
+          options.compactCommandOutput === true && config.threadActivityDetail === true;
+        yield* Ref.set(activityDetailSupported, supportsActivityDetail);
         yield* Ref.set(paginationSupported, supportsPagination);
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* markSynchronizing;
@@ -854,6 +858,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               prepared,
               threadId,
               supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : undefined,
+              supportsActivityDetail,
             )
             .pipe(
               Effect.catchTags({
@@ -883,6 +888,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           capabilities: [ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY],
           threadNotFoundError: true as const,
           ...(canResume ? { afterSequence: sequence } : {}),
+          ...(supportsActivityDetail ? { compactCommandOutput: true } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           // The WS fallback snapshot (sent when afterSequence is missing or
           // the gap is too large) should be windowed the same as the HTTP
@@ -959,11 +965,14 @@ function threadStateChanges(
   environmentId: EnvironmentIdType,
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
+  options: { readonly compactCommandOutput?: boolean } = {},
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentThreadState(threadId, resumeCache).pipe(Effect.map(SubscriptionRef.changes)),
+      makeEnvironmentThreadState(threadId, resumeCache, options).pipe(
+        Effect.map(SubscriptionRef.changes),
+      ),
     ),
   );
 }
@@ -973,6 +982,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
     EnvironmentRegistry | EnvironmentCacheStore | ThreadSnapshotLoader | R,
     E
   >,
+  options: { readonly compactCommandOutput?: boolean } = {},
 ) {
   // Cache definitions must outlive collectible live-atom definitions. The
   // registry retains these nodes without retaining environment or RPC scopes.
@@ -998,7 +1008,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
         (get) => {
           get.mount(resumeAtom);
           const resume = get.once(resumeAtom);
-          const live = threadStateChanges(environmentId, threadId, resume);
+          const live = threadStateChanges(environmentId, threadId, resume, options);
           return resume.snapshot === undefined
             ? live
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);

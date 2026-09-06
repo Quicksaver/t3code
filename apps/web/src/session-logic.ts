@@ -15,6 +15,7 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   type AssetResource,
+  type EventId,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
@@ -67,6 +68,8 @@ export interface WorkLogEntry {
   viewedImagePath?: string;
   command?: string;
   rawCommand?: string;
+  commandOutputAvailable?: boolean;
+  commandOutputActivityIds?: ReadonlyArray<EventId>;
   output?: string;
   stdout?: string;
   stderr?: string;
@@ -616,6 +619,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   ) {
     entry.output = parsedPayload.output;
   }
+  if (parsedPayload.commandOutputAvailable) {
+    entry.commandOutputAvailable = true;
+    entry.commandOutputActivityIds = [activity.id];
+  }
   if (parsedPayload.stdout) {
     entry.stdout = parsedPayload.stdout;
   }
@@ -924,6 +931,13 @@ function mergeDerivedWorkLogEntries(
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const commandOutputAvailable = previous.commandOutputAvailable || next.commandOutputAvailable;
+  const commandOutputActivityIds = [
+    ...new Set([
+      ...(previous.commandOutputActivityIds ?? []),
+      ...(next.commandOutputActivityIds ?? []),
+    ]),
+  ];
   const output =
     itemType === "collab_agent_tool_call"
       ? mergeTextOutputChunk(previous.output, next.output)
@@ -953,6 +967,7 @@ function mergeDerivedWorkLogEntries(
   return {
     ...previous,
     ...next,
+    ...(commandOutputAvailable ? { commandOutputAvailable, commandOutputActivityIds } : {}),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -1518,4 +1533,25 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "starting") return "connecting";
   if (session.status === "running") return "running";
   return "ready";
+}
+
+export function mergeDeferredCommandOutput(
+  workEntry: WorkLogEntry,
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): WorkLogEntry {
+  let output = workEntry.output;
+  let stdout = workEntry.stdout;
+  let stderr = workEntry.stderr;
+  for (const detailEntry of deriveWorkLogEntries(activities)) {
+    const activityKind = detailEntry.sourceActivityKind ?? "tool.completed";
+    output = mergeCumulativeOutput(output, detailEntry.output, activityKind);
+    stdout = mergeCumulativeOutput(stdout, detailEntry.stdout, activityKind);
+    stderr = mergeCumulativeOutput(stderr, detailEntry.stderr, activityKind);
+  }
+  return {
+    ...workEntry,
+    ...(output ? { output } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {}),
+  };
 }

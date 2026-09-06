@@ -11,6 +11,7 @@ import type {
   ApprovalRequestId,
   CheckpointRef,
   MessageId,
+  EventId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationProject,
@@ -249,6 +250,12 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
     query?: ProjectionThreadDetailQuery,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /** Read one persisted activity after a client explicitly expands it. */
+  readonly getThreadActivityById: (
+    threadId: ThreadId,
+    activityId: EventId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail together with the projection snapshot

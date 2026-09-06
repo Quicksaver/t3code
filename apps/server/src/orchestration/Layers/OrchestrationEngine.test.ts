@@ -408,6 +408,7 @@ describe("OrchestrationEngine", () => {
     const layer = OrchestrationEngineNoColdStorageLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
+          getThreadActivityById: () => Effect.die("Unused in this test"),
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>

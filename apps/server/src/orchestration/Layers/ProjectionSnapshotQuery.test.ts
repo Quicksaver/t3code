@@ -2902,6 +2902,30 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
         FROM activity_rows
       `;
 
+      const lazyFailedCommand = yield* snapshotQuery.getThreadActivityById(
+        threadW,
+        asEventId("activity-0011"),
+      );
+      assert.equal(lazyFailedCommand._tag, "Some");
+      if (lazyFailedCommand._tag === "Some") {
+        const payload = lazyFailedCommand.value.payload as {
+          readonly data: {
+            readonly item: { readonly aggregatedOutput: string };
+            readonly rawOutput: unknown;
+          };
+        };
+        assert.equal(lazyFailedCommand.value.id, asEventId("activity-0011"));
+        assert.match(payload.data.item.aggregatedOutput, /^failed command\nwwww/);
+        assert.deepStrictEqual(payload.data.rawOutput, { stdout: "failed output" });
+      }
+      assert.equal(
+        (yield* snapshotQuery.getThreadActivityById(
+          ThreadId.make("thread-a"),
+          asEventId("activity-0011"),
+        ))._tag,
+        "None",
+      );
+
       const fullDetail = yield* snapshotQuery.getThreadDetailById(threadW);
       assert.equal(fullDetail._tag, "Some");
       if (fullDetail._tag === "Some") {
@@ -3044,10 +3068,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
           data: {
             item: {
               command: "vp test run",
-              aggregatedOutput: "failed command",
+              aggregatedOutput: "failed command\n" + "w".repeat(8192),
             },
             files: [{ path: "apps/server/src/failed.ts" }],
-            rawOutput: { content: "failed output" },
+            rawOutput: { stdout: "failed output" },
           },
         });
       }

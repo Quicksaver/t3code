@@ -24,6 +24,7 @@ import {
   type OrchestrationProject,
   type OrchestrationSession,
   type OrchestrationThreadActivity,
+  EventId,
   type OrchestrationThreadShell,
   ModelSelection,
   ProjectId,
@@ -1528,6 +1529,30 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           activity_id ASC
       `,
   });
+
+  const getThreadActivityRowById = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, activityId: EventId }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, activityId }) => sql`
+      SELECT activity_id AS "activityId", thread_id AS "threadId", turn_id AS "turnId",
+        tone, kind, summary, payload_json AS "payload", sequence, created_at AS "createdAt"
+      FROM projection_thread_activities
+      WHERE thread_id = ${threadId} AND activity_id = ${activityId}
+    `,
+  });
+  const getThreadActivityById: ProjectionSnapshotQueryShape["getThreadActivityById"] = (
+    threadId,
+    activityId,
+  ) =>
+    getThreadActivityRowById({ threadId, activityId }).pipe(
+      Effect.map(Option.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getThreadActivityById:query",
+          "ProjectionSnapshotQuery.getThreadActivityById:decodeRow",
+        ),
+      ),
+    );
 
   const getUserInputActivityRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, requestId: ApprovalRequestId }),
@@ -3562,6 +3587,7 @@ pending_approval_requests AS (
   return {
     getCommandReadModel,
     getUserInputActivity,
+    getThreadActivityById,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,

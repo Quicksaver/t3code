@@ -9,6 +9,7 @@ export const WORK_LOG_ACTIVITY_LIMITS = {
 } as const;
 
 export const WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER = "\n… output truncated";
+export const WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY = "commandOutputAvailable";
 
 export const WORK_LOG_COMMAND_STDOUT_KEYS = ["stdout"] as const;
 export const WORK_LOG_COMMAND_STDERR_KEYS = ["stderr"] as const;

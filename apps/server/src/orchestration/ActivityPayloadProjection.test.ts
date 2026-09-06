@@ -223,7 +223,7 @@ describe("projectActivityPayload", () => {
       toolCallId: "opencode-call-1",
       data: { command: "vp lint" },
     });
-    expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
+    expect(claude.payload).toMatchObject({ data: { content: "x".repeat(5_000) } });
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 

@@ -879,6 +879,7 @@ export const ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY =
   "orchestration.thread-not-found-error.v1" as const;
 
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
+  compactCommandOutput: Schema.optionalKey(Schema.Boolean),
   threadId: ThreadId,
   /**
    * Named and versioned streamed-subscription capabilities understood by this
