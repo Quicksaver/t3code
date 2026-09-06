@@ -158,6 +158,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -513,6 +514,9 @@ const buildAppUnderTest = (options?: {
     gitManager?: Partial<GitManager.GitManager["Service"]>;
     sourceControlRepositoryService?: Partial<
       SourceControlRepositoryService.SourceControlRepositoryService["Service"]
+    >;
+    sourceControlPanelService?: Partial<
+      SourceControlPanelService.SourceControlPanelService["Service"]
     >;
     reviewService?: Partial<ReviewService.ReviewService["Service"]>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]>;
@@ -1020,6 +1024,11 @@ const buildAppUnderTest = (options?: {
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
       Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.mock(SourceControlPanelService.SourceControlPanelService)({
+          ...options?.layers?.sourceControlPanelService,
+        }),
+      ),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
           record: () => Effect.void,
@@ -6953,7 +6962,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(readError.cwd, workspaceDir);
       assert.equal(readError.relativePath, "linked-outside.txt");
       assert.equal(readError.failure, "resolved_path_outside_root");
-      assert.equal(readError.resolvedPath, resolvedOutsideFile);
+      assert.isDefined(readError.resolvedPath);
+      assert.equal(path.basename(readError.resolvedPath), path.basename(resolvedOutsideFile));
+      assert.equal(yield* fs.readFileString(readError.resolvedPath), "outside\n");
       assert.isDefined(readError.cause);
 
       if (

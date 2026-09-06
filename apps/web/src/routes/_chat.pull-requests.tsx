@@ -1922,12 +1922,14 @@ function PullRequestsRouteView() {
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
+            onAddSourceControl={() => undefined}
             onAddPullRequest={() => undefined}
             onAddAgents={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
+            sourceControlAvailable={false}
             pullRequestAvailable={false}
             agentsAvailable={false}
             liveAgentCount={0}

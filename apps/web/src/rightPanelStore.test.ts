@@ -3,6 +3,7 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  fileSurfaceId,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -10,6 +11,7 @@ import {
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
+  terminalSurfaceId,
   useRightPanelStore,
 } from "./rightPanelStore";
 
@@ -196,12 +198,63 @@ describe("rightPanelStore", () => {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
-          activeSurfaceId: "file:src/index.ts",
+          activeSurfaceId: fileSurfaceId("src/index.ts"),
           surfaces: [
             {
-              id: "file:src/index.ts",
+              id: fileSurfaceId("src/index.ts"),
               kind: "file",
               relativePath: "src/index.ts",
+              revealLine: null,
+              revealRequestId: 0,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it("preserves saved file surface cwd overrides during migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "file:/repo.worktrees/feature:src/index.ts",
+            surfaces: [
+              {
+                id: "file:/repo.worktrees/feature:src/index.ts",
+                kind: "file",
+                cwd: "/repo.worktrees/feature",
+                relativePath: "src/index.ts",
+              },
+              {
+                id: "file:README.md",
+                kind: "file",
+                cwd: 42,
+                relativePath: "README.md",
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: fileSurfaceId("src/index.ts", "/repo.worktrees/feature"),
+          surfaces: [
+            {
+              id: fileSurfaceId("src/index.ts", "/repo.worktrees/feature"),
+              kind: "file",
+              cwd: "/repo.worktrees/feature",
+              relativePath: "src/index.ts",
+              revealLine: null,
+              revealRequestId: 0,
+            },
+            {
+              id: fileSurfaceId("README.md"),
+              kind: "file",
+              relativePath: "README.md",
               revealLine: null,
               revealRequestId: 0,
             },
@@ -318,6 +371,31 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps Version Control open when migration drops the active plan surface", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "plan",
+            surfaces: [
+              { id: "plan", kind: "plan" },
+              { id: "source-control", kind: "source-control" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "source-control",
+          surfaces: [{ id: "source-control", kind: "source-control" }],
+        },
+      },
+    });
+  });
+
   it("open sets the active panel for a thread", () => {
     useRightPanelStore.getState().open(refA, "preview");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("preview");
@@ -366,17 +444,17 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:README.md",
+      activeSurfaceId: fileSurfaceId("README.md"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
           revealRequestId: 2,
         },
         {
-          id: "file:README.md",
+          id: fileSurfaceId("README.md"),
           kind: "file",
           relativePath: "README.md",
           revealLine: null,
@@ -427,7 +505,7 @@ describe("rightPanelStore", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
         (surface) => surface.id,
       ),
-    ).toEqual(["file:attachment:shared-id", "attachment:shared-id"]);
+    ).toEqual([fileSurfaceId("attachment:shared-id"), "attachment:shared-id"]);
   });
 
   it("updates line reveal requests when reopening a file surface", () => {
@@ -436,10 +514,10 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: 87,
@@ -452,10 +530,10 @@ describe("rightPanelStore", () => {
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
@@ -463,6 +541,46 @@ describe("rightPanelStore", () => {
         },
       ],
     });
+  });
+
+  it("keeps cwd-specific file surfaces separate from workspace file surfaces", () => {
+    useRightPanelStore.getState().openFile(refA, "src/index.ts");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", undefined, "/repo.worktrees/a");
+    useRightPanelStore.getState().openFile(refA, "src/index.ts", 9, "/repo.worktrees/a");
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: fileSurfaceId("src/index.ts", "/repo.worktrees/a"),
+      surfaces: [
+        {
+          id: fileSurfaceId("src/index.ts"),
+          kind: "file",
+          relativePath: "src/index.ts",
+          revealLine: null,
+          revealRequestId: 1,
+        },
+        {
+          id: fileSurfaceId("src/index.ts", "/repo.worktrees/a"),
+          kind: "file",
+          cwd: "/repo.worktrees/a",
+          relativePath: "src/index.ts",
+          revealLine: 9,
+          revealRequestId: 2,
+        },
+      ],
+    });
+  });
+
+  it("uses unambiguous ids for cwd and relative-path pairs", () => {
+    useRightPanelStore.getState().openFile(refA, "a:b", undefined, "/repo");
+    useRightPanelStore.getState().openFile(refA, "b", undefined, "/repo:a");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      fileSurfaceId("a:b", "/repo"),
+      fileSurfaceId("b", "/repo:a"),
+    ]);
   });
 
   it("removes persisted file surfaces when their workspace no longer exists", () => {
@@ -694,6 +812,89 @@ describe("rightPanelStore", () => {
     expect(state.activeSurfaceId).toBe("terminal:term-2");
   });
 
+  it("keeps an environment-owned action terminal separate from conversation terminals", () => {
+    const target = {
+      environmentId: "env-2",
+      projectId: "project-2",
+      cwd: "/remote/repo",
+      worktreePath: null,
+      label: "Test · Build server",
+    };
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().openTerminal(refA, "term-1", target);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: terminalSurfaceId("term-1", target),
+      surfaces: [
+        {
+          id: "terminal:term-1",
+          kind: "terminal",
+          resourceId: "term-1",
+          terminalIds: ["term-1"],
+          activeTerminalId: "term-1",
+        },
+        {
+          id: terminalSurfaceId("term-1", target),
+          kind: "terminal",
+          resourceId: "term-1",
+          terminalIds: ["term-1"],
+          activeTerminalId: "term-1",
+          target,
+        },
+      ],
+    });
+  });
+
+  it("preserves a valid environment-owned action terminal during migration", () => {
+    const target = {
+      environmentId: "env-2",
+      projectId: "project-2",
+      cwd: "/remote/repo",
+      worktreePath: null,
+      label: "Test · Build server",
+    };
+    const id = terminalSurfaceId("action-1", target);
+
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: id,
+            surfaces: [
+              {
+                id,
+                kind: "terminal",
+                resourceId: "action-1",
+                terminalIds: ["action-1"],
+                activeTerminalId: "action-1",
+                target,
+              },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: id,
+          surfaces: [
+            {
+              id,
+              kind: "terminal",
+              resourceId: "action-1",
+              terminalIds: ["action-1"],
+              activeTerminalId: "action-1",
+              target,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("tracks split panes and the active pane within a terminal surface", () => {
     useRightPanelStore.getState().openTerminal(refA, "term-1");
     useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-2");
@@ -768,14 +969,14 @@ describe("rightPanelStore", () => {
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
 
-    useRightPanelStore.getState().closeOtherSurfaces(refA, "file:src/index.ts");
+    useRightPanelStore.getState().closeOtherSurfaces(refA, fileSurfaceId("src/index.ts"));
 
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       isOpen: true,
-      activeSurfaceId: "file:src/index.ts",
+      activeSurfaceId: fileSurfaceId("src/index.ts"),
       surfaces: [
         {
-          id: "file:src/index.ts",
+          id: fileSurfaceId("src/index.ts"),
           kind: "file",
           relativePath: "src/index.ts",
           revealLine: null,
