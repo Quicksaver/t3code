@@ -46,4 +46,6 @@ pnpm --package "eas-cli@$EAS_VERSION" dlx eas build \
   </dev/null
 ```
 
-For builds, one task per device sequentially; but devices work simultaneously.
+For builds, one task per device sequentially; but devices work simultaneously. Be silent as you patiently wait for the builds to finish. Report only failures.
+
+When finished, provide an upstream changelog report: since we're outside the usual app update process, I need a sort of "Release notes" or "Changelog" summary of the changes that affect me and my usage of T3 Code, even if they don't affect my customizations. Based on all new upstream commits (base yourself on titles and bodies only, do not deep dive into diffs), group them by type and list them in your report.
