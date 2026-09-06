@@ -16,15 +16,15 @@ Before dispatch, read the main worktree's `.agents/skills/worktrees/SKILL.md`. U
 Give the subagent exactly the context it needs:
 
 - The absolute worktree path and an instruction to work only there.
-- An instruction to read `BRANCH_DETAILS.md` at the worktree root before acting and treat it as the complete branch-customization context. Do not read this file yourself.
+- An instruction to read `BRANCH_DETAILS.md` at the worktree root, before acting and treat it as the complete branch-customization context. The worktree for `base/fork` is an exception, it should read `FORK.md` instead, and ignore customization sections explicitly attributed to other branches. Do not read these files yourself.
 - The absolute path to the main worktree's `.agents/skills/worktrees/SKILL.md` and an instruction to load `$worktrees` directly from that path before desktop or mobile integrated verification. Do not copy or summarize the skill in the prompt.
-- An instruction to use the fixed web and server ports from `BRANCH_DETAILS.md`, follow `$worktrees`, and validate the changes. When frontend behavior changes, run one integrated verification pass for each affected surface: `$test-t3-app` for web and `$test-t3-mobile` for mobile.
+- An instruction to use the fixed web and server ports from `BRANCH_DETAILS.md`, follow `$worktrees`, and validate the changes. When frontend behavior changes, run one integrated verification pass for each affected surface: `$test-t3-app` for web and `$test-t3-mobile` for mobile. Do not copy or summarize these skills in the prompt. Integrated UI verification is exempt from the `base/fork` branch, that worktree only runs typechecks and automated tests.
 - A statement that the subagent works alone in its branch and worktree; no one else will change that worktree while it runs.
 - The skills and task instructions the subagent must follow.
 
 Mention only skills that the child must load. State its task directly.
 
-Never name, reference, summarize, or frame the task through any skill you loaded. Keep the larger orchestration, its name, your current step or reasoning, future steps, other subagents and worktrees, `FORK.md`, and copied or inferred branch documentation out of the child prompt.
+Never name, reference, summarize, or frame the task through any skill you loaded. Keep the larger orchestration, its name, your current step or reasoning, future steps, other subagents and worktrees, `FORK.md` (except for the `base/fork` branch), and copied or inferred branch documentation out of the child prompt.
 
 Bad: `Within the context of $update-worktrees, use $update-worktree to update this branch.`
 
