@@ -14,7 +14,4 @@ Be silent while you patiently wait for each subagent terminal result.
 
 The job is finished once every assigned branch has one combined customization commit directly above the selected `base/main` commit, with its upstream tracking unchanged. Only fast-forward `base/main`; customization commits stay on their assigned branches. Even if newer commits are found in `upstream/main`, do not pursue them.
 
-Finally, report:
-
-- Everything the subagents reported. Deduplicate shared upstream changes while naming every affected worktree and customization.
-- New or changed behavior introduced by the upstream changes.
+Finally, report on everything the subagents reported. Deduplicate shared upstream changes while naming every affected worktree and customization.

@@ -10,7 +10,7 @@ Load `$spawn-worktree`. Give the subagent one step at a time. Send the next step
 
 You only orchestrate and report. Do not validate the work or load skills assigned to the subagent.
 
-At every step, keep the branch independently functional and keep all changes and commits local. Do not push. Tell the subagent to be silent while it patiently waits for each tool result.
+At every step, keep the branch independently functional and keep all changes and commits local. Do not push. Tell the subagent to be silent while it patiently waits for each tool result. Keep reporting to a minimum at every step, include only what is explicitly mentioned here, and any issues you overcame or blockers you encountered.
 
 Keep every assessment and follow-up **relative to the branch's own customizations in light of the incoming upstream changes**. Do not assess incoming upstream changes or branch customizations by themselves.
 
@@ -33,11 +33,7 @@ The exact target is the `base/main` tip at the start of the update. Do not pursu
 - If no customizations remain, leave the branch at the target and report that result.
 - If upstream makes a significant portion of the branch obsolete, irrelevant, redundant, or superseded, report the affected customizations and stop after the rebase.
 
-Otherwise, require a report covering:
-
-- New or changed upstream behavior.
-- Upstream behavior that affects branch customizations or needs specific attention.
-- Technical debt or refactors worth addressing **relative to the branch's own customizations in light of the incoming upstream changes**. Do not include assessments of incoming upstream changes or branch customizations by themselves.
+Otherwise, report only on technical debt or refactors worth addressing **relative to the branch's own customizations in light of the incoming upstream changes**. Do not include assessments of incoming upstream changes or branch customizations by themselves.
 
 ### 2. Complete a missing report
 
