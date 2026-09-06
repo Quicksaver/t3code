@@ -10,16 +10,33 @@ import {
   WORK_LOG_COMMAND_DURATION_MS_KEYS,
   WORK_LOG_COMMAND_ELAPSED_SECONDS_KEYS,
   WORK_LOG_COMMAND_EXIT_CODE_KEYS,
-  WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER,
   WORK_LOG_COMMAND_ITEM_CONTENT_KEYS,
+  WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY,
+  WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER,
   WORK_LOG_COMMAND_RESULT_NUMBER_KEYS,
   WORK_LOG_COMMAND_RESULT_TEXT_KEYS,
   WORK_LOG_PATCH_CONTAINER_KEYS,
   WORK_LOG_PATCH_KEYS,
   WORK_LOG_PATH_KEYS,
 } from "@t3tools/shared/toolActivity";
+
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
+
+function projectViewedImagePath(data: Record<string, unknown>): string | undefined {
+  const directPath = asTrimmedString(data.imagePath);
+  if (directPath && isWorkspaceImagePreviewPath(directPath)) {
+    return directPath;
+  }
+
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (toolName !== "read" && toolName !== "read file") {
+    return undefined;
+  }
+  const input = asRecord(data.input);
+  const inputPath = asTrimmedString(input?.file_path) ?? asTrimmedString(input?.path);
+  return inputPath && isWorkspaceImagePreviewPath(inputPath) ? inputPath : undefined;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -76,6 +93,48 @@ function copyCommandResultFields(
   }
 }
 
+function copyCommandResultNumberFields(
+  source: Record<string, unknown>,
+  target: Record<string, unknown>,
+): void {
+  for (const key of WORK_LOG_COMMAND_RESULT_NUMBER_KEYS) {
+    if (typeof source[key] === "number" && Number.isFinite(source[key])) {
+      target[key] = source[key];
+    }
+  }
+}
+
+function projectCommandResult(
+  result: Record<string, unknown>,
+  preserveCommandDetails: boolean,
+  budget: CommandTextBudget,
+): Record<string, unknown> | undefined {
+  const projected: Record<string, unknown> = {};
+  if ("command" in result) {
+    projected.command = result.command;
+  }
+  copyCommandResultNumberFields(result, projected);
+  if (preserveCommandDetails) {
+    copyCommandResultFields(result, projected, budget);
+  }
+  const nestedResult = asRecord(result.result);
+  if (nestedResult) {
+    const projectedNestedResult = projectCommandResult(
+      nestedResult,
+      preserveCommandDetails,
+      budget,
+    );
+    if (projectedNestedResult) {
+      for (const [key, value] of Object.entries(projectedNestedResult)) {
+        if (!(key in projected)) {
+          projected[key] = value;
+        }
+      }
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
 function projectCommandData(
   data: Record<string, unknown>,
   preserveCommandDetails: boolean,
@@ -97,22 +156,8 @@ function projectCommandData(
 
   const result = asRecord(item.result);
   if (result) {
-    const projectedResult: Record<string, unknown> = {};
-    if ("command" in result) {
-      projectedResult.command = result.command;
-    }
-    if (preserveCommandDetails) {
-      copyCommandResultFields(result, projectedResult, budget);
-    } else {
-      const content = asTrimmedString(result.content);
-      if (content) {
-        const summary = summarizeToolTextOutput(content);
-        if (summary) {
-          projectedResult.content = summary;
-        }
-      }
-    }
-    if (Object.keys(projectedResult).length > 0) {
+    const projectedResult = projectCommandResult(result, preserveCommandDetails, budget);
+    if (projectedResult) {
       projectedItem.result = projectedResult;
     }
   }
@@ -126,13 +171,7 @@ function projectCommandData(
     }
     copyCommandResultFields(item, projectedItem, budget);
   } else {
-    const aggregatedOutput = asTrimmedString(item.aggregatedOutput);
-    if (aggregatedOutput) {
-      const summary = summarizeToolTextOutput(aggregatedOutput);
-      if (summary) {
-        projectedItem.aggregatedOutput = summary;
-      }
-    }
+    copyCommandResultNumberFields(item, projectedItem);
   }
 
   return Object.keys(projectedItem).length > 0 ? projectedItem : undefined;
@@ -142,33 +181,12 @@ function projectCommandValue(data: Record<string, unknown>): unknown {
   if (data.command !== undefined) {
     return data.command;
   }
-
   const input = asRecord(data.input);
   if (input?.command !== undefined) {
     return input.command;
   }
-
   const stateInput = asRecord(asRecord(data.state)?.input);
-  if (stateInput?.command !== undefined) {
-    return stateInput.command;
-  }
-
-  return undefined;
-}
-
-function projectViewedImagePath(data: Record<string, unknown>): string | undefined {
-  const directPath = asTrimmedString(data.imagePath);
-  if (directPath && isWorkspaceImagePreviewPath(directPath)) {
-    return directPath;
-  }
-
-  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
-  if (toolName !== "read" && toolName !== "read file") {
-    return undefined;
-  }
-  const input = asRecord(data.input);
-  const inputPath = asTrimmedString(input?.file_path) ?? asTrimmedString(input?.path);
-  return inputPath && isWorkspaceImagePreviewPath(inputPath) ? inputPath : undefined;
+  return stateInput?.command;
 }
 
 function summarizeToolTextOutput(value: string): string | null {
@@ -190,12 +208,6 @@ function summarizeToolTextOutput(value: string): string | null {
   return null;
 }
 
-/**
- * Fields of an MCP tool-call item both clients render in the expanded
- * work-log row. Everything else — notably `result`, which carries the full
- * tool output and dominates wire size on MCP-heavy threads — is summarized
- * or dropped. Full payloads remain in persistence.
- */
 const MCP_ITEM_KEPT_FIELDS = [
   "type",
   "id",
@@ -208,11 +220,6 @@ const MCP_ITEM_KEPT_FIELDS = [
   "durationMs",
 ] as const;
 
-/**
- * Pulls renderable text out of an MCP tool result: either a Codex-style
- * `{content: [{type: "text", text}, ...]}` record or a raw Claude
- * `tool_result` block whose `content` is a string or block array.
- */
 function extractMcpResultText(result: unknown): string | null {
   const record = asRecord(result);
   if (!record) {
@@ -317,7 +324,6 @@ function projectPreviewToolMetadata(data: Record<string, unknown>, status: unkno
  */
 function projectMcpToolCallData(data: Record<string, unknown>): Record<string, unknown> {
   const projectedData: Record<string, unknown> = {};
-
   const item = asRecord(data.item);
   if (item) {
     const projectedItem: Record<string, unknown> = {};
@@ -332,7 +338,6 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
     }
     projectedData.item = projectedItem;
   }
-
   if ("toolName" in data) {
     projectedData.toolName = data.toolName;
   }
@@ -345,7 +350,6 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
       projectedData.result = result;
     }
   }
-
   if ("toolCallId" in data) {
     projectedData.toolCallId = data.toolCallId;
   }
@@ -364,12 +368,12 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   if (fileDetails.changedFiles.length > 0) {
     projectedData.files = fileDetails.changedFiles.map((path) => ({ path }));
   }
-
   return projectedData;
 }
 
 function projectRawOutput(
   value: unknown,
+  isCommandActivity: boolean,
   preserveCommandDetails: boolean,
   budget: CommandTextBudget,
 ): Record<string, unknown> | undefined {
@@ -377,7 +381,9 @@ function projectRawOutput(
   if (direct) {
     const content = preserveCommandDetails
       ? boundedCommandText(value as string, budget)
-      : summarizeToolTextOutput(direct);
+      : isCommandActivity
+        ? null
+        : summarizeToolTextOutput(direct);
     return content ? { content } : undefined;
   }
 
@@ -386,9 +392,12 @@ function projectRawOutput(
     return undefined;
   }
 
-  if (preserveCommandDetails) {
+  if (isCommandActivity) {
     const projected: Record<string, unknown> = {};
-    copyCommandResultFields(rawOutput, projected, budget);
+    copyCommandResultNumberFields(rawOutput, projected);
+    if (preserveCommandDetails) {
+      copyCommandResultFields(rawOutput, projected, budget);
+    }
     if (typeof rawOutput.totalFiles === "number" && Number.isFinite(rawOutput.totalFiles)) {
       projected.totalFiles = rawOutput.totalFiles;
     }
@@ -518,6 +527,85 @@ function projectCollabData(data: Record<string, unknown>): Record<string, unknow
     Object.assign(projected, metadata);
   }
   return projected;
+}
+
+function hasCommandOutputInRecord(
+  record: Record<string, unknown> | null,
+  keys: ReadonlyArray<string>,
+): boolean {
+  return (
+    record !== null && keys.some((key) => typeof record[key] === "string" && record[key].length > 0)
+  );
+}
+
+const COMMAND_OUTPUT_TEXT_KEYS = [
+  ...new Set([...WORK_LOG_COMMAND_ITEM_CONTENT_KEYS, ...WORK_LOG_COMMAND_RESULT_TEXT_KEYS]),
+] as const;
+
+function recordHasCommandOutput(record: Record<string, unknown> | null): boolean {
+  if (!record) {
+    return false;
+  }
+  if (
+    record[WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY] === true ||
+    hasCommandOutputInRecord(record, COMMAND_OUTPUT_TEXT_KEYS)
+  ) {
+    return true;
+  }
+  return [record.item, record.result, record.rawOutput].some((value) =>
+    recordHasCommandOutput(asRecord(value)),
+  );
+}
+
+function hasCommandOutput(
+  payload: Record<string, unknown>,
+  data: Record<string, unknown>,
+): boolean {
+  return recordHasCommandOutput(data) || recordHasCommandOutput(payload);
+}
+
+function removeCommandOutputFields(record: Record<string, unknown>): Record<string, unknown> {
+  const projected = { ...record };
+  for (const key of COMMAND_OUTPUT_TEXT_KEYS) {
+    delete projected[key];
+  }
+  for (const key of ["item", "result", "rawOutput"] as const) {
+    const nested = asRecord(projected[key]);
+    if (nested) {
+      projected[key] = removeCommandOutputFields(nested);
+    }
+  }
+  return projected;
+}
+
+function mergeCommandSourceRecords(
+  fallback: Record<string, unknown> | null,
+  preferred: Record<string, unknown> | null,
+): Record<string, unknown> | undefined {
+  if (!fallback) {
+    return preferred ?? undefined;
+  }
+  if (!preferred) {
+    return fallback;
+  }
+  const fallbackInput = asRecord(fallback.input);
+  const preferredInput = asRecord(preferred.input);
+  const fallbackResult = asRecord(fallback.result);
+  const preferredResult = asRecord(preferred.result);
+  return {
+    ...fallback,
+    ...preferred,
+    ...(fallbackInput || preferredInput
+      ? {
+          input: mergeCommandSourceRecords(fallbackInput, preferredInput),
+        }
+      : {}),
+    ...(fallbackResult || preferredResult
+      ? {
+          result: mergeCommandSourceRecords(fallbackResult, preferredResult),
+        }
+      : {}),
+  };
 }
 
 function changeKindFromRecord(record: Record<string, unknown>): string | null {
@@ -675,31 +763,31 @@ function projectAcpContent(
     })
     .filter((entry): entry is string => entry !== null)
     .join("\n");
-  const content = preserveCommandDetails
-    ? boundedCommandText(text, budget)
-    : summarizeToolTextOutput(text);
+  const content = preserveCommandDetails ? boundedCommandText(text, budget) : null;
   return content ? { content } : undefined;
 }
 
-export interface ActivityPayloadProjectionOptions {
-  readonly preserveCommandDetails?: boolean;
-}
-
 /**
- * Removes activity payload fields that no current client reads. Command
- * activities retain bounded result details by default; callers persisting
- * cumulative non-terminal updates can request a summary-only projection to
- * avoid quadratic storage growth.
+ * Removes activity payload fields that no current client reads while retaining
+ * the full payload in persistence and the event store.
  */
-export function projectActivityPayload(
+function projectActivityPayloadWithOptions(
   activity: OrchestrationThreadActivity,
-  options: ActivityPayloadProjectionOptions = {},
+  options: { readonly includeCommandOutput: boolean; readonly deferredOutput?: boolean },
 ): OrchestrationThreadActivity {
   const payload = asRecord(activity.payload);
-  const data = asRecord(payload?.data);
-  if (!payload || !data) {
+  if (!payload) {
     return activity;
   }
+  const existingData = asRecord(payload.data);
+  const hasCommandEnvelope =
+    payload.itemType === "command_execution" ||
+    payload.requestKind === "command" ||
+    (payload.itemType === "dynamic_tool_call" && hasCommandValue(payload.command));
+  if (!existingData && !hasCommandEnvelope) {
+    return activity;
+  }
+  const data = existingData ?? {};
 
   const dataKind = changeKindFromRecord(data);
   const preserveFileDetails =
@@ -709,17 +797,18 @@ export function projectActivityPayload(
     dataKind === "move" ||
     dataKind === "delete" ||
     dataKind === "write";
-  const preserveCommandDetails =
-    options.preserveCommandDetails !== false &&
+  const isCommandActivity =
     !preserveFileDetails &&
     (payload.itemType === "command_execution" ||
       payload.requestKind === "command" ||
       dataKind === "execute" ||
-      (payload.itemType === "dynamic_tool_call" && hasCommandValue(data.command)));
+      (payload.itemType === "dynamic_tool_call" &&
+        (hasCommandValue(data.command) || hasCommandValue(payload.command))));
   const commandTextBudget: CommandTextBudget = {
     remaining: WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars,
     truncated: false,
   };
+  const preserveCommandDetails = isCommandActivity && options.includeCommandOutput;
   const itemStatus = asRecord(data.item)?.status;
   const statusPayload =
     payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
@@ -751,23 +840,50 @@ export function projectActivityPayload(
     };
   }
   const projectedData: Record<string, unknown> = { ...questionInput };
+  const mergedRawOutput = mergeCommandSourceRecords(
+    asRecord(payload.rawOutput),
+    asRecord(data.rawOutput),
+  );
   let rawOutput =
-    projectRawOutput(data.rawOutput, preserveCommandDetails, commandTextBudget) ??
-    projectAcpContent(data.content, preserveCommandDetails, commandTextBudget);
-  const item = projectCommandData(data, preserveCommandDetails, commandTextBudget);
+    projectRawOutput(
+      mergedRawOutput ?? data.rawOutput ?? payload.rawOutput,
+      isCommandActivity,
+      preserveCommandDetails,
+      commandTextBudget,
+    ) ?? projectAcpContent(data.content, preserveCommandDetails, commandTextBudget);
+  const mergedItem = mergeCommandSourceRecords(asRecord(payload.item), asRecord(data.item));
+  const item = mergedItem
+    ? projectCommandData({ item: mergedItem }, preserveCommandDetails, commandTextBudget)
+    : undefined;
   if (item) {
     projectedData.item = item;
+  }
+  const mergedResult = mergeCommandSourceRecords(asRecord(payload.result), asRecord(data.result));
+  if (mergedResult) {
+    const result = projectCommandResult(mergedResult, preserveCommandDetails, commandTextBudget);
+    if (result) {
+      Object.assign(projectedData, result);
+    }
   }
   const command = projectCommandValue(data);
   if (command !== undefined) {
     projectedData.command = command;
   }
   const imagePath = projectViewedImagePath(data);
-  if (imagePath) {
-    projectedData.imagePath = imagePath;
+  if (imagePath) projectedData.imagePath = imagePath;
+  if (isCommandActivity) {
+    copyCommandResultNumberFields({ ...payload, ...data }, projectedData);
   }
   if (preserveCommandDetails) {
-    copyCommandResultFields(data, projectedData, commandTextBudget);
+    copyCommandResultFields({ ...payload, ...data }, projectedData, commandTextBudget);
+  }
+  if (
+    isCommandActivity &&
+    !options.includeCommandOutput &&
+    options.deferredOutput === true &&
+    hasCommandOutput(payload, data)
+  ) {
+    projectedData[WORK_LOG_COMMAND_OUTPUT_AVAILABLE_KEY] = true;
   }
 
   const fileDetails: ProjectedFileDetails = {
@@ -775,7 +891,7 @@ export function projectActivityPayload(
     seenChangedFiles: new Set<string>(),
     patches: [],
     seenPatches: new Set<string>(),
-    preservePatches: preserveFileDetails || !preserveCommandDetails,
+    preservePatches: preserveFileDetails || !isCommandActivity,
   };
   collectProjectedFileDetails(data, fileDetails, 0);
   if (fileDetails.changedFiles.length > 0) {
@@ -783,7 +899,9 @@ export function projectActivityPayload(
     projectedData.files = fileDetails.changedFiles.map((path) => ({ path }));
   }
 
-  if ("toolCallId" in data) {
+  if ("toolCallId" in payload) {
+    projectedData.toolCallId = payload.toolCallId;
+  } else if ("toolCallId" in data) {
     projectedData.toolCallId = data.toolCallId;
   }
   if (dataKind) {
@@ -802,13 +920,52 @@ export function projectActivityPayload(
     projectedData.changes = fileDetails.patches;
   }
 
+  const finalPayload = isCommandActivity
+    ? removeCommandOutputFields(projectedPayload)
+    : projectedPayload;
   return {
     ...activity,
     payload: {
-      ...projectedPayload,
+      ...finalPayload,
       data: projectedData,
     },
   };
+}
+
+/**
+ * Keeps bounded command results in persistence. Non-terminal cumulative
+ * updates omit output to avoid quadratic storage growth.
+ */
+export function projectActivityPayload(
+  activity: OrchestrationThreadActivity,
+  options: { readonly preserveCommandDetails?: boolean } = {},
+): OrchestrationThreadActivity {
+  return projectActivityPayloadWithOptions(activity, {
+    includeCommandOutput: options.preserveCommandDetails !== false,
+  });
+}
+
+/**
+ * Projects an activity according to a client's explicit lazy-output request.
+ * Missing/false preserves the pre-lazy-output representation for version skew.
+ */
+export function projectActivityPayloadForClient(
+  activity: OrchestrationThreadActivity,
+  compactCommandOutput: boolean,
+): OrchestrationThreadActivity {
+  return projectActivityPayloadWithOptions(activity, {
+    includeCommandOutput: !compactCommandOutput,
+    deferredOutput: compactCommandOutput,
+  });
+}
+
+/**
+ * Projects one explicitly requested activity with bounded command output.
+ */
+export function projectActivityDetailPayload(
+  activity: OrchestrationThreadActivity,
+): OrchestrationThreadActivity {
+  return projectActivityPayloadWithOptions(activity, { includeCommandOutput: true });
 }
 
 /**
@@ -887,7 +1044,7 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
   if (itemType.length === 0 && label.length === 0 && detail.length === 0) {
     return null;
   }
-  return [itemType, label, detail].join("");
+  return [itemType, label, detail].join("\u001f");
 }
 
 interface ProjectedCumulativeDetails {
@@ -1021,6 +1178,9 @@ function completionCoversProjectedUpdate(
  * update within the turn — a later update belongs to a subsequent call that
  * reuses the same identity and is still in flight. Rows without a lifecycle
  * identity pass through, matching the clients, which never collapse them.
+ * Updates that contribute command output also pass through because incremental
+ * chunks are not guaranteed to be repeated by the completion; compact clients
+ * need every activity id so expansion can reconstruct the stream.
  * Live `thread.activity-appended` events are untouched: updates still stream
  * in real time and the completion supersedes them on the client as before.
  *
@@ -1046,7 +1206,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       continue;
     }
-    const key = `${activity.turnId ?? ""} ${identity}`;
+    const key = `${activity.turnId ?? ""}\0${identity}`;
     const indices = completionIndicesByKey.get(key);
     if (indices) {
       indices.push(index);
@@ -1066,7 +1226,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       return true;
     }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""} ${identity}`);
+    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\0${identity}`);
     const completionIndex = indices?.find((candidateIndex) => candidateIndex > index);
     return (
       completionIndex === undefined ||
@@ -1077,21 +1237,24 @@ function dropSupersededToolUpdatedActivities(
 
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
+  options: { readonly compactCommandOutput?: boolean } = { compactCommandOutput: false },
 ): OrchestrationThreadDetailSnapshot {
+  const compactCommandOutput = options.compactCommandOutput === true;
   return {
     ...snapshot,
     thread: {
       ...snapshot.thread,
       activities: dropSupersededToolUpdatedActivities(
-        dropStaleContextWindowActivities(snapshot.thread.activities).map((activity) =>
-          projectActivityPayload(activity),
-        ),
-      ),
+        dropStaleContextWindowActivities(snapshot.thread.activities),
+      ).map((activity) => projectActivityPayloadForClient(activity, compactCommandOutput)),
     },
   };
 }
 
-export function projectActivityEvent(event: OrchestrationEvent): OrchestrationEvent {
+export function projectActivityEvent(
+  event: OrchestrationEvent,
+  options: { readonly compactCommandOutput?: boolean } = { compactCommandOutput: false },
+): OrchestrationEvent {
   if (event.type !== "thread.activity-appended") {
     return event;
   }
@@ -1099,7 +1262,10 @@ export function projectActivityEvent(event: OrchestrationEvent): OrchestrationEv
     ...event,
     payload: {
       ...event.payload,
-      activity: projectActivityPayload(event.payload.activity),
+      activity: projectActivityPayloadForClient(
+        event.payload.activity,
+        options.compactCommandOutput === true,
+      ),
     },
   };
 }

@@ -8,6 +8,17 @@ export function hasRenderableCommandOutput(value: string | null | undefined): va
   return typeof value === "string" && /\S/u.test(value);
 }
 
+export function hasRenderableCommandOutputDetail(
+  entries: ReadonlyArray<Pick<WorkLogEntry, "output" | "stdout" | "stderr">>,
+): boolean {
+  return entries.some(
+    (entry) =>
+      hasRenderableCommandOutput(entry.output) ||
+      hasRenderableCommandOutput(entry.stdout) ||
+      hasRenderableCommandOutput(entry.stderr),
+  );
+}
+
 export function getRenderableCommandOutputLines(value: string | null | undefined): string[] {
   if (typeof value !== "string" || value.length === 0) {
     return [];

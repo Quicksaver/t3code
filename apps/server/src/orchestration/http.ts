@@ -7,7 +7,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
-import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
+import {
+  projectActivityDetailPayload,
+  projectThreadDetailSnapshot,
+} from "./ActivityPayloadProjection.ts";
 import { cleanupFailedUploadedAttachments, normalizeDispatchCommand } from "./Normalizer.ts";
 import {
   annotateEnvironmentRequest,
@@ -85,7 +88,27 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           if (Option.isNone(snapshot)) {
             return yield* failEnvironmentNotFound("thread_not_found");
           }
-          return projectThreadDetailSnapshot(snapshot.value);
+          return projectThreadDetailSnapshot(snapshot.value, {
+            compactCommandOutput: args.payload.compactCommandOutput === "true",
+          });
+        }),
+      )
+      .handle(
+        "threadActivity",
+        Effect.fn("environment.orchestration.threadActivity")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const activity = yield* projectionSnapshotQuery
+            .getThreadActivityById(args.params.threadId, args.params.activityId)
+            .pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_thread_activity_failed", cause),
+              ),
+            );
+          if (Option.isNone(activity)) {
+            return yield* failEnvironmentNotFound("thread_activity_not_found");
+          }
+          return projectActivityDetailPayload(activity.value);
         }),
       )
       .handle(

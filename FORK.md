@@ -373,39 +373,16 @@ Regression coverage lives in `apps/web/src/components/ChatView.localDispatch.tes
 
 **Worktree branch:** `feat/conversation-user-context-rendering`
 
-The fork's user-message rendering composes terminal, element, preview-annotation, and review-comment parsers into one ordered content sequence while keeping tool and subagent activity rendering outside the timeline component.
+Upstream structured composer-context records now own user-message parsing, inline chips, preview images, and clipboard preservation. The fork retains the separate tool-activity renderer; the legacy `userMessageContext.ts` parser and `UserMessageContentParts.tsx` renderer are superseded.
 
-Expected behavior:
+Integration constraints:
 
-- Standalone trailing `<element_context>` messages render as element chips instead of showing raw XML-like tags. Messages containing mixed or repeated terminal, element, preview, and review blocks retain their send order, including review comments before, between, or after generated contexts.
-- Generated context tags do not leak into the visible user-message body. Literal user-authored tag-like text remains visible, malformed trailing generated blocks are suppressed rather than partially exposed, and Copy retains the original serialized message text.
-- Inline file-change and review-comment diffs in the timeline intentionally use the lightweight `FileDiff` surfaces; `AnnotatableCodeView` remains the full diff-panel review-comment surface unless the timeline grows equivalent review-comment authoring behavior.
+- Preserve structured context references and clipboard payloads in `MessagesTimeline.tsx`. It retains row selection, list orchestration, and work-group scroll state.
+- `WorkActivityRows.tsx` owns live, grouped, and expanded tool and subagent rows, rich file diffs, question-answer history, command-output expansion, and keyboard row controls. Port upstream tool and subagent changes there while retaining live and failed styles, images, icons, and status/token summaries.
+- `MessagesTimeline.tsx` supplies `WorkActivityRowsProvider`, while `ExpandedWorkGroupEntries` supplies `WorkGroupViewProvider`. Do not import timeline-private contexts into the activity renderer.
+- Preserve deferred activity-detail loading through the shared authorization-refresh path. Web requests compact output only when the server advertises `threadActivityDetail`; mobile keeps embedded output. Cumulative updates remain storage-compacted, completed results stay bounded in persistence, and snapshot pruning checks raw cumulative coverage before removing output from the wire.
 
-Implementation notes:
-
-- Keep the upstream parsers under `apps/web/src/lib` and compose them in `userMessageContext.ts` rather than replacing them. Top-level review-comment segmentation occurs before generated-context parsing; review tags inside generated terminal, element, or preview bodies remain content rather than becoming review cards.
-- `UserMessageContentParts.tsx` owns collapsible text, inline terminal labels, element chips, preview cards, and review cards. `MessagesTimeline.tsx` retains attachments, row actions, renderer inputs, row selection, list orchestration, and work-group scroll state, but only extracts the state and inputs for each user row.
-- The combined activity/context integration keeps rich file diffs, command-output expansion, keyboard row controls, and deferred activity-detail loading in `WorkActivityRows.tsx`. HTTP details use the shared authorization-refresh path, and web requests compact output only when the server advertises `threadActivityDetail`; mobile keeps embedded output. Cumulative updates remain storage-compacted, completed results stay bounded in persistence, and snapshot pruning checks raw cumulative coverage before removing output from the wire.
-- `WorkActivityRows.tsx` owns live, grouped, and expanded tool and subagent rows. `MessagesTimeline.tsx` supplies `WorkActivityRowsProvider`, while `ExpandedWorkGroupEntries` supplies `WorkGroupViewProvider`; do not import timeline-private contexts into `WorkActivityRows.tsx`.
-- Extracted content renders through React text nodes and existing components, never through `dangerouslySetInnerHTML`. Keep parser ordering and raw-tag regressions in `userMessageContext.test.ts` and rendering integration in `MessagesTimeline.test.tsx`. When upstream changes tool or subagent rows, port those changes into `WorkActivityRows.tsx` while retaining live/failed styles, group expansion, expanded images and details, icons, and subagent status/token summaries.
-
-Primary files:
-
-- `apps/web/src/components/chat/MessagesTimeline.tsx`
-- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
-- `apps/web/src/components/chat/userMessageContext.ts`
-- `apps/web/src/components/chat/userMessageContext.test.ts`
-- `apps/web/src/components/chat/UserMessageContentParts.tsx`
-- `apps/web/src/components/chat/WorkActivityRows.tsx`
-- `apps/web/src/lib/terminalContext.ts`
-- `apps/web/src/lib/elementContext.ts`
-- `apps/web/src/lib/previewAnnotation.ts`
-
-Focused regression coverage:
-
-```sh
-vp test run apps/web/src/components/chat/userMessageContext.test.ts apps/web/src/components/chat/MessagesTimeline.test.tsx
-```
+Focused rendering coverage remains in `apps/web/src/components/chat/MessagesTimeline.test.tsx`.
 
 ## Conversation Tool Activity Rendering
 
@@ -1006,7 +983,7 @@ When updating from upstream, keep these local behaviors unless upstream has an e
 29. Repeated steering uses exact projected message-id acknowledgement with a guarded turn/session fallback and keeps message-dispatch state separate from new-thread busy state. Stop performs bounded best-effort child interruption before authoritative live-root-turn resolution and preserves timeout, failure, defect, and successful-empty fallback semantics.
 30. Thread-detail missing state preserves versioned and legacy capability negotiation, one HTTP/WS terminal classifier, serialized cache deletion and persistence, missing-snapshot termination before buffered live delivery, and one canonical draft/readiness classification that survives workspace-mode changes.
 31. Provider-neutral Magi remains reconciled against `MAGI.md`, including its canonical core-ledger migrations, provider subscription/upload/dispatch/compaction contracts, complete projection replay and lineage, root-owned checkpoint refresh, run-history query ownership, shared settings structure, and shared mobile icon.
-32. User-message context rendering retains ordered terminal, element, preview, and review parts, literal user tag text, original serialized Copy output, top-level review segmentation, and the `UserMessageContentParts` and `WorkActivityRows` ownership split.
+32. Upstream structured composer-context records own user-message chips and clipboard data. The fork retains explicit `WorkActivityRows` ownership and deferred command-output loading.
 
 ## Retirement Criteria
 
