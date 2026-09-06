@@ -2004,7 +2004,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("&lt;/review_comment&gt;");
   });
 
-  it("renders the upstream subagent summary with token usage and no fork child card", () => {
+  it("renders the expandable upstream subagent summary without a duplicate child card", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -2075,8 +2075,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Ran 1 subagent");
-    expect(markup).toContain("Σ 1.2k");
-    expect(markup).toContain("View ▸");
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain("Subagent - Inspect the regression");
     expect(markup).not.toContain("Completed in");
   });

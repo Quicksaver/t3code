@@ -364,7 +364,7 @@ Upstream structured composer-context records now own user-message parsing, inlin
 Integration constraints:
 
 - Preserve structured context references and clipboard payloads in `MessagesTimeline.tsx`. It retains row selection, list orchestration, and work-group scroll state.
-- `WorkActivityRows.tsx` owns live, grouped, and expanded tool and subagent rows, rich file diffs, question-answer history, command-output expansion, and keyboard row controls. Port upstream tool and subagent changes there while retaining live and failed styles, images, icons, and status/token summaries.
+- `WorkActivityRows.tsx` owns live, grouped, and expanded tool and subagent rows, rich file diffs, question-answer history, command-output expansion, and keyboard row controls. Port upstream tool and subagent changes there while retaining live and failed styles, images, icons, timestamps, expandable child rows, and status/token summaries.
 - `MessagesTimeline.tsx` supplies `WorkActivityRowsProvider`, while `ExpandedWorkGroupEntries` supplies `WorkGroupViewProvider`. Do not import timeline-private contexts into the activity renderer.
 - Preserve deferred activity-detail loading through the shared authorization-refresh path. Web requests compact output only when the server advertises `threadActivityDetail`; mobile keeps embedded output. Cumulative updates remain storage-compacted, completed results stay bounded in persistence, and snapshot pruning checks raw cumulative coverage before removing output from the wire.
 
@@ -975,7 +975,7 @@ When updating from upstream, keep these local behaviors unless upstream has an e
 29. Repeated steering uses exact projected message-id acknowledgement with a guarded turn/session fallback and keeps message-dispatch state separate from new-thread busy state. Stop performs bounded best-effort child interruption before authoritative live-root-turn resolution and preserves timeout, failure, defect, and successful-empty fallback semantics.
 30. Thread-detail missing state preserves versioned and legacy capability negotiation, one HTTP/WS terminal classifier, serialized cache deletion and persistence, missing-snapshot termination before buffered live delivery, and one canonical draft/readiness classification that survives workspace-mode changes.
 31. Provider-neutral Magi remains reconciled against `MAGI.md`, including its canonical core-ledger migrations, provider subscription/upload/dispatch/compaction contracts, complete projection replay and lineage, root-owned checkpoint refresh, run-history query ownership, shared settings structure, and shared mobile icon.
-32. Upstream structured composer-context records own user-message chips and clipboard data. The fork retains explicit `WorkActivityRows` ownership and deferred command-output loading.
+32. Upstream structured composer-context records own user-message chips and clipboard data. The fork retains explicit `WorkActivityRows` ownership and bounded command-output expansion.
 
 ## Retirement Criteria
 
