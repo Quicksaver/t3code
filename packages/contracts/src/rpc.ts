@@ -88,6 +88,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationSearchThreadsError,
   OrchestrationSearchThreadsInput,
+  OrchestrationThreadNotFoundError,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
@@ -1202,7 +1203,11 @@ const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subsc
 const WsOrchestrationSubscribeThreadRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeThread, {
   payload: OrchestrationRpcSchemas.subscribeThread.input,
   success: OrchestrationRpcSchemas.subscribeThread.output,
-  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    OrchestrationGetSnapshotError,
+    OrchestrationThreadNotFoundError,
+    EnvironmentAuthorizationError,
+  ]),
   stream: true,
 });
 
