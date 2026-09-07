@@ -3,6 +3,7 @@ import {
   EventId,
   MessageId,
   ORCHESTRATION_WS_METHODS,
+  OrchestrationThreadNotFoundError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -98,8 +99,9 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   readonly httpNone?: boolean;
   readonly initialLoad?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
   readonly diskLoad?: ReturnType<EnvironmentCacheStore["Service"]["loadThread"]>;
-  readonly removeThread?: ReturnType<EnvironmentCacheStore["Service"]["removeThread"]>;
   readonly stream?: Stream.Stream<OrchestrationThreadStreamItem, Error>;
+  readonly saveThread?: EnvironmentCacheStore["Service"]["saveThread"];
+  readonly removeThread?: EnvironmentCacheStore["Service"]["removeThread"];
 }) {
   const clock = yield* Clock.Clock;
   const wakeups = yield* Queue.unbounded<ConnectionWakeup>();
@@ -129,8 +131,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
     saveThread: (_environmentId, value) =>
       Effect.sync(() => {
         savedSnapshots.push(value);
-      }),
-    removeThread: () => options?.removeThread ?? Effect.void,
+      }).pipe(Effect.andThen(options?.saveThread?.(_environmentId, value) ?? Effect.void)),
+    removeThread: options?.removeThread ?? (() => Effect.void),
     loadServerConfig: () => Effect.succeed(Option.none()),
     saveServerConfig: () => Effect.void,
     loadVcsRefs: () => Effect.succeed(Option.none()),
@@ -302,6 +304,65 @@ describe("createEnvironmentThreadStateAtoms", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  for (const disposeSuccessor of [false, true]) {
+    it.effect(
+      `keeps deletion authoritative while the previous owner's finalizer saves (${disposeSuccessor ? "disposed" : "mounted"} successor)`,
+      () =>
+        Effect.gen(function* () {
+          const saveStarted = yield* Deferred.make<void>();
+          const releaseSave = yield* Deferred.make<void>();
+          const saved = yield* Deferred.make<void>();
+          const removed = yield* Deferred.make<void>();
+          let diskSnapshot = Option.none<OrchestrationThreadDetailSnapshot>();
+          const h = yield* makeHarness({
+            connected: true,
+            saveThread: (_environmentId, snapshot) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(saveStarted, undefined);
+                yield* Deferred.await(releaseSave);
+                diskSnapshot = Option.some(snapshot);
+                yield* Deferred.succeed(saved, undefined);
+              }),
+            removeThread: () =>
+              Effect.sync(() => {
+                diskSnapshot = Option.none();
+              }).pipe(Effect.andThen(Deferred.succeed(removed, undefined))),
+          });
+          yield* Effect.addFinalizer(() => Deferred.succeed(releaseSave, undefined));
+          const unmount = h.registry.mount(h.stateAtom);
+          const first = yield* Queue.take(h.subscriptions);
+          yield* Queue.offer(first.events, { kind: "synchronized" });
+          yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+
+          // The debounce clock has not advanced. This save belongs to disposal.
+          unmount();
+          yield* Deferred.await(saveStarted);
+          const unmountSuccessor = h.registry.mount(h.stateAtom);
+          const next = yield* Queue.take(h.subscriptions);
+          yield* Queue.failCause(
+            next.events,
+            Cause.fail(new OrchestrationThreadNotFoundError({ threadId: THREAD_ID })),
+          );
+          yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+          if (disposeSuccessor) {
+            unmountSuccessor();
+            yield* TestClock.adjust("0 millis");
+          }
+          yield* Deferred.succeed(releaseSave, undefined);
+          yield* Deferred.await(saved);
+          yield* TestClock.adjust("0 millis");
+          expect(diskSnapshot).toEqual(Option.none());
+          expect(yield* Deferred.isDone(removed)).toBe(true);
+          expect(h.registry.get(h.stateAtom).status).toBe("deleted");
+          if (!disposeSuccessor) {
+            unmountSuccessor();
+          }
+          yield* Deferred.await(first.closed);
+          yield* Deferred.await(next.closed);
+        }),
+    );
+  }
 
   it.effect("exposes snapshot loader defects before the RPC subscription starts", () =>
     Effect.gen(function* () {
@@ -625,79 +686,18 @@ describe("createEnvironmentThreadStateAtoms", () => {
     }),
   );
 
-  it.effect.each([1, 16, 500])("publishes each replay batch once (batch size: %i)", (batchSize) =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness();
-      const unmount = h.registry.mount(h.stateAtom);
-      const first = yield* Queue.take(h.subscriptions);
-      let updates = 0;
-      const stop = h.registry.subscribe(h.details.messagesAtom(h.ref), () => updates++, {
-        immediate: true,
-      });
-      updates = 0;
-      const events: OrchestrationThreadStreamItem[] = Array.from({ length: 500 }, (_, index) => ({
-        kind: "event",
-        event: {
-          type: "thread.message-sent",
-          sequence: 8 + index,
-          eventId: EventId.make(`replay-${index}`),
-          aggregateKind: "thread",
-          aggregateId: THREAD_ID,
-          occurredAt: THREAD.createdAt,
-          commandId: null,
-          causationEventId: null,
-          correlationId: null,
-          metadata: {},
-          payload: {
-            threadId: THREAD_ID,
-            messageId: MessageId.make("replayed-message"),
-            role: "assistant",
-            text: `${index},`,
-            turnId: null,
-            streaming: true,
-            createdAt: THREAD.createdAt,
-            updatedAt: THREAD.createdAt,
-          },
-        },
-      }));
-      for (let offset = 0; offset < events.length; offset += batchSize) {
-        yield* Queue.offerAll(first.events, events.slice(offset, offset + batchSize));
-        const last = Math.min(offset + batchSize, events.length) - 1;
-        yield* observeState(
-          h.registry,
-          h.stateAtom,
-          (state) => Option.getOrNull(state.data)?.messages[0]?.text.endsWith(`${last},`) === true,
-        );
-      }
-      yield* Queue.offerAll(first.events, [events[499]!, events[0]!]);
-      yield* Queue.offer(first.events, { kind: "synchronized" });
-      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
-      expect(currentThread(h.registry, h.stateAtom).messages[0]?.text).toBe(
-        Array.from({ length: 500 }, (_, index) => `${index},`).join(""),
-      );
-      expect(updates).toBe(Math.ceil(500 / batchSize));
-      stop();
-      unmount();
-      yield* Deferred.await(first.closed);
-      const remount = h.registry.mount(h.stateAtom);
-      const next = yield* Queue.take(h.subscriptions);
-      expect(next.afterSequence).toBe(507);
-      remount();
-      yield* Deferred.await(next.closed);
-    }),
-  );
-
   it.effect("does not reload an archived disk snapshot when removal fails", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness({
         httpNone: true,
         diskLoad: Effect.succeed(Option.some(SNAPSHOT)),
-        removeThread: Effect.fail(
-          new ConnectionPersistenceError({
-            operation: "remove-thread",
-            message: "Test removal failure",
-          }),
-        ),
+        removeThread: () =>
+          Effect.fail(
+            new ConnectionPersistenceError({
+              operation: "remove-thread",
+              message: "Test removal failure",
+            }),
+          ),
       });
       const unmount = h.registry.mount(h.stateAtom);
       const first = yield* Queue.take(h.subscriptions);
@@ -802,18 +802,19 @@ describe("createEnvironmentThreadStateAtoms", () => {
         let removals = 0;
         const h = yield* makeHarness({
           diskLoad: Effect.succeed(Option.some(SNAPSHOT)),
-          removeThread: Effect.sync(() => {
-            removals += 1;
-          }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ConnectionPersistenceError({
-                  operation: "remove-thread",
-                  message: "Test removal failure",
-                }),
+          removeThread: () =>
+            Effect.sync(() => {
+              removals += 1;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ConnectionPersistenceError({
+                    operation: "remove-thread",
+                    message: "Test removal failure",
+                  }),
+                ),
               ),
             ),
-          ),
         });
         const unmount = h.registry.mount(h.stateAtom);
         const first = yield* Queue.take(h.subscriptions);
@@ -897,6 +898,68 @@ describe("createEnvironmentThreadStateAtoms", () => {
       h.registry.dispose();
       yield* TestClock.adjust("0 millis");
       expect(cachedThreadGeneration(h.cache, TARGET.environmentId, THREAD_ID)).toBe(0);
+    }),
+  );
+
+  it.effect.each([1, 16, 500])("publishes each replay batch once (batch size: %i)", (batchSize) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      let updates = 0;
+      const stop = h.registry.subscribe(h.details.messagesAtom(h.ref), () => updates++, {
+        immediate: true,
+      });
+      updates = 0;
+      const events: OrchestrationThreadStreamItem[] = Array.from({ length: 500 }, (_, index) => ({
+        kind: "event",
+        event: {
+          type: "thread.message-sent",
+          sequence: 8 + index,
+          eventId: EventId.make(`replay-${index}`),
+          aggregateKind: "thread",
+          aggregateId: THREAD_ID,
+          occurredAt: THREAD.createdAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId: THREAD_ID,
+            messageId: MessageId.make("replayed-message"),
+            role: "assistant",
+            text: `${index},`,
+            turnId: null,
+            streaming: true,
+            createdAt: THREAD.createdAt,
+            updatedAt: THREAD.createdAt,
+          },
+        },
+      }));
+      for (let offset = 0; offset < events.length; offset += batchSize) {
+        yield* Queue.offerAll(first.events, events.slice(offset, offset + batchSize));
+        const last = Math.min(offset + batchSize, events.length) - 1;
+        yield* observeState(
+          h.registry,
+          h.stateAtom,
+          (state) => Option.getOrNull(state.data)?.messages[0]?.text.endsWith(`${last},`) === true,
+        );
+      }
+      yield* Queue.offerAll(first.events, [events[499]!, events[0]!]);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      expect(currentThread(h.registry, h.stateAtom).messages[0]?.text).toBe(
+        Array.from({ length: 500 }, (_, index) => `${index},`).join(""),
+      );
+      expect(updates).toBe(Math.ceil(500 / batchSize));
+      stop();
+      unmount();
+      yield* Deferred.await(first.closed);
+      const remount = h.registry.mount(h.stateAtom);
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBe(507);
+      remount();
+      yield* Deferred.await(next.closed);
     }),
   );
 
