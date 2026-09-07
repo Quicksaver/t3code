@@ -18,6 +18,7 @@ import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { useOptimisticThreadArchiveStore } from "~/optimisticThreadArchiveStore";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -44,6 +45,9 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -75,9 +79,11 @@ export function DraftHeroHeadline({
         }),
         threads,
         projectSortOrder,
+        optimisticallyArchivedThreadKeys,
       ),
     [
       environmentLabelById,
+      optimisticallyArchivedThreadKeys,
       primaryEnvironmentId,
       projectGroupingSettings,
       projectSortOrder,
