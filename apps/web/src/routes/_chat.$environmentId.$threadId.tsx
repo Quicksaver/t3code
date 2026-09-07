@@ -9,10 +9,11 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { SidebarInset } from "~/components/ui/sidebar";
 import {
+  classifyThreadDetail,
   useEnvironmentThreadRefs,
-  useThreadDetail,
+  useThreadDetailWhenReady,
   useThreadShell,
-  useThreadStatus,
+  useThreadStatusWhenReady,
 } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
@@ -26,17 +27,19 @@ function ChatThreadRouteView() {
     threadRef === null ? null : environmentShell.stateAtom(threadRef.environmentId),
   );
   const serverThreadShell = useThreadShell(threadRef);
-  const serverThreadDetail = useThreadDetail(threadRef);
-  const serverThreadStatus = useThreadStatus(threadRef);
-  const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
-  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
-  const environmentHasServerThreads = environmentThreadRefs.length > 0;
-  const draftThreadExists = useComposerDraftStore((store) =>
-    threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
-  );
   const draftThread = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
+  const draftThreadExists = draftThread !== null;
+  const threadClassification = classifyThreadDetail({
+    hasLocalDraft: draftThreadExists,
+    hasServerShell: serverThreadShell !== null,
+  });
+  const serverThreadDetail = useThreadDetailWhenReady(threadRef, threadClassification);
+  const serverThreadStatus = useThreadStatusWhenReady(threadRef, threadClassification);
+  const environmentThreadRefs = useEnvironmentThreadRefs(threadRef?.environmentId ?? null);
+  const bootstrapComplete = shell.data?.snapshot._tag === "Some";
+  const environmentHasServerThreads = environmentThreadRefs.length > 0;
   const environmentHasDraftThreads = useComposerDraftStore((store) => {
     if (!threadRef) {
       return false;
