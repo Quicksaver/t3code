@@ -4,10 +4,11 @@ import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   getLatestThreadSortTimestamp,
   resolveSettledThreadTimestamp,
@@ -364,8 +365,9 @@ type ScopedSidebarProject = SidebarProject & {
 };
 
 type ScopedSidebarThread = ThreadSortInput & {
-  environmentId: string;
-  projectId: string;
+  id: ThreadId;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
   archivedAt: string | null;
 };
 
@@ -1089,6 +1091,18 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function filterVisibleSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id">,
+>(threads: readonly T[], optimisticallyArchivedThreadKeys: ReadonlySet<string>): T[] {
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      !optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+  );
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -1179,6 +1193,7 @@ export function sortLogicalProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const groupKeyByProjectRef = new Map(
     projects.flatMap((project) =>
@@ -1190,7 +1205,14 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
+      continue;
+    }
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
@@ -1222,12 +1244,18 @@ export function sortScopedProjectsForSidebar<
   projects: readonly TProject[],
   threads: readonly TThread[],
   sortOrder: SidebarProjectSortOrder,
+  optimisticallyArchivedThreadKeys: ReadonlySet<string> = new Set(),
 ): TProject[] {
   const scopedKey = (environmentId: string, projectId: string) =>
     `${environmentId}\u0000${projectId}`;
   const threadsByProject = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) {
+    if (
+      thread.archivedAt !== null ||
+      optimisticallyArchivedThreadKeys.has(
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      )
+    ) {
       continue;
     }
     const key = scopedKey(thread.environmentId, thread.projectId);

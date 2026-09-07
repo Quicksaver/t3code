@@ -41,6 +41,10 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import {
+  optimisticallyHideArchivedThread,
+  revealOptimisticallyArchivedThread,
+} from "../optimisticThreadArchiveStore";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -309,21 +313,29 @@ export function useThreadActions() {
       const shouldNavigateToDraft =
         currentRouteThreadRef?.environmentId === threadRef.environmentId &&
         archivedThreadIds.has(currentRouteThreadRef.threadId);
-
-      for (const archivedThreadId of withRootLast(archivedThreadIds, threadRef.threadId)) {
-        const archiveResult = await archiveThreadMutation({
-          environmentId: threadRef.environmentId,
-          input: { threadId: archivedThreadId },
-        });
-        if (archiveResult._tag === "Failure") {
-          return archiveResult;
-        }
+      optimisticallyHideArchivedThread(threadRef);
+      const archiveResult = await archiveThreadMutation({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
+      if (archiveResult._tag === "Failure") {
+        revealOptimisticallyArchivedThread(threadRef);
+        return archiveResult;
       }
+      // The domain event is published before the command acknowledgement, so
+      // the shell now owns visibility. Do not retain a local tombstone that
+      // could hide a later unarchive performed by another client.
+      revealOptimisticallyArchivedThread(threadRef);
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
       if (wokeAt !== null) {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      // The local composer draft intentionally survives archive, but its
+      // pending server uploads are transient and never enter the cold bundle.
+      // Release them now; opening the restored draft starts fresh uploads from
+      // its local image data.
+      releaseComposerDraftUploads(threadRef);
       opts.onArchived?.();
 
       if (shouldNavigateToDraft) {
@@ -343,6 +355,7 @@ export function useThreadActions() {
 
   const unarchiveThread = useCallback(
     async (target: ScopedThreadRef) => {
+      revealOptimisticallyArchivedThread(target);
       const result = await unarchiveThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
@@ -453,15 +466,11 @@ export function useThreadActions() {
         deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
-        const deleteResult = await deleteThreadMutation({
-          environmentId: threadRef.environmentId,
-          input: { threadId: deletedThreadId },
-        });
-        if (deleteResult._tag === "Failure") {
-          return deleteResult;
-        }
-      }
+      const deleteResult = await deleteThreadMutation({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
+      if (deleteResult._tag === "Failure") return deleteResult;
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       for (const deletedThreadId of deletedIds) {
         const deletedThreadRef = scopeThreadRef(threadRef.environmentId, deletedThreadId);

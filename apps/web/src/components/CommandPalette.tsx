@@ -1,5 +1,7 @@
 "use client";
 
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
@@ -126,7 +128,6 @@ import {
   buildBrowseGroups,
   buildProjectActionItems,
   buildRootGroups,
-  buildThreadActionItems,
   enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
@@ -141,25 +142,29 @@ import {
   reduceCommandPaletteUiState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import {
+  filterVisibleSidebarThreads,
+  orderItemsByPreferredIds,
+  sortLogicalProjectsForSidebar,
+} from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
+import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import {
-  COMMAND_PALETTE_META_ICON_CLASS,
-  CommandPaletteMetaDot,
-  ThreadCommandSubtitle,
-} from "./ThreadCommandSubtitle";
+  buildLocationAwareProjectActionItems,
+  buildVisibleThreadActionItems,
+} from "./CommandPalette.thread-project-items";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -639,13 +644,20 @@ function OpenCommandPaletteDialog(props: {
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
+  const visibleThreads = useMemo(
+    () => filterVisibleSidebarThreads(threads, optimisticallyArchivedThreadKeys),
+    [optimisticallyArchivedThreadKeys, threads],
+  );
   const navigableThreads = useMemo(
     () =>
       filterStandaloneSubagentConversations(
-        threads,
+        visibleThreads,
         clientSettings.subagentConversationVisibilityEnabled,
       ),
-    [clientSettings.subagentConversationVisibilityEnabled, threads],
+    [clientSettings.subagentConversationVisibilityEnabled, visibleThreads],
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
@@ -767,10 +779,10 @@ function OpenCommandPaletteDialog(props: {
     () =>
       sortLogicalProjectsForSidebar(
         unsortedProjectGroups,
-        threads,
+        visibleThreads,
         clientSettings.sidebarProjectSortOrder,
       ),
-    [clientSettings.sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    [clientSettings.sidebarProjectSortOrder, unsortedProjectGroups, visibleThreads],
   );
   const contextualProjectRef = useMemo(
     () =>
@@ -1030,15 +1042,13 @@ function OpenCommandPaletteDialog(props: {
         : null;
       const latestThread = groupedProjectKeys
         ? (sortThreads(
-            threads.filter(
-              (thread) =>
-                thread.archivedAt === null &&
-                groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+            visibleThreads.filter((thread) =>
+              groupedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
             ),
             clientSettings.sidebarThreadSortOrder,
           )[0] ?? null)
         : getLatestThreadForProject(
-            threads.filter((thread) => thread.environmentId === project.environmentId),
+            visibleThreads.filter((thread) => thread.environmentId === project.environmentId),
             project.id,
             clientSettings.sidebarThreadSortOrder,
           );
@@ -1059,7 +1069,7 @@ function OpenCommandPaletteDialog(props: {
       handleNewThread,
       navigate,
       projectGroupByTargetKey,
-      threads,
+      visibleThreads,
     ],
   );
 
@@ -1083,41 +1093,16 @@ function OpenCommandPaletteDialog(props: {
   const projectThreadItems = useMemo(
     () =>
       enumerateCommandPaletteItems(
-        buildProjectActionItems({
+        buildLocationAwareProjectActionItems({
           projects: pickerProjects,
           valuePrefix: "new-thread-in",
           searchTerms: (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const location = projectEnvironmentLocationById.get(project.environmentId);
-            return [
-              ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []),
-              ...(location ? [location.label] : []),
-            ];
-          },
-          renderDescription: (project) => {
-            const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
-              kind: "remote",
-              label: "Remote",
-              machine: "server" as const,
-            };
             return (
-              <span className="flex min-w-0 items-center gap-1">
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  {location.kind === "remote" ? (
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={location.machine}
-                      className={COMMAND_PALETTE_META_ICON_CLASS}
-                    />
-                  ) : null}
-                  <span className="truncate">{location.label}</span>
-                </span>
-                <CommandPaletteMetaDot />
-                <span className="truncate">{project.workspaceRoot}</span>
-              </span>
+              group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ?? []
             );
           },
+          getLocation: (project) => projectEnvironmentLocationById.get(project.environmentId),
           icon: projectFavicon,
           runProject: async (project) => {
             const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -1147,8 +1132,9 @@ function OpenCommandPaletteDialog(props: {
 
   const allThreadItems = useMemo(
     () =>
-      buildThreadActionItems({
+      buildVisibleThreadActionItems({
         threads: navigableThreads,
+        optimisticallyArchivedThreadKeys,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
@@ -1208,6 +1194,7 @@ function OpenCommandPaletteDialog(props: {
       threadContentMatchByKey,
       threadSearchQuery,
       navigableThreads,
+      optimisticallyArchivedThreadKeys,
     ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
@@ -1833,7 +1820,7 @@ function OpenCommandPaletteDialog(props: {
       );
       if (existing) {
         const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
+          visibleThreads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
           clientSettings.sidebarThreadSortOrder,
         );
@@ -1915,7 +1902,7 @@ function OpenCommandPaletteDialog(props: {
       providers,
       setOpen,
       clientSettings.sidebarThreadSortOrder,
-      threads,
+      visibleThreads,
     ],
   );
 

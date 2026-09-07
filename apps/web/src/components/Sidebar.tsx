@@ -100,6 +100,7 @@ import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
 } from "../sidebarPendingFileDropStore";
+import { useOptimisticThreadArchiveStore } from "../optimisticThreadArchiveStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectScopeKeys,
@@ -148,6 +149,7 @@ import { buildThreadActionMenuItems, isRootThreadLifecycleAction } from "./threa
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
+  filterVisibleSidebarThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -2206,6 +2208,9 @@ export default function Sidebar() {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const optimisticallyArchivedThreadKeys = useOptimisticThreadArchiveStore(
+    (state) => state.threadKeys,
+  );
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2319,8 +2324,6 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const routeTargetRef = useRef(routeTarget);
-  routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
   // captured when the settle started: if the user navigated elsewhere while
   // the command was in flight, completing it must not yank them away.
@@ -2378,8 +2381,14 @@ export default function Sidebar() {
     ],
   );
   const projectGroups = useMemo(
-    () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
-    [sidebarProjectSortOrder, threads, unsortedProjectGroups],
+    () =>
+      sortLogicalProjectsForSidebar(
+        unsortedProjectGroups,
+        threads,
+        sidebarProjectSortOrder,
+        optimisticallyArchivedThreadKeys,
+      ),
+    [optimisticallyArchivedThreadKeys, sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
@@ -2527,8 +2536,12 @@ export default function Sidebar() {
   }, [clearSelection, projectScopeKey]);
 
   const structuralThreads = useMemo(
-    () => selectSidebarProjectLineageThreads({ threads, projectKeys: scopedProjectKeys }),
-    [scopedProjectKeys, threads],
+    () =>
+      selectSidebarProjectLineageThreads({
+        threads: filterVisibleSidebarThreads(threads, optimisticallyArchivedThreadKeys),
+        projectKeys: scopedProjectKeys,
+      }),
+    [scopedProjectKeys, threads, optimisticallyArchivedThreadKeys],
   );
   const runningThreadKeys = useMemo(
     () => new Set(visibleSidebarThreads(structuralThreads, null).map(sidebarThreadKey)),
@@ -2593,6 +2606,11 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // Settled threads stay in the live shell stream (settled ≠ archived), so
+  // the partition works directly off live shells: no archived-snapshot
+  // merging. Archived threads remain hidden here — including while a local
+  // archive command is still in flight — because archive keeps its original
+  // "remove from sidebar" meaning.
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2695,6 +2713,7 @@ export default function Sidebar() {
   }, [
     nowMinute,
     optimisticDrop,
+    optimisticallyArchivedThreadKeys,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
