@@ -42,6 +42,13 @@ export const orchestrationEventsProcessedTotal = Metric.counter(
   },
 );
 
+export const providerFailureActivityAppendFailuresTotal = Metric.counter(
+  "t3_provider_failure_activity_append_failures_total",
+  {
+    description: "Total provider failure activities that could not be recorded.",
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });

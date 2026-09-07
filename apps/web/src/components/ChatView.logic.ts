@@ -18,6 +18,8 @@ import {
   type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ProjectedSubagentLifecycle } from "@t3tools/client-runtime/state/subagentRuntime";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -98,6 +100,22 @@ export function shouldRenderPreviewMiniPlayer(
       renderedRightPanelSurface.resourceId === miniPlayerTabId
     )
   );
+}
+
+export type RightPanelControlsOwner = "header" | "root" | "sheet";
+
+export function resolveRightPanelControlsOwner(input: {
+  rightPanelOpen: boolean;
+  rightPanelPresent: boolean;
+  shouldUseRightPanelSheet: boolean;
+}): RightPanelControlsOwner {
+  if (input.rightPanelPresent && !input.shouldUseRightPanelSheet) {
+    return "root";
+  }
+  if (input.rightPanelPresent && input.rightPanelOpen && input.shouldUseRightPanelSheet) {
+    return "sheet";
+  }
+  return "header";
 }
 
 export function shouldOpenProactivePullRequest(
@@ -369,6 +387,114 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
   };
 }
 
+export interface AgentChildConversation {
+  readonly threadRef: ScopedThreadRef;
+  readonly title: string;
+}
+
+type ConversationVisibilityThreadShell = Pick<ThreadShell, "environmentId" | "parentRelation">;
+
+/**
+ * Child conversation detail is deliberately gated at the subscription
+ * boundary. Shells stay available for agent progress, lineage, and archive
+ * behavior even when standalone child conversations are disabled.
+ */
+export function canLoadStandaloneThreadConversation(input: {
+  readonly threadShell: ConversationVisibilityThreadShell | null;
+  readonly hasLocalDraft: boolean;
+  readonly clientSettingsHydrated: boolean;
+  readonly subagentConversationVisibilityEnabled: boolean;
+}): boolean {
+  if (input.hasLocalDraft) return true;
+  if (!input.threadShell) return false;
+  return (
+    input.threadShell.parentRelation?.kind !== "subagent" ||
+    (input.clientSettingsHydrated && input.subagentConversationVisibilityEnabled)
+  );
+}
+
+export function resolveDisabledSubagentParentThreadRef(input: {
+  readonly threadShell: ConversationVisibilityThreadShell | null;
+  readonly clientSettingsHydrated: boolean;
+  readonly subagentConversationVisibilityEnabled: boolean;
+}): ScopedThreadRef | null {
+  const relation = input.threadShell?.parentRelation;
+  if (
+    !input.clientSettingsHydrated ||
+    input.subagentConversationVisibilityEnabled ||
+    relation?.kind !== "subagent" ||
+    !input.threadShell
+  ) {
+    return null;
+  }
+  return scopeThreadRef(input.threadShell.environmentId, relation.parentThreadId);
+}
+
+type AgentConversationThreadShell = Pick<
+  ThreadShell,
+  "environmentId" | "id" | "title" | "parentRelation"
+>;
+
+export function deriveAgentChildConversationByProviderId(input: {
+  activeThread: Pick<ThreadShell, "environmentId" | "id" | "parentRelation"> | null | undefined;
+  threadShells: ReadonlyArray<AgentConversationThreadShell>;
+  enabled?: boolean;
+}): ReadonlyMap<string, AgentChildConversation> {
+  const conversations = new Map<string, AgentChildConversation>();
+  if (!input.activeThread || input.enabled === false) return conversations;
+
+  const rootThreadId =
+    input.activeThread.parentRelation?.kind === "subagent"
+      ? input.activeThread.parentRelation.rootThreadId
+      : input.activeThread.id;
+  for (const shell of input.threadShells) {
+    const relation = shell.parentRelation;
+    if (
+      shell.environmentId === input.activeThread.environmentId &&
+      relation?.kind === "subagent" &&
+      relation.rootThreadId === rootThreadId
+    ) {
+      conversations.set(relation.providerThreadId, {
+        threadRef: scopeThreadRef(shell.environmentId, shell.id),
+        title: shell.title,
+      });
+    }
+  }
+  return conversations;
+}
+
+/**
+ * Child lifecycle stays available independently of the standalone-child UI
+ * preference. The Agents panel needs it to settle parent activity rows even
+ * when child conversation navigation is disabled.
+ */
+export function deriveAgentChildLifecycleByProviderId(input: {
+  activeThread: Pick<ThreadShell, "environmentId" | "id" | "parentRelation"> | null | undefined;
+  threadShells: ReadonlyArray<AgentConversationThreadShell>;
+}): ReadonlyMap<string, ProjectedSubagentLifecycle> {
+  const lifecycles = new Map<string, ProjectedSubagentLifecycle>();
+  if (!input.activeThread) return lifecycles;
+
+  const rootThreadId =
+    input.activeThread.parentRelation?.kind === "subagent"
+      ? input.activeThread.parentRelation.rootThreadId
+      : input.activeThread.id;
+  for (const shell of input.threadShells) {
+    const relation = shell.parentRelation;
+    if (
+      shell.environmentId === input.activeThread.environmentId &&
+      relation?.kind === "subagent" &&
+      relation.rootThreadId === rootThreadId
+    ) {
+      lifecycles.set(relation.providerThreadId, {
+        status: relation.status,
+        completedAt: relation.completedAt,
+      });
+    }
+  }
+  return lifecycles;
+}
+
 export function shouldWriteThreadErrorToCurrentServerThread(input: {
   activeServerThread:
     | {
@@ -388,10 +514,20 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
-export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "session">): {
+export function buildThreadTurnInterruptInput(
+  thread: Pick<Thread, "id" | "latestTurn" | "parentRelation" | "session">,
+): {
   threadId: ThreadId;
   turnId?: TurnId;
 } {
+  const parentRelation = thread.parentRelation;
+  if (parentRelation?.kind === "subagent") {
+    if (parentRelation.status === "running" && thread.latestTurn?.state === "running") {
+      return { threadId: thread.id, turnId: thread.latestTurn.turnId };
+    }
+    return { threadId: thread.id };
+  }
+
   const runningTurnId = thread.session?.status === "running" ? thread.session.activeTurnId : null;
   return {
     threadId: thread.id,
@@ -508,9 +644,14 @@ export function getAntigravitySendBlockReason(
 }
 
 export function buildRunningThreadTurnInterruptInput(
-  thread: Pick<Thread, "id" | "session"> | null | undefined,
+  thread: Pick<Thread, "id" | "session" | "latestTurn" | "parentRelation"> | null | undefined,
   phase: SessionPhase,
 ): { threadId: ThreadId; turnId?: TurnId } | null {
+  if (thread?.parentRelation?.kind === "subagent") {
+    return thread.parentRelation.status === "running"
+      ? buildThreadTurnInterruptInput(thread)
+      : null;
+  }
   if (phase !== "running" || thread?.session?.status !== "running") {
     return null;
   }

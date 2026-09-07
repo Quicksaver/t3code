@@ -15,6 +15,7 @@ import {
   type HomeListItem,
 } from "./homeListItems";
 import type { HomeThreadGroup } from "./homeThreadList";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -69,6 +70,9 @@ function makeGroup(key: string, threadCount: number): HomeThreadGroup {
     projects: [project],
     pendingTasks: [],
     threads,
+    threadDepths: new Map(
+      threads.map((thread) => [scopedThreadKey(thread.environmentId, thread.id), 0]),
+    ),
     // All threads inside the recency window, so the baseline stays at the
     // initial page size and the pagination expectations below hold.
     recentThreads: threads,
@@ -173,6 +177,9 @@ describe("buildHomeListLayout", () => {
       projects: [project],
       pendingTasks: [],
       threads,
+      threadDepths: new Map(
+        threads.map((thread) => [scopedThreadKey(thread.environmentId, thread.id), 0]),
+      ),
       recentThreads: threads.slice(0, 3),
       newThreadTarget: project,
     };
@@ -238,5 +245,23 @@ describe("buildHomeListLayout", () => {
     // header + 6 threads + show-more = 8 items, so beta's header is index 8.
     expect(layout.stickyHeaderIndices).toEqual([0, 8]);
     expect(layout.items[8]).toMatchObject({ type: "header", isFirst: false });
+  });
+
+  it("carries thread nesting depth into row items", () => {
+    const group = makeGroup("alpha", 2);
+    const nestedThread = group.threads[1]!;
+    const layout = buildHomeListLayout({
+      groups: [
+        {
+          ...group,
+          threadDepths: new Map([
+            [scopedThreadKey(nestedThread.environmentId, nestedThread.id), 2],
+          ]),
+        },
+      ],
+      displayStates: displayStates({}),
+    });
+
+    expect(layout.items[2]).toMatchObject({ type: "thread", depth: 2 });
   });
 });

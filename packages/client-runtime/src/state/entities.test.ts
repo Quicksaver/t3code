@@ -2,7 +2,9 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  ProviderItemId,
   ThreadId,
+  TurnId,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
 } from "@t3tools/contracts";
@@ -33,6 +35,27 @@ const PROJECT_ID = ProjectId.make("project-1");
 const OTHER_PROJECT_ID = ProjectId.make("project-2");
 const THREAD_ID = ThreadId.make("thread-1");
 const OTHER_THREAD_ID = ThreadId.make("thread-2");
+const PARENT_RELATION = {
+  kind: "subagent" as const,
+  rootThreadId: ThreadId.make("thread-root"),
+  parentThreadId: ThreadId.make("thread-parent"),
+  parentTurnId: TurnId.make("turn-parent"),
+  parentItemId: ProviderItemId.make("item-parent"),
+  parentActivitySequence: 1,
+  providerThreadId: "provider-child",
+  titleSeed: "Inspect child work",
+  depth: 1,
+  startedAt: "2026-06-01T00:00:00.000Z",
+  completedAt: null,
+  status: "running" as const,
+};
+const UPDATED_PARENT_RELATION = {
+  ...PARENT_RELATION,
+  parentActivitySequence: 2,
+  parentItemId: ProviderItemId.make("item-parent-updated"),
+  status: "completed" as const,
+  completedAt: "2026-06-01T00:02:00.000Z",
+};
 
 describe("scoped entity keys", () => {
   it("preserves an invalid project key as structured error data", () => {
@@ -210,6 +233,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/stale-worktree",
       activeOrderKey: "t",
       unsettledAt: "2026-03-09T10:00:00.000Z",
+      parentRelation: PARENT_RELATION,
       deletedAt: null,
       messages,
       proposedPlans: [],
@@ -224,6 +248,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      parentRelation: UPDATED_PARENT_RELATION,
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -234,6 +259,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      parentRelation: UPDATED_PARENT_RELATION,
     });
     expect(merged?.messages).toBe(messages);
   });

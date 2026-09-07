@@ -106,9 +106,45 @@ const fixtures = [
   }),
   makeActivity("collab", "collab_agent_tool_call", {
     kind: "delegate",
+    toolCallId: "tool-collab",
+    itemId: "item-collab",
+    item: {
+      id: "tool-collab",
+      prompt: "Inspect the projection",
+      tool: "spawnAgent",
+      input: {
+        task: "Inspect nested input",
+        ignored: "input bulk",
+      },
+      ignored: "item bulk",
+    },
+    rawInput: {
+      message: "Inspect raw input",
+      ignored: "raw input bulk",
+    },
+    parentCollab: {
+      itemId: "tool-collab",
+      detail: "Inspect the projection",
+      ignored: "parent bulk",
+    },
+    subagentChildren: [
+      {
+        childThreadId: "thread-child",
+        parentItemId: "tool-collab",
+        titleSeed: "Inspect the projection",
+        ignored: "child bulk",
+      },
+      {
+        threadId: "thread-resumed-child",
+        parentItemId: "tool-collab-resumed",
+        titleSeed: "Resume the projection",
+        ignored: "resumed child bulk",
+      },
+    ],
     rawOutput: {
       content: "``` \n```",
-      stdout: "must not be used when content is present",
+      stdout: "secondary collab output field",
+      ignored: "raw output bulk",
     },
     ignored: "top-level bulk",
   }),
@@ -247,7 +283,71 @@ describe("projectActivityPayload", () => {
     });
   });
 
-  it("keeps current web and mobile derived fields for every tool item type", () => {
+  it("retains client-consumed subagent fields while pruning collab bulk", () => {
+    const collabFixture = fixtures[3]!;
+    const projected = projectActivityPayload(collabFixture);
+
+    expect(projected.payload).toMatchObject({
+      data: {
+        kind: "delegate",
+        toolCallId: "tool-collab",
+        itemId: "item-collab",
+        item: {
+          id: "tool-collab",
+          prompt: "Inspect the projection",
+          input: {
+            task: "Inspect nested input",
+          },
+        },
+        rawInput: {
+          message: "Inspect raw input",
+        },
+        parentCollab: {
+          itemId: "tool-collab",
+          detail: "Inspect the projection",
+        },
+        subagentChildren: [
+          {
+            childThreadId: "thread-child",
+            parentItemId: "tool-collab",
+            titleSeed: "Inspect the projection",
+          },
+          {
+            threadId: "thread-resumed-child",
+            parentItemId: "tool-collab-resumed",
+            titleSeed: "Resume the projection",
+          },
+        ],
+        rawOutput: {
+          content: "``` \n```",
+          stdout: "secondary collab output field",
+        },
+      },
+    });
+    expect(projected.payload).not.toHaveProperty("data.ignored");
+    expect(projected.payload).not.toHaveProperty("data.item.ignored");
+    expect(projected.payload).not.toHaveProperty("data.item.tool");
+    expect(projected.payload).not.toHaveProperty("data.item.input.ignored");
+    expect(projected.payload).not.toHaveProperty("data.rawInput.ignored");
+    expect(projected.payload).not.toHaveProperty("data.parentCollab.ignored");
+    expect(projected.payload).not.toHaveProperty("data.subagentChildren.0.ignored");
+    expect(projected.payload).not.toHaveProperty("data.subagentChildren.1.ignored");
+    expect(projected.payload).not.toHaveProperty("data.rawOutput.ignored");
+  });
+
+  it("drops non-string collab metadata that current clients cannot consume", () => {
+    const projected = projectActivityPayload(
+      makeActivity("collab-invalid-metadata", "collab_agent_tool_call", {
+        toolCallId: { ignored: "bulk" },
+        itemId: 42,
+        kind: ["delegate"],
+      }),
+    );
+
+    expect(projected.payload).toMatchObject({ data: {} });
+  });
+
+  it("keeps current web and mobile derived output identical for every tool item type", () => {
     for (const activity of fixtures) {
       const projected = projectActivityPayload(activity);
       if (activity === fixtures[0]) {

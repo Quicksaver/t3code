@@ -17,7 +17,10 @@ import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { beginPendingThreadOrder, getPendingThreadOrder } from "../../state/thread-order";
 import { createPendingThreadOrder, createThreadMovePlanner } from "../threads/threadOrder";
-import { getThreadListV2OrderedSection } from "../threads/threadListV2";
+import {
+  getThreadListV2OrderedSection,
+  resolveThreadListV2OrderingTargets,
+} from "../threads/threadListV2";
 
 /** Version skew: never send settle/unsettle to a server that predates them
     (capability defaults false on decode for older servers). */
@@ -476,8 +479,28 @@ export function useThreadListActions(): {
   const moveThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: "up" | "down") => {
       if (getPendingThreadOrder() !== null) return false;
-      const section = thread.pinnedAt != null ? "pinned" : "active";
       const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+      const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+      const orderingScope = {
+        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
+        threads: shells,
+        now: new Date().toISOString(),
+        settlementEnvironmentIds: new Set(
+          [...configs].flatMap(([id, config]) =>
+            config.environment.capabilities.threadSettlement === true ? [id] : [],
+          ),
+        ),
+        snoozeEnvironmentIds: new Set(
+          [...configs].flatMap(([id, config]) =>
+            config.environment.capabilities.threadSnooze === true ? [id] : [],
+          ),
+        ),
+      };
+      const orderingTarget = resolveThreadListV2OrderingTargets(orderingScope).get(
+        scopedThreadKey(thread.environmentId, thread.id),
+      );
+      if (orderingTarget === undefined) return false;
+      const { section, representativeKey: movedId } = orderingTarget;
       const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
         const capabilities = configs.get(environmentId)?.environment.capabilities;
         return section === "pinned"
@@ -491,29 +514,13 @@ export function useThreadListActions(): {
         );
         return false;
       }
-      const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
-      const ordered = getThreadListV2OrderedSection({
-        threads: shells,
-        section,
-        now: new Date().toISOString(),
-        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-        settlementEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSettlement === true ? [id] : [],
-          ),
-        ),
-        snoozeEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSnooze === true ? [id] : [],
-          ),
-        ),
-      });
+      const ordered = getThreadListV2OrderedSection({ ...orderingScope, section });
       const assignments = createThreadMovePlanner({
         allThreads: shells,
         ordered,
         section,
         reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
-      })(scopedThreadKey(thread.environmentId, thread.id), direction);
+      })(movedId, direction);
       if (assignments === null) return false;
       const shellByKey = new Map(
         ordered.map((shell) => [scopedThreadKey(shell.environmentId, shell.id), shell]),
@@ -523,7 +530,7 @@ export function useThreadListActions(): {
         createPendingThreadOrder({
           section,
           ordered,
-          movedId: scopedThreadKey(thread.environmentId, thread.id),
+          movedId,
           direction,
           assignments,
         }),

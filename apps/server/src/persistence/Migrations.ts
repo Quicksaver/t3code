@@ -9,6 +9,7 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
 // Import all migrations statically
@@ -44,23 +45,36 @@ import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexe
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
-import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
-import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
-import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
-import Migration0036 from "./Migrations/036_ProjectionThreadsPinned.ts";
-import Migration0037 from "./Migrations/037_ProjectionTurnsKeysetIndex.ts";
-import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
-import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
-import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
-import Migration0041 from "./Migrations/041_AuthSessionClientConnection.ts";
-import Migration0042 from "./Migrations/042_ProjectionThreadLinkedPullRequest.ts";
-import Migration0043 from "./Migrations/043_ProjectionThreadsUnsettledAt.ts";
-import Migration0044 from "./Migrations/044_ClearAutomaticProjectModelDefaults.ts";
-import Migration0045 from "./Migrations/045_ProjectionProjectsAutoPull.ts";
-import Migration0046 from "./Migrations/046_RepairAutomaticSettlementTimestamps.ts";
-import Migration0047 from "./Migrations/047_ProjectionProjectIcon.ts";
-import Migration0048 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts";
-import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
+import Migration0033 from "./Migrations/033_ProjectionThreadParentRelation.ts";
+import Migration0034 from "./Migrations/034_BackfillEmptyProjectionThreadRootIds.ts";
+import Migration0035 from "./Migrations/035_ThreadColdArchive.ts";
+import Migration0036 from "./Migrations/036_DeletedThreadCleanupQueue.ts";
+import Migration0037 from "./Migrations/037_SubagentColdArchiveGlue.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadsSettled.ts";
+import Migration0039 from "./Migrations/039_ProjectionThreadsSnoozed.ts";
+import Migration0040 from "./Migrations/040_ProjectionThreadTitleRegeneration.ts";
+import Migration0041 from "./Migrations/041_ThreadColdArchiveCompatibility.ts";
+import Migration0042 from "./Migrations/042_ProjectionThreadsPinned.ts";
+import Migration0043 from "./Migrations/043_ProjectionTurnsKeysetIndex.ts";
+import Migration0044 from "./Migrations/044_ProjectionThreadsPinOrderKey.ts";
+import Migration0045 from "./Migrations/045_ProjectionProjectsDefaultThreadEnvMode.ts";
+import Migration0046 from "./Migrations/046_ProjectionProjectFaviconPath.ts";
+import Migration0047 from "./Migrations/047_ThreadStorageLifecycleCompatibility.ts";
+import Migration0048 from "./Migrations/048_MagiProjections.ts";
+import Migration0049 from "./Migrations/049_MagiActiveConversationUniqueness.ts";
+import Migration0050 from "./Migrations/050_MagiProposalTerminology.ts";
+import Migration0051 from "./Migrations/051_MagiThreadColdArchiveGlue.ts";
+import Migration0052 from "./Migrations/052_AuthSessionClientConnection.ts";
+import Migration0053 from "./Migrations/053_ProjectionThreadLinkedPullRequest.ts";
+import Migration0054 from "./Migrations/054_ProjectionThreadsUnsettledAt.ts";
+import Migration0055 from "./Migrations/055_ClearAutomaticProjectModelDefaults.ts";
+import Migration0056 from "./Migrations/056_ProjectionProjectsAutoPull.ts";
+import Migration0057 from "./Migrations/057_ProjectionThreadLineageConvergenceAfterUpstreamTail.ts";
+import Migration0058 from "./Migrations/058_RepairAutomaticSettlementTimestamps.ts";
+import Migration0059 from "./Migrations/059_ProjectionProjectIcon.ts";
+import Migration0060 from "./Migrations/060_MagiCoreMigrationCompatibility.ts";
+import Migration0061 from "./Migrations/061_ProjectionThreadBranchPullRequest.ts";
+import Migration0062 from "./Migrations/062_ProjectionThreadsActiveOrderKey.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -72,7 +86,7 @@ import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-const migrationEntries = [
+export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
@@ -105,28 +119,41 @@ const migrationEntries = [
   [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
   [31, "AuthAuthorizationScopes", Migration0031],
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
-  [33, "ProjectionThreadsSettled", Migration0033],
-  [34, "ProjectionThreadsSnoozed", Migration0034],
-  [35, "ProjectionThreadTitleRegeneration", Migration0035],
-  [36, "ProjectionThreadsPinned", Migration0036],
-  [37, "ProjectionTurnsKeysetIndex", Migration0037],
-  [38, "ProjectionThreadsPinOrderKey", Migration0038],
-  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
-  [40, "ProjectionProjectFaviconPath", Migration0040],
-  [41, "AuthSessionClientConnection", Migration0041],
-  [42, "ProjectionThreadLinkedPullRequest", Migration0042],
-  [43, "ProjectionThreadsUnsettledAt", Migration0043],
-  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
-  [45, "ProjectionProjectsAutoPull", Migration0045],
-  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
-  [47, "ProjectionProjectIcon", Migration0047],
-  [48, "ProjectionThreadBranchPullRequest", Migration0048],
-  [49, "ProjectionThreadsActiveOrderKey", Migration0049],
+  [33, "ProjectionThreadParentRelation", Migration0033],
+  [34, "BackfillEmptyProjectionThreadRootIds", Migration0034],
+  [35, "ThreadColdArchive", Migration0035],
+  [36, "DeletedThreadCleanupQueue", Migration0036],
+  [37, "SubagentColdArchiveGlue", Migration0037],
+  [38, "ProjectionThreadsSettled", Migration0038],
+  [39, "ProjectionThreadsSnoozed", Migration0039],
+  [40, "ProjectionThreadTitleRegeneration", Migration0040],
+  [41, "ThreadColdArchiveCompatibility", Migration0041],
+  [42, "ProjectionThreadsPinned", Migration0042],
+  [43, "ProjectionTurnsKeysetIndex", Migration0043],
+  [44, "ProjectionThreadsPinOrderKey", Migration0044],
+  [45, "ProjectionProjectsDefaultThreadEnvMode", Migration0045],
+  [46, "ProjectionProjectFaviconPath", Migration0046],
+  [47, "ThreadStorageLifecycleCompatibility", Migration0047],
+  [48, "MagiProjections", Migration0048],
+  [49, "MagiActiveConversationUniqueness", Migration0049],
+  [50, "MagiProposalTerminology", Migration0050],
+  [51, "MagiThreadColdArchiveGlue", Migration0051],
+  [52, "AuthSessionClientConnection", Migration0052],
+  [53, "ProjectionThreadLinkedPullRequest", Migration0053],
+  [54, "ProjectionThreadsUnsettledAt", Migration0054],
+  [55, "ClearAutomaticProjectModelDefaults", Migration0055],
+  [56, "ProjectionProjectsAutoPull", Migration0056],
+  [57, "ProjectionThreadLineageConvergenceAfterUpstreamTail", Migration0057],
+  [58, "RepairAutomaticSettlementTimestamps", Migration0058],
+  [59, "ProjectionProjectIcon", Migration0059],
+  [60, "MagiCoreMigrationCompatibility", Migration0060],
+  [61, "ProjectionThreadBranchPullRequest", Migration0061],
+  [62, "ProjectionThreadsActiveOrderKey", Migration0062],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
-const makeMigrationLoader = (throughId?: number) =>
+export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
       migrationEntries
@@ -145,6 +172,84 @@ export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
+const normalizeDivergentMigrationHistory = Effect.fn("normalizeDivergentMigrationHistory")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const migrationTable = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'effect_sql_migrations'
+    `;
+    if ((migrationTable[0]?.count ?? 0) === 0) {
+      return;
+    }
+
+    const upstreamTitleAt35 = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM effect_sql_migrations
+      WHERE migration_id = 35 AND name = 'ProjectionThreadTitleRegeneration'
+    `;
+    if (upstreamTitleAt35.length === 0) {
+      return;
+    }
+
+    yield* Effect.logInfo("normalizing divergent upstream migration history", {
+      migrationId: 35,
+      name: upstreamTitleAt35[0]?.name,
+    });
+
+    // Upstream published title regeneration, pinning, project mode, project
+    // favicon, authentication, pull-request, settlement, and icon migrations
+    // at ids 35 through 49
+    // after the fork had already published cold storage there. Remove only
+    // those upstream history markers: all schema changes are idempotent, so
+    // the canonical fork sequence can replay 35 through 49 without deleting
+    // upstream-created columns, indexes, or data.
+    yield* sql`
+      DELETE FROM effect_sql_migrations
+      WHERE
+        (migration_id = 35 AND name = 'ProjectionThreadTitleRegeneration') OR
+        (migration_id = 36 AND name = 'ProjectionThreadsPinned') OR
+        (migration_id = 37 AND name = 'ProjectionTurnsKeysetIndex') OR
+        (migration_id = 38 AND name = 'ProjectionThreadsPinOrderKey') OR
+        (migration_id = 39 AND name = 'ProjectionProjectsDefaultThreadEnvMode') OR
+        (migration_id = 40 AND name = 'ProjectionProjectFaviconPath') OR
+        (migration_id = 41 AND name = 'AuthSessionClientConnection') OR
+        (migration_id = 42 AND name = 'ProjectionThreadLinkedPullRequest') OR
+        (migration_id = 43 AND name = 'ProjectionThreadsUnsettledAt') OR
+        (migration_id = 44 AND name = 'ClearAutomaticProjectModelDefaults') OR
+        (migration_id = 45 AND name = 'ProjectionProjectsAutoPull') OR
+        (migration_id = 46 AND name = 'RepairAutomaticSettlementTimestamps') OR
+        (migration_id = 47 AND name = 'ProjectionProjectIcon') OR
+        (migration_id = 48 AND name = 'ProjectionThreadBranchPullRequest') OR
+        (migration_id = 49 AND name = 'ProjectionThreadsActiveOrderKey')
+    `;
+  },
+);
+
+const normalizeLegacyMagiMigrationHistory = Effect.fn("normalizeLegacyMagiMigrationHistory")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const tables = yield* sql<{ readonly name: string }>`
+      SELECT name
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'effect_sql_migrations'
+    `;
+    if (tables.length === 0) {
+      return;
+    }
+
+    yield* sql`
+      DELETE FROM effect_sql_migrations
+      WHERE
+        (name = 'MagiProjections' AND migration_id <> 48) OR
+        (name = 'MagiActiveConversationUniqueness' AND migration_id <> 49) OR
+        (name = 'MagiProposalTerminology' AND migration_id <> 50) OR
+        (name = 'MagiCoreMigrationCompatibility' AND migration_id <> 60)
+    `;
+  },
+);
+
 /**
  * Run all pending migrations.
  *
@@ -158,6 +263,8 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* normalizeDivergentMigrationHistory();
+  yield* normalizeLegacyMagiMigrationHistory();
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0

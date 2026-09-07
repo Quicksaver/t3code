@@ -348,6 +348,9 @@ export function projectEvent(
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
+            ...(payload.parentRelation !== undefined
+              ? { parentRelation: payload.parentRelation }
+              : {}),
             messages: [],
             activities: [],
             checkpoints: [],
@@ -513,6 +516,9 @@ export function projectEvent(
               : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+            ...(payload.parentRelation !== undefined
+              ? { parentRelation: payload.parentRelation }
+              : {}),
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
               : {}),

@@ -51,6 +51,7 @@ const clientSettings: ClientSettings = {
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
   planModeEnabled: false,
+  subagentConversationVisibilityEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   providerModelPreferences: {},

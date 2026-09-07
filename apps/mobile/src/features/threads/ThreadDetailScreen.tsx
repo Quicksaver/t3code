@@ -100,6 +100,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { SUBAGENT_CONTROL_BAR_HEIGHT, SubagentControlBar } from "./SubagentControlBar";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
@@ -146,6 +147,7 @@ export interface ThreadDetailScreenProps {
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
+  readonly onOpenParentThread?: () => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
@@ -324,6 +326,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   )
     ? 0
     : Math.max(insets.bottom, 12);
+  const subagentControlBottomInset = Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
@@ -397,8 +400,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           entry.message.text.trim().toLowerCase() !== "/compact"),
     ) ||
     (Boolean(props.loadEarlier) && props.selectedThread.latestUserMessageAt !== null);
-  const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
-  const composerOverlapHeight = composerChrome + composerBottomInset;
+  const selectedThreadIsSubagent = props.selectedThread.parentRelation?.kind === "subagent";
+  const subagentControlCanStop =
+    selectedThreadIsSubagent &&
+    (props.selectedThread.parentRelation?.status === "running" ||
+      props.selectedThread.session?.status === "running" ||
+      props.selectedThread.session?.status === "starting");
+  const composerChrome = selectedThreadIsSubagent
+    ? SUBAGENT_CONTROL_BAR_HEIGHT
+    : composerExpanded
+      ? COMPOSER_EXPANDED_CHROME
+      : COMPOSER_COLLAPSED_CHROME;
+  const composerOverlapBottomInset = selectedThreadIsSubagent
+    ? subagentControlBottomInset
+    : composerBottomInset;
+  const composerOverlapHeight = composerChrome + composerOverlapBottomInset;
   // While a user-input request is pending, the questionnaire owns the
   // composer slot outright: expanded it is the full card, collapsed it is a
   // composer-style bar in the same place (with its own stop control). The
@@ -492,9 +508,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     keyboardHeight:
       lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT,
     navigationHeaderHeight,
-    // The questionnaire owns the composer slot, so only the composer's
-    // bottom inset still overlaps.
-    composerOverlapHeight: composerBottomInset,
+    // The questionnaire owns the bottom control slot, so only that slot's
+    // safe-area inset still overlaps.
+    composerOverlapHeight: composerOverlapBottomInset,
   });
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
@@ -992,53 +1008,58 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 ) : null}
               </View>
 
-              {/* Hidden (not unmounted) while a user-input request owns the
-                composer slot, so composer drafts and editor state survive.
-                A rejected creation has no thread to send to; the failure card
-                owns the slot instead. */}
-              <View
-                style={
-                  activeUserInputRequestId !== null || props.creationState?.kind === "failed"
-                    ? { display: "none" }
-                    : undefined
-                }
-              >
-                <ThreadComposer
-                  editorRef={composerEditorRef}
-                  draftMessage={props.draftMessage}
-                  draftAttachments={props.draftAttachments}
-                  placeholder="Ask the repo agent, or run a command…"
+              {selectedThreadIsSubagent ? (
+                <SubagentControlBar
+                  bottomInset={subagentControlBottomInset}
                   contentMaxWidth={contentMaxWidth}
-                  connectionState={props.connectionStateLabel}
-                  environmentLabel={props.environmentLabel}
-                  selectedThread={props.selectedThread}
-                  hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
-                  serverConfig={props.serverConfig}
-                  queueCount={props.selectedThreadQueueCount}
-                  environmentId={props.environmentId}
-                  projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
-                  // Follow-ups typed during setup wait in the draft: queueing
-                  // them against a thread id the server may still reject
-                  // would strand them in the outbox.
-                  sendBlockedReason={
-                    props.creationState?.kind === "preparing" ? "Starting the task…" : null
-                  }
-                  bottomInset={composerBottomInset}
-                  onChangeDraftMessage={props.onChangeDraftMessage}
-                  onPickDraftMedia={props.onPickDraftMedia}
-                  onPickDraftFiles={props.onPickDraftFiles}
-                  onNativePasteImages={props.onNativePasteImages}
-                  onRemoveDraftImage={props.onRemoveDraftImage}
+                  isRunning={subagentControlCanStop}
+                  onOpenParentThread={props.onOpenParentThread}
                   onStopThread={props.onStopThread}
-                  onSendMessage={handleSendMessage}
-                  onShowUsageLimits={showUsageLimits}
-                  onUpdateModelSelection={props.onUpdateThreadModelSelection}
-                  onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
-                  onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
-                  onExpandedChange={setComposerExpanded}
-                  onEditorFocusChange={handleComposerFocusChange}
                 />
-              </View>
+              ) : (
+                // Hidden (not unmounted) while a user-input request owns the
+                // composer slot, so composer drafts and editor state survive.
+                <View
+                  style={
+                    activeUserInputRequestId !== null || props.creationState?.kind === "failed"
+                      ? { display: "none" }
+                      : undefined
+                  }
+                >
+                  <ThreadComposer
+                    editorRef={composerEditorRef}
+                    draftMessage={props.draftMessage}
+                    draftAttachments={props.draftAttachments}
+                    placeholder="Ask the repo agent, or run a command…"
+                    contentMaxWidth={contentMaxWidth}
+                    connectionState={props.connectionStateLabel}
+                    environmentLabel={props.environmentLabel}
+                    selectedThread={props.selectedThread}
+                    hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
+                    serverConfig={props.serverConfig}
+                    queueCount={props.selectedThreadQueueCount}
+                    environmentId={props.environmentId}
+                    projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
+                    sendBlockedReason={
+                      props.creationState?.kind === "preparing" ? "Starting the task…" : null
+                    }
+                    bottomInset={composerBottomInset}
+                    onChangeDraftMessage={props.onChangeDraftMessage}
+                    onPickDraftMedia={props.onPickDraftMedia}
+                    onPickDraftFiles={props.onPickDraftFiles}
+                    onNativePasteImages={props.onNativePasteImages}
+                    onRemoveDraftImage={props.onRemoveDraftImage}
+                    onStopThread={props.onStopThread}
+                    onSendMessage={handleSendMessage}
+                    onShowUsageLimits={showUsageLimits}
+                    onUpdateModelSelection={props.onUpdateThreadModelSelection}
+                    onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
+                    onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
+                    onExpandedChange={setComposerExpanded}
+                    onEditorFocusChange={handleComposerFocusChange}
+                  />
+                </View>
+              )}
             </View>
           </Animated.View>
         </KeyboardStickyView>

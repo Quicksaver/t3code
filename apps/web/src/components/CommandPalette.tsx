@@ -112,6 +112,7 @@ import {
 } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
+import { filterStandaloneSubagentConversations } from "../subagentControls";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
@@ -638,6 +639,14 @@ function OpenCommandPaletteDialog(props: {
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const navigableThreads = useMemo(
+    () =>
+      filterStandaloneSubagentConversations(
+        threads,
+        clientSettings.subagentConversationVisibilityEnabled,
+      ),
+    [clientSettings.subagentConversationVisibilityEnabled, threads],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -1139,7 +1148,7 @@ function OpenCommandPaletteDialog(props: {
   const allThreadItems = useMemo(
     () =>
       buildThreadActionItems({
-        threads,
+        threads: navigableThreads,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
@@ -1198,7 +1207,7 @@ function OpenCommandPaletteDialog(props: {
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
       threadSearchQuery,
-      threads,
+      navigableThreads,
     ],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);

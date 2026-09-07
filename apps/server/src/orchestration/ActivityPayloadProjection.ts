@@ -333,6 +333,100 @@ function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+function copyStringFields(
+  source: Record<string, unknown>,
+  keys: ReadonlyArray<string>,
+): Record<string, unknown> | undefined {
+  const projected: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.length > 0) {
+      projected[key] = value;
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
+const COLLAB_PROMPT_FIELDS = ["prompt", "message", "description", "task"] as const;
+
+function projectCollabItem(value: unknown): Record<string, unknown> | undefined {
+  const item = asRecord(value);
+  if (!item) {
+    return undefined;
+  }
+
+  const projected = copyStringFields(item, ["id", ...COLLAB_PROMPT_FIELDS]) ?? {};
+  const input = asRecord(item.input);
+  const projectedInput = input ? copyStringFields(input, COLLAB_PROMPT_FIELDS) : undefined;
+  if (projectedInput) {
+    projected.input = projectedInput;
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
+function projectCollabChildren(value: unknown): ReadonlyArray<Record<string, unknown>> | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const projected = value.flatMap((child) => {
+    const record = asRecord(child);
+    if (!record) {
+      return [];
+    }
+    const fields = copyStringFields(record, [
+      "childThreadId",
+      "threadId",
+      "parentItemId",
+      "titleSeed",
+    ]);
+    return fields ? [fields] : [];
+  });
+  return projected.length > 0 ? projected : undefined;
+}
+
+function projectCollabData(data: Record<string, unknown>): Record<string, unknown> {
+  // Keep this allowlist aligned with current client readers. Persistence retains
+  // the complete provider payload when clients begin consuming another field.
+  const projected: Record<string, unknown> = {};
+
+  const item = projectCollabItem(data.item);
+  if (item) {
+    projected.item = item;
+  }
+  const rawInput = asRecord(data.rawInput);
+  const projectedRawInput = rawInput ? copyStringFields(rawInput, COLLAB_PROMPT_FIELDS) : undefined;
+  if (projectedRawInput) {
+    projected.rawInput = projectedRawInput;
+  }
+  const parentCollab = asRecord(data.parentCollab);
+  const projectedParentCollab = parentCollab
+    ? copyStringFields(parentCollab, ["itemId", "detail"])
+    : undefined;
+  if (projectedParentCollab) {
+    projected.parentCollab = projectedParentCollab;
+  }
+  const rawOutput = asRecord(data.rawOutput);
+  const projectedRawOutput = rawOutput
+    ? copyStringFields(rawOutput, ["content", "output", "text", "stdout", "result"])
+    : undefined;
+  if (projectedRawOutput) {
+    // Keep collab chunks on this verbatim allowlist instead of projectRawOutput:
+    // subagent output is streamed and concatenated in order by current clients.
+    projected.rawOutput = projectedRawOutput;
+  }
+  const children = projectCollabChildren(data.subagentChildren);
+  if (children) {
+    projected.subagentChildren = children;
+  }
+
+  const metadata = copyStringFields(data, ["toolCallId", "itemId", "kind"]);
+  if (metadata) {
+    Object.assign(projected, metadata);
+  }
+  return projected;
+}
+
 function projectAcpContent(value: unknown): Record<string, unknown> | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -370,6 +464,16 @@ export function projectActivityPayload(
     payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
       ? { ...payload, status: itemStatus }
       : payload;
+
+  if (payload.itemType === "collab_agent_tool_call") {
+    return {
+      ...activity,
+      payload: {
+        ...projectedPayload,
+        data: projectCollabData(data),
+      },
+    };
+  }
 
   if (payload.itemType === "mcp_tool_call") {
     return {
@@ -476,10 +580,12 @@ function dropStaleContextWindowActivities(
 }
 
 /**
- * Identity used to retain only the newest lifecycle row for each call in a
- * thread snapshot. Prefer the runtime item id, then the legacy nested id, and
- * finally the itemType/title/detail triple. Rows without any identity remain
- * untouched.
+ * Identity both clients use to fold a tool lifecycle row into the call it
+ * belongs to (`deriveToolLifecycleCollapseKey` in web's `session-logic` and
+ * mobile's `threadActivity`): an explicit `data.toolCallId` when the adapter
+ * emits one, otherwise the itemType/title/detail triple. Returns null for rows
+ * with no identity at all — those never collapse on the client either, so they
+ * must not be dropped here.
  */
 function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | null {
   const payload = asRecord(activity.payload);

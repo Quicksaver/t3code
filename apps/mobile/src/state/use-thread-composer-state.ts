@@ -200,11 +200,15 @@ export function useThreadComposerState() {
     }
   }, [acknowledgedMessages, selectedThreadMessages]);
 
-  const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
+  const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+  const selectedThreadIsSubagent = selectedThread?.parentRelation?.kind === "subagent";
+  const selectedDraft =
+    selectedThreadKey && !selectedThreadIsSubagent ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
   const draftAttachments = selectedDraft?.attachments ?? [];
-  const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
-  const selectedThread = selectedThreadDetail ?? selectedThreadShell;
+  const selectedThreadQueueCount = selectedThreadIsSubagent
+    ? 0
+    : selectedThreadQueuedMessages.length;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
@@ -285,7 +289,7 @@ export function useThreadComposerState() {
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 
   const onSendMessage = useCallback(async () => {
-    if (!selectedThreadShell) {
+    if (!selectedThreadShell || selectedThreadIsSubagent) {
       return null;
     }
     // The server has not created this thread yet. Queuing a follow-up against
@@ -431,24 +435,25 @@ export function useThreadComposerState() {
     selectedEnvironmentRuntime?.serverConfig,
     selectedThreadCreation,
     selectedThreadDetail,
+    selectedThreadIsSubagent,
     selectedThreadShell,
     uploadThreadFeedback,
   ]);
 
   const onChangeDraftMessage = useCallback(
     (value: string) => {
-      if (!selectedThreadShell) {
+      if (!selectedThreadShell || selectedThreadIsSubagent) {
         return;
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
       setComposerDraftText(threadKey, value);
     },
-    [selectedThreadShell],
+    [selectedThreadIsSubagent, selectedThreadShell],
   );
 
   const onPickDraftMedia = useCallback(async () => {
-    if (!selectedThreadShell) {
+    if (!selectedThreadShell || selectedThreadIsSubagent) {
       return;
     }
 
@@ -471,10 +476,15 @@ export function useThreadComposerState() {
     if (problems.length > 0) {
       Alert.alert("Could not attach photo or video", problems.join("\n\n"));
     }
-  }, [composerDrafts, selectedEnvironmentRuntime?.serverConfig, selectedThreadShell]);
+  }, [
+    composerDrafts,
+    selectedEnvironmentRuntime?.serverConfig,
+    selectedThreadIsSubagent,
+    selectedThreadShell,
+  ]);
 
   const onPickDraftFiles = useCallback(async () => {
-    if (!selectedThreadShell) {
+    if (!selectedThreadShell || selectedThreadIsSubagent) {
       return;
     }
     const maxBytes =
@@ -503,10 +513,15 @@ export function useThreadComposerState() {
     if (problems.length > 0) {
       Alert.alert("Could not attach file", problems.join("\n\n"));
     }
-  }, [composerDrafts, selectedEnvironmentRuntime?.serverConfig, selectedThreadShell]);
+  }, [
+    composerDrafts,
+    selectedEnvironmentRuntime?.serverConfig,
+    selectedThreadIsSubagent,
+    selectedThreadShell,
+  ]);
 
   const onPasteIntoDraft = useCallback(async () => {
-    if (!selectedThreadShell) {
+    if (!selectedThreadShell || selectedThreadIsSubagent) {
       return;
     }
 
@@ -525,11 +540,11 @@ export function useThreadComposerState() {
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
       );
     }
-  }, [composerDrafts, selectedThreadShell]);
+  }, [composerDrafts, selectedThreadIsSubagent, selectedThreadShell]);
 
   const onNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
-      if (!selectedThreadShell || uris.length === 0) {
+      if (!selectedThreadShell || selectedThreadIsSubagent || uris.length === 0) {
         return;
       }
 
@@ -551,24 +566,24 @@ export function useThreadComposerState() {
         });
       }
     },
-    [composerDrafts, selectedThreadShell],
+    [composerDrafts, selectedThreadIsSubagent, selectedThreadShell],
   );
 
   const onRemoveDraftImage = useCallback(
     (imageId: string) => {
-      if (!selectedThreadShell) {
+      if (!selectedThreadShell || selectedThreadIsSubagent) {
         return;
       }
 
       const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
       removeComposerDraftAttachment(threadKey, imageId);
     },
-    [selectedThreadShell],
+    [selectedThreadIsSubagent, selectedThreadShell],
   );
 
   const onUpdateModelSelection = useCallback(
     (value: ModelSelection) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || selectedThreadIsSubagent) {
         return;
       }
       const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
@@ -581,22 +596,22 @@ export function useThreadComposerState() {
           : {}),
       });
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThreadKey],
+    [selectedEnvironmentRuntime?.serverConfig, selectedThreadIsSubagent, selectedThreadKey],
   );
 
   const onUpdateRuntimeMode = useCallback(
     (value: RuntimeMode) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || selectedThreadIsSubagent) {
         return;
       }
       updateComposerDraftSettings(selectedThreadKey, { runtimeMode: value });
     },
-    [selectedThreadKey],
+    [selectedThreadIsSubagent, selectedThreadKey],
   );
 
   const onUpdateInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
-      if (!selectedThreadKey) {
+      if (!selectedThreadKey || selectedThreadIsSubagent) {
         return;
       }
       const modelSelection =
@@ -609,7 +624,12 @@ export function useThreadComposerState() {
         interactionMode: resolveProviderInteractionMode(provider, value),
       });
     },
-    [selectedEnvironmentRuntime?.serverConfig, selectedThread?.modelSelection, selectedThreadKey],
+    [
+      selectedEnvironmentRuntime?.serverConfig,
+      selectedThread?.modelSelection,
+      selectedThreadIsSubagent,
+      selectedThreadKey,
+    ],
   );
 
   return {
