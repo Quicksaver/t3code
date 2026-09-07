@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { classifyTaskAgentKind, type OrchestrationThreadActivity } from "@t3tools/contracts";
 import {
   deriveAgentPanelModel,
+  reconcileSubagentProjectionStatuses,
   foldSubagentActivities,
   formatSubagentModelLabel,
   formatSubagentTokenCount,
@@ -889,5 +890,73 @@ describe("nested agents vs subagent shells", () => {
       }),
     ]);
     expect(agents.map((agent) => agent.id)).toEqual(["nested-1"]);
+  });
+});
+
+describe("reconcileSubagentProjectionStatuses", () => {
+  it("settles a stale working row from its authoritative child projection", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "provider-child-thread",
+        title: "Completed child",
+      }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([
+        ["provider-child-thread", { status: "completed", completedAt: "2026-08-01T10:01:00.000Z" }],
+      ]),
+    );
+
+    expect(reconciled[0]).toMatchObject({
+      status: "completed",
+      completedAt: "2026-08-01T10:01:00.000Z",
+    });
+    expect(deriveAgentPanelModel({ agents: reconciled })).toMatchObject({
+      liveCount: 0,
+      settledCount: 1,
+    });
+  });
+
+  it("maps terminal projection vocabulary without overriding idle or terminal activity rows", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "errored" }),
+      activity("task.started", { taskId: "stopped" }),
+      activity("task.started", { taskId: "idle" }),
+      activity("task.updated", { taskId: "idle", status: "idle" }),
+      activity("task.completed", { taskId: "already-terminal", status: "failed" }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([
+        ["errored", { status: "errored", completedAt: null }],
+        ["stopped", { status: "stopped", completedAt: null }],
+        ["idle", { status: "completed", completedAt: null }],
+        ["already-terminal", { status: "completed", completedAt: null }],
+      ]),
+    );
+    const byId = new Map(reconciled.map((agent) => [agent.id, agent]));
+
+    expect(byId.get("errored")?.status).toBe("failed");
+    expect(byId.get("stopped")?.status).toBe("interrupted");
+    expect(byId.get("idle")?.status).toBe("idle");
+    expect(byId.get("already-terminal")?.status).toBe("failed");
+  });
+
+  it("keeps unmatched or still-running projections active", () => {
+    const agents = fold([
+      activity("task.started", { taskId: "still-running" }),
+      activity("task.started", { taskId: "unmatched" }),
+    ]);
+
+    const reconciled = reconcileSubagentProjectionStatuses(
+      agents,
+      new Map([["still-running", { status: "running", completedAt: null }]]),
+    );
+
+    expect(reconciled).toBe(agents);
+    expect(reconciled.map((agent) => agent.status)).toEqual(["running", "running"]);
   });
 });

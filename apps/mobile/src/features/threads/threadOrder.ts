@@ -11,6 +11,7 @@ type OrderRow = Pick<
   | "createdAt"
   | "unsettledAt"
   | "pinnedAt"
+  | "settledOverride"
 >;
 
 export interface PendingThreadOrder {
@@ -50,7 +51,13 @@ export function createThreadMovePlanner(input: {
   );
   const writableIds = new Set(
     input.ordered
-      .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
+      .filter(
+        (row) =>
+          input.reorderableEnvironmentIds.has(row.environmentId) &&
+          (input.section === "pinned"
+            ? row.pinnedAt != null
+            : row.pinnedAt == null && row.settledOverride !== "settled"),
+      )
       .map(rowId),
   );
   return (movedId: string, direction: "up" | "down") => {

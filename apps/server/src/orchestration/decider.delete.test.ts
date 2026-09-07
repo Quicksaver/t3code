@@ -7,6 +7,8 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   ProviderInstanceId,
+  ProviderItemId,
+  TurnId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,6 +21,8 @@ const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const asProviderItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
 
 const seedReadModel = Effect.gen(function* () {
   const now = "2026-01-01T00:00:00.000Z";
@@ -102,6 +106,96 @@ const seedReadModel = Effect.gen(function* () {
   });
 });
 
+const seedReadModelWithSubagents = Effect.gen(function* () {
+  const now = "2026-01-01T00:00:00.000Z";
+  const withRoots = yield* seedReadModel;
+  const childThreadId = asThreadId("thread-delete-1-child");
+  const grandchildThreadId = asThreadId("thread-delete-1-grandchild");
+  const withChild = yield* projectEvent(withRoots, {
+    sequence: 4,
+    eventId: asEventId("evt-thread-create-1-child"),
+    aggregateKind: "thread",
+    aggregateId: childThreadId,
+    type: "thread.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-create-1-child"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-create-1-child"),
+    metadata: {},
+    payload: {
+      threadId: childThreadId,
+      projectId: asProjectId("project-delete"),
+      title: "Thread Delete 1 Child",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: asThreadId("thread-delete-1"),
+        parentThreadId: asThreadId("thread-delete-1"),
+        parentTurnId: asTurnId("turn-delete-1"),
+        parentItemId: asProviderItemId("item-delete-1"),
+        parentActivitySequence: 1,
+        providerThreadId: "provider-thread-delete-1-child",
+        titleSeed: "Child",
+        depth: 1,
+        startedAt: now,
+        completedAt: null,
+        status: "running",
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+
+  return yield* projectEvent(withChild, {
+    sequence: 5,
+    eventId: asEventId("evt-thread-create-1-grandchild"),
+    aggregateKind: "thread",
+    aggregateId: grandchildThreadId,
+    type: "thread.created",
+    occurredAt: now,
+    commandId: asCommandId("cmd-thread-create-1-grandchild"),
+    causationEventId: null,
+    correlationId: asCommandId("cmd-thread-create-1-grandchild"),
+    metadata: {},
+    payload: {
+      threadId: grandchildThreadId,
+      projectId: asProjectId("project-delete"),
+      title: "Thread Delete 1 Grandchild",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      branch: null,
+      worktreePath: null,
+      parentRelation: {
+        kind: "subagent",
+        rootThreadId: asThreadId("thread-delete-1"),
+        parentThreadId: childThreadId,
+        parentTurnId: asTurnId("turn-delete-1-child"),
+        parentItemId: asProviderItemId("item-delete-1-child"),
+        parentActivitySequence: 2,
+        providerThreadId: "provider-thread-delete-1-grandchild",
+        titleSeed: "Grandchild",
+        depth: 2,
+        startedAt: now,
+        completedAt: null,
+        status: "running",
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+  });
+});
+
 type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
 function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>) {
@@ -136,7 +230,32 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
   });
 }
 
-it.layer(NodeServices.layer)("decider deletion flows", (it) => {
+function normalizeThreadLifecycleEvents(event: PlannedEvent | ReadonlyArray<PlannedEvent>) {
+  const events = Array.isArray(event) ? event : [event];
+  return events.map((entry) => {
+    switch (entry.type) {
+      case "thread.deleted":
+        return {
+          type: entry.type,
+          threadId: entry.payload.threadId,
+        };
+      case "thread.archived":
+        return {
+          type: entry.type,
+          threadId: entry.payload.threadId,
+        };
+      case "project.deleted":
+        return {
+          type: entry.type,
+          projectId: entry.payload.projectId,
+        };
+      default:
+        return { type: entry.type };
+    }
+  });
+}
+
+it.layer(NodeServices.layer)("decider thread lifecycle flows", (it) => {
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
@@ -212,6 +331,173 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
       }
 
       expect(normalizeDeleteEvent(forcedResult)).toEqual(normalizeDeleteEvent(sequentialEvents));
+    }),
+  );
+
+  it.effect("deletes subagent descendants before deleting their parent thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.delete",
+          commandId: asCommandId("cmd-thread-delete-cascade"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel,
+      });
+
+      expect(normalizeThreadLifecycleEvents(result)).toEqual([
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1-grandchild") },
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1-child") },
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1") },
+      ]);
+    }),
+  );
+
+  it.effect("archives subagent descendants before archiving their parent thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.archive",
+          commandId: asCommandId("cmd-thread-archive-cascade"),
+          threadId: asThreadId("thread-delete-1"),
+        },
+        readModel,
+      });
+
+      expect(normalizeThreadLifecycleEvents(result)).toEqual([
+        { type: "thread.archived", threadId: asThreadId("thread-delete-1-grandchild") },
+        { type: "thread.archived", threadId: asThreadId("thread-delete-1-child") },
+        { type: "thread.archived", threadId: asThreadId("thread-delete-1") },
+      ]);
+    }),
+  );
+
+  it.effect("rejects reparenting a subagent beneath its own descendant", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+      const child = readModel.threads.find(
+        (thread) => thread.id === asThreadId("thread-delete-1-child"),
+      );
+      if (child?.parentRelation?.kind !== "subagent") {
+        throw new Error("Expected seeded child subagent relation");
+      }
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.meta.update",
+            commandId: asCommandId("cmd-thread-cycle-reparent"),
+            threadId: child.id,
+            parentRelation: {
+              ...child.parentRelation,
+              parentThreadId: asThreadId("thread-delete-1-grandchild"),
+              depth: 3,
+            },
+          },
+          readModel,
+        }),
+      );
+
+      expect(error.message).toContain("parent relation would create a cycle");
+    }),
+  );
+
+  it.effect("rejects creating a subagent with a missing parent thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+      const child = readModel.threads.find(
+        (thread) => thread.id === asThreadId("thread-delete-1-child"),
+      );
+      if (child?.parentRelation?.kind !== "subagent") {
+        throw new Error("Expected seeded child subagent relation");
+      }
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.create",
+            commandId: asCommandId("cmd-thread-create-missing-parent"),
+            threadId: asThreadId("thread-missing-parent-child"),
+            projectId: child.projectId,
+            title: "Missing parent child",
+            modelSelection: child.modelSelection,
+            interactionMode: child.interactionMode,
+            runtimeMode: child.runtimeMode,
+            branch: child.branch,
+            worktreePath: child.worktreePath,
+            parentRelation: {
+              ...child.parentRelation,
+              parentThreadId: asThreadId("thread-missing-parent"),
+              providerThreadId: "provider-thread-missing-parent-child",
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          readModel,
+        }),
+      );
+
+      expect(error.message).toContain(
+        "Thread 'thread-missing-parent' does not exist for command 'thread.create'",
+      );
+    }),
+  );
+
+  it.effect("rejects reparenting a subagent to a missing parent thread", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+      const child = readModel.threads.find(
+        (thread) => thread.id === asThreadId("thread-delete-1-child"),
+      );
+      if (child?.parentRelation?.kind !== "subagent") {
+        throw new Error("Expected seeded child subagent relation");
+      }
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.meta.update",
+            commandId: asCommandId("cmd-thread-reparent-missing-parent"),
+            threadId: child.id,
+            parentRelation: {
+              ...child.parentRelation,
+              parentThreadId: asThreadId("thread-missing-parent"),
+            },
+          },
+          readModel,
+        }),
+      );
+
+      expect(error.message).toContain(
+        "Thread 'thread-missing-parent' does not exist for command 'thread.meta.update'",
+      );
+    }),
+  );
+
+  it.effect("force-deletes subagent descendants once when deleting a project", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModelWithSubagents;
+
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "project.delete",
+          commandId: asCommandId("cmd-project-delete-subagents"),
+          projectId: asProjectId("project-delete"),
+          force: true,
+        },
+        readModel,
+      });
+
+      expect(normalizeThreadLifecycleEvents(result)).toEqual([
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1-grandchild") },
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1-child") },
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-1") },
+        { type: "thread.deleted", threadId: asThreadId("thread-delete-2") },
+        { type: "project.deleted", projectId: asProjectId("project-delete") },
+      ]);
     }),
   );
 });

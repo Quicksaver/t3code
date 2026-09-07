@@ -49,7 +49,7 @@ function latestUserMessageAt(thread: OrchestrationThread): OrchestrationThread["
   return null;
 }
 
-function threadDetailToShell(
+export function threadDetailToShell(
   environmentId: EnvironmentId,
   thread: OrchestrationThread,
 ): EnvironmentThreadShell {
@@ -78,6 +78,7 @@ function threadDetailToShell(
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
     session: thread.session,
+    parentRelation: thread.parentRelation,
     latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,
     hasPendingUserInput: false,

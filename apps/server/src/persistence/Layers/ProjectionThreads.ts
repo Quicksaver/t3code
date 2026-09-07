@@ -41,6 +41,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode,
           branch,
           worktree_path,
+          parent_kind,
+          root_thread_id,
+          parent_thread_id,
+          parent_turn_id,
+          parent_item_id,
+          parent_activity_sequence,
+          provider_thread_id,
+          title_seed,
+          subagent_depth,
+          subagent_started_at,
+          subagent_completed_at,
+          subagent_status,
           linked_pull_request_json,
           branch_pull_request_json,
           latest_turn_id,
@@ -72,6 +84,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.interactionMode},
           ${row.branch},
           ${row.worktreePath},
+          ${row.parentKind},
+          ${row.rootThreadId},
+          ${row.parentThreadId},
+          ${row.parentTurnId},
+          ${row.parentItemId},
+          ${row.parentActivitySequence},
+          ${row.providerThreadId},
+          ${row.titleSeed},
+          ${row.subagentDepth},
+          ${row.subagentStartedAt},
+          ${row.subagentCompletedAt},
+          ${row.subagentStatus},
           ${row.linkedPullRequest === undefined || row.linkedPullRequest === null ? null : JSON.stringify(row.linkedPullRequest)},
           ${row.branchPullRequest === undefined || row.branchPullRequest === null ? null : JSON.stringify(row.branchPullRequest)},
           ${row.latestTurnId},
@@ -80,7 +104,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.archivedAt},
           ${row.settledOverride},
           ${row.settledAt},
-          ${row.unsettledAt},
+          ${row.unsettledAt ?? null},
           ${row.snoozedUntil},
           ${row.snoozedAt},
           ${row.pinnedAt},
@@ -103,6 +127,66 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode = excluded.interaction_mode,
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
+          parent_kind = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_kind
+            ELSE excluded.parent_kind
+          END,
+          root_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.root_thread_id
+            ELSE excluded.root_thread_id
+          END,
+          parent_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_thread_id
+            ELSE excluded.parent_thread_id
+          END,
+          parent_turn_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_turn_id
+            ELSE excluded.parent_turn_id
+          END,
+          parent_item_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_item_id
+            ELSE excluded.parent_item_id
+          END,
+          parent_activity_sequence = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.parent_activity_sequence
+            ELSE excluded.parent_activity_sequence
+          END,
+          provider_thread_id = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.provider_thread_id
+            ELSE excluded.provider_thread_id
+          END,
+          title_seed = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.title_seed
+            ELSE excluded.title_seed
+          END,
+          subagent_depth = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_depth
+            ELSE excluded.subagent_depth
+          END,
+          subagent_started_at = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_started_at
+            ELSE excluded.subagent_started_at
+          END,
+          subagent_completed_at = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_completed_at
+            ELSE excluded.subagent_completed_at
+          END,
+          subagent_status = CASE
+            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+              THEN projection_threads.subagent_status
+            ELSE excluded.subagent_status
+          END,
           linked_pull_request_json = excluded.linked_pull_request_json,
           branch_pull_request_json = excluded.branch_pull_request_json,
           latest_turn_id = excluded.latest_turn_id,
@@ -141,6 +225,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(root_thread_id, ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -181,6 +277,18 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          COALESCE(parent_kind, 'root') AS "parentKind",
+          COALESCE(NULLIF(root_thread_id, ''), thread_id) AS "rootThreadId",
+          parent_thread_id AS "parentThreadId",
+          parent_turn_id AS "parentTurnId",
+          parent_item_id AS "parentItemId",
+          COALESCE(parent_activity_sequence, 0) AS "parentActivitySequence",
+          provider_thread_id AS "providerThreadId",
+          title_seed AS "titleSeed",
+          COALESCE(subagent_depth, 0) AS "subagentDepth",
+          subagent_started_at AS "subagentStartedAt",
+          subagent_completed_at AS "subagentCompletedAt",
+          subagent_status AS "subagentStatus",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",

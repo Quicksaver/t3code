@@ -11,7 +11,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, CornerLeftUpIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -25,6 +25,7 @@ import {
 import GitActionsControl from "../GitActionsControl";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
@@ -67,6 +68,7 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onRunProjectScript: (script: ProjectScript) => void;
+  onOpenParentThread?: (() => void) | undefined;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
     scriptId: string,
@@ -139,6 +141,7 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onOpenParentThread,
 }: ChatHeaderProps) {
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
@@ -320,6 +323,27 @@ export const ChatHeader = memo(function ChatHeader({
       <WorkspaceBreadcrumb
         ariaLabel="Thread breadcrumb"
         className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+        trailingAction={
+          onOpenParentThread ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="outline"
+                    className="shrink-0"
+                    aria-label="Open parent conversation"
+                    onClick={onOpenParentThread}
+                  />
+                }
+              >
+                <CornerLeftUpIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Open parent conversation</TooltipPopup>
+            </Tooltip>
+          ) : null
+        }
       >
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone

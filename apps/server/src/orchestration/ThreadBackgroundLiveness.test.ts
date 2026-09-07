@@ -69,6 +69,7 @@ describe("ThreadBackgroundLiveness", () => {
       kind: "started",
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(0);
     liveness.recordTaskLiveness({
       threadId,
       taskId: "a1",
@@ -77,6 +78,15 @@ describe("ThreadBackgroundLiveness", () => {
       kind: "started",
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(1);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a2",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+    });
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(2);
     liveness.recordTaskLiveness({
       threadId,
       taskId: "a1",
@@ -84,7 +94,42 @@ describe("ThreadBackgroundLiveness", () => {
       status: "completed",
       kind: "completed",
     });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(1);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a2",
+      taskType: "subagent",
+      status: "idle",
+      kind: "updated",
+    });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(0);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a2",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(1);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a2",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a2",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(0);
     liveness.recordTaskLiveness({
       threadId,
       taskId: "m1",
@@ -93,6 +138,50 @@ describe("ThreadBackgroundLiveness", () => {
       kind: "completed",
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(0);
+  });
+
+  it("reopens an idle resumable agent only on an explicit active status", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-live-resume";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: "running",
+      kind: "started",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: "idle",
+      kind: "updated",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: undefined,
+      kind: "progress",
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: undefined,
+      kind: "updated",
+    });
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(0);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "a1",
+      taskType: undefined,
+      status: "running",
+      kind: "updated",
+    });
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    expect(liveness.getThreadActiveAgentCount(threadId)).toBe(1);
   });
 
   it("terminal rows without a taskType still clear monitor entries", () => {

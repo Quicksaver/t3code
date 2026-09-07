@@ -25,6 +25,8 @@ export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 interface ThreadLivenessState {
   readonly agents: Set<string>;
   readonly monitors: Set<string>;
+  /** Prevent late progress/tool events from reviving a settled task. */
+  readonly settled: Map<string, "idle" | "terminal">;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -40,6 +42,7 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   "cancelled",
   "interrupted",
 ]);
+const MAX_SETTLED_TASKS_PER_THREAD = 2_048;
 
 export class ThreadBackgroundLivenessService extends Context.Service<
   ThreadBackgroundLivenessService,
@@ -69,6 +72,9 @@ export class ThreadBackgroundLivenessService extends Context.Service<
      * "monitoring" only when watch loops are the ONLY live work.
      */
     readonly getThreadBackgroundLiveness: (threadId: string) => ThreadBackgroundLiveness;
+
+    /** Number of live agent tasks backing the sidebar subagent badge. */
+    readonly getThreadActiveAgentCount: (threadId: string) => number;
   }
 >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
 
@@ -80,7 +86,11 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     if (existing) {
       return existing;
     }
-    const created: ThreadLivenessState = { agents: new Set(), monitors: new Set() };
+    const created: ThreadLivenessState = {
+      agents: new Set(),
+      monitors: new Set(),
+      settled: new Map(),
+    };
     stateByThreadId.set(threadId, created);
     return created;
   };
@@ -96,13 +106,52 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     }
     state.agents.delete(taskId);
     state.monitors.delete(taskId);
-    if (state.agents.size === 0 && state.monitors.size === 0) {
+    if (state.agents.size === 0 && state.monitors.size === 0 && state.settled.size === 0) {
       stateByThreadId.delete(threadId);
     }
   };
 
   return {
     recordTaskLiveness: (input) => {
+      const existing = stateByThreadId.get(input.threadId);
+      if (input.kind === "started") {
+        existing?.settled.delete(input.taskId);
+      } else {
+        const settledKind = existing?.settled.get(input.taskId);
+        const explicitlyResumed =
+          settledKind === "idle" &&
+          input.kind === "updated" &&
+          (input.status === "running" || input.status === "waiting");
+        if (explicitlyResumed) {
+          existing?.settled.delete(input.taskId);
+        } else if (settledKind !== undefined) {
+          return;
+        }
+      }
+
+      // Idle counts as not-live: a resting (resumable) Codex child isn't
+      // doing anything, and an all-idle fleet must not pin Working. Keep a
+      // tombstone until the session exits so late tool/progress notifications
+      // cannot resurrect a task that already settled.
+      const terminal =
+        input.kind === "completed" ||
+        input.status === "idle" ||
+        (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
+      if (terminal) {
+        const state = stateFor(input.threadId);
+        state.agents.delete(input.taskId);
+        state.monitors.delete(input.taskId);
+        state.settled.delete(input.taskId);
+        state.settled.set(input.taskId, input.status === "idle" ? "idle" : "terminal");
+        if (state.settled.size > MAX_SETTLED_TASKS_PER_THREAD) {
+          const oldestTaskId = state.settled.keys().next().value;
+          if (oldestTaskId !== undefined) {
+            state.settled.delete(oldestTaskId);
+          }
+        }
+        return;
+      }
+
       const taskType = input.taskType;
       if (taskType !== undefined && INERT_TASK_TYPES.has(taskType)) {
         drop(input.threadId, input.taskId);
@@ -119,17 +168,6 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         return;
       }
 
-      // Idle counts as not-live: a resting (resumable) Codex child isn't
-      // doing anything, and an all-idle fleet must not pin Working.
-      const terminal =
-        input.kind === "completed" ||
-        input.status === "idle" ||
-        (input.status !== undefined && TERMINAL_STATUSES.has(input.status));
-      if (terminal) {
-        drop(input.threadId, input.taskId);
-        return;
-      }
-
       // Status-free progress and metadata updates are not restarts. A delayed
       // row after idle must not put the task back in the live set (#7128).
       if ((input.kind === "progress" || input.kind === "updated") && input.status === undefined) {
@@ -141,7 +179,6 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
           return;
         }
       }
-
       drop(input.threadId, input.taskId);
       const state = stateFor(input.threadId);
       const bucket =
@@ -166,6 +203,8 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
       }
       return null;
     },
+
+    getThreadActiveAgentCount: (threadId) => stateByThreadId.get(threadId)?.agents.size ?? 0,
   };
 }
 
