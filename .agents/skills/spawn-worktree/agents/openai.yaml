@@ -1,0 +1,6 @@
+interface:
+  display_name: "Spawn Worktree"
+  short_description: "Dispatch and supervise one worktree agent."
+
+policy:
+  allow_implicit_invocation: false

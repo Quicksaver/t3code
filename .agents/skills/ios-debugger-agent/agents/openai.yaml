@@ -2,6 +2,10 @@ interface:
   display_name: "iOS Debugger Agent"
   short_description: "Build and drive iOS Simulator apps"
   default_prompt: "Use $ios-debugger-agent to build, launch, and inspect the current iOS app on Simulator."
+
+policy:
+  allow_implicit_invocation: true
+
 dependencies:
   tools:
     - type: "mcp"
