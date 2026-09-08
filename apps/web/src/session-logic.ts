@@ -1,7 +1,4 @@
-import {
-  requestKindFromRequestType,
-  type PendingApproval,
-} from "@t3tools/client-runtime/pending-requests";
+import { type PendingApproval } from "@t3tools/client-runtime/pending-requests";
 import { UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -9,8 +6,6 @@ import * as Arr from "effect/Array";
 import { shallow } from "zustand/vanilla/shallow";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
-  commandDetailRepeatsCommand,
-  extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
   workEntryIndicatesToolFailure,
@@ -18,9 +13,7 @@ import {
   workLogEntryIsToolLike,
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
-import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
-  isToolLifecycleItemType,
   type AssetResource,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
@@ -40,6 +33,16 @@ import {
   type ThreadSession,
   type TurnDiffSummary,
 } from "./types";
+import {
+  asTrimmedString,
+  normalizePreviewForComparison,
+  extractWorkLogActivityIdentity,
+  mergeChangedFiles,
+  mergeCumulativeOutput,
+  mergeCumulativePatch,
+  normalizeCompactToolLabel,
+  parseWorkLogActivityPayload,
+} from "./lib/workLogActivity";
 
 export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 
@@ -65,6 +68,11 @@ export interface WorkLogEntry {
   command?: string;
   rawCommand?: string;
   output?: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  patch?: string;
   changedFiles?: ReadonlyArray<string>;
   subagentPrompt?: string;
   subagentChildren?: ReadonlyArray<SubagentWorkLogChild>;
@@ -517,10 +525,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
       : null;
-  const commandPreview = extractToolCommand(payload);
-  const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
-  const toolPresentation = extractToolActivityPresentation(payload);
+  const parsedPayload = parseWorkLogActivityPayload(payload, {
+    heading: activity.summary,
+    preserveBlankRawOutputStreams: activity.kind === "tool.updated",
+  });
+  const title = parsedPayload.title;
   const isTaskActivity =
     activity.kind === "task.started" ||
     activity.kind === "task.progress" ||
@@ -542,10 +551,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload &&
       typeof payload.detail === "string" &&
       payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
+      ? parsedPayload.strippedDetail
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
-  const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
+    : parsedPayload.detail;
+  const toolCallId = isTaskActivity ? null : parsedPayload.toolCallId;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -563,15 +572,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     const answer = decodeQuestionAttachmentAnswer(payload);
     if (Option.isSome(answer)) entry.questionAnswer = answer.value;
   }
-  const itemType = extractWorkLogItemType(payload);
-  const requestKind = extractWorkLogRequestKind(payload);
+  const itemType = parsedPayload.itemType;
+  const requestKind = parsedPayload.requestKind;
   const subagentOutput =
     itemType === "collab_agent_tool_call" ? extractSubagentOutput(payload) : null;
   const subagentPrompt =
     itemType === "collab_agent_tool_call" ? extractSubagentPrompt(payload, detail) : null;
   const subagentChildren =
     itemType === "collab_agent_tool_call" ? extractSubagentChildren(payload) : [];
-  const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
   if (detail) {
     entry.detail = detail;
   } else if (activity.kind === "runtime.error" || activity.kind === "runtime.warning") {
@@ -583,20 +591,48 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.detail = message;
     }
   }
-  if (viewedImagePath) {
-    entry.viewedImagePath = viewedImagePath;
+  if (parsedPayload.viewedImagePath) {
+    entry.viewedImagePath = parsedPayload.viewedImagePath;
   }
-  if (commandPreview.command) {
-    entry.command = commandPreview.command;
+  if (parsedPayload.command) {
+    entry.command = parsedPayload.command;
   }
-  if (commandPreview.rawCommand) {
-    entry.rawCommand = commandPreview.rawCommand;
+  if (parsedPayload.rawCommand) {
+    entry.rawCommand = parsedPayload.rawCommand;
   }
   if (subagentOutput) {
     entry.output = subagentOutput;
   }
-  if (changedFiles.length > 0) {
-    entry.changedFiles = changedFiles;
+  const isCommandEntry =
+    itemType === "command_execution" ||
+    requestKind === "command" ||
+    Boolean(parsedPayload.command || parsedPayload.rawCommand);
+  if (
+    parsedPayload.output &&
+    !parsedPayload.stdout &&
+    !parsedPayload.stderr &&
+    !entry.output &&
+    isCommandEntry
+  ) {
+    entry.output = parsedPayload.output;
+  }
+  if (parsedPayload.stdout) {
+    entry.stdout = parsedPayload.stdout;
+  }
+  if (parsedPayload.stderr) {
+    entry.stderr = parsedPayload.stderr;
+  }
+  if (parsedPayload.exitCode !== null) {
+    entry.exitCode = parsedPayload.exitCode;
+  }
+  if (parsedPayload.durationMs !== null) {
+    entry.durationMs = parsedPayload.durationMs;
+  }
+  if (parsedPayload.patch) {
+    entry.patch = parsedPayload.patch;
+  }
+  if (parsedPayload.changedFiles.length > 0) {
+    entry.changedFiles = parsedPayload.changedFiles;
   }
   if (subagentPrompt) {
     entry.subagentPrompt = subagentPrompt;
@@ -607,21 +643,17 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (title) {
     entry.toolTitle = title;
   }
-  if (toolPresentation.toolSurface) {
-    entry.toolSurface = toolPresentation.toolSurface;
+  if (parsedPayload.toolData !== undefined) {
+    entry.toolData = parsedPayload.toolData;
   }
-  if (toolPresentation.toolIcon) {
-    entry.toolIcon = toolPresentation.toolIcon;
+  if (parsedPayload.toolSurface) {
+    entry.toolSurface = parsedPayload.toolSurface;
   }
-  if (toolPresentation.toolSource) {
-    entry.toolSource = toolPresentation.toolSource;
+  if (parsedPayload.toolIcon) {
+    entry.toolIcon = parsedPayload.toolIcon;
   }
-  if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
-    const toolData = typeof data?.toolName === "string" ? (data.item ?? data) : data?.item;
-    if (toolData !== undefined) {
-      entry.toolData = toolData;
-    }
+  if (parsedPayload.toolSource) {
+    entry.toolSource = parsedPayload.toolSource;
   }
   if (itemType) {
     entry.itemType = itemType;
@@ -895,7 +927,7 @@ function mergeDerivedWorkLogEntries(
   const output =
     itemType === "collab_agent_tool_call"
       ? mergeTextOutputChunk(previous.output, next.output)
-      : mergeTextOutput(previous.output, next.output);
+      : mergeCumulativeOutput(previous.output, next.output, next.sourceActivityKind);
   const subagentPrompt =
     itemType === "collab_agent_tool_call"
       ? (previous.subagentPrompt ?? next.subagentPrompt)
@@ -904,6 +936,11 @@ function mergeDerivedWorkLogEntries(
     itemType === "collab_agent_tool_call"
       ? mergeSubagentChildren(previous.subagentChildren, next.subagentChildren)
       : (next.subagentChildren ?? previous.subagentChildren);
+  const stdout = mergeCumulativeOutput(previous.stdout, next.stdout, next.sourceActivityKind);
+  const stderr = mergeCumulativeOutput(previous.stderr, next.stderr, next.sourceActivityKind);
+  const exitCode = next.exitCode ?? previous.exitCode;
+  const durationMs = next.durationMs ?? previous.durationMs;
+  const patch = mergeCumulativePatch(previous.patch, next.patch);
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const toolSurface = next.toolSurface ?? previous.toolSurface;
   const toolIcon = next.toolIcon ?? previous.toolIcon;
@@ -921,6 +958,11 @@ function mergeDerivedWorkLogEntries(
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
     ...(output ? { output } : {}),
+    ...(stdout ? { stdout } : {}),
+    ...(stderr ? { stderr } : {}),
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(patch ? { patch } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(subagentPrompt ? { subagentPrompt } : {}),
     ...(subagentChildren && subagentChildren.length > 0 ? { subagentChildren } : {}),
@@ -959,19 +1001,6 @@ function mergeSubagentChildren(
   return [...byChildActivity.values()];
 }
 
-function mergeTextOutput(
-  previous: string | undefined,
-  next: string | undefined,
-): string | undefined {
-  if (!previous) {
-    return next;
-  }
-  if (!next) {
-    return previous;
-  }
-  return `${previous}${next}`;
-}
-
 function mergeTextOutputChunk(
   previous: string | undefined,
   next: string | undefined,
@@ -983,17 +1012,6 @@ function mergeTextOutputChunk(
     return previous;
   }
   return `${previous}${next}`;
-}
-
-function mergeChangedFiles(
-  previous: ReadonlyArray<string> | undefined,
-  next: ReadonlyArray<string> | undefined,
-): string[] {
-  const merged = [...(previous ?? []), ...(next ?? [])];
-  if (merged.length === 0) {
-    return [];
-  }
-  return [...new Set(merged)];
 }
 
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
@@ -1015,16 +1033,12 @@ function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | un
     return `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
-  const detail = entry.detail?.trim() ?? "";
+  const detail = entry.detail?.trim() ?? entry.command?.trim() ?? entry.rawCommand?.trim() ?? "";
   const itemType = entry.itemType ?? "";
   if (normalizedLabel.length === 0 && detail.length === 0 && itemType.length === 0) {
     return undefined;
   }
   return [itemType, normalizedLabel, detail].join("\u001f");
-}
-
-function normalizeCompactToolLabel(value: string): string {
-  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
 function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPlanState {
@@ -1041,373 +1055,6 @@ function toLatestProposedPlanState(proposedPlan: ProposedPlan): LatestProposedPl
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function asTrimmedString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function trimMatchingOuterQuotes(value: string): string {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
-    (trimmed.startsWith('"') && trimmed.endsWith('"'))
-  ) {
-    const unquoted = trimmed.slice(1, -1).trim();
-    return unquoted.length > 0 ? unquoted : trimmed;
-  }
-  return trimmed;
-}
-
-function executableBasename(value: string): string | null {
-  const trimmed = trimMatchingOuterQuotes(value);
-  if (trimmed.length === 0) {
-    return null;
-  }
-  const normalized = trimmed.replace(/\\/g, "/");
-  const segments = normalized.split("/");
-  const last = segments.at(-1)?.trim() ?? "";
-  return last.length > 0 ? last.toLowerCase() : null;
-}
-
-function splitExecutableAndRest(value: string): { executable: string; rest: string } | null {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
-    const quote = trimmed.charAt(0);
-    const closeIndex = trimmed.indexOf(quote, 1);
-    if (closeIndex <= 0) {
-      return null;
-    }
-    return {
-      executable: trimmed.slice(0, closeIndex + 1),
-      rest: trimmed.slice(closeIndex + 1).trim(),
-    };
-  }
-
-  const firstWhitespace = trimmed.search(/\s/);
-  if (firstWhitespace < 0) {
-    return {
-      executable: trimmed,
-      rest: "",
-    };
-  }
-
-  return {
-    executable: trimmed.slice(0, firstWhitespace),
-    rest: trimmed.slice(firstWhitespace).trim(),
-  };
-}
-
-const SHELL_WRAPPER_SPECS = [
-  {
-    executables: ["pwsh", "pwsh.exe", "powershell", "powershell.exe"],
-    wrapperFlagPattern: /(?:^|\s)-command\s+/i,
-  },
-  {
-    executables: ["cmd", "cmd.exe"],
-    wrapperFlagPattern: /(?:^|\s)\/c\s+/i,
-  },
-  {
-    executables: ["bash", "sh", "zsh"],
-    wrapperFlagPattern: /(?:^|\s)-(?:l)?c\s+/i,
-  },
-] as const;
-
-function findShellWrapperSpec(shell: string) {
-  return SHELL_WRAPPER_SPECS.find((spec) =>
-    (spec.executables as ReadonlyArray<string>).includes(shell),
-  );
-}
-
-function unwrapCommandRemainder(value: string, wrapperFlagPattern: RegExp): string | null {
-  const match = wrapperFlagPattern.exec(value);
-  if (!match) {
-    return null;
-  }
-
-  const command = value.slice(match.index + match[0].length).trim();
-  if (command.length === 0) {
-    return null;
-  }
-
-  const openingQuote = command[0];
-  if ((openingQuote === "'" || openingQuote === '"') && !command.endsWith(openingQuote)) {
-    return null;
-  }
-
-  const unwrapped = trimMatchingOuterQuotes(command);
-  return unwrapped.length > 0 ? unwrapped : null;
-}
-
-function unwrapKnownShellCommandWrapper(value: string): string {
-  const split = splitExecutableAndRest(value);
-  if (!split || split.rest.length === 0) {
-    return value;
-  }
-
-  const shell = executableBasename(split.executable);
-  if (!shell) {
-    return value;
-  }
-
-  const spec = findShellWrapperSpec(shell);
-  if (!spec) {
-    return value;
-  }
-
-  return unwrapCommandRemainder(split.rest, spec.wrapperFlagPattern) ?? value;
-}
-
-function formatCommandArrayPart(value: string): string {
-  return /[\s"'`]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
-}
-
-function formatCommandValue(value: unknown): string | null {
-  const direct = asTrimmedString(value);
-  if (direct) {
-    return direct;
-  }
-  if (!Array.isArray(value)) {
-    return null;
-  }
-  const parts: Array<string> = [];
-  for (const entry of value) {
-    const part = asTrimmedString(entry);
-    if (part !== null) {
-      parts.push(part);
-    }
-  }
-  if (parts.length === 0) {
-    return null;
-  }
-  return parts.map((part) => formatCommandArrayPart(part)).join(" ");
-}
-
-function normalizeCommandValue(value: unknown): string | null {
-  const formatted = formatCommandValue(value);
-  return formatted ? unwrapKnownShellCommandWrapper(formatted) : null;
-}
-
-function toRawToolCommand(value: unknown, normalizedCommand: string | null): string | null {
-  const formatted = formatCommandValue(value);
-  if (!formatted || normalizedCommand === null) {
-    return null;
-  }
-  return formatted === normalizedCommand ? null : formatted;
-}
-
-function extractToolCommand(payload: Record<string, unknown> | null): {
-  command: string | null;
-  rawCommand: string | null;
-} {
-  const data = asRecord(payload?.data);
-  const item = asRecord(data?.item);
-  const itemResult = asRecord(item?.result);
-  const itemInput = asRecord(item?.input);
-  const itemType = asTrimmedString(payload?.itemType);
-  const detail = asTrimmedString(payload?.detail);
-  const candidates: unknown[] = [
-    item?.command,
-    itemInput?.command,
-    itemResult?.command,
-    data?.command,
-    itemType === "command_execution" && detail ? stripTrailingExitCode(detail).output : null,
-  ];
-
-  for (const candidate of candidates) {
-    const command = normalizeCommandValue(candidate);
-    if (!command) {
-      continue;
-    }
-    return {
-      command,
-      rawCommand: toRawToolCommand(candidate, command),
-    };
-  }
-
-  return {
-    command: null,
-    rawCommand: null,
-  };
-}
-
-function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
-}
-
-function extractToolCallId(payload: Record<string, unknown> | null): string | null {
-  const data = asRecord(payload?.data);
-  const item = asRecord(data?.item);
-  const parentCollab = asRecord(data?.parentCollab);
-  return (
-    asTrimmedString(payload?.toolCallId) ??
-    asTrimmedString(data?.toolCallId) ??
-    asTrimmedString(parentCollab?.itemId) ??
-    asTrimmedString(data?.itemId) ??
-    asTrimmedString(item?.id)
-  );
-}
-
-function normalizeInlinePreview(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function truncateInlinePreview(value: string, maxLength = 84): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-function normalizePreviewForComparison(value: string | null | undefined): string | null {
-  const normalized = asTrimmedString(value);
-  if (!normalized) {
-    return null;
-  }
-  return normalizeCompactToolLabel(normalizeInlinePreview(normalized)).toLowerCase();
-}
-
-function summarizeToolTextOutput(value: string): string | null {
-  const lines: Array<string> = [];
-  for (const rawLine of value.split(/\r?\n/u)) {
-    const line = normalizeInlinePreview(rawLine);
-    if (line.length > 0) {
-      lines.push(line);
-    }
-  }
-  const firstLine = lines.find((line) => line !== "```");
-  if (firstLine) {
-    return truncateInlinePreview(firstLine);
-  }
-  if (lines.length > 1) {
-    return `${lines.length.toLocaleString()} lines`;
-  }
-  return null;
-}
-
-function summarizeToolRawOutput(payload: Record<string, unknown> | null): string | null {
-  const data = asRecord(payload?.data);
-  const rawOutput = asRecord(data?.rawOutput);
-  if (!rawOutput) {
-    return null;
-  }
-
-  const totalFiles = asNumber(rawOutput.totalFiles);
-  if (totalFiles !== null) {
-    const suffix = rawOutput.truncated === true ? "+" : "";
-    return `${totalFiles.toLocaleString()} file${totalFiles === 1 ? "" : "s"}${suffix}`;
-  }
-
-  const content = asTrimmedString(rawOutput.content);
-  if (content) {
-    return summarizeToolTextOutput(content);
-  }
-
-  const stdout = asTrimmedString(rawOutput.stdout);
-  if (stdout) {
-    return summarizeToolTextOutput(stdout);
-  }
-
-  return null;
-}
-
-function extractToolOutput(payload: Record<string, unknown> | null): string | null {
-  const output = extractCommandOutputText(payload?.data);
-  return output ? stripTrailingExitCode(output).output : null;
-}
-
-function isCommandToolDetail(payload: Record<string, unknown> | null, heading: string): boolean {
-  const data = asRecord(payload?.data);
-  const kind = asTrimmedString(data?.kind)?.toLowerCase();
-  const title = asTrimmedString(payload?.title ?? heading)?.toLowerCase();
-  return (
-    extractWorkLogItemType(payload) === "command_execution" ||
-    kind === "execute" ||
-    title === "terminal" ||
-    title === "ran command"
-  );
-}
-
-function extractToolDetail(
-  payload: Record<string, unknown> | null,
-  heading: string,
-): string | null {
-  const rawDetail = asTrimmedString(payload?.detail);
-  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
-  const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
-  const commandTool = isCommandToolDetail(payload, heading);
-  const commandPreview = commandTool
-    ? extractToolCommand(payload)
-    : { command: null, rawCommand: null };
-  const command = commandPreview.command;
-
-  if (commandTool && command) {
-    const output = extractToolOutput(payload);
-    if (output) return output;
-  }
-
-  const data = asRecord(payload?.data);
-  const repeatsCommand =
-    detail !== null &&
-    commandDetailRepeatsCommand({
-      detail,
-      command,
-      rawCommand: commandPreview.rawCommand,
-      toolName: data?.toolName,
-      data,
-    });
-
-  if (detail && normalizedHeading !== normalizedDetail && (!commandTool || !repeatsCommand)) {
-    return detail;
-  }
-
-  if (commandTool) {
-    return null;
-  }
-
-  const rawOutputSummary = summarizeToolRawOutput(payload);
-  if (rawOutputSummary) {
-    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
-    if (normalizedRawOutputSummary !== normalizedHeading) {
-      return rawOutputSummary;
-    }
-  }
-
-  return null;
-}
-
-function stripTrailingExitCode(value: string): {
-  output: string | null;
-  exitCode?: number | undefined;
-} {
-  const trimmed = value.trim();
-  const match = /^(?<output>[\s\S]*?)(?:\s*<exited with exit code (?<code>\d+)>)\s*$/i.exec(
-    trimmed,
-  );
-  if (!match?.groups) {
-    return {
-      output: trimmed.length > 0 ? trimmed : null,
-    };
-  }
-  const exitCode = Number.parseInt(match.groups.code ?? "", 10);
-  const normalizedOutput = match.groups.output?.trim() ?? "";
-  return {
-    output: normalizedOutput.length > 0 ? normalizedOutput : null,
-    ...(Number.isInteger(exitCode) ? { exitCode } : {}),
-  };
 }
 
 function firstStringFromRecord(
@@ -1491,92 +1138,6 @@ function extractSubagentChildren(
   return result;
 }
 
-function extractWorkLogItemType(
-  payload: Record<string, unknown> | null,
-): WorkLogEntry["itemType"] | undefined {
-  if (typeof payload?.itemType === "string" && isToolLifecycleItemType(payload.itemType)) {
-    return payload.itemType;
-  }
-  return undefined;
-}
-
-function extractWorkLogRequestKind(
-  payload: Record<string, unknown> | null,
-): WorkLogEntry["requestKind"] | undefined {
-  if (
-    payload?.requestKind === "command" ||
-    payload?.requestKind === "file-read" ||
-    payload?.requestKind === "file-change"
-  ) {
-    return payload.requestKind;
-  }
-  return requestKindFromRequestType(payload?.requestType) ?? undefined;
-}
-
-function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
-  const normalized = asTrimmedString(value);
-  if (!normalized || seen.has(normalized)) {
-    return;
-  }
-  seen.add(normalized);
-  target.push(normalized);
-}
-
-function collectChangedFiles(value: unknown, target: string[], seen: Set<string>, depth: number) {
-  if (depth > 4 || target.length >= 12) {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectChangedFiles(entry, target, seen, depth + 1);
-      if (target.length >= 12) {
-        return;
-      }
-    }
-    return;
-  }
-
-  const record = asRecord(value);
-  if (!record) {
-    return;
-  }
-
-  pushChangedFile(target, seen, record.path);
-  pushChangedFile(target, seen, record.filePath);
-  pushChangedFile(target, seen, record.relativePath);
-  pushChangedFile(target, seen, record.filename);
-  pushChangedFile(target, seen, record.newPath);
-  pushChangedFile(target, seen, record.oldPath);
-
-  for (const nestedKey of [
-    "item",
-    "result",
-    "input",
-    "data",
-    "changes",
-    "files",
-    "edits",
-    "patch",
-    "patches",
-    "operations",
-  ]) {
-    if (!(nestedKey in record)) {
-      continue;
-    }
-    collectChangedFiles(record[nestedKey], target, seen, depth + 1);
-    if (target.length >= 12) {
-      return;
-    }
-  }
-}
-
-function extractChangedFiles(payload: Record<string, unknown> | null): string[] {
-  const changedFiles: string[] = [];
-  const seen = new Set<string>();
-  collectChangedFiles(asRecord(payload?.data), changedFiles, seen, 0);
-  return changedFiles;
-}
-
 function compareActivitiesByOrder(
   left: OrchestrationThreadActivity,
   right: OrchestrationThreadActivity,
@@ -1602,10 +1163,15 @@ function compareActivitiesByOrder(
     return lifecycleRankComparison;
   }
 
-  // Stable sort preserves arrival order for unsequenced same-timestamp events.
-  // Streaming text chunks can share millisecond timestamps; sorting those by
-  // random event ids can scramble the reconstructed output.
-  return 0;
+  if (
+    shouldPreserveSameTimestampToolUpdateOrder(left, right) ||
+    (asRecord(left.payload)?.itemType === "collab_agent_tool_call" &&
+      asRecord(right.payload)?.itemType === "collab_agent_tool_call")
+  ) {
+    return 0;
+  }
+
+  return left.id.localeCompare(right.id);
 }
 
 function compareActivityLifecycleRank(kind: string): number {
@@ -1619,6 +1185,25 @@ function compareActivityLifecycleRank(kind: string): number {
     return 2;
   }
   return 1;
+}
+
+function shouldPreserveSameTimestampToolUpdateOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): boolean {
+  if (left.kind !== "tool.updated" || right.kind !== "tool.updated") {
+    return false;
+  }
+  const leftIdentity = extractWorkLogActivityIdentity(left.payload);
+  const rightIdentity = extractWorkLogActivityIdentity(right.payload);
+  if (leftIdentity.toolCallId && rightIdentity.toolCallId) {
+    return leftIdentity.toolCallId === rightIdentity.toolCallId;
+  }
+  return (
+    (leftIdentity.itemType != null || leftIdentity.title !== null) &&
+    leftIdentity.itemType === rightIdentity.itemType &&
+    leftIdentity.title === rightIdentity.title
+  );
 }
 
 function timelineEntryFromMessage(message: ChatMessage): TimelineEntry {

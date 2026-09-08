@@ -108,6 +108,20 @@ describe("shareDevServer", () => {
     }),
   );
 
+  // Vite binds `localhost`, which modern Node resolves to `::1` first, so a
+  // 127.0.0.1 target would proxy to a loopback nothing listens on.
+  it.effect("proxies to the localhost name Vite binds, not 127.0.0.1", () =>
+    Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
+      yield* shareDevServer({ webPort: 5788 }).pipe(
+        Effect.provide(spawnerLayer({ off: { exitCode: 0 } }, calls)),
+      );
+
+      const serveCall = calls.find((args) => args.includes("--bg"));
+      assert.deepEqual(serveCall, ["serve", "--bg", "--https=5788", "http://localhost:5788"]);
+    }),
+  );
+
   // The stale-mapping clear runs before serve, so a failure here leaves the
   // port serving nothing. Saying only "serve failed" would let an operator
   // assume their previous mapping survived.
