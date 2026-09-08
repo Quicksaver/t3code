@@ -24,6 +24,13 @@ describe("workEntryIndicatesToolFailure", () => {
     label: "Read",
   };
 
+  it.each([0, 1, -1])("uses structured exit code %s for completed command outcomes", (exitCode) => {
+    const entry = { ...base, tone: "tool" as const, toolLifecycleStatus: "completed", exitCode };
+    expect(workEntryIndicatesToolFailure(entry)).toBe(exitCode !== 0);
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(exitCode !== 0);
+    expect(workEntryIndicatesToolSuccess(entry)).toBe(exitCode === 0);
+  });
+
   it("is true for error tone", () => {
     expect(
       workEntryIndicatesToolFailure({
