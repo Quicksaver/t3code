@@ -722,7 +722,7 @@ Provider and completion integration:
 Client ownership:
 
 - Shared environment selection and access live in `EnvironmentSettingsPanel*`; `ProviderSettingsPanel.logic.ts` remains a compatibility adapter. `SettingsListDetail.tsx` owns the shared list and editor structure.
-- `useMagiRunHistory` owns the latest summary, expanded 100-run subscription, and transition behavior. Only the expanded query live-polls. `ChatView` passes the selected summary to the panel and timeline; the timeline must not query independently or fabricate a thread id.
+- `useMagiRunHistory` owns the latest summary, expanded 100-run subscription, and transition behavior. The expanded panel explicitly includes sibling and nested native-child runs. It polls both that history and the owner-only latest summary, so more than 100 newer descendant runs cannot crowd the owner out of timeline updates. `ChatView` passes aggregated history to the panel and the owner-only summary to the timeline; the timeline must not query independently or fabricate a thread id.
 - Web and mobile share `MagiConsensusIcon`. It uses `withUniwind(Svg)`, `currentColor`, `accent-icon`, and explicit overrides, and remains outside the theme escape-hatch allowlist.
 
 Primary reference:

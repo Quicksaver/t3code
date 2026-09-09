@@ -17,6 +17,7 @@ import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { cn } from "../../lib/cn";
 import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
 import { relativeTime } from "../../lib/time";
@@ -498,6 +499,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const threadAccessibilityLabel = [
     thread.title,
+    thread.activeMagiRun ? "Magi active" : null,
     pr?.accessibilityLabel,
     props.hasQueuedMessages ? "messages queued to send" : null,
   ]
@@ -675,6 +677,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         >
           <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
             <View className="flex-row items-center justify-between gap-2">
+              {thread.activeMagiRun ? <MagiConsensusIcon size={16} /> : null}
               <Text
                 className={cn(
                   "flex-1 text-lg font-t3-bold",
@@ -754,6 +757,12 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       >
         <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
+            {thread.activeMagiRun ? (
+              <MagiConsensusIcon
+                size={15}
+                color={selected ? String(selectedForegroundColor) : undefined}
+              />
+            ) : null}
             <Text
               className={cn(
                 "flex-1 text-base font-t3-medium",

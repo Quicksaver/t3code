@@ -77,7 +77,10 @@ function subagentParentRelationCreatesCycle(
     visitedThreadIds.add(currentThreadId);
 
     const currentThread = threadById.get(currentThreadId);
-    if (currentThread?.parentRelation?.kind !== "subagent") {
+    if (
+      currentThread?.parentRelation === undefined ||
+      currentThread.parentRelation.kind === "root"
+    ) {
       return false;
     }
     currentThreadId = currentThread.parentRelation.parentThreadId;
@@ -110,33 +113,42 @@ const validateSubagentParentRelation = Effect.fn("validateSubagentParentRelation
   },
 );
 
-function listActiveSubagentDescendants(
+function listNonDeletedLifecycleDescendantsPostOrder(
   readModel: OrchestrationReadModel,
   parentThreadId: OrchestrationThread["id"],
 ): readonly OrchestrationThread[] {
-  const descendants: OrchestrationThread[] = [];
-  const pendingParentThreadIds = new Set<OrchestrationThread["id"]>([parentThreadId]);
-  let changed = true;
-
-  while (changed) {
-    changed = false;
-    for (const thread of readModel.threads) {
-      if (thread.deletedAt !== null || thread.parentRelation?.kind !== "subagent") {
-        continue;
-      }
-      if (!pendingParentThreadIds.has(thread.parentRelation.parentThreadId)) {
-        continue;
-      }
-      if (pendingParentThreadIds.has(thread.id)) {
-        continue;
-      }
-      descendants.push(thread);
-      pendingParentThreadIds.add(thread.id);
-      changed = true;
+  const childrenByParent = new Map<OrchestrationThread["id"], OrchestrationThread[]>();
+  for (const thread of readModel.threads) {
+    if (
+      thread.deletedAt !== null ||
+      thread.parentRelation === undefined ||
+      thread.parentRelation.kind === "root"
+    ) {
+      continue;
     }
+    const children = childrenByParent.get(thread.parentRelation.parentThreadId) ?? [];
+    children.push(thread);
+    childrenByParent.set(thread.parentRelation.parentThreadId, children);
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  return descendants.toSorted(compareSubagentLifecycleOrder);
+  const descendants: OrchestrationThread[] = [];
+  const visited = new Set<OrchestrationThread["id"]>([parentThreadId]);
+  const visit = (currentThreadId: OrchestrationThread["id"]): void => {
+    for (const child of childrenByParent.get(currentThreadId) ?? []) {
+      if (visited.has(child.id)) {
+        continue;
+      }
+      visited.add(child.id);
+      visit(child.id);
+      descendants.push(child);
+    }
+  };
+  visit(parentThreadId);
+
+  return descendants;
 }
 
 function listProjectLifecycleRootThreads(
@@ -149,12 +161,33 @@ function listProjectLifecycleRootThreads(
   const activeThreadIds = new Set(activeThreads.map((thread) => thread.id));
 
   return activeThreads.filter((thread) => {
-    if (thread.parentRelation?.kind !== "subagent") {
+    if (thread.parentRelation === undefined || thread.parentRelation.kind === "root") {
       return true;
     }
     return !activeThreadIds.has(thread.parentRelation.parentThreadId);
   });
 }
+type ThreadUnarchiveCommand = Extract<OrchestrationCommand, { type: "thread.unarchive" }>;
+
+const validateMagiParentRelation = Effect.fn("validateMagiParentRelation")(function* (input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: OrchestrationThread["id"];
+  readonly parentRelation: OrchestrationThread["parentRelation"] | undefined;
+}) {
+  if (input.parentRelation?.kind !== "magi") return;
+  if (input.parentRelation.parentThreadId !== input.parentRelation.rootThreadId) {
+    return yield* new OrchestrationCommandInvariantError({
+      commandType: input.command.type,
+      detail: `Magi participant '${input.threadId}' must be a direct child of its root thread.`,
+    });
+  }
+  yield* requireThread({
+    readModel: input.readModel,
+    command: input.command,
+    threadId: input.parentRelation.rootThreadId,
+  });
+});
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -480,6 +513,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
         parentRelation: command.parentRelation,
       });
+      yield* validateMagiParentRelation({
+        readModel,
+        command,
+        threadId: command.threadId,
+        parentRelation: command.parentRelation,
+      });
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -513,7 +552,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const descendantDeleteCommands = listActiveSubagentDescendants(
+      const descendantDeleteCommands = listNonDeletedLifecycleDescendantsPostOrder(
         readModel,
         command.threadId,
       ).map((thread): ThreadDeleteCommand => ({
@@ -549,7 +588,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
-      const descendantArchiveCommands = listActiveSubagentDescendants(readModel, command.threadId)
+      const descendantArchiveCommands = listNonDeletedLifecycleDescendantsPostOrder(
+        readModel,
+        command.threadId,
+      )
         .filter((thread) => thread.archivedAt === null)
         .map((thread): ThreadArchiveCommand => ({
           type: "thread.archive",
@@ -585,6 +627,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantUnarchiveCommands = listNonDeletedLifecycleDescendantsPostOrder(
+        readModel,
+        command.threadId,
+      )
+        .filter((thread) => thread.archivedAt !== null)
+        .map((thread): ThreadUnarchiveCommand => ({
+          type: "thread.unarchive",
+          commandId: command.commandId,
+          threadId: thread.id,
+        }));
+      if (descendantUnarchiveCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantUnarchiveCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -1027,6 +1085,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       yield* validateSubagentParentRelation({
+        readModel,
+        command,
+        threadId: command.threadId,
+        parentRelation: command.parentRelation,
+      });
+      yield* validateMagiParentRelation({
         readModel,
         command,
         threadId: command.threadId,

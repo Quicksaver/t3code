@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
+  MagiRunConfig as MagiRunConfigSchema,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectId as ProjectIdSchema,
   ProviderInteractionMode as ProviderInteractionModeSchema,
@@ -9,6 +10,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  type MagiRunConfig,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -67,6 +69,7 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  readonly magiArm?: MagiRunConfig;
   /**
    * Set on new-task drafts only. The project is stored here rather than in
    * the key so a project can hold any number of drafts and a draft can be
@@ -121,6 +124,7 @@ const ComposerDraftSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
+  magiArm: Schema.optional(MagiRunConfigSchema),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -212,7 +216,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.magiArm === undefined
   );
 }
 
@@ -1040,6 +1045,21 @@ export function updateComposerDraftSettings(
   });
 }
 
+export function setComposerDraftMagiArm(draftKey: string, config: MagiRunConfig | null): void {
+  updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    const { magiArm: _magiArm, ...withoutMagiArm } = existing;
+    const draft: ComposerDraft =
+      config === null ? withoutMagiArm : { ...withoutMagiArm, magiArm: config };
+    if (isEmptyDraft(draft)) {
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    }
+    return { ...current, [draftKey]: draft };
+  });
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -1057,6 +1077,7 @@ export function clearComposerDraftContentState(
   // draft leaves the store rather than lingering as a blank row.
   const {
     importedShareIds: _importedShareIds,
+    magiArm: _magiArm,
     modelSelection,
     workspaceSelection,
     project: _project,

@@ -3,6 +3,7 @@ import {
   MessageId,
   ThreadId,
   type ModelSelection,
+  type MagiRunConfig,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -40,6 +41,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly startFromOrigin: boolean;
   /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
+  readonly magiArm?: MagiRunConfig;
 }
 
 /**
@@ -85,6 +87,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
             runSetupScript: true,
           }
         : {}),
+      ...(spec.magiArm ? { magiArm: spec.magiArm } : {}),
     },
     createdAt: spec.createdAt,
   };

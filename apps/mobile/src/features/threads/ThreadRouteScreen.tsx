@@ -37,7 +37,10 @@ import {
   AndroidScreenHeader,
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
+import { ControlPill } from "../../components/ControlPill";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
+import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
@@ -47,6 +50,7 @@ import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
+import { magiEnvironment } from "../../state/magi";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -68,6 +72,7 @@ import {
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
+import { MagiPanelSheet } from "./MagiPanelSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -244,6 +249,7 @@ function ThreadRouteContent(
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
+  const [magiVisible, setMagiVisible] = useState(false);
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
@@ -300,6 +306,33 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const magiSupported = serverConfig?.environment.capabilities.magi === true;
+  const hasActiveMagiRun = selectedThread?.activeMagiRun != null;
+  const activeMagiRunId = selectedThread?.activeMagiRun?.runId ?? null;
+  const magiHistoryQuery = useEnvironmentQuery(
+    magiSupported && selectedThread !== null
+      ? magiEnvironment.history({
+          environmentId: selectedThread.environmentId,
+          input: { rootThreadId: selectedThread.id, limit: 1, includeDescendants: true },
+        })
+      : null,
+  );
+  const previousActiveMagiRunIdRef = useRef(activeMagiRunId);
+  useEffect(() => {
+    // The shell drops its active summary when a run becomes terminal. Refresh
+    // the cached history then so the same button remains available afterward.
+    const previousActiveMagiRunId = previousActiveMagiRunIdRef.current;
+    previousActiveMagiRunIdRef.current = activeMagiRunId;
+    if (previousActiveMagiRunId !== null && activeMagiRunId === null) {
+      magiHistoryQuery.refresh();
+    }
+  }, [activeMagiRunId, magiHistoryQuery.refresh]);
+  const showMagiButton =
+    magiSupported && (hasActiveMagiRun || (magiHistoryQuery.data?.runs.length ?? 0) > 0);
+  const threadIsRunning =
+    selectedThread?.session?.status === "running" || selectedThread?.session?.status === "starting";
+  const handleOpenMagi = useCallback(() => setMagiVisible(true), []);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -857,7 +890,6 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
@@ -924,12 +956,36 @@ function ThreadRouteContent(
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
+          onOpenMagi={
+            magiSupported && !hasActiveMagiRun && !threadIsRunning ? handleOpenMagi : undefined
+          }
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
           onDismissUserInput={requests.onDismissUserInput}
         />
+        {showMagiButton ? (
+          <View
+            pointerEvents="box-none"
+            className="absolute right-3 z-20"
+            style={{
+              top:
+                Platform.OS === "ios" && usesNativeHeaderGlass
+                  ? safeAreaInsets.top + IOS_NAV_BAR_HEIGHT + 12
+                  : 12,
+            }}
+          >
+            <ControlPill
+              accessibilityLabel={
+                hasActiveMagiRun ? "Open active Magi run" : "Open Magi run history"
+              }
+              className="border border-border bg-card shadow-md shadow-black/10"
+              iconNode={<MagiConsensusIcon size={18} />}
+              onPress={handleOpenMagi}
+            />
+          </View>
+        ) : null}
       </View>
     </>
   );
@@ -993,6 +1049,15 @@ function ThreadRouteContent(
       {renderThreadRouteBody(
         Platform.OS !== "android" && !layout.usesSplitView && !usesNativeHeaderGlass,
       )}
+      {magiSupported ? (
+        <MagiPanelSheet
+          visible={magiVisible}
+          environmentId={selectedThread.environmentId}
+          threadId={selectedThread.id}
+          activeRun={selectedThread.activeMagiRun ?? null}
+          onClose={() => setMagiVisible(false)}
+        />
+      ) : null}
     </>
   );
 }

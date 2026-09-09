@@ -160,6 +160,7 @@ export interface ThreadDetailScreenProps {
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
+  readonly onOpenMagi?: () => void;
   readonly onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -1051,6 +1052,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onRemoveDraftImage={props.onRemoveDraftImage}
                     onStopThread={props.onStopThread}
                     onSendMessage={handleSendMessage}
+                    onOpenMagi={props.onOpenMagi}
                     onShowUsageLimits={showUsageLimits}
                     onUpdateModelSelection={props.onUpdateThreadModelSelection}
                     onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}

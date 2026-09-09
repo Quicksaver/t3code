@@ -65,6 +65,28 @@ export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_ev
   description: "Total canonical provider runtime events processed.",
 });
 
+export const magiRunsTotal = Metric.counter("t3_magi_runs_total", {
+  description: "Total Magi runs started, correlated by source and terminal outcome.",
+});
+export const magiTurnsTotal = Metric.counter("t3_magi_turns_total", {
+  description: "Total Magi deliberation turns completed.",
+});
+export const magiParticipantTurnsTotal = Metric.counter("t3_magi_participant_turns_total", {
+  description: "Total Magi participant turns by provider outcome and parse mode.",
+});
+export const magiParticipantTurnDuration = Metric.timer("t3_magi_participant_turn_duration", {
+  description: "Duration of one Magi participant turn.",
+});
+export const magiParticipantTokensTotal = Metric.counter("t3_magi_participant_tokens_total", {
+  description: "Provider-reported Magi participant tokens by direction.",
+});
+export const magiProposalsTotal = Metric.counter("t3_magi_proposals_total", {
+  description: "Total Magi proposals observed during arbitration.",
+});
+export const magiActionsTotal = Metric.counter("t3_magi_actions_total", {
+  description: "Total Magi actions issued or reconciled.",
+});
+
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
 });

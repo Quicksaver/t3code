@@ -18,7 +18,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
+} from "./EnvironmentSettingsPanel.logic";
 
 const AUTOMATIC_VALUE = "automatic";
 

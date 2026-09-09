@@ -19,6 +19,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { cn } from "../../lib/cn";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -530,6 +531,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const depthInset = Math.max(0, props.depth) * THREAD_LINEAGE_INDENT_STEP;
   const canUseLifecycleActions = canUseThreadListV2LifecycleActions(thread);
   const isSubagent = thread.parentRelation?.kind === "subagent";
+  const threadAccessibilityLabel = [
+    thread.title,
+    thread.activeMagiRun ? "Magi active" : null,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
@@ -815,6 +823,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
+        {thread.activeMagiRun ? (
+          <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
+        ) : null}
         <Text
           className={cn(
             "flex-1 text-sm font-t3-medium",
@@ -1070,9 +1081,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -1130,9 +1139,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane || materialYouStyleLayoutActive ? undefined : "bg-screen"}
@@ -1177,6 +1184,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 workspaceRoot={props.project.workspaceRoot}
               />
             </View>
+          ) : null}
+          {thread.activeMagiRun ? (
+            <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
           ) : null}
           <View className="min-w-0 flex-1">
             <Text

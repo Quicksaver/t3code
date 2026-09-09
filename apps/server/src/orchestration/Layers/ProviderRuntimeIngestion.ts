@@ -144,6 +144,7 @@ function makeSyntheticSubagentThreadShell(input: {
     updatedAt: input.createdAt,
     archivedAt: null,
     parentRelation: input.parentRelation,
+    activeMagiRun: null,
     settledOverride: null,
     settledAt: null,
     unsettledAt: null,

@@ -525,6 +525,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           backgroundLiveness: "working",
           activeSubagentCount: 1,
           planProgress: null,
+          activeMagiRun: null,
         },
       ]);
 
@@ -789,6 +790,64 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(context.value.hasOtherUserMessages, hasOtherUserMessages);
         }
       }
+    }),
+  );
+
+  it.effect("keeps Magi participant conversations out of the live shell snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'magi-shell-project', 'Magi shell project', '/tmp/magi-shell', NULL, '[]',
+          '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          branch, worktree_path, magi_root_thread_id, magi_parent_thread_id,
+          magi_provider_thread_id, magi_started_at, magi_status, magi_run_id,
+          magi_participant_id, created_at, updated_at, deleted_at
+        ) VALUES
+          (
+            'magi-shell-root', 'magi-shell-project', 'Root',
+            '{"instanceId":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', NULL
+          ),
+          (
+            'magi-shell-participant', 'magi-shell-project', 'Participant',
+            '{"instanceId":"codex","model":"gpt-5-codex"}', 'approval-required', 'default',
+            NULL, NULL, 'magi-shell-root', 'magi-shell-root', 'provider-participant',
+            '2026-08-21T00:00:00.000Z', 'running',
+            'run-1', 'participant-1', '2026-08-21T00:00:00.000Z',
+            '2026-08-21T00:00:00.000Z', NULL
+          )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.deepEqual(
+        shellSnapshot.threads.map((thread) => thread.id),
+        [ThreadId.make("magi-shell-root")],
+      );
+
+      const participantDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.equal(Option.getOrNull(participantDetail)?.parentRelation?.kind, "magi");
+
+      const participantShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.isTrue(Option.isNone(participantShell));
     }),
   );
 
