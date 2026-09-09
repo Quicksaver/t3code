@@ -123,6 +123,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.vcsPull]: AuthOrchestrationOperateScope,
   [WS_METHODS.vcsPanelSnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPanelBranchDetails]: AuthOrchestrationReadScope,
+  [WS_METHODS.vcsPanelCommitFiles]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPanelBranchCommits]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPanelStashDetails]: AuthOrchestrationReadScope,
   [WS_METHODS.vcsPanelEnrichWorkingTreeFiles]: AuthOrchestrationReadScope,

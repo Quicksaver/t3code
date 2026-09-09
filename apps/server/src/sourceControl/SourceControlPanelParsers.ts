@@ -365,3 +365,27 @@ export function parseFileChangesFromNumstat(input: {
   }
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
 }
+
+/** Parse Git's C-locale shortstat without shipping a pathname for every changed file. */
+export function parseCommitsWithStats(output: string): VcsPanelSnapshotResult["recentCommits"] {
+  const stats = new Map<string, { fileCount: number; insertions: number; deletions: number }>();
+  let sha = "";
+  for (const line of output.split("\n")) {
+    const fields = line.split("\t");
+    if (fields.length >= 6) {
+      sha = fields[0] ?? "";
+      continue;
+    }
+    const changed = /^\s+(\d+) files? changed/.exec(line);
+    if (!changed || !sha) continue;
+    stats.set(sha, {
+      fileCount: Number(changed[1]),
+      insertions: Number(/(\d+) insertions?\(\+\)/.exec(line)?.[1] ?? 0),
+      deletions: Number(/(\d+) deletions?\(-\)/.exec(line)?.[1] ?? 0),
+    });
+  }
+  return parseCommits(output).map((commit) => ({
+    ...commit,
+    fileStats: stats.get(commit.sha) ?? { fileCount: 0, insertions: 0, deletions: 0 },
+  }));
+}

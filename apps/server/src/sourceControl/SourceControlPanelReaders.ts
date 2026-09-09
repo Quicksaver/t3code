@@ -29,6 +29,7 @@ import {
   parseAheadBehindCounts,
   branchActivityTime,
   parseCommits,
+  parseCommitsWithStats,
   parseCreatedFromRef,
   parseFileChangesFromNumstat,
   parseNameStatus,
@@ -98,6 +99,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
   ): Effect.Effect<
     {
       readonly porcelain: string;
+      readonly unstagedNumstat: string;
       readonly changeGroups: VcsPanelChangeGroup[];
     },
     GitCommandError
@@ -130,6 +132,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         });
         return {
           porcelain,
+          unstagedNumstat,
           changeGroups: parsePorcelainStatus({
             status: porcelain,
             stagedFiles,
@@ -172,7 +175,6 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
           statuses: parseNameStatus(nameStatus),
         }),
       ),
-      Effect.orElseSucceed(() => []),
     );
 
   const commitRefsBySha = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) => {
@@ -317,21 +319,30 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     );
   };
 
-  const withCommitDetails = (cwd: string, commits: VcsPanelSnapshotResult["recentCommits"]) =>
+  const withCommitDetails = (
+    cwd: string,
+    commits: VcsPanelSnapshotResult["recentCommits"],
+    deferFiles = false,
+  ) =>
     withCommitAvatars(cwd, commits).pipe(
-      Effect.flatMap((commitsWithAvatars) =>
-        commitRefsBySha(cwd, commitsWithAvatars).pipe(
-          Effect.flatMap((refsBySha) =>
+      Effect.flatMap((withAvatars) =>
+        commitRefsBySha(cwd, withAvatars).pipe(
+          Effect.flatMap((refs) =>
             Effect.forEach(
-              commitsWithAvatars,
-              (commit) =>
-                commitFiles(cwd, commit.sha).pipe(
-                  Effect.map((files) => ({
-                    ...commit,
-                    ...(refsBySha.get(commit.sha) ?? { headRefs: [], tags: [] }),
-                    files,
-                  })),
-                ),
+              withAvatars,
+              (commit) => {
+                const summary = {
+                  ...commit,
+                  ...(refs.get(commit.sha) ?? { headRefs: [], tags: [] }),
+                };
+                // Older clients expect files inline and do not know the detail endpoint.
+                return deferFiles
+                  ? Effect.succeed({ ...summary, files: [], filesDeferred: true })
+                  : commitFiles(cwd, commit.sha).pipe(
+                      Effect.orElseSucceed(() => []),
+                      Effect.map((files) => ({ ...summary, files })),
+                    );
+              },
               { concurrency: 2 },
             ),
           ),
@@ -541,16 +552,23 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     range: string,
     maxCount: number,
     skip = 0,
+    deferFiles = false,
   ): Effect.Effect<VcsPanelSnapshotResult["recentCommits"], GitCommandError> =>
-    run("vcs.panel.branchCommits", cwd, [
-      "log",
-      `--skip=${skip}`,
-      `--max-count=${maxCount}`,
-      "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
-      range,
-    ]).pipe(
-      Effect.map(parseCommits),
-      Effect.flatMap((commits) => withCommitDetails(cwd, commits)),
+    run(
+      "vcs.panel.branchCommits",
+      cwd,
+      [
+        "log",
+        ...(deferFiles ? ["--shortstat"] : []),
+        `--skip=${skip}`,
+        `--max-count=${maxCount}`,
+        "--format=%H%x09%h%x09%an%x09%ae%x09%aI%x09%s",
+        range,
+      ],
+      { env: { LC_ALL: "C", LANG: "C" } },
+    ).pipe(
+      Effect.map(deferFiles ? parseCommitsWithStats : parseCommits),
+      Effect.flatMap((commits) => withCommitDetails(cwd, commits, deferFiles)),
     );
 
   const branchCommits = (
@@ -560,6 +578,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     kind: VcsPanelBranchCommitsInput["kind"],
     skip: number,
     limit: number,
+    deferFiles = false,
   ): Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError> =>
     Effect.gen(function* () {
       const refName = branch.name;
@@ -571,7 +590,10 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         };
       }
       const [total, commits] = yield* Effect.all(
-        [countCommitsForRange(cwd, historyRef), commitsForRange(cwd, historyRef, limit, skip)],
+        [
+          countCommitsForRange(cwd, historyRef),
+          commitsForRange(cwd, historyRef, limit, skip, deferFiles),
+        ],
         { concurrency: "unbounded" },
       );
       return {
@@ -830,6 +852,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     branch: VcsRef,
     defaultCompareRef: string | null,
     compareBaseRef?: string,
+    deferFiles = false,
   ): Effect.Effect<VcsPanelBranchDetails, GitCommandError> =>
     Effect.gen(function* () {
       const refName = branch.name;
@@ -850,15 +873,15 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
       ] = yield* Effect.all(
         [
           baseRef
-            ? commitsForRange(cwd, `${baseRef}..${refName}`, COMMIT_PAGE_SIZE)
+            ? commitsForRange(cwd, `${baseRef}..${refName}`, COMMIT_PAGE_SIZE, 0, deferFiles)
             : Effect.succeed([]),
           baseRef ? countCommitsForRange(cwd, `${baseRef}..${refName}`) : Effect.succeed(0),
           baseRef
-            ? commitsForRange(cwd, `${refName}..${baseRef}`, COMMIT_PAGE_SIZE)
+            ? commitsForRange(cwd, `${refName}..${baseRef}`, COMMIT_PAGE_SIZE, 0, deferFiles)
             : Effect.succeed([]),
           baseRef ? countCommitsForRange(cwd, `${refName}..${baseRef}`) : Effect.succeed(0),
           countCommitsForRange(cwd, historyRef),
-          commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE),
+          commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE, 0, deferFiles),
           compareFiles(cwd, baseRef, refName),
           unsyncedBaseRef
             ? commitShasForRange(cwd, `${unsyncedBaseRef}..${refName}`)
@@ -892,6 +915,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
   return {
     actionableForkBranches,
     actionableForkForChangeRequest,
+    commitFiles,
     branchCommits,
     branchDetails,
     changeGroupsHaveFiles,

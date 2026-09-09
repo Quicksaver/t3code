@@ -360,6 +360,11 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsPanelBranchDetails,
       staleTimeMs: 5_000,
     }),
+    panelCommitFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:commit-files",
+      tag: WS_METHODS.vcsPanelCommitFiles,
+      staleTimeMs: Infinity,
+    }),
     panelBranchCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:vcs:panel:branch-commits",
       tag: WS_METHODS.vcsPanelBranchCommits,

@@ -8,6 +8,8 @@ import type {
   VcsListRefsResult,
   VcsPanelAddRemoteInput,
   VcsPanelBranchActionInput,
+  VcsPanelCommitFilesInput,
+  VcsPanelCommitFilesResult,
   VcsPanelBranchCommitsInput,
   VcsPanelBranchCommitsResult,
   VcsPanelBranchDetails,
@@ -1603,6 +1605,7 @@ export interface EnvironmentApi {
     refreshStatus: (input: VcsStatusInput) => Promise<VcsStatusResult>;
     panelSnapshot: (input: VcsPanelSnapshotInput) => Promise<VcsPanelSnapshotResult>;
     branchDetails: (input: VcsPanelBranchDetailsInput) => Promise<VcsPanelBranchDetails>;
+    commitFiles: (input: VcsPanelCommitFilesInput) => Promise<VcsPanelCommitFilesResult>;
     branchCommits: (input: VcsPanelBranchCommitsInput) => Promise<VcsPanelBranchCommitsResult>;
     stashDetails: (input: VcsPanelStashDetailsInput) => Promise<VcsPanelStashDetails>;
     stageFiles: (input: VcsPanelFileActionInput) => Promise<void>;

@@ -390,3 +390,15 @@ export function detectSourceControlProviderFromRemoteUrl(
     baseUrl: toBaseUrl(host),
   };
 }
+
+/** Detail identity excludes working-tree changes, which cannot change committed history. */
+export function panelBranchDetailsFingerprint(snapshot: VcsPanelSnapshotResult): string {
+  return JSON.stringify([
+    snapshot.refsFingerprint,
+    snapshot.status.refName,
+    snapshot.localBranches,
+    snapshot.remotes,
+    snapshot.actionableForkBranches,
+    snapshot.defaultCompareRef,
+  ]);
+}

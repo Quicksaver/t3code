@@ -265,7 +265,7 @@ export function CommitTooltip({
 }) {
   const relativeDate = formatRelativeDate(commit.authoredAt);
   const readableDate = formatReadableDate(commit.authoredAt);
-  const stats = sumFiles(commit.files);
+  const stats = commit.fileStats ?? sumFiles(commit.files);
   return (
     <div className="w-72 space-y-2 py-1 text-left">
       <div className="flex min-w-0 items-center gap-2">
@@ -284,7 +284,9 @@ export function CommitTooltip({
         </div>
       ) : null}
       <div className="line-clamp-3">{commit.message}</div>
-      <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+      {commit.fileStats || !commit.filesDeferred ? (
+        <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+      ) : null}
       <RefLabels commit={commit} remoteNames={remoteNames} />
     </div>
   );

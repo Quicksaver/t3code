@@ -431,53 +431,74 @@ export function useSourceControlPanelState({
     [],
   );
 
-  const flushWorkingTreeFileEnrichmentQueue = useCallback(() => {
-    workingTreeEnrichmentTimerRef.current = null;
-    if (!api) return;
-    const keys = [...pendingWorkingTreeEnrichmentPathsRef.current].filter(
-      (key) =>
-        !enrichedWorkingTreeFilesRef.current.has(key) &&
-        !hiddenWorkingTreePathsRef.current.has(key) &&
-        !inFlightWorkingTreeEnrichmentPathsRef.current.has(key),
-    );
-    pendingWorkingTreeEnrichmentPathsRef.current.clear();
-    if (keys.length === 0) return;
+  const enrichmentRunningRef = useRef(false);
+  const flushEnrichmentRef = useRef<() => void>(() => {});
+  const flushWorkingTreeFileEnrichmentQueue = useCallback(
+    function flushEnrichment() {
+      workingTreeEnrichmentTimerRef.current = null;
+      if (!api || enrichmentRunningRef.current) return;
+      const keys = [...pendingWorkingTreeEnrichmentPathsRef.current].filter(
+        (key) =>
+          !enrichedWorkingTreeFilesRef.current.has(key) &&
+          !hiddenWorkingTreePathsRef.current.has(key) &&
+          !inFlightWorkingTreeEnrichmentPathsRef.current.has(key),
+      );
+      keys.splice(64);
+      for (const key of keys) pendingWorkingTreeEnrichmentPathsRef.current.delete(key);
+      if (keys.length === 0) return;
+      enrichmentRunningRef.current = true;
 
-    const requestsByCwd = new Map<string, string[]>();
-    for (const key of keys) {
-      const parsed = splitEnrichmentFileKey(key);
-      if (!parsed.cwd || !parsed.path) continue;
-      const paths = requestsByCwd.get(parsed.cwd) ?? [];
-      paths.push(parsed.path);
-      requestsByCwd.set(parsed.cwd, paths);
-      inFlightWorkingTreeEnrichmentPathsRef.current.add(key);
-    }
-    if (requestsByCwd.size === 0) return;
+      const requestsByCwd = new Map<string, string[]>();
+      for (const key of keys) {
+        const parsed = splitEnrichmentFileKey(key);
+        if (!parsed.cwd || !parsed.path) continue;
+        const paths = requestsByCwd.get(parsed.cwd) ?? [];
+        paths.push(parsed.path);
+        requestsByCwd.set(parsed.cwd, paths);
+        inFlightWorkingTreeEnrichmentPathsRef.current.add(key);
+      }
+      if (requestsByCwd.size === 0) {
+        enrichmentRunningRef.current = false;
+        return;
+      }
 
-    const generation = workingTreeEnrichmentGenerationRef.current;
-    void Promise.all(
-      [...requestsByCwd].map(async ([targetCwd, paths]) => ({
-        targetCwd,
-        result: await api.vcs.enrichWorkingTreeFiles({ cwd: targetCwd, paths }),
-      })),
-    )
-      .then((results) => {
-        if (workingTreeEnrichmentGenerationRef.current !== generation) return;
-        for (const { targetCwd, result } of results) {
-          applyWorkingTreeFileEnrichmentResult(targetCwd, result);
-        }
-      })
-      .catch((nextError: unknown) => {
-        if (workingTreeEnrichmentGenerationRef.current === generation) {
-          setError(errorMessage(nextError));
-        }
-      })
-      .finally(() => {
-        for (const key of keys) {
-          inFlightWorkingTreeEnrichmentPathsRef.current.delete(key);
-        }
-      });
-  }, [api, applyWorkingTreeFileEnrichmentResult]);
+      const generation = workingTreeEnrichmentGenerationRef.current;
+      void Promise.all(
+        [...requestsByCwd].map(async ([targetCwd, paths]) => ({
+          targetCwd,
+          result: await api.vcs.enrichWorkingTreeFiles({ cwd: targetCwd, paths }),
+        })),
+      )
+        .then((results) => {
+          if (workingTreeEnrichmentGenerationRef.current !== generation) return;
+          for (const { targetCwd, result } of results) {
+            applyWorkingTreeFileEnrichmentResult(targetCwd, result);
+          }
+        })
+        .catch((nextError: unknown) => {
+          if (workingTreeEnrichmentGenerationRef.current === generation) {
+            setError(errorMessage(nextError));
+          }
+        })
+        .finally(() => {
+          for (const key of keys) {
+            inFlightWorkingTreeEnrichmentPathsRef.current.delete(key);
+          }
+          enrichmentRunningRef.current = false;
+          if (pendingWorkingTreeEnrichmentPathsRef.current.size > 0) {
+            workingTreeEnrichmentTimerRef.current = window.setTimeout(
+              () => flushEnrichmentRef.current(),
+              50,
+            );
+          }
+        });
+    },
+    [api, applyWorkingTreeFileEnrichmentResult],
+  );
+
+  useEffect(() => {
+    flushEnrichmentRef.current = flushWorkingTreeFileEnrichmentQueue;
+  }, [flushWorkingTreeFileEnrichmentQueue]);
 
   const queueWorkingTreeFileEnrichment = useCallback(
     (file: PanelChangedFile, targetCwd: string) => {
@@ -502,6 +523,8 @@ export function useSourceControlPanelState({
 
   useEffect(
     () => () => {
+      workingTreeEnrichmentGenerationRef.current += 1;
+      pendingWorkingTreeEnrichmentPathsRef.current.clear();
       if (workingTreeEnrichmentTimerRef.current !== null) {
         window.clearTimeout(workingTreeEnrichmentTimerRef.current);
       }

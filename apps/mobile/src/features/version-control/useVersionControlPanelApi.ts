@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   VcsPanelBranchDetails,
+  VcsPanelCommitFilesResult,
   VcsPanelFileDiffResult,
   VcsPanelSnapshotInput,
   VcsPanelSnapshotResult,
@@ -32,6 +33,13 @@ async function unwrapPanelCommand<TResult>(
 export function useVersionControlPanelApi(environmentId: EnvironmentId) {
   const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, {
     refresh: true,
+    reportFailure: false,
+  });
+  const retryPanelCommitFiles = useAtomQueryRunner(vcsEnvironment.panelCommitFiles, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const panelCommitFiles = useAtomQueryRunner(vcsEnvironment.panelCommitFiles, {
     reportFailure: false,
   });
   const panelBranchDetails = useAtomQueryRunner(vcsEnvironment.panelBranchDetails, {
@@ -121,8 +129,16 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
     () => ({
       snapshot: (input: VcsPanelSnapshotInput) =>
         runPanelCommand<typeof input, VcsPanelSnapshotResult>(panelSnapshot, input),
+      commitFiles: (input: Parameters<typeof panelCommitFiles>[0]["input"], retry = false) =>
+        runPanelCommand<typeof input, VcsPanelCommitFilesResult>(
+          retry ? retryPanelCommitFiles : panelCommitFiles,
+          input,
+        ),
       branchDetails: (input: Parameters<typeof panelBranchDetails>[0]["input"]) =>
-        runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, input),
+        runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, {
+          ...input,
+          deferCommitFiles: true,
+        }),
       stashDetails: (input: Parameters<typeof panelStashDetails>[0]["input"]) =>
         runPanelCommand<typeof input, VcsPanelStashDetails>(panelStashDetails, input),
       readFileDiff: (input: Parameters<typeof panelReadFileDiff>[0]["input"]) =>
@@ -170,6 +186,8 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
     [
       panelAddRemote,
       panelApplyStash,
+      panelCommitFiles,
+      retryPanelCommitFiles,
       panelBranchDetails,
       panelCommitStaged,
       panelCreateStash,

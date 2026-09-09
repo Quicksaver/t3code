@@ -1355,3 +1355,106 @@ describe("SourceControlPanelService", () => {
     );
   });
 });
+
+describe("lazy commit files", () => {
+  it.effect("keeps history lightweight and shares immutable file reads", () => {
+    const calls: ExecuteGitInput[] = [];
+    const sha = "a".repeat(40);
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      const page = yield* service.branchCommits({
+        cwd: "/repo",
+        branch: branchRef,
+        kind: "history",
+        skip: 0,
+        limit: 10,
+        deferCommitFiles: true,
+      });
+      assert.equal(page.commits[0]?.filesDeferred, true);
+      assert.deepStrictEqual(page.commits[0]?.files, []);
+      assert.isFalse(calls.some((call) => call.operation === "vcs.panel.commitNumstat"));
+      const [first, second] = yield* Effect.all(
+        [service.commitFiles({ cwd: "/repo", sha }), service.commitFiles({ cwd: "/repo", sha })],
+        { concurrency: "unbounded" },
+      );
+      assert.equal(first.files.length, 1);
+      assert.deepStrictEqual(first, second);
+      yield* service.commitFiles({ cwd: "/repo", sha });
+      assert.equal(calls.filter((call) => call.operation === "vcs.panel.commitNumstat").length, 1);
+      yield* service.commitFiles({ cwd: "/other-repo", sha });
+      assert.equal(calls.filter((call) => call.operation === "vcs.panel.commitNumstat").length, 2);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            if (input.args[0] === "rev-list") return success("1");
+            if (input.args[0] === "log")
+              return success(
+                [
+                  sha,
+                  "aaaaaaa",
+                  "Author",
+                  "author@example.test",
+                  "2026-09-09T00:00:00Z",
+                  "Large commit",
+                ].join("\t"),
+              );
+            if (input.operation === "vcs.panel.commitNumstat") return success("1\t0\tfile.txt\0");
+            if (input.operation === "vcs.panel.commitNameStatus") return success("M\0file.txt\0");
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+  it.effect("retries file reads after a Git failure", () => {
+    let fail = true;
+    const sha = "b".repeat(40);
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      const failed = yield* service.commitFiles({ cwd: "/repo", sha }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(failed));
+      fail = false;
+      const files = yield* service.commitFiles({ cwd: "/repo", sha });
+      assert.deepStrictEqual(files.files, []);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer(() => Effect.sync(() => (fail ? failure("read failed") : success()))),
+      ),
+    );
+  });
+});
+
+it.effect("shares repository scans across enrichment batches", () => {
+  const calls: ExecuteGitInput[] = [];
+  return Effect.gen(function* () {
+    const service = yield* SourceControlPanelService;
+    yield* Effect.all(
+      [
+        service.enrichWorkingTreeFiles({ cwd: "/repo", paths: ["first.txt"] }),
+        service.enrichWorkingTreeFiles({ cwd: "/repo", paths: ["second.txt"] }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.equal(
+      calls.filter((call) => call.operation === "vcs.panel.enrichWorkingTreeFiles.statusPorcelain")
+        .length,
+      1,
+    );
+    assert.equal(
+      calls.filter((call) => call.operation === "vcs.panel.enrichWorkingTreeFiles.unstagedNumstat")
+        .length,
+      1,
+    );
+  }).pipe(
+    Effect.provide(
+      makeTestLayer((input) =>
+        Effect.sync(() => {
+          calls.push(input);
+          return success();
+        }),
+      ),
+    ),
+  );
+});

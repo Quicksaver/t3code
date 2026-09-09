@@ -1,3 +1,5 @@
+import { memo } from "react";
+import { SourceControlVirtualList } from "./SourceControlVirtualList";
 import type {
   EnvironmentId,
   ThreadId,
@@ -106,6 +108,182 @@ import { VisualStudioCode } from "../Icons";
 import { TooltipPopup } from "../ui/tooltip";
 import { fileStatusColor, fileStatusLetter } from "./SourceControlPanelPrimitives";
 
+const WorkingTreeFile = memo(function WorkingTreeFile({
+  file,
+  selected,
+  diffExpanded,
+  discardPending,
+  discardKey,
+  targetCwd,
+  currentChangeSet,
+  changeSetId,
+  setSelectedChangePaths,
+  setSelectedWorktreeChangePaths,
+  confirm,
+  runAction,
+  api,
+  toggleFileDiff,
+  openContextMenu,
+  activeThreadRef,
+  openFilePanel,
+  openInVsCode,
+  copyText,
+  renderFileDiff,
+}: {
+  readonly file: PanelChangedFile;
+  readonly selected: boolean;
+  readonly diffExpanded: boolean;
+  readonly discardPending: boolean;
+  readonly discardKey: string;
+  readonly targetCwd: string;
+  readonly currentChangeSet: boolean;
+  readonly changeSetId: string;
+} & Pick<
+  ReadySourceControlPanelController,
+  | "setSelectedChangePaths"
+  | "setSelectedWorktreeChangePaths"
+  | "confirm"
+  | "runAction"
+  | "api"
+  | "toggleFileDiff"
+  | "openContextMenu"
+  | "activeThreadRef"
+  | "openFilePanel"
+  | "openInVsCode"
+  | "copyText"
+  | "renderFileDiff"
+>) {
+  const onSelectionChange = (path: string, checked: boolean) => {
+    if (currentChangeSet) {
+      setSelectedChangePaths((current) => {
+        const next = new Set(current);
+        if (checked) next.add(path);
+        else next.delete(path);
+        return next;
+      });
+    } else {
+      setSelectedWorktreeChangePaths((current) => {
+        const next = new Map(current);
+        const paths = new Set(next.get(changeSetId) ?? []);
+        if (checked) paths.add(path);
+        else paths.delete(path);
+        next.set(changeSetId, paths);
+        return next;
+      });
+    }
+  };
+  const diffSource = {
+    kind: "working-tree",
+    staged: !file.hasUnstagedChanges && file.hasStagedChanges,
+  } satisfies FileDiffSource;
+  const discardFile = () =>
+    void (async () => {
+      if (!(await confirm(`Discard changes in ${file.path}?`))) return;
+      await runAction(discardKey, async () => {
+        if (!api) return;
+        const paths = operationPathsForFile(file);
+        if (file.hasUnstagedChanges) {
+          await api.vcs.discardFiles({ cwd: targetCwd, paths, staged: false });
+        }
+        if (file.hasStagedChanges) {
+          await api.vcs.discardFiles({ cwd: targetCwd, paths, staged: true });
+        }
+      });
+    })();
+  return (
+    <div key={file.path} className="space-y-0.5">
+      <WorkingFileTooltipRow
+        file={file}
+        onToggle={() => toggleFileDiff(file, diffSource, targetCwd)}
+        onContextMenu={(event) =>
+          openContextMenu(
+            event,
+            [
+              ...(activeThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
+              { id: "open-vscode", label: "Open in VS Code" },
+              {
+                id: "discard",
+                label: "Discard change",
+                destructive: true,
+                disabled: discardPending,
+                icon: "trash",
+                separatorBefore: true,
+              },
+              {
+                id: "copy-filename",
+                label: "Copy filename",
+                icon: "copy",
+                separatorBefore: true,
+              },
+              { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
+            ],
+            {
+              discard: discardFile,
+              ...(activeThreadRef
+                ? { "open-file": () => openFilePanel(file.path, targetCwd) }
+                : {}),
+              "open-vscode": () => openInVsCode(file.path, targetCwd),
+              "copy-filename": () => copyText(fileBasename(file.path)),
+              "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, targetCwd)),
+            },
+          )
+        }
+      >
+        {diffExpanded ? (
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span onClick={(event) => event.stopPropagation()}>
+          <Checkbox
+            checked={selected}
+            disabled={discardPending}
+            aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
+            onCheckedChange={(checked) => onSelectionChange(file.path, checked === true)}
+          />
+        </span>
+        <span
+          className={cn(
+            "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
+            fileStatusColor(file.status),
+          )}
+        >
+          {fileStatusLetter(file.status)}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{file.path}</span>
+        <StatLabels insertions={file.insertions} deletions={file.deletions} />
+        <RowActions>
+          <IconButton
+            label="Discard changes"
+            destructive
+            disabled={discardPending}
+            loading={discardPending}
+            onClick={discardFile}
+          >
+            <Trash2 className="size-3.5" />
+          </IconButton>
+          {activeThreadRef ? (
+            <IconButton label="Open file" onClick={() => openFilePanel(file.path, targetCwd)}>
+              <FileText className="size-3.5" />
+            </IconButton>
+          ) : null}
+          <IconButton
+            label="Open in VS Code"
+            onClick={() => void openInVsCode(file.path, targetCwd)}
+          >
+            <VisualStudioCode className="size-3.5" />
+          </IconButton>
+        </RowActions>
+      </WorkingFileTooltipRow>
+      {diffExpanded ? (
+        <div className="ml-4 border-l border-border/60 pl-1">
+          {renderFileDiff(file, diffSource, targetCwd)}
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
 export function makeSourceControlPanelWorkingTreeRenderers(
   controller: ReadySourceControlPanelController,
 ) {
@@ -160,145 +338,35 @@ export function makeSourceControlPanelWorkingTreeRenderers(
     selectedPaths: selectedChangePaths,
     activity: currentBranch ? branchActivityTimestamp(currentBranch) : 0,
   };
-  const toggleChangeSetFileSelection = (
-    changeSet: WorkingTreeChangeSetView,
-    path: string,
-    checked: boolean,
-  ) => {
-    if (changeSet.current) {
-      setSelectedChangePaths((current) => {
-        const next = new Set(current);
-        if (checked) next.add(path);
-        else next.delete(path);
-        return next;
-      });
-      return;
-    }
-    setSelectedWorktreeChangePaths((current) => {
-      const next = new Map(current);
-      const paths = new Set(next.get(changeSet.id) ?? []);
-      if (checked) paths.add(path);
-      else paths.delete(path);
-      next.set(changeSet.id, paths);
-      return next;
-    });
-  };
-
   const renderWorkingFile = (changeSet: WorkingTreeChangeSetView) => (file: PanelChangedFile) => {
-    const selected = changeSet.selectedPaths.has(file.path);
     const discardKey = `${changeSet.id}:file-discard:${file.path}`;
     const diffSource = {
       kind: "working-tree",
       staged: !file.hasUnstagedChanges && file.hasStagedChanges,
     } satisfies FileDiffSource;
-    const diffExpanded = expandedFileDiffs.has(fileDiffKey(file, diffSource, changeSet.cwd));
-    const discardFile = () =>
-      void (async () => {
-        if (!(await confirm(`Discard changes in ${file.path}?`))) return;
-        await runAction(discardKey, async () => {
-          if (!api) return;
-          const paths = operationPathsForFile(file);
-          if (file.hasUnstagedChanges) {
-            await api.vcs.discardFiles({ cwd: changeSet.cwd, paths, staged: false });
-          }
-          if (file.hasStagedChanges) {
-            await api.vcs.discardFiles({ cwd: changeSet.cwd, paths, staged: true });
-          }
-        });
-      })();
     return (
-      <div key={file.path} className="space-y-0.5">
-        <WorkingFileTooltipRow
-          file={file}
-          onToggle={() => toggleFileDiff(file, diffSource, changeSet.cwd)}
-          onContextMenu={(event) =>
-            openContextMenu(
-              event,
-              [
-                ...(activeThreadRef ? ([{ id: "open-file", label: "Open file" }] as const) : []),
-                { id: "open-vscode", label: "Open in VS Code" },
-                {
-                  id: "discard",
-                  label: "Discard change",
-                  destructive: true,
-                  disabled: isActionRunning(discardKey),
-                  icon: "trash",
-                  separatorBefore: true,
-                },
-                {
-                  id: "copy-filename",
-                  label: "Copy filename",
-                  icon: "copy",
-                  separatorBefore: true,
-                },
-                { id: "copy-full-path", label: "Copy full path to file", icon: "copy" },
-              ],
-              {
-                discard: discardFile,
-                ...(activeThreadRef
-                  ? { "open-file": () => openFilePanel(file.path, changeSet.cwd) }
-                  : {}),
-                "open-vscode": () => openInVsCode(file.path, changeSet.cwd),
-                "copy-filename": () => copyText(fileBasename(file.path)),
-                "copy-full-path": () => copyText(resolvePathLinkTarget(file.path, changeSet.cwd)),
-              },
-            )
-          }
-        >
-          {diffExpanded ? (
-            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <span onClick={(event) => event.stopPropagation()}>
-            <Checkbox
-              checked={selected}
-              disabled={isActionRunning(discardKey)}
-              aria-label={selected ? `Deselect ${file.path}` : `Select ${file.path}`}
-              onCheckedChange={(checked) =>
-                toggleChangeSetFileSelection(changeSet, file.path, checked === true)
-              }
-            />
-          </span>
-          <span
-            className={cn(
-              "w-3 shrink-0 text-center text-[10px] font-semibold uppercase",
-              fileStatusColor(file.status),
-            )}
-          >
-            {fileStatusLetter(file.status)}
-          </span>
-          <span className="min-w-0 flex-1 truncate">{file.path}</span>
-          <StatLabels insertions={file.insertions} deletions={file.deletions} />
-          <RowActions>
-            <IconButton
-              label="Discard changes"
-              destructive
-              disabled={isActionRunning(discardKey)}
-              loading={isActionRunning(discardKey)}
-              onClick={discardFile}
-            >
-              <Trash2 className="size-3.5" />
-            </IconButton>
-            {activeThreadRef ? (
-              <IconButton label="Open file" onClick={() => openFilePanel(file.path, changeSet.cwd)}>
-                <FileText className="size-3.5" />
-              </IconButton>
-            ) : null}
-            <IconButton
-              label="Open in VS Code"
-              onClick={() => void openInVsCode(file.path, changeSet.cwd)}
-            >
-              <VisualStudioCode className="size-3.5" />
-            </IconButton>
-          </RowActions>
-        </WorkingFileTooltipRow>
-        {diffExpanded ? (
-          <div className="ml-4 border-l border-border/60 pl-1">
-            {renderFileDiff(file, diffSource, changeSet.cwd)}
-          </div>
-        ) : null}
-      </div>
+      <WorkingTreeFile
+        file={file}
+        selected={changeSet.selectedPaths.has(file.path)}
+        diffExpanded={expandedFileDiffs.has(fileDiffKey(file, diffSource, changeSet.cwd))}
+        discardPending={isActionRunning(discardKey)}
+        discardKey={discardKey}
+        targetCwd={changeSet.cwd}
+        currentChangeSet={changeSet.current}
+        changeSetId={changeSet.id}
+        setSelectedChangePaths={setSelectedChangePaths}
+        setSelectedWorktreeChangePaths={setSelectedWorktreeChangePaths}
+        confirm={confirm}
+        runAction={runAction}
+        api={api}
+        toggleFileDiff={toggleFileDiff}
+        openContextMenu={openContextMenu}
+        activeThreadRef={activeThreadRef}
+        openFilePanel={openFilePanel}
+        openInVsCode={openInVsCode}
+        copyText={copyText}
+        renderFileDiff={renderFileDiff}
+      />
     );
   };
 
@@ -439,18 +507,18 @@ export function makeSourceControlPanelWorkingTreeRenderers(
                 </IconButton>
               </div>
             </div>
-            <div className="space-y-0.5">
-              {files.map((file) => (
+            <SourceControlVirtualList
+              items={files}
+              getKey={(file) => file.path}
+              renderItem={(file) => (
                 <WorkingFileRow
-                  key={file.path}
                   file={file}
-                  onRendered={(renderedFile) =>
-                    queueWorkingTreeFileEnrichment(renderedFile, changeSet.cwd)
-                  }
+                  onRendered={queueWorkingTreeFileEnrichment}
+                  cwd={changeSet.cwd}
                   renderFile={renderWorkingFile(changeSet)}
                 />
-              ))}
-            </div>
+              )}
+            />
           </>
         )}
       </div>

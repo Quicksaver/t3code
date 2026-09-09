@@ -1,3 +1,5 @@
+import { SourceControlVirtualList } from "./SourceControlVirtualList";
+import { CommitFileChanges } from "./CommitFileChanges";
 import type {
   EnvironmentId,
   ThreadId,
@@ -155,7 +157,7 @@ export function makeSourceControlPanelBranchRenderers(
   ) => {
     const key = treeKey("commit", commit.sha);
     const expanded = expandedTree.has(key);
-    const stats = sumFiles(commit.files);
+    const stats = commit.fileStats ?? sumFiles(commit.files);
     const relativeDate = formatRelativeDate(commit.authoredAt);
     const undoKey = options.undoBranchName
       ? commitUndoActionKey(options.undoBranchName, commit.sha)
@@ -226,7 +228,9 @@ export function makeSourceControlPanelBranchRenderers(
                   commit={commit}
                   remoteNames={snapshot.remotes.map((remote) => remote.name)}
                 />
-                <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+                {commit.fileStats || !commit.filesDeferred ? (
+                  <StatLabels insertions={stats.insertions} deletions={stats.deletions} />
+                ) : null}
                 {relativeDate ? (
                   <span className="shrink-0 text-[11px] text-muted-foreground">{relativeDate}</span>
                 ) : null}
@@ -288,8 +292,11 @@ export function makeSourceControlPanelBranchRenderers(
         </Tooltip>
         {expanded ? (
           <div className="ml-2 border-l border-border/60 pl-1">
-            <FileChangeList
-              files={commit.files}
+            <CommitFileChanges
+              key={`${cwd}:${commit.sha}`}
+              commit={commit}
+              api={api}
+              cwd={cwd}
               emptyLabel="No file changes."
               onFileContextMenu={openFileChangeContextMenu}
               {...fileDiffListProps(() => ({ kind: "commit", sha: commit.sha }))}
@@ -378,7 +385,11 @@ export function makeSourceControlPanelBranchRenderers(
               icon: <Upload className="size-3.5 shrink-0 text-success-foreground" />,
               children: (
                 <div className="space-y-0.5">
-                  {details.aheadCommits.map(renderBranchCommit)}
+                  <SourceControlVirtualList
+                    items={details.aheadCommits}
+                    getKey={(commit) => commit.sha}
+                    renderItem={renderBranchCommit}
+                  />
                   <LoadMoreCommitsButton
                     remaining={details.aheadCommitsRemaining}
                     loading={loadingDetails}
@@ -397,7 +408,11 @@ export function makeSourceControlPanelBranchRenderers(
               icon: <Download className="size-3.5 shrink-0 text-warning-foreground" />,
               children: (
                 <div className="space-y-0.5">
-                  {details.behindCommits.map(renderBranchCommit)}
+                  <SourceControlVirtualList
+                    items={details.behindCommits}
+                    getKey={(commit) => commit.sha}
+                    renderItem={renderBranchCommit}
+                  />
                   <LoadMoreCommitsButton
                     remaining={details.behindCommitsRemaining}
                     loading={loadingDetails}
@@ -419,7 +434,11 @@ export function makeSourceControlPanelBranchRenderers(
               {details.commits.length === 0 ? (
                 <div className="px-3 py-1 text-xs text-muted-foreground">No commits.</div>
               ) : (
-                details.commits.map(renderBranchCommit)
+                <SourceControlVirtualList
+                  items={details.commits}
+                  getKey={(commit) => commit.sha}
+                  renderItem={renderBranchCommit}
+                />
               )}
               <LoadMoreCommitsButton
                 remaining={details.commitsRemaining}
