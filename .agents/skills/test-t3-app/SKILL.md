@@ -75,9 +75,10 @@ Tear down when the user explicitly asks, confirms the iteration is finished, or 
 
 When teardown is appropriate:
 
-1. Stop the dev process with its terminal interrupt.
-2. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
-3. Otherwise remove only a path created for this test after resolving and verifying the exact target.
+1. Close every collaborative preview tab created for this test with `preview_close`, passing each retained `tabId` explicitly. Confirm each result returns `tabId: null`. Keep this cleanup scoped to owned tabs; omitting `tabId` can close a different active tab.
+2. Stop the dev process with its terminal interrupt.
+3. Preserve the isolated base directory when it contains useful reproduction evidence or state for a likely follow-up.
+4. Otherwise remove only a path created for this test after resolving and verifying the exact target.
 
 If completion is uncertain, keep the environment alive and mention that it is retained for further iteration. A fresh isolated base directory remains the safest reset when authentication, migrations, or fixture state becomes ambiguous.
 
