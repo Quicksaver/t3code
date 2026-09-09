@@ -1,3 +1,4 @@
+import { panelBranchDetailsFingerprint } from "@t3tools/shared/sourceControl";
 import type {
   VcsPanelBranchDetails,
   VcsPanelFileChange,
@@ -43,7 +44,6 @@ import {
   snapshotIsPendingForCwd,
   snapshotRequestIsCurrent,
   stashIdentityKey,
-  workingTreeEnrichmentRequests,
   type VersionControlChangeSet,
 } from "./versionControlModel";
 import {
@@ -146,6 +146,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
   const detailRequestIds = useRef(new Map<string, number>());
   const selectedThreadCwdRef = useRef(selectedThreadCwd);
   const snapshotRevision = useRef(0);
+  const detailsFingerprint = useRef<string | null>(null);
   const snapshotFingerprint = useRef<string | null>(null);
   const refreshQueue = useRef<VersionControlRefreshQueue | null>(null);
   const refreshRunId = useRef(0);
@@ -195,6 +196,10 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
     );
   }, []);
 
+  useEffect(() => {
+    if (snapshot && selectedThreadCwd) syncSelections(snapshot, selectedThreadCwd);
+  }, [snapshot, selectedThreadCwd, syncSelections]);
+
   const performSnapshotRefresh = useCallback(
     async (requestCwd: string | null, options: VersionControlRefreshOptions) => {
       if (requestCwd !== selectedThreadCwdRef.current) return;
@@ -227,57 +232,34 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
         const nextFingerprint = `${requestCwd}\0${JSON.stringify(rawSnapshot)}`;
         if (snapshotFingerprint.current !== nextFingerprint) {
           snapshotFingerprint.current = nextFingerprint;
-          snapshotRevision.current += 1;
-          setBranchDetails(new Map());
-          setStashDetails(new Map());
-          setDetailErrors(new Map());
-          setExpandedRows(
-            (current) =>
-              new Set(
-                [...current].filter(
-                  (key) =>
-                    !key.startsWith("branch:") &&
-                    !key.startsWith("fork:") &&
-                    !key.startsWith("commit:") &&
-                    !key.startsWith("stash:"),
+          const nextDetailsFingerprint = `${requestCwd}\0${panelBranchDetailsFingerprint(rawSnapshot)}\0${JSON.stringify(rawSnapshot.stashes)}`;
+          if (
+            detailsFingerprint.current !== nextDetailsFingerprint ||
+            options.refresh !== "working-tree"
+          ) {
+            detailsFingerprint.current = nextDetailsFingerprint;
+            snapshotRevision.current += 1;
+            setBranchDetails(new Map());
+            setStashDetails(new Map());
+            setDetailErrors(new Map());
+            setExpandedRows(
+              (current) =>
+                new Set(
+                  [...current].filter(
+                    (key) =>
+                      !key.startsWith("branch:") &&
+                      !key.startsWith("fork:") &&
+                      !key.startsWith("commit:") &&
+                      !key.startsWith("stash:"),
+                  ),
                 ),
-              ),
-          );
+            );
+          }
         }
+        enrichmentRequested.current.clear();
+        enrichmentPending.current.clear();
         setScopedSnapshot({ cwd: requestCwd, snapshot: rawSnapshot });
-        syncSelections(rawSnapshot, requestCwd);
         setError(null);
-
-        const enrichmentRequests = workingTreeEnrichmentRequests(rawSnapshot, requestCwd);
-        if (enrichmentRequests.length > 0) {
-          void Promise.allSettled(
-            enrichmentRequests.map(
-              async (request) => [request.cwd, await api.enrichWorkingTreeFiles(request)] as const,
-            ),
-          ).then((enrichmentResults) => {
-            if (
-              !snapshotRequestIsCurrent(
-                requestId,
-                snapshotRequestId.current,
-                requestCwd,
-                selectedThreadCwdRef.current,
-              )
-            ) {
-              return;
-            }
-            const enrichmentEntries = enrichmentResults.flatMap((result) =>
-              result.status === "fulfilled" ? [result.value] : [],
-            );
-            if (enrichmentEntries.length === 0) return;
-            const enrichedSnapshot = applyWorkingTreeEnrichments(
-              rawSnapshot,
-              requestCwd,
-              new Map(enrichmentEntries),
-            );
-            setScopedSnapshot({ cwd: requestCwd, snapshot: enrichedSnapshot });
-            syncSelections(enrichedSnapshot, requestCwd);
-          });
-        }
       } catch (cause) {
         if (
           snapshotRequestIsCurrent(
@@ -306,6 +288,65 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
       }
     },
     [api, syncSelections],
+  );
+
+  const enrichmentRequested = useRef(new Set<string>());
+  const enrichmentPending = useRef(new Map<string, { cwd: string; path: string }>());
+  const enrichmentRunning = useRef(false);
+  const enrichmentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enqueueFileEnrichment = useCallback(
+    (file: VcsPanelFileChange, cwd: string) => {
+      if (file.status !== "untracked" && file.status !== "deleted") return;
+      const key = JSON.stringify([cwd, file.path]);
+      if (enrichmentRequested.current.has(key)) return;
+      enrichmentRequested.current.add(key);
+      enrichmentPending.current.set(key, { cwd, path: file.path });
+      const flush = async () => {
+        enrichmentTimer.current = null;
+        if (enrichmentRunning.current) return;
+        enrichmentRunning.current = true;
+        try {
+          while (enrichmentPending.current.size > 0) {
+            const entries = [...enrichmentPending.current.entries()].slice(0, 64);
+            const cwd = entries[0]![1].cwd;
+            const batch = entries.filter(([, entry]) => entry.cwd === cwd);
+            for (const [key] of batch) enrichmentPending.current.delete(key);
+            const requestId = snapshotRequestId.current;
+            const result = await api.enrichWorkingTreeFiles({
+              cwd,
+              paths: batch.map(([, entry]) => entry.path),
+            });
+            if (requestId !== snapshotRequestId.current) continue;
+            setScopedSnapshot((current) => {
+              if (!current || current.cwd !== selectedThreadCwdRef.current) return current;
+              return {
+                ...current,
+                snapshot: applyWorkingTreeEnrichments(
+                  current.snapshot,
+                  current.cwd,
+                  new Map([[cwd, result]]),
+                ),
+              };
+            });
+          }
+        } catch {
+          // Metadata can retry on the next authoritative snapshot.
+        } finally {
+          enrichmentRunning.current = false;
+        }
+      };
+      if (!enrichmentRunning.current && enrichmentTimer.current === null) {
+        enrichmentTimer.current = setTimeout(() => void flush(), 50);
+      }
+    },
+    [api],
+  );
+  useEffect(
+    () => () => {
+      enrichmentPending.current.clear();
+      if (enrichmentTimer.current !== null) clearTimeout(enrichmentTimer.current);
+    },
+    [],
   );
 
   const refreshSnapshot = useCallback(
@@ -841,6 +882,7 @@ export function useVersionControlRouteController(props: VersionControlRouteScree
     busy,
     busyAction,
     changeSets,
+    enqueueFileEnrichment,
     commitSelected,
     deleteBranch,
     detailErrors,

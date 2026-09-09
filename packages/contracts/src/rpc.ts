@@ -65,6 +65,8 @@ import {
   GitPullRequestRefInput,
   VcsPanelAddRemoteInput,
   VcsPanelBranchActionInput,
+  VcsPanelCommitFilesInput,
+  VcsPanelCommitFilesResult,
   VcsPanelBranchCommitsInput,
   VcsPanelBranchCommitsResult,
   VcsPanelBranchDetails,
@@ -300,6 +302,7 @@ export const WS_METHODS = {
   vcsRefreshStatus: "vcs.refreshStatus",
   vcsPanelSnapshot: "vcs.panel.snapshot",
   vcsPanelBranchDetails: "vcs.panel.branchDetails",
+  vcsPanelCommitFiles: "vcs.panel.commitFiles",
   vcsPanelBranchCommits: "vcs.panel.branchCommits",
   vcsPanelStashDetails: "vcs.panel.stashDetails",
   vcsPanelStageFiles: "vcs.panel.stageFiles",
@@ -947,6 +950,12 @@ export const WsVcsPanelBranchDetailsRpc = Rpc.make(WS_METHODS.vcsPanelBranchDeta
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+export const WsVcsPanelCommitFilesRpc = Rpc.make(WS_METHODS.vcsPanelCommitFiles, {
+  payload: VcsPanelCommitFilesInput,
+  success: VcsPanelCommitFilesResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 export const WsVcsPanelBranchCommitsRpc = Rpc.make(WS_METHODS.vcsPanelBranchCommits, {
   payload: VcsPanelBranchCommitsInput,
   success: VcsPanelBranchCommitsResult,
@@ -1479,6 +1488,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRefreshStatusRpc,
   WsVcsPanelSnapshotRpc,
   WsVcsPanelBranchDetailsRpc,
+  WsVcsPanelCommitFilesRpc,
   WsVcsPanelBranchCommitsRpc,
   WsVcsPanelStashDetailsRpc,
   WsVcsPanelStageFilesRpc,

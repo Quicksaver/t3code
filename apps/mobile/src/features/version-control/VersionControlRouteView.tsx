@@ -1,3 +1,6 @@
+import { useEffect, type ComponentProps } from "react";
+import { VersionControlList } from "./VersionControlList";
+import { VersionControlCommitFiles } from "./VersionControlCommitFiles";
 import type {
   VcsPanelCommitSummary,
   VcsPanelFileChange,
@@ -40,6 +43,20 @@ interface FileDiffRequest {
   readonly source: FileDiffSource;
 }
 
+function WorkingFileRow({
+  cwd,
+  onRendered,
+  ...props
+}: ComponentProps<typeof FileRow> & {
+  readonly cwd: string;
+  readonly onRendered: (file: VcsPanelFileChange, cwd: string) => void;
+}) {
+  useEffect(() => {
+    onRendered(props.file, cwd);
+  }, [props.file, cwd, onRendered]);
+  return <FileRow {...props} />;
+}
+
 export function VersionControlRouteView({
   controller,
 }: {
@@ -53,6 +70,7 @@ export function VersionControlRouteView({
     busy,
     busyAction,
     changeSets,
+    enqueueFileEnrichment,
     commitSelected,
     deleteBranch,
     detailErrors,
@@ -115,21 +133,27 @@ export function VersionControlRouteView({
         expanded={expanded}
         onToggle={() => toggleExpanded(commitKey)}
       >
-        {commit.files.map((file) => {
-          const request: FileDiffRequest = {
-            cwd,
-            file,
-            source: { kind: "commit", sha: commit.sha },
-          };
-          return (
-            <FileRow
-              key={`${commit.sha}:${file.path}:${file.originalPath ?? ""}`}
-              file={file}
-              disabled={busy}
-              onOpenDiff={() => openFileDiff(request)}
-            />
-          );
-        })}
+        <VersionControlCommitFiles
+          key={`${cwd}:${commit.sha}`}
+          commit={commit}
+          cwd={cwd}
+          api={api}
+          renderFile={(file) => {
+            const request: FileDiffRequest = {
+              cwd,
+              file,
+              source: { kind: "commit", sha: commit.sha },
+            };
+            return (
+              <FileRow
+                key={`${commit.sha}:${file.path}:${file.originalPath ?? ""}`}
+                file={file}
+                disabled={busy}
+                onOpenDiff={() => openFileDiff(request)}
+              />
+            );
+          }}
+        />
       </BranchCommitRow>
     );
   };
@@ -323,28 +347,34 @@ export function VersionControlRouteView({
                             onPress={() => discardSelected(changeSet)}
                           />
                         </View>
-                        {changeSet.files.map((file) => {
-                          const diffRequest: FileDiffRequest = {
-                            cwd: changeSet.cwd,
-                            file,
-                            source: {
-                              kind: "working-tree",
-                              staged: workingTreeDiffIsStaged(file),
-                            },
-                          };
-                          return (
-                            <FileRow
-                              key={file.path}
-                              file={file}
-                              selected={(selectedByCwd.get(changeSet.cwd) ?? new Set()).has(
-                                file.path,
-                              )}
-                              disabled={busy}
-                              onSelect={() => toggleSelectedFile(changeSet.cwd, file.path)}
-                              onOpenDiff={() => openFileDiff(diffRequest)}
-                            />
-                          );
-                        })}
+                        <VersionControlList
+                          items={changeSet.files}
+                          getKey={(file) => file.path}
+                          renderItem={(file) => {
+                            const diffRequest: FileDiffRequest = {
+                              cwd: changeSet.cwd,
+                              file,
+                              source: {
+                                kind: "working-tree",
+                                staged: workingTreeDiffIsStaged(file),
+                              },
+                            };
+                            return (
+                              <WorkingFileRow
+                                cwd={changeSet.cwd}
+                                onRendered={enqueueFileEnrichment}
+                                key={file.path}
+                                file={file}
+                                selected={(selectedByCwd.get(changeSet.cwd) ?? new Set()).has(
+                                  file.path,
+                                )}
+                                disabled={busy}
+                                onSelect={() => toggleSelectedFile(changeSet.cwd, file.path)}
+                                onOpenDiff={() => openFileDiff(diffRequest)}
+                              />
+                            );
+                          }}
+                        />
                       </>
                     ) : null}
                   </View>
@@ -626,24 +656,28 @@ export function VersionControlRouteView({
                           />
                         </View>
                         {details ? (
-                          details.files.map((file) => {
-                            const request: FileDiffRequest = {
-                              cwd: selectedThreadCwd,
-                              file,
-                              source: {
-                                kind: "stash",
-                                stashRef: stash.refName,
-                              },
-                            };
-                            return (
-                              <FileRow
-                                key={`${file.path}:${file.originalPath ?? ""}`}
-                                file={file}
-                                disabled={busy}
-                                onOpenDiff={() => openFileDiff(request)}
-                              />
-                            );
-                          })
+                          <VersionControlList
+                            items={details.files}
+                            getKey={(file) => file.path}
+                            renderItem={(file) => {
+                              const request: FileDiffRequest = {
+                                cwd: selectedThreadCwd,
+                                file,
+                                source: {
+                                  kind: "stash",
+                                  stashRef: stash.refName,
+                                },
+                              };
+                              return (
+                                <FileRow
+                                  key={`${file.path}:${file.originalPath ?? ""}`}
+                                  file={file}
+                                  disabled={busy}
+                                  onOpenDiff={() => openFileDiff(request)}
+                                />
+                              );
+                            }}
+                          />
                         ) : (
                           <Text className="border-t border-border px-4 py-3 text-xs text-foreground-muted">
                             {detailErrors.has(key)

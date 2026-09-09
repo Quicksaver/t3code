@@ -1,3 +1,4 @@
+import { panelBranchDetailsFingerprint } from "@t3tools/shared/sourceControl";
 import { useCallback, useEffect } from "react";
 
 import { drainPanelRefreshQueue, vcsPanelSnapshotFingerprint } from "./SourceControlPanel.logic";
@@ -66,6 +67,15 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
               await hydrateExpandedBranchDetails(nextSnapshot);
               await hydrateExpandedStashDetails(nextSnapshot);
             } else {
+              const previous = snapshotRef.current;
+              const branchesChanged =
+                mode === "full" ||
+                !previous ||
+                panelBranchDetailsFingerprint(previous) !==
+                  panelBranchDetailsFingerprint(nextSnapshot);
+              const stashesChanged =
+                !previous ||
+                JSON.stringify(previous.stashes) !== JSON.stringify(nextSnapshot.stashes);
               snapshotFingerprintRef.current = nextSnapshotFingerprint;
               snapshotRef.current = nextSnapshot;
               resetWorkingTreeFileEnrichment();
@@ -73,8 +83,8 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
               syncWorktreeChangedPathSelection(nextSnapshot.worktreeChangeSets);
               setSnapshot(nextSnapshot);
               reloadExpandedWorkingTreeDiffs(nextSnapshot, { preserveLoaded: true });
-              await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: true });
-              await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: true });
+              await hydrateExpandedBranchDetails(nextSnapshot, { reloadAll: branchesChanged });
+              await hydrateExpandedStashDetails(nextSnapshot, { reloadAll: stashesChanged });
             }
           },
           onError: (nextError) => {

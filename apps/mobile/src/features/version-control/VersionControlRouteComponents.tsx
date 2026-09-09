@@ -222,7 +222,7 @@ export function BranchCommitRow(props: {
   readonly onToggle: () => void;
   readonly children: React.ReactNode;
 }) {
-  const stats = selectedFileStats(props.commit.files);
+  const stats = props.commit.fileStats ?? selectedFileStats(props.commit.files);
   return (
     <View className="border-t border-border/70">
       <Pressable
@@ -250,7 +250,9 @@ export function BranchCommitRow(props: {
             <Text className="min-w-0 flex-1 text-2xs text-foreground-muted" numberOfLines={1}>
               {props.commit.authorName ?? "Unknown author"} · {props.commit.shortSha}
             </Text>
-            <ChangeCounts insertions={stats.insertions} deletions={stats.deletions} />
+            {props.commit.fileStats || !props.commit.filesDeferred ? (
+              <ChangeCounts insertions={stats.insertions} deletions={stats.deletions} />
+            ) : null}
             <SymbolView
               name={props.expanded ? "chevron.down" : "chevron.right"}
               size={11}
@@ -261,7 +263,7 @@ export function BranchCommitRow(props: {
         </View>
       </Pressable>
       {props.expanded ? (
-        props.commit.files.length > 0 ? (
+        props.commit.filesDeferred || props.commit.files.length > 0 ? (
           props.children
         ) : (
           <Text className="border-t border-border/70 px-4 py-3 text-xs text-foreground-muted">

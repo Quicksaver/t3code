@@ -1,3 +1,4 @@
+import * as NodeCrypto from "node:crypto";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -21,6 +22,8 @@ import {
   type VcsPanelBranchDetailsInput,
   type VcsPanelCommitActionInput,
   type VcsPanelCommitInput,
+  type VcsPanelCommitFilesInput,
+  type VcsPanelCommitFilesResult,
   type VcsPanelCompareInput,
   type VcsPanelCompareResult,
   type VcsPanelDeleteBranchInput,
@@ -169,6 +172,9 @@ export class SourceControlPanelService extends Context.Service<
     readonly branchDetails: (
       input: VcsPanelBranchDetailsInput,
     ) => Effect.Effect<VcsPanelBranchDetails, GitCommandError>;
+    readonly commitFiles: (
+      input: VcsPanelCommitFilesInput,
+    ) => Effect.Effect<VcsPanelCommitFilesResult, GitCommandError>;
     readonly branchCommits: (
       input: VcsPanelBranchCommitsInput,
     ) => Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError>;
@@ -495,12 +501,13 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
 
   const {
     actionableForkBranches,
+    commitFiles,
     branchCommits,
     branchDetails,
     changeGroupsHaveFiles,
     generatedCommitMessage,
     generatedStashMessage,
-    readWorkingTreeChangeGroups,
+    readWorkingTreeChangeGroups: readRawWorkingTreeChangeGroups,
     refExists,
     stashDetails,
     upstreamForRef,
@@ -554,18 +561,30 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
       );
     }).pipe(Effect.orElseSucceed(() => null));
 
-  const enrichWorkingTreeFiles: SourceControlPanelService["Service"]["enrichWorkingTreeFiles"] =
-    Effect.fn("enrichWorkingTreeFiles")(function* (input) {
-      const requestedPaths = uniquePaths(input.paths);
-      const [porcelain, unstagedNumstat] = yield* Effect.all(
+  // Commit objects are immutable. Share reads across pages, panels, and clients.
+  const commitFilesCache = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, sha] = JSON.parse(key) as [string, string];
+      return commitFiles(cwd, sha);
+    },
+    {
+      capacity: 128,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
+    },
+  );
+
+  // Scrolling may request several batches before Git finishes one status scan.
+  const enrichmentStatusCache = yield* Cache.makeWith(
+    (cwd: string) =>
+      Effect.all(
         [
-          run("vcs.panel.enrichWorkingTreeFiles.statusPorcelain", input.cwd, [
+          run("vcs.panel.enrichWorkingTreeFiles.statusPorcelain", cwd, [
             "status",
             "--porcelain=2",
             "--branch",
             "-uall",
           ]),
-          run("vcs.panel.enrichWorkingTreeFiles.unstagedNumstat", input.cwd, [
+          run("vcs.panel.enrichWorkingTreeFiles.unstagedNumstat", cwd, [
             "diff",
             "--numstat",
             "-z",
@@ -573,6 +592,29 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           ]),
         ],
         { concurrency: "unbounded" },
+      ),
+    {
+      capacity: 64,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.seconds(1) : Duration.zero),
+    },
+  );
+
+  const readWorkingTreeChangeGroups = (cwd: string) =>
+    readRawWorkingTreeChangeGroups(cwd).pipe(
+      Effect.tap((result) =>
+        Cache.set(enrichmentStatusCache, path.resolve(cwd), [
+          result.porcelain,
+          result.unstagedNumstat,
+        ] satisfies [string, string]),
+      ),
+    );
+
+  const enrichWorkingTreeFiles: SourceControlPanelService["Service"]["enrichWorkingTreeFiles"] =
+    Effect.fn("enrichWorkingTreeFiles")(function* (input) {
+      const requestedPaths = uniquePaths(input.paths);
+      const [porcelain, unstagedNumstat] = yield* Cache.get(
+        enrichmentStatusCache,
+        path.resolve(input.cwd),
       );
 
       const requestedPathSet = new Set(requestedPaths);
@@ -828,6 +870,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   const snapshot: SourceControlPanelService["Service"]["snapshot"] = Effect.fn("snapshot")(
     function* (input) {
       const cacheKey = path.resolve(input.cwd);
+      yield* Cache.invalidate(enrichmentStatusCache, cacheKey);
       const request = yield* Ref.modify(snapshotCacheRef, (state) => {
         const requestId = state.nextRequestId + 1;
         const cached = state.snapshotsByCwd.get(cacheKey) ?? null;
@@ -861,8 +904,20 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         ] as const;
       });
 
+      const refsFingerprint = NodeCrypto.createHash("sha256")
+        .update(
+          yield* run("vcs.panel.refsFingerprint", input.cwd, [
+            "for-each-ref",
+            "--format=%(refname)%09%(objectname)",
+          ]),
+        )
+        .digest("hex");
       let nextSnapshot: VcsPanelSnapshotResult;
-      if (!request.full && request.cached !== null) {
+      if (
+        !request.full &&
+        request.cached !== null &&
+        request.cached.refsFingerprint === refsFingerprint
+      ) {
         const incremental = yield* readWorkingTreeSnapshot(input.cwd, request.cached);
         nextSnapshot = repositoryStatusChanged(request.cached.status, incremental.status)
           ? yield* readFullSnapshot(input.cwd)
@@ -888,6 +943,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         );
       }
 
+      nextSnapshot = { ...nextSnapshot, refsFingerprint };
       yield* Ref.update(snapshotCacheRef, (state) => {
         if (state.latestRequestByCwd.get(cacheKey) !== request.requestId) {
           return state;
@@ -920,9 +976,27 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
   return SourceControlPanelService.of({
     snapshot,
     branchDetails: (input) =>
-      branchDetails(input.cwd, input.branch, input.defaultCompareRef, input.compareBaseRef),
+      branchDetails(
+        input.cwd,
+        input.branch,
+        input.defaultCompareRef,
+        input.compareBaseRef,
+        input.deferCommitFiles,
+      ),
+    commitFiles: (input) =>
+      Cache.get(commitFilesCache, JSON.stringify([path.resolve(input.cwd), input.sha])).pipe(
+        Effect.map((files) => ({ files })),
+      ),
     branchCommits: (input) =>
-      branchCommits(input.cwd, input.branch, input.baseRef, input.kind, input.skip, input.limit),
+      branchCommits(
+        input.cwd,
+        input.branch,
+        input.baseRef,
+        input.kind,
+        input.skip,
+        input.limit,
+        input.deferCommitFiles,
+      ),
     stashDetails: (input) => stashDetails(input.cwd, input.stashRef),
     enrichWorkingTreeFiles,
     fetchAllRemotes,

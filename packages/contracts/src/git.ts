@@ -414,7 +414,23 @@ export const VcsPanelStash = Schema.Struct({
 });
 export type VcsPanelStash = typeof VcsPanelStash.Type;
 
+export const VcsPanelCommitFilesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  sha: Schema.String.check(Schema.isPattern(/^[a-fA-F0-9]{40,64}$/)),
+});
+export type VcsPanelCommitFilesInput = typeof VcsPanelCommitFilesInput.Type;
+export const VcsPanelCommitFilesResult = Schema.Struct({ files: Schema.Array(VcsPanelFileChange) });
+export type VcsPanelCommitFilesResult = typeof VcsPanelCommitFilesResult.Type;
+
 export const VcsPanelCommitSummary = Schema.Struct({
+  filesDeferred: Schema.optional(Schema.Boolean),
+  fileStats: Schema.optional(
+    Schema.Struct({
+      fileCount: NonNegativeInt,
+      insertions: NonNegativeInt,
+      deletions: NonNegativeInt,
+    }),
+  ),
   sha: TrimmedNonEmptyStringSchema,
   shortSha: TrimmedNonEmptyStringSchema,
   message: TrimmedNonEmptyStringSchema,
@@ -452,6 +468,7 @@ export const VcsPanelBranchDetails = Schema.Struct({
 export type VcsPanelBranchDetails = typeof VcsPanelBranchDetails.Type;
 
 export const VcsPanelBranchDetailsInput = Schema.Struct({
+  deferCommitFiles: Schema.optional(Schema.Boolean),
   cwd: TrimmedNonEmptyStringSchema,
   branch: VcsRef,
   defaultCompareRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
@@ -460,6 +477,7 @@ export const VcsPanelBranchDetailsInput = Schema.Struct({
 export type VcsPanelBranchDetailsInput = typeof VcsPanelBranchDetailsInput.Type;
 
 export const VcsPanelBranchCommitsInput = Schema.Struct({
+  deferCommitFiles: Schema.optional(Schema.Boolean),
   cwd: TrimmedNonEmptyStringSchema,
   branch: VcsRef,
   baseRef: Schema.optional(TrimmedNonEmptyStringSchema.pipe(Schema.NullOr)),
@@ -500,6 +518,7 @@ export const VcsPanelFetchAllRemotesInput = Schema.Struct({
 export type VcsPanelFetchAllRemotesInput = typeof VcsPanelFetchAllRemotesInput.Type;
 
 export const VcsPanelSnapshotResult = Schema.Struct({
+  refsFingerprint: Schema.optional(Schema.String),
   status: VcsStatusResult,
   changeGroups: Schema.Array(VcsPanelChangeGroup),
   worktreeChangeSets: Schema.Array(VcsPanelWorktreeChangeSet),

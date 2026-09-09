@@ -232,6 +232,7 @@ describe("SourceControlPanelService", () => {
     const includePullRequestOptions: Array<boolean | undefined> = [];
     let dirty = false;
     let aheadCount = 0;
+    let refs = "initial refs";
     return Effect.gen(function* () {
       const service = yield* SourceControlPanelService;
 
@@ -251,12 +252,21 @@ describe("SourceControlPanelService", () => {
         ["changed.txt"],
       );
       assert.deepStrictEqual(calls.map((call) => call.operation).toSorted(), [
+        "vcs.panel.refsFingerprint",
         "vcs.panel.stagedNameStatus",
         "vcs.panel.stagedNumstat",
         "vcs.panel.statusPorcelain",
         "vcs.panel.unstagedNumstat",
       ]);
 
+      calls.length = 0;
+      yield* service.enrichWorkingTreeFiles({ cwd: "/repo", paths: ["changed.txt"] });
+      assert.deepStrictEqual(calls, [], "enrichment should reuse the snapshot's Git scans");
+
+      refs = "rewritten refs with the same commit date";
+      const rewritten = yield* service.snapshot({ cwd: "/repo", refresh: "working-tree" });
+      assert.notEqual(rewritten.refsFingerprint, initial.refsFingerprint);
+      assert.isTrue(calls.some((call) => call.operation === "vcs.panel.localBranches"));
       calls.length = 0;
       aheadCount = 1;
       const fallback = yield* service.snapshot({ cwd: "/repo", refresh: "working-tree" });
@@ -271,6 +281,8 @@ describe("SourceControlPanelService", () => {
             Effect.sync(() => {
               calls.push(input);
               switch (input.operation) {
+                case "vcs.panel.refsFingerprint":
+                  return success(refs);
                 case "vcs.panel.localBranches":
                   return success("main\t*\t/repo\t2026-07-20T10:00:00.000Z\torigin/main\t");
                 case "vcs.panel.statusPorcelain":

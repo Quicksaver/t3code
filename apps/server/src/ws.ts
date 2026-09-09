@@ -2507,6 +2507,10 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "vcs",
             },
           ),
+        [WS_METHODS.vcsPanelCommitFiles]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelCommitFiles, sourceControlPanel.commitFiles(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsPanelBranchCommits]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsPanelBranchCommits,

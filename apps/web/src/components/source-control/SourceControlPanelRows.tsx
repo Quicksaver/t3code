@@ -1,8 +1,9 @@
+import { SourceControlVirtualList } from "./SourceControlVirtualList";
 import type { VcsPanelFileChange, VcsPanelSnapshotResult } from "@t3tools/contracts";
 import { FileDiff, useWorkerPool } from "@pierre/diffs/react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ComponentProps, MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { getRenderablePatch, resolveDiffThemeName } from "~/lib/diffRendering";
 
@@ -11,7 +12,6 @@ import type { PanelChangedFile } from "./SourceControlPanel.logic";
 import {
   COLLAPSED_SECTION_HEIGHT,
   COMMIT_PAGE_SIZE,
-  WORKING_FILE_PREFETCH_MARGIN,
   sumFiles,
   type SectionKey,
 } from "./SourceControlPanelModel";
@@ -133,8 +133,10 @@ export function FileChangeList({
     return <div className="px-3 py-1 text-xs text-muted-foreground">{emptyLabel}</div>;
   }
   return (
-    <div className="space-y-0.5">
-      {files.map((file) => {
+    <SourceControlVirtualList
+      items={files}
+      getKey={(file) => getFileKey?.(file) ?? `${file.path}:${file.status}`}
+      renderItem={(file) => {
         const fileKey = getFileKey?.(file) ?? `${file.path}:${file.status}`;
         const expanded = isFileExpanded?.(file) ?? false;
         return (
@@ -152,8 +154,8 @@ export function FileChangeList({
             ) : null}
           </div>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }
 
@@ -184,33 +186,18 @@ export function LoadMoreCommitsButton({
 export function WorkingFileRow({
   file,
   onRendered,
+  cwd,
   renderFile,
 }: {
   readonly file: PanelChangedFile;
-  readonly onRendered: (file: PanelChangedFile) => void;
+  readonly onRendered: (file: PanelChangedFile, cwd: string) => void;
+  readonly cwd: string;
   readonly renderFile: (file: PanelChangedFile) => ReactNode;
 }) {
-  const rowRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    const element = rowRef.current;
-    if (!element || typeof IntersectionObserver === "undefined") {
-      onRendered(file);
-      return;
-    }
-    let didRender = false;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (didRender || !entries.some((entry) => entry.isIntersecting)) return;
-        didRender = true;
-        onRendered(file);
-        observer.disconnect();
-      },
-      { rootMargin: `${WORKING_FILE_PREFETCH_MARGIN}px 0px` },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [file, onRendered]);
-  return <div ref={rowRef}>{renderFile(file)}</div>;
+    onRendered(file, cwd);
+  }, [file, cwd, onRendered]);
+  return renderFile(file);
 }
 
 export function InlineFileDiff({
