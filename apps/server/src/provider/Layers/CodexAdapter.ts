@@ -14,6 +14,7 @@ import {
   type CodexSettings,
   ProviderDriverKind,
   type ProviderEvent,
+  type ProviderContextUsage,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
@@ -58,6 +59,11 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import {
+  CODEX_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -85,6 +91,9 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+// Magi tools wait for complete participant evidence. Keep Codex's MCP call
+// alive while a slow panel finishes; explicit Magi cancellation remains the stop path.
+const T3_CODE_MCP_TOOL_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -106,6 +115,7 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   readonly turnTokenUsage: CodexTurnTokenUsageState;
+  lastContextUsage: ProviderContextUsage | null;
   stopped: boolean;
 }
 
@@ -2237,6 +2247,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
+        input = normalizeMagiSessionStartInput(input);
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -2282,7 +2293,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  "-c",
+                  `mcp_servers.t3-code.tool_timeout_sec=${T3_CODE_MCP_TOOL_TIMEOUT_SECONDS}`,
                 ],
+              }
+            : {}),
+          ...(input.control?.executionProfile === "magi-read-only"
+            ? {
+                magiParticipant: true,
               }
             : {}),
         };
@@ -2332,6 +2350,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
                 event.payload,
               );
+              const usage = payload ? normalizeCodexTokenUsage(payload.tokenUsage) : undefined;
+              const context = sessions.get(input.threadId);
+              if (usage && context) {
+                context.lastContextUsage = {
+                  usedTokens: usage.usedTokens,
+                  limitTokens: usage.maxTokens ?? null,
+                  measuredAt: event.createdAt,
+                };
+              }
               if (payload) {
                 accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
               }
@@ -2464,6 +2491,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           runtime,
           eventFiber,
           turnTokenUsage,
+          lastContextUsage: null,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -2505,6 +2533,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    input = normalizeMagiSendTurnInput(input);
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the
     // path line ProviderService puts in the prompt.
@@ -2536,6 +2565,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.control?.outputSchema !== undefined
+          ? { outputSchema: input.control.outputSchema }
+          : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
@@ -2617,6 +2649,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
   };
+
+  const getContextUsage: NonNullable<CodexAdapterShape["getContextUsage"]> = (threadId) =>
+    requireSession(threadId).pipe(Effect.map((session) => session.lastContextUsage));
 
   const uploadFeedback: CodexAdapterShape["uploadFeedback"] = (input) =>
     requireSession(input.threadId).pipe(
@@ -2710,6 +2745,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      magi: CODEX_MAGI_CAPABILITIES,
       promptlessTurnContinuation: true,
     },
     startSession,
@@ -2718,6 +2754,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    getContextUsage,
     uploadFeedback,
     respondToRequest,
     respondToUserInput,

@@ -29,6 +29,9 @@ import {
   ProjectId,
   ThreadLinkedPullRequest,
   ThreadId,
+  ActiveMagiRunSummary,
+  MagiParticipantId,
+  MagiRunId,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -115,6 +118,7 @@ const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
+    activeMagiRun: Schema.optional(Schema.NullOr(Schema.fromJsonString(ActiveMagiRunSummary))),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   }),
@@ -354,6 +358,34 @@ function mapTitleRegeneration(row: Schema.Schema.Type<typeof ProjectionThreadDbR
     : null;
 }
 
+function mapMagiParentRelation(
+  row: Schema.Schema.Type<typeof ProjectionThreadDbRowSchema>,
+): OrchestrationThread["parentRelation"] | undefined {
+  if (
+    row.magiRootThreadId == null ||
+    row.magiParentThreadId == null ||
+    row.magiRunId == null ||
+    row.magiParticipantId == null ||
+    row.magiProviderThreadId == null ||
+    row.magiStartedAt == null ||
+    row.magiStatus == null
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "magi",
+    rootThreadId: row.magiRootThreadId,
+    parentThreadId: row.magiParentThreadId,
+    runId: MagiRunId.make(row.magiRunId),
+    participantId: MagiParticipantId.make(row.magiParticipantId),
+    providerThreadId: row.magiProviderThreadId,
+    depth: 1,
+    startedAt: row.magiStartedAt,
+    completedAt: row.magiCompletedAt ?? null,
+    status: row.magiStatus,
+  };
+}
+
 function mapSessionRow(
   row: Schema.Schema.Type<typeof ProjectionThreadSessionDbRowSchema>,
 ): OrchestrationSession {
@@ -500,6 +532,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          magi_root_thread_id AS "magiRootThreadId",
+          magi_parent_thread_id AS "magiParentThreadId",
+          magi_run_id AS "magiRunId",
+          magi_participant_id AS "magiParticipantId",
+          magi_provider_thread_id AS "magiProviderThreadId",
+          magi_started_at AS "magiStartedAt",
+          magi_completed_at AS "magiCompletedAt",
+          magi_status AS "magiStatus",
+          active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -540,6 +581,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          magi_root_thread_id AS "magiRootThreadId",
+          magi_parent_thread_id AS "magiParentThreadId",
+          magi_run_id AS "magiRunId",
+          magi_participant_id AS "magiParticipantId",
+          magi_provider_thread_id AS "magiProviderThreadId",
+          magi_started_at AS "magiStartedAt",
+          magi_completed_at AS "magiCompletedAt",
+          magi_status AS "magiStatus",
+          active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -564,6 +614,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
+          AND magi_run_id IS NULL
         ORDER BY project_id ASC, created_at ASC, thread_id ASC
       `,
   });
@@ -582,6 +633,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          magi_root_thread_id AS "magiRootThreadId",
+          magi_parent_thread_id AS "magiParentThreadId",
+          magi_run_id AS "magiRunId",
+          magi_participant_id AS "magiParticipantId",
+          magi_provider_thread_id AS "magiProviderThreadId",
+          magi_started_at AS "magiStartedAt",
+          magi_completed_at AS "magiCompletedAt",
+          magi_status AS "magiStatus",
+          active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -606,6 +666,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NOT NULL
+          AND magi_run_id IS NULL
         ORDER BY project_id ASC, archived_at DESC, thread_id DESC
       `,
   });
@@ -860,7 +921,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
-          (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+          (SELECT COUNT(*) FROM projection_threads WHERE magi_run_id IS NULL) AS "threadCount"
       `,
   });
 
@@ -915,6 +976,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
+            AND threads.magi_run_id IS NULL
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
             AND (
@@ -1073,6 +1135,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          magi_root_thread_id AS "magiRootThreadId",
+          magi_parent_thread_id AS "magiParentThreadId",
+          magi_run_id AS "magiRunId",
+          magi_participant_id AS "magiParticipantId",
+          magi_provider_thread_id AS "magiProviderThreadId",
+          magi_started_at AS "magiStartedAt",
+          magi_completed_at AS "magiCompletedAt",
+          magi_status AS "magiStatus",
+          active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",
@@ -2072,6 +2143,9 @@ pending_approval_requests AS (
                 branch: row.branch,
                 worktreePath: row.worktreePath,
                 branchPullRequest: row.branchPullRequest,
+                ...(mapMagiParentRelation(row) !== undefined
+                  ? { parentRelation: mapMagiParentRelation(row) }
+                  : {}),
                 ...(row.linkedPullRequest === null
                   ? {}
                   : { linkedPullRequest: row.linkedPullRequest }),
@@ -2287,6 +2361,9 @@ pending_approval_requests AS (
                   branch: row.branch,
                   worktreePath: row.worktreePath,
                   branchPullRequest: row.branchPullRequest,
+                  ...(mapMagiParentRelation(row) !== undefined
+                    ? { parentRelation: mapMagiParentRelation(row) }
+                    : {}),
                   ...(row.linkedPullRequest === null
                     ? {}
                     : { linkedPullRequest: row.linkedPullRequest }),
@@ -2454,6 +2531,7 @@ pending_approval_requests AS (
                         row.threadId,
                       ),
                       planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
+                      activeMagiRun: row.activeMagiRun ?? null,
                     } satisfies OrchestrationThreadShell)
                   : Result.failVoid,
               ),
@@ -2604,6 +2682,7 @@ pending_approval_requests AS (
                   row.threadId,
                 ),
                 planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
+                activeMagiRun: row.activeMagiRun ?? null,
               })),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
@@ -2892,6 +2971,14 @@ pending_approval_requests AS (
         return Option.none<OrchestrationThreadShell>();
       }
 
+      // Magi participant threads are owned implementation details of their
+      // exact conversation. The initial shell snapshot already excludes them;
+      // returning no shell here keeps live thread-upsert events from adding
+      // them to sidebar state until the next full reload.
+      if (mapMagiParentRelation(threadRow.value)?.kind === "magi") {
+        return Option.none<OrchestrationThreadShell>();
+      }
+
       return Option.some({
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
@@ -2927,6 +3014,7 @@ pending_approval_requests AS (
           threadRow.value.threadId,
         ),
         planProgress: threadPlanProgress.getThreadPlanProgress(threadRow.value.threadId),
+        activeMagiRun: threadRow.value.activeMagiRun ?? null,
       } satisfies OrchestrationThreadShell);
     });
 
@@ -3185,6 +3273,9 @@ pending_approval_requests AS (
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         branchPullRequest: threadRow.value.branchPullRequest,
+        ...(mapMagiParentRelation(threadRow.value) !== undefined
+          ? { parentRelation: mapMagiParentRelation(threadRow.value) }
+          : {}),
         ...(threadRow.value.linkedPullRequest === null
           ? {}
           : { linkedPullRequest: threadRow.value.linkedPullRequest }),

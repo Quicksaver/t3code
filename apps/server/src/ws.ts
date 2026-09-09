@@ -44,6 +44,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  MAGI_WS_METHODS,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -111,6 +112,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as MagiControlBroker from "./mcp/MagiControlBroker.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -531,6 +533,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const magi = MagiControlBroker.proxy;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1165,6 +1168,14 @@ const makeWsRpcLayer = (
 
             yield* runSetupProgram();
 
+            if (bootstrap?.magiArm) {
+              yield* magi.armThread({
+                threadId: command.threadId,
+                expectedRevision: 0,
+                config: bootstrap.magiArm,
+              });
+            }
+
             return yield* dispatchFromClient(finalTurnStartCommand);
           });
 
@@ -1296,6 +1307,48 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [MAGI_WS_METHODS.getOptions]: () =>
+          observeRpcEffect(MAGI_WS_METHODS.getOptions, magi.getPanelOptions(), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.getSettings]: () =>
+          observeRpcEffect(MAGI_WS_METHODS.getSettings, magi.getSettings(), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.updateSettings]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.updateSettings, magi.updateSettings(input), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.resetSettings]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.resetSettings, magi.resetSettings(input.target), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.armThread]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.armThread, magi.armThread(input), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.getArm]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.getArm, magi.getArm(input.threadId), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.disarmThread]: (input) =>
+          observeRpcEffect(
+            MAGI_WS_METHODS.disarmThread,
+            magi.disarmThread(input.threadId, input.expectedRevision),
+            { "rpc.aggregate": "magi" },
+          ),
+        [MAGI_WS_METHODS.listRuns]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.listRuns, magi.listRuns(input), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.getRunDetail]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.getRunDetail, magi.getRunDetail(input), {
+            "rpc.aggregate": "magi",
+          }),
+        [MAGI_WS_METHODS.exportDiagnostics]: (input) =>
+          observeRpcEffect(MAGI_WS_METHODS.exportDiagnostics, magi.exportDiagnostics(input), {
+            "rpc.aggregate": "magi",
+          }),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,

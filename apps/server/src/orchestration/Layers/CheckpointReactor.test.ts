@@ -15,6 +15,8 @@ import {
   CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
+  MagiParticipantId,
+  MagiRunId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -137,6 +139,9 @@ function createProviderServiceHarness(
         },
       }),
     rollbackConversation,
+    subscribeEvents: PubSub.subscribe(runtimeEventPubSub).pipe(
+      Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
+    ),
     uploadFeedback: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -303,6 +308,7 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
+    readonly magiParticipant?: boolean;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -421,6 +427,26 @@ describe("CheckpointReactor", () => {
         createdAt,
       }),
     );
+    if (options?.magiParticipant) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-magi-root-thread-create"),
+          threadId: ThreadId.make("magi-root-thread"),
+          projectId: asProjectId("project-1"),
+          title: "Magi Root Thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: options.threadBranch ?? null,
+          worktreePath: options.threadWorktreePath ?? cwd,
+          createdAt,
+        }),
+      );
+    }
     await Effect.runPromise(
       engine
         .dispatch({
@@ -437,6 +463,22 @@ describe("CheckpointReactor", () => {
           runtimeMode: "approval-required",
           branch: options?.threadBranch ?? null,
           worktreePath: options?.threadWorktreePath ?? cwd,
+          ...(options?.magiParticipant
+            ? {
+                parentRelation: {
+                  kind: "magi" as const,
+                  rootThreadId: ThreadId.make("magi-root-thread"),
+                  parentThreadId: ThreadId.make("magi-root-thread"),
+                  runId: MagiRunId.make("magi-run-1"),
+                  participantId: MagiParticipantId.make("magi-participant-1"),
+                  providerThreadId: "provider-magi-participant-1",
+                  depth: 1,
+                  startedAt: createdAt,
+                  completedAt: null,
+                  status: "running" as const,
+                },
+              }
+            : {}),
           createdAt,
         })
         .pipe(
@@ -922,6 +964,43 @@ describe("CheckpointReactor", () => {
       yield* Effect.promise(harness.drain);
     }),
   );
+  it("does not refresh pull requests for Magi participant turns", async () => {
+    const gitStatusRefreshCalls: string[] = [];
+    const pullRequestRefreshCalls: string[] = [];
+    const harness = await createHarness({
+      seedFilesystemCheckpoints: false,
+      threadBranch: "t3code/feature",
+      localStatusRefName: "t3code/feature",
+      gitStatusRefreshCalls,
+      pullRequestRefreshCalls,
+      magiParticipant: true,
+    });
+
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-magi-participant-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-magi-participant"),
+      payload: { state: "completed" },
+    });
+
+    await harness.drain();
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.latestTurn?.turnId === "turn-magi-participant" && entry.checkpoints.length === 1,
+    );
+    expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
+    ).toBe(true);
+    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(pullRequestRefreshCalls).toEqual([]);
+    expect(harness.pullRequestRefreshes).toEqual([]);
+  });
 
   it("re-asks for the pull request after adopting a drifted checkout", async () => {
     const pullRequestRefreshCalls: string[] = [];

@@ -326,6 +326,7 @@ type ThreadSettingsSessionProps = {
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly showRuntime?: boolean;
 };
 
 export type ExistingThreadSettingsRouteSession = ThreadSettingsSessionProps & {
@@ -375,6 +376,7 @@ type ThreadSettingsSessionValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly runtimeMode: RuntimeMode;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
+  readonly showRuntime: boolean;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly providerExpansionOverrides: ReadonlySet<string>;
   readonly hasLegacyModels: boolean;
@@ -503,6 +505,7 @@ function ThreadSettingsSessionProvider(
       providerGroups: props.providerGroups,
       runtimeMode: props.runtimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+      showRuntime: props.showRuntime ?? true,
       displayedDescriptors,
       providerExpansionOverrides,
       hasLegacyModels,
@@ -534,6 +537,7 @@ function ThreadSettingsSessionProvider(
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
+      props.showRuntime,
       props.providerGroups,
       props.runtimeMode,
       searchQuery,
@@ -721,7 +725,8 @@ function ThreadSettingsOptionsItem(props: {
         className="mx-4 overflow-hidden rounded-2xl bg-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
       >
-        {session.displayedDescriptors.map((descriptor) => {
+        {session.displayedDescriptors.map((descriptor, index) => {
+          const isLast = !session.showRuntime && index === session.displayedDescriptors.length - 1;
           if (descriptor.type === "select") {
             return (
               <Animated.View
@@ -733,6 +738,7 @@ function ThreadSettingsOptionsItem(props: {
                 layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
               >
                 <DisclosureRow
+                  isLast={isLast}
                   label={descriptor.label}
                   value={getProviderOptionCurrentLabel(descriptor)}
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
@@ -748,6 +754,7 @@ function ThreadSettingsOptionsItem(props: {
               layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
             >
               <SwitchRow
+                isLast={isLast}
                 label={descriptor.label}
                 value={descriptor.currentValue ?? false}
                 onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
@@ -755,16 +762,18 @@ function ThreadSettingsOptionsItem(props: {
             </Animated.View>
           );
         })}
-        <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
-          <DisclosureRow
-            isLast
-            label="Runtime"
-            value={
-              RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
-            }
-            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
-          />
-        </Animated.View>
+        {session.showRuntime ? (
+          <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
+            <DisclosureRow
+              isLast
+              label="Runtime"
+              value={
+                RUNTIME_MODE_CHOICES.find((choice) => choice.mode === session.runtimeMode)?.label
+              }
+              onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
+            />
+          </Animated.View>
+        ) : null}
       </Animated.View>
 
       {Platform.OS !== "ios" && session.hasLegacyModels ? (
@@ -976,6 +985,7 @@ type ThreadSettingsPickerStackParams = {
 
 type ThreadSettingsPickerPresentation = {
   readonly onClose: () => void;
+  readonly title?: string;
 };
 
 const ThreadSettingsPickerStack = createNativeStackNavigator<ThreadSettingsPickerStackParams>();
@@ -1075,7 +1085,7 @@ function ThreadSettingsModelsScreen() {
             },
           ]}
           onBack={presentation.onClose}
-          title="Thread settings"
+          title={presentation.title ?? "Thread settings"}
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1213,8 +1223,9 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
   const presentation = useMemo(
     () => ({
       onClose: props.onClose,
+      title: props.title,
     }),
-    [props.onClose],
+    [props.onClose, props.title],
   );
 
   return (
@@ -1242,7 +1253,7 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsModels"
           component={ThreadSettingsModelsScreen}
-          options={{ headerBackVisible: false, title: "Thread settings" }}
+          options={{ headerBackVisible: false, title: props.title ?? "Thread settings" }}
         />
         <ThreadSettingsPickerStack.Screen
           name="ThreadSettingsChoice"
@@ -1277,6 +1288,86 @@ export function ExistingThreadSettingsRouteScreen() {
   return (
     <ThreadSettingsSessionProvider {...settings}>
       <ThreadSettingsPickerNavigator onClose={() => navigation.goBack()} />
+    </ThreadSettingsSessionProvider>
+  );
+}
+
+/** Shared conversation model, reasoning, and context-window picker. */
+export function ThreadModelSettingsPicker(
+  props: ThreadSettingsSessionProps & ThreadSettingsPickerPresentation,
+) {
+  const { onClose, title, ...session } = props;
+  return (
+    <ThreadSettingsSessionProvider {...session}>
+      <ThreadSettingsPickerNavigator onClose={onClose} title={title} />
+    </ThreadSettingsSessionProvider>
+  );
+}
+
+function EmbeddedThreadModelSettingsPickerContent(props: ThreadSettingsPickerPresentation) {
+  const session = useThreadSettingsSession();
+  const [submenu, setSubmenu] = useState<ThreadSettingsSubmenuPage | null>(null);
+  const submenuTitle =
+    submenu?.kind === "runtime"
+      ? "Runtime"
+      : submenu?.kind === "descriptor"
+        ? (session.displayedDescriptors.find(
+            (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
+          )?.label ?? "Option")
+        : null;
+  const commitAndClose = useCallback(() => {
+    session.commitPendingModel();
+    props.onClose();
+  }, [props, session]);
+
+  return (
+    <View className="flex-1 bg-sheet">
+      <View className="min-h-14 flex-row items-center gap-3 border-b border-border px-4">
+        <Pressable
+          accessibilityLabel={submenu ? "Back" : "Cancel model settings"}
+          accessibilityRole="button"
+          className="w-16"
+          onPress={() => (submenu ? setSubmenu(null) : props.onClose())}
+        >
+          <Text className="text-base font-t3-medium">{submenu ? "Back" : "Cancel"}</Text>
+        </Pressable>
+        <Text className="min-w-0 flex-1 text-center text-lg font-t3-bold" numberOfLines={1}>
+          {submenuTitle ?? props.title ?? "Model settings"}
+        </Text>
+        {submenu ? (
+          <View className="w-16" />
+        ) : (
+          <Pressable
+            accessibilityLabel={session.pendingModel ? "Save model settings" : "Done"}
+            accessibilityRole="button"
+            className="w-16 items-end"
+            onPress={commitAndClose}
+          >
+            <Text className="text-base font-t3-medium">
+              {session.pendingModel ? "Save" : "Done"}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+      <HeaderHeightContext.Provider value={0}>
+        {submenu ? (
+          <ThreadSettingsChoiceContent submenu={submenu} onSelected={() => setSubmenu(null)} />
+        ) : (
+          <ThreadSettingsMainContent onOpenSubmenu={setSubmenu} />
+        )}
+      </HeaderHeightContext.Provider>
+    </View>
+  );
+}
+
+/** Model and reasoning picker embedded in an existing modal without a nested native navigator. */
+export function EmbeddedThreadModelSettingsPicker(
+  props: ThreadSettingsSessionProps & ThreadSettingsPickerPresentation,
+) {
+  const { onClose, title, ...session } = props;
+  return (
+    <ThreadSettingsSessionProvider {...session}>
+      <EmbeddedThreadModelSettingsPickerContent onClose={onClose} title={title} />
     </ThreadSettingsSessionProvider>
   );
 }

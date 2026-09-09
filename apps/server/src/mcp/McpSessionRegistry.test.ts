@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -71,6 +72,28 @@ it.effect("builds MCP endpoints from the bound server host", () =>
       });
       expect(issued.config.endpoint).toBe(expectedEndpoint);
     }
+  }),
+);
+
+it.effect("routes credentials to capability-specific tool listings", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const issue = (capabilities: ReadonlySet<McpInvocationContext.McpCapability>) =>
+      registry.issue({
+        threadId: ThreadId.make(`thread-${[...capabilities].join("-")}`),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities,
+      });
+
+    const preview = yield* issue(new Set(["preview"]));
+    expect(preview.config.endpoint.endsWith("/mcp")).toBe(true);
+    const control = yield* issue(new Set(["magi-control"]));
+    expect(control.config.endpoint.endsWith("/mcp/magi")).toBe(true);
+    expect(
+      (yield* issue(new Set(["preview", "magi-control"]))).config.endpoint.endsWith("/mcp/all"),
+    ).toBe(true);
+    const context = yield* issue(new Set(["magi-context"]));
+    expect(context.config.endpoint.endsWith("/mcp/context")).toBe(true);
   }),
 );
 

@@ -8,6 +8,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/magi"
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
@@ -55,6 +56,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
+  "/settings/magi": "Magi",
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
@@ -67,6 +69,13 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  { id: "magi-arbitrator-prompt", title: "Magi arbitrator prompt", to: "/settings/magi" },
+  {
+    id: "magi-run-details-diagnostics",
+    title: "Magi run details and diagnostics",
+    to: "/settings/magi",
+  },
+  { id: "magi-personalities", title: "Magi personalities", to: "/settings/magi" },
   {
     id: "project-defaults",
     title: "Project defaults and overrides",

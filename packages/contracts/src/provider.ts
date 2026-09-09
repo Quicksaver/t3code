@@ -23,6 +23,7 @@ import {
   RuntimeMode,
 } from "./orchestration.ts";
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
+import { ProviderControlInput } from "./magi.ts";
 
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
@@ -63,6 +64,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  control: Schema.optional(ProviderControlInput),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
@@ -79,6 +81,7 @@ export const ProviderSendTurnInput = Schema.Struct({
   ),
   modelSelection: Schema.optional(ModelSelection),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  control: Schema.optional(ProviderControlInput),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
 

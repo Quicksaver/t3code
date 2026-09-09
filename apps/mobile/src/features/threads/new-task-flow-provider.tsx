@@ -53,6 +53,7 @@ import {
   retargetNewTaskDraft,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
+  setComposerDraftMagiArm,
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -898,6 +899,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     // Only hydrate a fresh editing draft; reopening mid-edit keeps newer edits.
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
       setComposerDraftText(draftKey, message.text);
+      setComposerDraftMagiArm(draftKey, message.magiArm ?? null);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,
@@ -964,6 +966,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         commandId: CommandId.make(metadata.commandId),
         text,
         attachments: draft.attachments,
+        ...(draft.magiArm ? { magiArm: draft.magiArm } : {}),
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         interactionMode: resolvePendingTaskInteractionMode({

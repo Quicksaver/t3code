@@ -45,6 +45,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  Network,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -299,6 +300,11 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+function activeMagiRunLabel(thread: SidebarThreadSummary): string | null {
+  if (!thread.activeMagiRun) return null;
+  return `Magi ${thread.activeMagiRun.state.replaceAll("-", " ")}`;
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -330,6 +336,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const magiRunLabel = activeMagiRunLabel(thread);
   return (
     <TooltipPopup
       side="right"
@@ -402,6 +409,12 @@ function SidebarThreadTooltip({
               <div className="min-w-0 truncate text-foreground/75">
                 {terminalProcessLabel(terminalProcessCount)}
               </div>
+            </div>
+          ) : null}
+          {magiRunLabel ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <Network aria-hidden className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">{magiRunLabel}</div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
@@ -1895,10 +1908,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
+              <span className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1">
+                {thread.activeMagiRun ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="img"
+                          aria-label={activeMagiRunLabel(thread) ?? "Magi run active"}
+                          className="pointer-events-auto inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                        >
+                          <Network aria-hidden className="size-3.5" />
+                        </span>
+                      }
+                    />
+                    <TooltipPopup side="top">{activeMagiRunLabel(thread)}</TooltipPopup>
+                  </Tooltip>
+                ) : null}
                 {isRemote ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
@@ -1909,7 +1935,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center">
+                  <span aria-hidden className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={

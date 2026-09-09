@@ -18,6 +18,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection, ProjectScript } from "./orchestration.ts";
+import { DEFAULT_MAGI_SETTINGS, MagiSettings, MagiSettingsPatch } from "./magi.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -1063,6 +1064,7 @@ export const ServerSettings = Schema.Struct({
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  magi: MagiSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAGI_SETTINGS))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1266,6 +1268,7 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
+  magi: Schema.optionalKey(MagiSettingsPatch),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(CodexSettingsPatch),
