@@ -764,8 +764,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               }),
           ),
         );
-        const child = yield* commandSpawner
-          .spawn(
+        const child = yield* Effect.suspend(() =>
+          commandSpawner.spawn(
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
               env: {
@@ -774,17 +774,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 ...trace2Monitor.env,
               },
             }),
-          )
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new GitCommandError({
-                  ...gitCommandContext(commandInput),
-                  detail: "Failed to spawn Git process.",
-                  cause,
-                }),
+          ),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                ...gitCommandContext(commandInput),
+                detail: "Failed to spawn Git process.",
+                cause,
+              }),
+          ),
+          // Node can throw synchronously for launch failures such as ENAMETOOLONG.
+          // They must fail this Git request, not the shared RPC connection.
+          Effect.catchDefect((cause) =>
+            Effect.fail(
+              new GitCommandError({
+                ...gitCommandContext(commandInput),
+                detail: "Failed to spawn Git process.",
+                cause,
+              }),
             ),
-          );
+          ),
+        );
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [

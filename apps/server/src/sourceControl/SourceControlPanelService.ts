@@ -288,6 +288,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     args: readonly string[],
     options?: {
       readonly allowNonZeroExit?: boolean;
+      readonly stdin?: string;
       readonly env?: NodeJS.ProcessEnv;
       readonly progress?: ExecuteGitProgress;
     },
@@ -297,6 +298,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         operation,
         cwd,
         args,
+        ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
         ...(options?.env !== undefined ? { env: options.env } : {}),
         ...(options?.progress !== undefined ? { progress: options.progress } : {}),
         allowNonZeroExit: options?.allowNonZeroExit ?? false,
@@ -312,6 +314,7 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
     args: readonly string[],
     options?: {
       readonly allowNonZeroExit?: boolean;
+      readonly stdin?: string;
       readonly env?: NodeJS.ProcessEnv;
       readonly progress?: ExecuteGitProgress;
     },
@@ -433,8 +436,10 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         yield* run(
           input.operations.tempIndexIntentToAdd,
           input.cwd,
-          ["--literal-pathspecs", "add", "-N", "--", ...input.paths],
-          { env },
+          ["--literal-pathspecs", "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul"],
+          // A deleted row can compare against thousands of untracked rename candidates.
+          // Keep those literal paths off the platform-limited process command line.
+          { env, stdin: `${input.paths.join("\0")}\0` },
         ).pipe(Effect.asVoid);
         return yield* body(env);
       }).pipe(

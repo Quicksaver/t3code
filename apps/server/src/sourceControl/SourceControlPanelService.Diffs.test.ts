@@ -733,7 +733,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.readFileDiff.tempIndexIntentToAdd",
-            args: ["--literal-pathspecs", "add", "-N", "--", "src/new.ts"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-N",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
           },
           {
             operation: "vcs.panel.readFileDiff",
@@ -976,6 +982,45 @@ describe("SourceControlPanelService", () => {
     ),
   );
 
+  it.effect("streams large rename candidate sets without putting paths on the command line", () => {
+    const paths = Array.from(
+      { length: 2500 },
+      (_, index) => `public/plugins/${"long-directory-".repeat(5)}${index}/file with spaces.ts`,
+    );
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      yield* service.enrichWorkingTreeFiles({ cwd: "/repo", paths: ["removed.ts"] });
+      const add = calls.find((call) => call.operation === "vcs.panel.tempIndexIntentToAdd");
+      assert.isDefined(add);
+      assert.deepStrictEqual(add?.args, [
+        "--literal-pathspecs",
+        "add",
+        "-N",
+        "--pathspec-from-file=-",
+        "--pathspec-file-nul",
+      ]);
+      assert.equal(add?.stdin, `${paths.join("\0")}\0`);
+      assert.isAbove(add!.stdin!.length, 32767);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success(
+              input.operation === "vcs.panel.enrichWorkingTreeFiles.statusPorcelain"
+                ? [
+                    "1 .D N... 100644 100644 000000 abc abc removed.ts",
+                    ...paths.map((path) => `? ${path}`),
+                  ].join("\n")
+                : "",
+            );
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("uses all untracked destinations when enriching a visible deleted source", () => {
     const calls: ExecuteGitInput[] = [];
 
@@ -999,15 +1044,11 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(result.hiddenPaths, ["copilot-blast-review/SKILL.md"]);
       assert.deepStrictEqual(
         calls.find((call) => call.operation === "vcs.panel.tempIndexIntentToAdd")?.args,
-        [
-          "--literal-pathspecs",
-          "add",
-          "-N",
-          "--",
-          "blast-review/SKILL.md",
-          "blast-review/agents/openai.yaml",
-          "blast-review/scripts/blast-review.ts",
-        ],
+        ["--literal-pathspecs", "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul"],
+      );
+      assert.equal(
+        calls.find((call) => call.operation === "vcs.panel.tempIndexIntentToAdd")?.stdin,
+        "blast-review/SKILL.md\0blast-review/agents/openai.yaml\0blast-review/scripts/blast-review.ts\0",
       );
     }).pipe(
       Effect.provide(
