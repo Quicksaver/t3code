@@ -891,6 +891,10 @@ describe("SourceControlPanelService", () => {
             args: ["read-tree", "HEAD"],
           },
           {
+            operation: "vcs.panel.commitStaged.selectedDeletions",
+            args: ["diff", "--cached", "--name-only", "--diff-filter=D", "-z"],
+          },
+          {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
             args: [
               "--literal-pathspecs",
@@ -905,19 +909,24 @@ describe("SourceControlPanelService", () => {
             args: ["commit", "-m", "Commit selected file"],
           },
           {
-            operation: "vcs.panel.stageFiles",
+            operation: "vcs.panel.commitStaged.syncIndex",
             args: [
               "--literal-pathspecs",
-              "add",
-              "-A",
+              "reset",
+              "HEAD",
               "--pathspec-from-file=-",
               "--pathspec-file-nul",
             ],
           },
         ],
       );
-      const selectedIndexCalls = calls.filter((call) =>
-        call.operation.startsWith("vcs.panel.commitStaged"),
+      const selectedIndexCalls = calls.filter(
+        (call) =>
+          call.operation.startsWith("vcs.panel.commitStaged") &&
+          ![
+            "vcs.panel.commitStaged.selectedDeletions",
+            "vcs.panel.commitStaged.syncIndex",
+          ].includes(call.operation),
       );
       assert.isTrue(selectedIndexCalls.every((call) => Boolean(call.env?.GIT_INDEX_FILE?.length)));
       assert.strictEqual(
@@ -949,7 +958,10 @@ describe("SourceControlPanelService", () => {
       const service = yield* SourceControlPanelService;
       yield* service.commitStaged({ cwd: "/repo", paths });
       assert.isAbove(stdin.length, 32767);
-      const adds = calls.filter((call) => call.args.includes("add"));
+      const adds = calls.filter(
+        (call) =>
+          call.args.includes("add") || call.operation === "vcs.panel.commitStaged.syncIndex",
+      );
       assert.lengthOf(adds, 2);
       assert.deepStrictEqual(
         adds.map((call) => call.stdin),
@@ -978,6 +990,80 @@ describe("SourceControlPanelService", () => {
     );
   });
 
+  it.effect(
+    "preserves selected staged deletions without re-adding their ignored working files",
+    () => {
+      const calls: ExecuteGitInput[] = [];
+      return Effect.gen(function* () {
+        const service = yield* SourceControlPanelService;
+        yield* service.commitStaged({
+          cwd: "/repo",
+          paths: ["plugins/[ignored].php", ".gitignore"],
+          message: "Stop tracking plugin",
+        });
+        const removal = calls.find(
+          (call) => call.operation === "vcs.panel.commitStaged.tempIndexRemoveSelected",
+        );
+        assert.deepStrictEqual(removal?.args, ["update-index", "--force-remove", "-z", "--stdin"]);
+        assert.equal(removal?.stdin, "plugins/[ignored].php\0");
+        assert.isString(removal?.env?.GIT_INDEX_FILE);
+        assert.equal(
+          calls.find((call) => call.operation === "vcs.panel.commitStaged.tempIndexAddSelected")
+            ?.stdin,
+          ".gitignore\0",
+        );
+        const sync = calls.find((call) => call.operation === "vcs.panel.commitStaged.syncIndex");
+        assert.deepStrictEqual(sync?.args, [
+          "--literal-pathspecs",
+          "reset",
+          "HEAD",
+          "--pathspec-from-file=-",
+          "--pathspec-file-nul",
+        ]);
+        assert.equal(sync?.stdin, "plugins/[ignored].php\0.gitignore\0");
+        assert.isUndefined(sync?.env);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer((input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return success(
+                input.operation === "vcs.panel.commitStaged.selectedDeletions"
+                  ? "plugins/[ignored].php\0unselected.php\0"
+                  : "",
+              );
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("commits a selection containing only staged deletions without invoking add", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      yield* service.commitStaged({
+        cwd: "/repo",
+        paths: ["removed.php"],
+        message: "Stop tracking file",
+      });
+      assert.isFalse(calls.some((call) => call.args.includes("add")));
+      assert.isTrue(calls.some((call) => call.operation === "vcs.panel.commitStaged"));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success(
+              input.operation === "vcs.panel.commitStaged.selectedDeletions" ? "removed.php\0" : "",
+            );
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("leaves the real index untouched when a selected-file commit fails", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {
@@ -996,6 +1082,7 @@ describe("SourceControlPanelService", () => {
         [
           "vcs.panel.commitStaged.tempIndexResolveHead",
           "vcs.panel.commitStaged.tempIndexReadTree",
+          "vcs.panel.commitStaged.selectedDeletions",
           "vcs.panel.commitStaged.tempIndexAddSelected",
           "vcs.panel.commitStaged",
         ],
@@ -1037,6 +1124,10 @@ describe("SourceControlPanelService", () => {
             args: ["read-tree", "HEAD"],
           },
           {
+            operation: "vcs.panel.commitStaged.selectedDeletions",
+            args: ["diff", "--cached", "--name-only", "--diff-filter=D", "-z"],
+          },
+          {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
             args: [
               "--literal-pathspecs",
@@ -1051,11 +1142,11 @@ describe("SourceControlPanelService", () => {
             args: ["commit", "-m", "Commit selected file"],
           },
           {
-            operation: "vcs.panel.stageFiles",
+            operation: "vcs.panel.commitStaged.syncIndex",
             args: [
               "--literal-pathspecs",
-              "add",
-              "-A",
+              "reset",
+              "HEAD",
               "--pathspec-from-file=-",
               "--pathspec-file-nul",
             ],
@@ -1067,7 +1158,7 @@ describe("SourceControlPanelService", () => {
         makeTestLayer((input) =>
           Effect.sync(() => {
             calls.push(input);
-            return input.operation === "vcs.panel.stageFiles"
+            return input.operation === "vcs.panel.commitStaged.syncIndex"
               ? failure("index sync failed")
               : success();
           }),
@@ -1114,7 +1205,7 @@ describe("SourceControlPanelService", () => {
       });
 
       assert.deepStrictEqual(
-        calls.slice(0, 3).map((call) => ({
+        calls.slice(0, 4).map((call) => ({
           operation: call.operation,
           args: call.args,
           allowNonZeroExit: call.allowNonZeroExit,
@@ -1128,6 +1219,11 @@ describe("SourceControlPanelService", () => {
           {
             operation: "vcs.panel.commitStaged.tempIndexReadTree",
             args: ["read-tree", "--empty"],
+            allowNonZeroExit: false,
+          },
+          {
+            operation: "vcs.panel.commitStaged.selectedDeletions",
+            args: ["diff", "--cached", "--name-only", "--diff-filter=D", "-z"],
             allowNonZeroExit: false,
           },
           {
@@ -1169,7 +1265,7 @@ describe("SourceControlPanelService", () => {
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>
-          input.operation === "vcs.panel.stageFiles"
+          input.operation === "vcs.panel.commitStaged.syncIndex"
             ? Effect.die(new Error("index sync defect"))
             : Effect.succeed(success()),
         ),

@@ -494,7 +494,14 @@ export function makeSourceControlPanelActions(
           yield* runCommit(input.cwd, message, env);
         }),
       );
-      const indexSyncExit = yield* Effect.exit(stageFiles({ cwd: input.cwd, paths }));
+      const indexSyncExit = yield* Effect.exit(
+        run(
+          "vcs.panel.commitStaged.syncIndex",
+          input.cwd,
+          ["--literal-pathspecs", "reset", "HEAD", "--pathspec-from-file=-", "--pathspec-file-nul"],
+          { stdin: `${paths.join("\0")}\0` },
+        ),
+      );
       if (Exit.isFailure(indexSyncExit)) {
         yield* Effect.logWarning("Selected-file commit index synchronization failed after commit", {
           cwd: input.cwd,
