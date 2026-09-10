@@ -477,12 +477,35 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
           headResult.exitCode === 0 ? ["read-tree", "HEAD"] : ["read-tree", "--empty"],
           { env },
         ).pipe(Effect.asVoid);
-        yield* run(
-          "vcs.panel.commitStaged.tempIndexAddSelected",
-          cwd,
-          ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
-          { env, stdin: `${paths.join("\0")}\0` },
-        ).pipe(Effect.asVoid);
+        // A staged deletion can still exist on disk (git rm --cached), often newly ignored.
+        // Preserve that intent instead of adding the file back from the working tree.
+        const deleted = new Set(
+          (yield* run("vcs.panel.commitStaged.selectedDeletions", cwd, [
+            "diff",
+            "--cached",
+            "--name-only",
+            "--diff-filter=D",
+            "-z",
+          ])).split("\0"),
+        );
+        const selectedDeletions = paths.filter((file) => deleted.has(file));
+        const selectedFiles = paths.filter((file) => !deleted.has(file));
+        if (selectedDeletions.length > 0) {
+          yield* run(
+            "vcs.panel.commitStaged.tempIndexRemoveSelected",
+            cwd,
+            ["update-index", "--force-remove", "-z", "--stdin"],
+            { env, stdin: `${selectedDeletions.join("\0")}\0` },
+          );
+        }
+        if (selectedFiles.length > 0) {
+          yield* run(
+            "vcs.panel.commitStaged.tempIndexAddSelected",
+            cwd,
+            ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+            { env, stdin: `${selectedFiles.join("\0")}\0` },
+          );
+        }
         return yield* body(env);
       }).pipe(
         Effect.ensuring(
