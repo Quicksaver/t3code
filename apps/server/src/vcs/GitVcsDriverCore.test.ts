@@ -181,6 +181,43 @@ for (const location of ["root", "nested", "worktree"] as const) {
   );
 }
 
+it.effect("keeps synchronous spawn failures local to the Git request", () => {
+  const spawnError = Object.assign(new Error("spawn ENAMETOOLONG"), { code: "ENAMETOOLONG" });
+  let attempts = 0;
+  const spawner = ChildProcessSpawner.make(() => {
+    attempts++;
+    if (attempts === 1) throw spawnError;
+    if (attempts === 2) return Effect.die(spawnError);
+    return Effect.succeed(makeSuccessfulHandle("git version test"));
+  });
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const error = yield* driver
+        .execute({ operation: "test.spawn", cwd: "/repo", args: ["--version"] })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "GitCommandError");
+      assert.equal(error.detail, "Failed to spawn Git process.");
+      assert.strictEqual(error.cause, spawnError);
+    }
+    const result = yield* driver.execute({
+      operation: "test.afterSpawnFailure",
+      cwd: "/repo",
+      args: ["--version"],
+    });
+    assert.equal(result.stdout, "git version test");
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
