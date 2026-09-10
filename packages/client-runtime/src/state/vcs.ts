@@ -355,6 +355,11 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsPanelSnapshot,
       staleTimeMs: 5_000,
     }),
+    // Mutation follow-ups must not join a snapshot read that began before the mutation.
+    readPanelSnapshot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:read-snapshot",
+      tag: WS_METHODS.vcsPanelSnapshot,
+    }),
     panelBranchDetails: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:vcs:panel:branch-details",
       tag: WS_METHODS.vcsPanelBranchDetails,

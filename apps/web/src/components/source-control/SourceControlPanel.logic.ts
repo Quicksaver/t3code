@@ -138,7 +138,6 @@ function eligiblePeerBranch(input: {
   readonly snapshot: VcsPanelSnapshotResult;
   readonly branchName: string;
   readonly remote: TrackedBranchRemote;
-  readonly requireSynced: boolean;
 }): VcsRef | null {
   if (
     !input.snapshot.status.isRepo ||
@@ -164,7 +163,6 @@ function eligiblePeerBranch(input: {
 
   const counts = branchSyncCounts(branch, input.snapshot);
   if (counts.aheadCount > 0) return null;
-  if (input.requireSynced && counts.behindCount > 0) return null;
   return branch;
 }
 
@@ -216,7 +214,6 @@ export async function pushBranchAndSyncPeers(options: {
             snapshot,
             branchName: options.sourceBranch.name,
             remote: sourceRemote,
-            requireSynced: true,
           })
             ? target
             : null;
@@ -239,7 +236,6 @@ export async function pushBranchAndSyncPeers(options: {
           snapshot,
           branchName: options.sourceBranch.name,
           remote: sourceRemote,
-          requireSynced: false,
         });
         if (!branch) return;
         if (branchSyncCounts(branch, snapshot).behindCount > 0) {
