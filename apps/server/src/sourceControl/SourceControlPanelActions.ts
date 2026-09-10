@@ -62,6 +62,7 @@ export const SOURCE_CONTROL_PANEL_REF_AFFECTING_ACTION_METHODS = [
 ] as const satisfies readonly SourceControlPanelActionMethodName[];
 
 interface RunOptions {
+  readonly stdin?: string;
   readonly allowNonZeroExit?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly progress?: ExecuteGitProgress;
@@ -237,13 +238,12 @@ export function makeSourceControlPanelActions(
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> => effect.pipe(Effect.ensuring(invalidateRefs(cwd)));
   const stageFiles: SourceControlPanelService["Service"]["stageFiles"] = (input) =>
-    run("vcs.panel.stageFiles", input.cwd, [
-      "--literal-pathspecs",
-      "add",
-      "-A",
-      "--",
-      ...input.paths,
-    ]).pipe(Effect.asVoid);
+    run(
+      "vcs.panel.stageFiles",
+      input.cwd,
+      ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+      { stdin: `${input.paths.join("\0")}\0` },
+    ).pipe(Effect.asVoid);
 
   const unstageFiles: SourceControlPanelService["Service"]["unstageFiles"] = (input) =>
     run("vcs.panel.unstageFiles", input.cwd, [
@@ -488,8 +488,9 @@ export function makeSourceControlPanelActions(
     if (paths.length > 0) {
       yield* withTemporarySelectedIndex(input.cwd, paths, (env) =>
         Effect.gen(function* () {
+          // The temporary index already contains only the selected changes.
           const message =
-            input.message?.trim() || (yield* generatedCommitMessage(input.cwd, paths, env));
+            input.message?.trim() || (yield* generatedCommitMessage(input.cwd, undefined, env));
           yield* runCommit(input.cwd, message, env);
         }),
       );

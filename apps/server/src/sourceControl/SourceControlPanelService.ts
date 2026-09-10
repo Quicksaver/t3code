@@ -480,8 +480,8 @@ export const make = Effect.fn("makeSourceControlPanelService")(function* () {
         yield* run(
           "vcs.panel.commitStaged.tempIndexAddSelected",
           cwd,
-          ["--literal-pathspecs", "add", "-A", "--", ...paths],
-          { env },
+          ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
+          { env, stdin: `${paths.join("\0")}\0` },
         ).pipe(Effect.asVoid);
         return yield* body(env);
       }).pipe(
