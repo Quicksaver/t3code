@@ -1627,19 +1627,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: "Git index is locked. Status will resume when the index lock is removed.",
       });
       // Status can succeed while locked, repeatedly running LFS clean filters without caching.
-      if (
-        yield* fileSystem.exists(lockPath).pipe(
-          Effect.mapError(
-            (cause) =>
-              new GitCommandError({
-                ...lockError,
-                detail: "Failed to check the Git index lock.",
-                cause,
-              }),
-          ),
-        )
-      ) {
-        return yield* lockError;
+      const indexIsLocked = fileSystem.exists(lockPath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              ...lockError,
+              detail: "Failed to check the Git index lock.",
+              cause,
+            }),
+        ),
+      );
+      if (yield* indexIsLocked) {
+        // Other status readers can briefly lock the index while refreshing its cache.
+        // Give them time to finish without running clean filters against a locked index.
+        yield* Effect.sleep("1 second");
+        if (yield* indexIsLocked) return yield* lockError;
       }
     }
     const statusResult = yield* executeGitWithStableDiagnostics(

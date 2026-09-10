@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -141,8 +142,22 @@ for (const location of ["root", "nested", "worktree"] as const) {
     `skips clean filters while the ${location} index is locked and resumes after unlock`,
     () =>
       Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
         const fs = yield* FileSystem.FileSystem;
+        const lockChecks = yield* Queue.unbounded<boolean>();
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(ServerConfigLayer),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            exists: (path) =>
+              fs
+                .exists(path)
+                .pipe(
+                  Effect.tap((exists) =>
+                    path.endsWith("index.lock") ? Queue.offer(lockChecks, exists) : Effect.void,
+                  ),
+                ),
+          }),
+        );
         const path = yield* Path.Path;
         const repository = yield* makeTmpDir();
         yield* initRepoWithCommit(repository);
@@ -166,15 +181,27 @@ for (const location of ["root", "nested", "worktree"] as const) {
         yield* fs.makeDirectory(statusCwd, { recursive: true });
 
         for (let poll = 0; poll < 3; poll++) {
-          const result = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.result);
+          const pending = yield* driver
+            .statusDetailsLocal(statusCwd)
+            .pipe(Effect.result, Effect.forkChild);
+          assert.isTrue(yield* Queue.take(lockChecks));
+          assert.isFalse(yield* fs.exists(runsPath));
+          yield* TestClock.adjust("1 second");
+          const result = yield* Fiber.join(pending);
+          assert.isTrue(yield* Queue.take(lockChecks));
           assert.isTrue(Result.isFailure(result));
           if (Result.isFailure(result)) assert.include(result.failure.detail, "index is locked");
         }
         assert.isFalse(yield* fs.exists(runsPath));
         assert.isTrue(yield* fs.exists(lockPath));
 
+        const pending = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.forkChild);
+        assert.isTrue(yield* Queue.take(lockChecks));
+        assert.isFalse(yield* fs.exists(runsPath));
         yield* fs.remove(lockPath);
-        const status = yield* driver.statusDetailsLocal(statusCwd);
+        yield* TestClock.adjust("1 second");
+        const status = yield* Fiber.join(pending);
+        assert.isFalse(yield* Queue.take(lockChecks));
         assert.isFalse(status.hasWorkingTreeChanges);
         assert.include(yield* fs.readFileString(runsPath), "clean");
       }).pipe(Effect.provide(TestLayer)),
