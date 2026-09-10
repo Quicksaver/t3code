@@ -554,101 +554,113 @@ describe("SourceControlPanel environment federation", () => {
     };
   };
 
-  it("fast-forwards a clean synced peer after pushing the same branch and remote", async () => {
-    const calls: string[] = [];
-    const sourceSnapshot = syncedMainSnapshot({
-      aheadCount: 1,
-      remoteUrl: "git@example.test:team/repo.git",
-    });
-    const peerSnapshots = [syncedMainSnapshot(), syncedMainSnapshot({ behindCount: 1 })];
+  it.each([0, 3])(
+    "fast-forwards a clean peer already %i commits behind on the same remote branch",
+    async (behindCount) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({
+        aheadCount: 1,
+        remoteUrl: "git@example.test:team/repo.git",
+      });
+      const peerSnapshots = [
+        syncedMainSnapshot({ behindCount }),
+        syncedMainSnapshot({ behindCount: behindCount + 1 }),
+      ];
 
-    await pushBranchAndSyncPeers({
-      sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
-      sourceBranch: sourceSnapshot.localBranches[0]!,
-      sourceSnapshot,
-      force: false,
-      peerTargets: [
-        { environmentId: PRIMARY_ENVIRONMENT_ID, cwd: "/local/repo" },
-        { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
-      ],
-      push: async () => {
-        calls.push("push");
-      },
-      readPeerSnapshot: async () => {
-        calls.push("snapshot");
-        return peerSnapshots.shift()!;
-      },
-      fetchPeerBranch: async (_target, branchName) => {
-        calls.push(`fetch:${branchName}`);
-      },
-      pullPeerBranch: async (_target, branchName) => {
-        calls.push(`pull:${branchName}`);
-      },
-    });
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [
+          { environmentId: PRIMARY_ENVIRONMENT_ID, cwd: "/local/repo" },
+          { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
+        ],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async () => {
+          calls.push("snapshot");
+          return peerSnapshots.shift()!;
+        },
+        fetchPeerBranch: async (_target, branchName) => {
+          calls.push(`fetch:${branchName}`);
+        },
+        pullPeerBranch: async (_target, branchName) => {
+          calls.push(`pull:${branchName}`);
+        },
+      });
 
-    expect(calls).toEqual(["snapshot", "push", "fetch:main", "snapshot", "pull:main"]);
-  });
+      expect(calls).toEqual(["snapshot", "push", "fetch:main", "snapshot", "pull:main"]);
+    },
+  );
 
-  it("leaves peers alone when they were dirty or tracking another remote before the push", async () => {
-    const calls: string[] = [];
-    const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
-    const peers = new Map<EnvironmentId, VcsPanelSnapshotResult>([
-      [REMOTE_ENVIRONMENT_ID, syncedMainSnapshot({ dirty: true })],
-      [
-        DISCONNECTED_ENVIRONMENT_ID,
-        syncedMainSnapshot({ remoteUrl: "https://example.test/another/repo.git" }),
-      ],
-    ]);
+  it.each([{ dirty: true, behindCount: 3 }, { aheadCount: 1 }, { aheadCount: 1, behindCount: 3 }])(
+    "skips dirty or locally ahead peers before pushing: %j",
+    async (peerState) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
+      const peers = new Map<EnvironmentId, VcsPanelSnapshotResult>([
+        [REMOTE_ENVIRONMENT_ID, syncedMainSnapshot(peerState)],
+        [
+          DISCONNECTED_ENVIRONMENT_ID,
+          syncedMainSnapshot({ remoteUrl: "https://example.test/another/repo.git" }),
+        ],
+      ]);
 
-    await pushBranchAndSyncPeers({
-      sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
-      sourceBranch: sourceSnapshot.localBranches[0]!,
-      sourceSnapshot,
-      force: false,
-      peerTargets: [
-        { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
-        { environmentId: DISCONNECTED_ENVIRONMENT_ID, cwd: "/other/repo" },
-      ],
-      push: async () => {
-        calls.push("push");
-      },
-      readPeerSnapshot: async (target) => peers.get(target.environmentId)!,
-      fetchPeerBranch: async () => {
-        calls.push("fetch");
-      },
-      pullPeerBranch: async () => {
-        calls.push("pull");
-      },
-    });
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [
+          { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
+          { environmentId: DISCONNECTED_ENVIRONMENT_ID, cwd: "/other/repo" },
+        ],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async (target) => peers.get(target.environmentId)!,
+        fetchPeerBranch: async () => {
+          calls.push("fetch");
+        },
+        pullPeerBranch: async () => {
+          calls.push("pull");
+        },
+      });
 
-    expect(calls).toEqual(["push"]);
-  });
+      expect(calls).toEqual(["push"]);
+    },
+  );
 
-  it("rechecks a prepared peer after fetch and skips pull if local state changed", async () => {
-    const calls: string[] = [];
-    const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
-    const peerSnapshots = [syncedMainSnapshot(), syncedMainSnapshot({ aheadCount: 1 })];
+  it.each([{ aheadCount: 1 }, { aheadCount: 1, behindCount: 4 }, { dirty: true, behindCount: 4 }])(
+    "rechecks an eligible behind peer after fetch and skips changed state: %j",
+    async (peerState) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
+      const peerSnapshots = [syncedMainSnapshot({ behindCount: 3 }), syncedMainSnapshot(peerState)];
 
-    await pushBranchAndSyncPeers({
-      sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
-      sourceBranch: sourceSnapshot.localBranches[0]!,
-      sourceSnapshot,
-      force: false,
-      peerTargets: [{ environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" }],
-      push: async () => {
-        calls.push("push");
-      },
-      readPeerSnapshot: async () => peerSnapshots.shift()!,
-      fetchPeerBranch: async () => {
-        calls.push("fetch");
-      },
-      pullPeerBranch: async () => {
-        calls.push("pull");
-      },
-    });
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [{ environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" }],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async () => peerSnapshots.shift()!,
+        fetchPeerBranch: async () => {
+          calls.push("fetch");
+        },
+        pullPeerBranch: async () => {
+          calls.push("pull");
+        },
+      });
 
-    expect(calls).toEqual(["push", "fetch"]);
-  });
+      expect(calls).toEqual(["push", "fetch"]);
+    },
+  );
 
   it("changes panel identity with every repository cache scope", () => {
     const base = {

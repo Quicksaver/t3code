@@ -48,6 +48,9 @@ async function unwrapPanelCommand<TResult>(
 }
 
 export function useSourceControlPanelApi(environmentId: EnvironmentId) {
+  const readPanelSnapshot = useAtomCommand(vcsEnvironment.readPanelSnapshot, {
+    reportFailure: false,
+  });
   const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, {
     refresh: true,
     reportFailure: false,
@@ -253,7 +256,7 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
         panelSnapshot: (targetEnvironmentId: EnvironmentId, input: VcsPanelSnapshotInput) =>
           runFederatedPanelCommand<typeof input, VcsPanelSnapshotResult>(
             targetEnvironmentId,
-            panelSnapshot,
+            readPanelSnapshot,
             input,
           ),
         fetchBranch: (
@@ -310,6 +313,7 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
       panelUnstageFiles,
       runPanelCommand,
       runFederatedPanelCommand,
+      readPanelSnapshot,
       switchRefCommand,
     ],
   );
