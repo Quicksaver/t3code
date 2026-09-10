@@ -301,7 +301,7 @@ Generated commit and stash messages use the app's `Source control writer model`.
 
 ## Error Handling
 
-Rename enrichment for a visible deleted file can inspect every untracked destination, even when the file list is virtualized. Temporary-index intent-to-add operations send NUL-delimited literal paths through standard input with `--pathspec-from-file=- --pathspec-file-nul`. Keep these candidate lists off the command line: thousands of long paths can exceed Windows' process-launch limit and produce `spawn ENAMETOOLONG`.
+Rename enrichment for a visible deleted file can inspect every untracked destination, even when the file list is virtualized. Temporary-index intent-to-add, selected-file commit staging, and real-index staging send NUL-delimited literal paths through standard input with `--pathspec-from-file=- --pathspec-file-nul`. Keep these file lists off the command line: thousands of long paths can exceed Windows' process-launch limit and produce `spawn ENAMETOOLONG`. Generated commit messages read the selected temporary index without repeating the path list in diff arguments; that index already excludes unselected changes. Both the temporary-index add and post-commit real-index synchronization must handle large selections.
 
 The core Git launcher converts synchronous spawn exceptions and spawn-effect defects into `GitCommandError`. A failed Git launch must remain scoped to its request; allowing it to escape as a connection-wide RPC defect disconnects unrelated subscriptions and can cause a reconnect/retry loop.
 

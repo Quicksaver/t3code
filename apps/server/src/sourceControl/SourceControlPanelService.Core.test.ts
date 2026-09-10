@@ -812,7 +812,7 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [
-          ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+          ["--literal-pathspecs", "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"],
           ["--literal-pathspecs", "reset", "--", "src/[literal].ts"],
         ],
       );
@@ -892,7 +892,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
-            args: ["--literal-pathspecs", "add", "-A", "--", "src/mixed.ts"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-A",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
           },
           {
             operation: "vcs.panel.commitStaged",
@@ -900,7 +906,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.stageFiles",
-            args: ["--literal-pathspecs", "add", "-A", "--", "src/mixed.ts"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-A",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
           },
         ],
       );
@@ -913,6 +925,47 @@ describe("SourceControlPanelService", () => {
         GIT_COMMAND_TIMEOUT_MS.commit,
       );
       assert.isUndefined(calls.at(-1)?.env?.GIT_INDEX_FILE);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps large literal selections off argv throughout a generated-message commit", () => {
+    const calls: ExecuteGitInput[] = [];
+    const paths = Array.from(
+      { length: 2500 },
+      (_, index) => `plugins/${"long-directory/".repeat(5)}file [${index}].txt`,
+    );
+    paths.push("literal\nnewline.txt", ":(glob)literal.txt");
+    const stdin = `${paths.join("\0")}\0`;
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      yield* service.commitStaged({ cwd: "/repo", paths });
+      assert.isAbove(stdin.length, 32767);
+      const adds = calls.filter((call) => call.args.includes("add"));
+      assert.lengthOf(adds, 2);
+      assert.deepStrictEqual(
+        adds.map((call) => call.stdin),
+        [stdin, stdin],
+      );
+      assert.isString(adds[0]?.env?.GIT_INDEX_FILE);
+      assert.isUndefined(adds[1]?.env?.GIT_INDEX_FILE);
+      const messageReads = calls.filter((call) =>
+        call.operation.startsWith("vcs.panel.commitMessage"),
+      );
+      assert.lengthOf(messageReads, 2);
+      assert.isTrue(
+        messageReads.every((call) => call.env?.GIT_INDEX_FILE === adds[0]?.env?.GIT_INDEX_FILE),
+      );
+      assert.isTrue(calls.every((call) => call.args.every((arg) => !paths.includes(arg))));
+      assert.isTrue(calls.some((call) => call.operation === "vcs.panel.commitStaged"));
     }).pipe(
       Effect.provide(
         makeTestLayer((input) =>
@@ -985,7 +1038,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
-            args: ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-A",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
           },
           {
             operation: "vcs.panel.commitStaged",
@@ -993,7 +1052,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.stageFiles",
-            args: ["--literal-pathspecs", "add", "-A", "--", "src/[literal].ts"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-A",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
           },
         ],
       );
@@ -1067,7 +1132,13 @@ describe("SourceControlPanelService", () => {
           },
           {
             operation: "vcs.panel.commitStaged.tempIndexAddSelected",
-            args: ["--literal-pathspecs", "add", "-A", "--", "README.md"],
+            args: [
+              "--literal-pathspecs",
+              "add",
+              "-A",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
             allowNonZeroExit: false,
           },
         ],
