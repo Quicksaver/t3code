@@ -14,7 +14,12 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef } from "react";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isThreadArchiveBlocked,
+  pinOrderKeyBetween,
+} from "../components/Sidebar.logic";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -52,7 +57,7 @@ export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveB
   },
 ) {
   override get message(): string {
-    return "Cannot archive a running thread.";
+    return "Cannot archive a thread while work is still active.";
   }
 }
 
@@ -286,12 +291,7 @@ export function useThreadActions() {
       });
       const archivedThreadIds = collectLifecycleThreadIds(threads, new Set([threadRef.threadId]));
       if (
-        threads.some(
-          (entry) =>
-            archivedThreadIds.has(entry.id) &&
-            entry.session?.status === "running" &&
-            entry.session.activeTurnId != null,
-        )
+        threads.some((entry) => archivedThreadIds.has(entry.id) && isThreadArchiveBlocked(entry))
       ) {
         return AsyncResult.failure(
           Cause.fail(
@@ -308,7 +308,7 @@ export function useThreadActions() {
         currentRouteThreadRef?.environmentId === threadRef.environmentId &&
         archivedThreadIds.has(currentRouteThreadRef.threadId);
 
-      for (const archivedThreadId of withRootLast(archivedThreadIds, threadRef.threadId)) {
+      for (const archivedThreadId of [threadRef.threadId]) {
         const archiveResult = await archiveThreadMutation({
           environmentId: threadRef.environmentId,
           input: { threadId: archivedThreadId },
@@ -462,7 +462,7 @@ export function useThreadActions() {
         deletedThreadIds: deletedIds,
         sortOrder: sidebarThreadSortOrder,
       });
-      for (const deletedThreadId of withRootLast(deletedIds, threadRef.threadId)) {
+      for (const deletedThreadId of [threadRef.threadId]) {
         const deleteResult = await deleteThreadMutation({
           environmentId: threadRef.environmentId,
           input: { threadId: deletedThreadId },

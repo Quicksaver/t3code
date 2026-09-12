@@ -181,7 +181,9 @@ import {
   buildMultiSelectThreadContextMenuItems,
   deleteSelectedThreadEntries,
   canUseSelectedRootThreadLifecycleActions,
+  formatArchiveSkippedDescription,
   getSidebarThreadIdsToPrewarm,
+  isThreadArchiveBlocked,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
@@ -468,8 +470,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [discoveredPorts, navigateToThread, openPreview, threadRef],
   );
-  const isThreadRunning =
-    thread.session?.status === "running" && thread.session.activeTurnId != null;
+  const isThreadRunning = isThreadArchiveBlocked(thread);
   const canUseLifecycleActions = canUseLegacySidebarThreadLifecycleActions(thread);
   const canShowInlineArchive = shouldShowLegacySidebarInlineArchive({
     thread,
@@ -498,7 +499,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && canShowInlineArchive;
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
-    : !isThreadRunning
+    : canShowInlineArchive
       ? "pointer-events-none transition-opacity duration-150 max-sm:pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
@@ -1947,14 +1948,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         });
         return null;
       };
-      const hasRunningThread = selectedThreadEntries.some(
-        ({ thread }) => thread.session?.status === "running" && thread.session.activeTurnId != null,
+      const hasArchiveBlockedThread = selectedThreadEntries.some(({ thread }) =>
+        isThreadArchiveBlocked(thread),
       );
 
       const clicked = await api.contextMenu.show(
         buildMultiSelectThreadContextMenuItems({
           count,
-          hasRunningThread,
+          hasArchiveBlockedThread,
           canUseLifecycleActions,
         }),
         position,
@@ -1982,6 +1983,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const archiveOutcome = await archiveSelectedThreadEntries({
           entries: dispatchSelection.entries,
           archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
+          canArchive: ({ threadRef }) => !isThreadArchiveBlocked(readThreadShell(threadRef)),
         });
         for (const failure of archiveOutcome.followupFailures) {
           if (isAtomCommandInterrupted(failure)) continue;
@@ -1994,8 +1996,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
+        removeFromSelection(archiveOutcome.archivedThreadKeys);
         if (archiveOutcome.mutationFailure) {
-          removeFromSelection(archiveOutcome.archivedThreadKeys);
           if (!isAtomCommandInterrupted(archiveOutcome.mutationFailure)) {
             const error = squashAtomCommandFailure(archiveOutcome.mutationFailure);
             toastManager.add(
@@ -2006,9 +2008,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }),
             );
           }
-          return;
         }
-        removeFromSelection(dispatchSelection.threadKeys);
+        if (archiveOutcome.skippedThreadKeys.length > 0) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title:
+                archiveOutcome.archivedThreadKeys.length === 0
+                  ? "No threads archived"
+                  : "Some threads were not archived",
+              description: formatArchiveSkippedDescription(archiveOutcome.skippedThreadKeys.length),
+            }),
+          );
+        }
         return;
       }
 
