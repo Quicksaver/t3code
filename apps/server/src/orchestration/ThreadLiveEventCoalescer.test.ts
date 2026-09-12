@@ -90,6 +90,49 @@ function makeMessage(sequence: number, text = "Still working"): OrchestrationEve
 }
 
 describe("ThreadLiveEventCoalescer", () => {
+  for (const compactCommandOutput of [true, false]) {
+    it.effect(
+      `preserves negotiated command output through live delivery (compact=${compactCommandOutput})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const source = makeToolActivity(1, { kind: "tool.completed" });
+            if (source.type !== "thread.activity-appended") throw new Error("Expected activity");
+            const event: OrchestrationEvent = {
+              ...source,
+              payload: {
+                ...source.payload,
+                activity: {
+                  ...source.payload.activity,
+                  payload: {
+                    itemType: "command_execution",
+                    toolCallId: "call-command",
+                    data: compactCommandOutput
+                      ? {
+                          item: { command: "echo hello", exitCode: 0 },
+                          commandOutputAvailable: true,
+                        }
+                      : {
+                          item: { command: "echo hello", aggregatedOutput: "hello\n", exitCode: 0 },
+                        },
+                  },
+                },
+              },
+            };
+            const coalescer = yield* makeThreadLiveEventCoalescer();
+            yield* coalescer.offer({ kind: "event", event });
+            const delivered = yield* coalescer.stream.pipe(Stream.take(1), Stream.runCollect);
+            expect(delivered).toEqual([{ kind: "event", event }]);
+            expect(
+              delivered
+                .map((item) => (item.kind === "event" ? encodeEvent(item.event) : ""))
+                .join(""),
+            ).toContain(compactCommandOutput ? '"commandOutputAvailable":true' : "hello\\n");
+          }),
+        ),
+    );
+  }
+
   it("coalesces only calls with a stable toolCallId", () => {
     const events = [
       makeToolActivity(1, { toolCallId: "call-a" }),

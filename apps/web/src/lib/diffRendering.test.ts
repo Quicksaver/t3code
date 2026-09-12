@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { FileDiffMetadata } from "@pierre/diffs/types";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
+  createChangedFileDiffPathMatcher,
   getDiffLineStat,
   getRenderablePatch,
 } from "./diffRendering";
@@ -28,6 +30,51 @@ describe("buildPatchCacheKey", () => {
     expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
       buildPatchCacheKey(patch, "diff-panel:dark"),
     );
+  });
+});
+
+describe("createChangedFileDiffPathMatcher", () => {
+  it("matches absolute changed files to workspace-relative diff paths", () => {
+    expect(
+      createChangedFileDiffPathMatcher("apps/web/src/session-logic.ts")(
+        "/Users/example/t3code/apps/web/src/session-logic.ts",
+      ),
+    ).toBe(true);
+  });
+
+  it("matches relative changed files to nested diff suffixes", () => {
+    expect(createChangedFileDiffPathMatcher("apps/web/src/index.ts")("src/index.ts")).toBe(true);
+  });
+
+  it("does not match basename-only changed files to unrelated nested diff paths", () => {
+    expect(createChangedFileDiffPathMatcher("apps/web/src/index.ts")("index.ts")).toBe(false);
+  });
+
+  it("normalizes Windows separators before comparing paths", () => {
+    expect(
+      createChangedFileDiffPathMatcher("apps/web/src/session-logic.ts")(
+        String.raw`C:\Users\example\t3code\apps\web\src\session-logic.ts`,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("buildFileDiffRenderKey", () => {
+  it("uses parser cache keys to distinguish same-path diffs", () => {
+    const first = {
+      cacheKey: "same-path:first-snapshot",
+      name: "apps/web/src/session-logic.ts",
+      prevName: "apps/web/src/session-logic.ts",
+      type: "change",
+    } as FileDiffMetadata;
+    const second = {
+      ...first,
+      cacheKey: "same-path:second-snapshot",
+    } as FileDiffMetadata;
+
+    expect(buildFileDiffRenderKey(first)).toBe("same-path:first-snapshot");
+    expect(buildFileDiffRenderKey(second)).toBe("same-path:second-snapshot");
+    expect(buildFileDiffRenderKey(first)).not.toBe(buildFileDiffRenderKey(second));
   });
 });
 

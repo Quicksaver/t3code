@@ -12,7 +12,6 @@ import * as Queue from "effect/Queue";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import { projectActivityEvent } from "./ActivityPayloadProjection.ts";
 import { makeLiveStreamBudget, type RetainedLiveItem } from "./LiveStreamBudget.ts";
 
 const COALESCE_WINDOW = Duration.millis(50);
@@ -167,8 +166,9 @@ export const makeThreadLiveEventCoalescer = Effect.fn("makeThreadLiveEventCoales
             Effect.gen(function* () {
               yield* budget.check;
               if (input.kind === "event") {
-                // Retain only the client payload, not full persisted tool output.
-                yield* budget.retain(projectActivityEvent(input.event)).pipe(
+                // The subscriber already projected this event for the client's capabilities.
+                // Reprojecting here would discard deferred command-output markers.
+                yield* budget.retain(input.event).pipe(
                   Effect.tap((item) => Effect.sync(() => pendingUpdates.push(item))),
                   Effect.uninterruptible,
                 );

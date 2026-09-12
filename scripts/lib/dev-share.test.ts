@@ -98,12 +98,14 @@ describe("unshareDevServer", () => {
 describe("shareDevServer", () => {
   it.effect("returns the tailnet URL for the same port", () =>
     Effect.gen(function* () {
+      const calls: Array<ReadonlyArray<string>> = [];
       const shared = yield* shareDevServer({ webPort: 5788 }).pipe(
-        Effect.provide(spawnerLayer({ off: { exitCode: 1, stderr: NO_HANDLER_STDERR } })),
+        Effect.provide(spawnerLayer({ off: { exitCode: 1, stderr: NO_HANDLER_STDERR }, calls })),
       );
 
       assert.equal(shared.host, "host.example.ts.net");
       assert.equal(shared.url, "https://host.example.ts.net:5788/");
+      assert.deepEqual(calls.at(-1), ["serve", "--bg", "--https=5788", "http://localhost:5788"]);
     }),
   );
 
