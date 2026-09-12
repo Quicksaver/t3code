@@ -37,6 +37,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { resolveCodexInterruptTurnId } from "./CodexInterruptResolution.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -1180,9 +1181,7 @@ function updateSession(
   });
 }
 
-function parseThreadSnapshot(
-  response: EffectCodexSchema.V2ThreadReadResponse | EffectCodexSchema.V2ThreadRollbackResponse,
-): CodexThreadSnapshot {
+function parseThreadSnapshot(response: CodexThreadWithTurns): CodexThreadSnapshot {
   return {
     threadId: response.thread.id,
     turns: response.thread.turns.map((turn) => ({
@@ -1221,16 +1220,20 @@ const readCodexHistoryMode = Effect.fn("readCodexHistoryMode")(function* (
   return metadata.thread.historyMode;
 });
 
-export const readCodexThread = Effect.fn("readCodexThread")(function* (
+type CodexThreadWithTurns = {
+  readonly thread: Pick<EffectCodexSchema.V2ThreadReadResponse["thread"], "id" | "turns">;
+};
+
+// Keep provider turn metadata until callers choose their own projection. Interrupt
+// resolution needs status and startedAt, while conversation history needs items.
+export const readCodexThreadWithTurns = Effect.fn("readCodexThreadWithTurns")(function* (
   client: CodexHistoryClient,
   threadId: string,
-): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+): Effect.fn.Return<CodexThreadWithTurns, CodexErrors.CodexAppServerError> {
   if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
-    return parseThreadSnapshot(
-      yield* client.request("thread/read", { threadId, includeTurns: true }),
-    );
+    return yield* client.request("thread/read", { threadId, includeTurns: true });
   }
-  const turns: Array<CodexThreadTurnSnapshot> = [];
+  const turns: Array<EffectCodexSchema.V2ThreadReadResponse__Turn> = [];
   const requestedCursors = new Set<string | null>();
   let cursor: string | null = null;
   do {
@@ -1258,10 +1261,17 @@ export const readCodexThread = Effect.fn("readCodexThread")(function* (
         ),
       ),
     );
-    turns.push(...page.data.map((turn) => ({ id: TurnId.make(turn.id), items: turn.items })));
+    turns.push(...page.data);
     cursor = page.nextCursor;
   } while (cursor !== null);
-  return { threadId, turns };
+  return { thread: { id: threadId, turns } };
+});
+
+export const readCodexThread = Effect.fn("readCodexThread")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+  return parseThreadSnapshot(yield* readCodexThreadWithTurns(client, threadId));
 });
 
 export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
@@ -2494,7 +2504,6 @@ export const makeCodexSessionRuntime = (
       interruptTurn: (turnId) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          const session = yield* Ref.get(sessionRef);
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
           // each live child turn first, best-effort per child, BOUNDED: the
@@ -2515,7 +2524,14 @@ export const makeCodexSessionRuntime = (
                 .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
             { concurrency: 8, discard: true },
           ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
-          const effectiveTurnId = turnId ?? session.activeTurnId;
+          const effectiveTurnId = yield* resolveCodexInterruptTurnId({
+            providerThreadId,
+            requestedTurnId: turnId,
+            readSessionActiveTurnId: Ref.get(sessionRef).pipe(
+              Effect.map((session) => session.activeTurnId),
+            ),
+            readThread: readCodexThreadWithTurns(client, providerThreadId),
+          });
           if (!effectiveTurnId) {
             return;
           }
