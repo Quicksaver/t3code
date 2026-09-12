@@ -206,6 +206,7 @@ describe("archiveSelectedThreadEntries", () => {
 
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [],
     });
@@ -222,6 +223,7 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(2);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one"],
+      skippedThreadKeys: [],
       mutationFailure: failure,
       followupFailures: [],
     });
@@ -237,6 +239,7 @@ describe("archiveSelectedThreadEntries", () => {
     expect(archive).toHaveBeenCalledTimes(3);
     expect(outcome).toEqual({
       archivedThreadKeys: ["one", "two", "three"],
+      skippedThreadKeys: [],
       mutationFailure: null,
       followupFailures: [failure],
     });
@@ -295,13 +298,13 @@ describe("buildBulkTitleRegenerationContextMenuItem", () => {
 describe("buildMultiSelectThreadContextMenuItems", () => {
   it("offers bulk archive with the selected count", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 3, hasRunningThread: false }),
+      buildMultiSelectThreadContextMenuItems({ count: 3, hasArchiveBlockedThread: false }),
     ).toContainEqual({ id: "archive", label: "Archive (3)", disabled: false });
   });
 
-  it("disables bulk archive when a selected thread is running", () => {
+  it("disables bulk archive when a selected thread cannot be archived", () => {
     expect(
-      buildMultiSelectThreadContextMenuItems({ count: 2, hasRunningThread: true }),
+      buildMultiSelectThreadContextMenuItems({ count: 2, hasArchiveBlockedThread: true }),
     ).toContainEqual({ id: "archive", label: "Archive (2)", disabled: true });
   });
 });
