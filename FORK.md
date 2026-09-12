@@ -499,7 +499,7 @@ Useful focused commands:
 
 **Worktree branch:** `feat/archive-settings-ux`
 
-The settings Archive panel is intentionally denser than the upstream-style settings rows so large archives remain scannable. The native mobile Archived Threads screen mirrors the same information hierarchy and behavior with mobile-native project sections, swipe actions, long-press menus, and header controls.
+The settings Archive panel is intentionally denser than the upstream-style settings rows so large archives remain scannable. Web environment, project, and checkout scopes constrain snapshot loading, groups, search, empty states, and bulk actions before rendering. The native mobile Archived Threads screen mirrors the same information hierarchy and behavior with mobile-native project sections, swipe actions, long-press menus, and header controls.
 
 Expected behavior:
 
