@@ -42,7 +42,6 @@ import {
   buildRunningThreadTurnInterruptInput,
   buildThreadTurnInterruptInput,
   canLoadStandaloneThreadConversation,
-  createLocalDispatchSnapshot,
   deriveAgentChildConversationByProviderId,
   deriveAgentChildLifecycleByProviderId,
   deriveComposerSendState,
@@ -52,7 +51,6 @@ import {
   getAntigravitySendBlockReason,
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
-  hasServerAcknowledgedLocalDispatch,
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
@@ -96,6 +94,10 @@ import {
   waitForRevertedMessage,
   prepareRevertedMessageAttachments,
 } from "./ChatView.logic";
+import {
+  createLocalDispatchSnapshot,
+  hasServerAcknowledgedLocalDispatch,
+} from "./ChatView.localDispatch";
 
 describe("agent browser close confirmation", () => {
   const surfaces = [
@@ -2320,18 +2322,23 @@ describe("startNewThreadForProject", () => {
 });
 
 describe("hasServerAcknowledgedLocalDispatch", () => {
+  const expectedUserMessageId = MessageId.make("message-expected");
+
   it("does not acknowledge unchanged server state", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
+      expectedUserMessageId,
     );
+
+    expect(localDispatch.expectedUserMessageId).toBe(expectedUserMessageId);
 
     expect(
       hasServerAcknowledgedLocalDispatch({
         localDispatch,
         phase: "ready",
         latestTurn: completedTurn,
-        latestUserMessageId: localDispatch.latestUserMessageId,
         session: readySession,
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2342,6 +2349,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
   it("keeps a follow-up active while its provider session is starting", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
+      expectedUserMessageId,
     );
 
     expect(
@@ -2349,12 +2357,12 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "connecting",
         latestTurn: completedTurn,
-        latestUserMessageId: MessageId.make("message-followup"),
         session: {
           ...readySession,
           status: "starting",
           updatedAt: "2026-03-29T00:01:00.000Z",
         },
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2362,9 +2370,34 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
+  it("accepts an exact projection while the provider session is starting", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: completedTurn, session: readySession }),
+      expectedUserMessageId,
+    );
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "connecting",
+        latestTurn: completedTurn,
+        session: {
+          ...readySession,
+          status: "starting",
+          updatedAt: "2026-03-29T00:01:00.000Z",
+        },
+        projectedMessages: [{ id: expectedUserMessageId, role: "user" }],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+  });
+
   it("acknowledges a settled newer turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
+      expectedUserMessageId,
     );
     const newerTurn = {
       ...completedTurn,
@@ -2379,8 +2412,8 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "ready",
         latestTurn: newerTurn,
-        latestUserMessageId: localDispatch.latestUserMessageId,
         session: { ...readySession, updatedAt: newerTurn.completedAt },
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2391,6 +2424,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
   it("waits for the matching running turn before acknowledging", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestTurn: completedTurn, session: readySession }),
+      expectedUserMessageId,
     );
     const runningTurn = {
       ...completedTurn,
@@ -2406,12 +2440,12 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
-        latestUserMessageId: localDispatch.latestUserMessageId,
         session: {
           ...readySession,
           status: "running",
           activeTurnId: TurnId.make("turn-other"),
         },
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2422,12 +2456,12 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
-        latestUserMessageId: localDispatch.latestUserMessageId,
         session: {
           ...readySession,
           status: "running",
           activeTurnId: runningTurn.turnId,
         },
+        projectedMessages: [],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2435,7 +2469,27 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
-  it("acknowledges a steering message projected onto the current running turn", () => {
+  it("acknowledges pending user interaction and errors immediately", () => {
+    const localDispatch = createLocalDispatchSnapshot(makeThread(), expectedUserMessageId);
+    const common = {
+      localDispatch,
+      phase: "ready" as const,
+      latestTurn: null,
+      session: null,
+      projectedMessages: [],
+      hasPendingApproval: false,
+      hasPendingUserInput: false,
+      threadError: null,
+    };
+
+    expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
+    expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
+    expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+
+  it("acknowledges a steer when its user message is projected onto the running thread", () => {
+    const initialMessageId = MessageId.make("message-initial");
+    const steerMessageId = MessageId.make("message-steer");
     const runningTurn = {
       ...completedTurn,
       state: "running" as const,
@@ -2448,20 +2502,21 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     };
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({
-        latestTurn: runningTurn,
-        session: runningSession,
         messages: [
           {
-            id: MessageId.make("message-before-steer"),
+            id: initialMessageId,
             role: "user",
-            text: "Initial prompt",
+            text: "start",
             turnId: runningTurn.turnId,
-            createdAt: runningTurn.requestedAt,
-            updatedAt: runningTurn.requestedAt,
             streaming: false,
+            createdAt: now,
+            updatedAt: now,
           },
         ],
+        latestTurn: runningTurn,
+        session: runningSession,
       }),
+      steerMessageId,
     );
 
     expect(
@@ -2469,8 +2524,53 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         localDispatch,
         phase: "running",
         latestTurn: runningTurn,
-        latestUserMessageId: MessageId.make("message-steer"),
         session: runningSession,
+        projectedMessages: [
+          {
+            id: initialMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: steerMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(true);
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: steerMessageId,
+            role: "user",
+          },
+          {
+            id: MessageId.make("message-other-client"),
+            role: "user",
+          },
+        ],
         hasPendingApproval: false,
         hasPendingUserInput: false,
         threadError: null,
@@ -2478,41 +2578,132 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(true);
   });
 
-  it("acknowledges pending user interaction and errors immediately", () => {
-    const localDispatch = createLocalDispatchSnapshot(makeThread());
-    const common = {
-      localDispatch,
-      phase: "ready" as const,
-      latestTurn: null,
-      latestUserMessageId: localDispatch.latestUserMessageId,
-      session: null,
-      hasPendingApproval: false,
-      hasPendingUserInput: false,
-      threadError: null,
-    };
+  it.each([null, "ready"] as const)(
+    "acknowledges the exact projected message when the dispatch session status is %s",
+    (sessionStatus) => {
+      const steerMessageId = MessageId.make("message-steer");
+      const runningTurn = {
+        ...completedTurn,
+        state: "running" as const,
+        completedAt: null,
+      };
+      const runningSession = {
+        ...readySession,
+        status: "running" as const,
+        activeTurnId: runningTurn.turnId,
+      };
+      const localDispatch = {
+        ...createLocalDispatchSnapshot(
+          makeThread({
+            latestTurn: runningTurn,
+            session: runningSession,
+          }),
+          steerMessageId,
+        ),
+        sessionStatus,
+      };
 
-    expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
-    expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
+      expect(
+        hasServerAcknowledgedLocalDispatch({
+          localDispatch,
+          phase: "running",
+          latestTurn: runningTurn,
+          session: runningSession,
+          projectedMessages: [
+            {
+              id: steerMessageId,
+              role: "user",
+            },
+          ],
+          hasPendingApproval: false,
+          hasPendingUserInput: false,
+          threadError: null,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it("requires the next steer id after the previous steer was projected", () => {
+    const previousSteerMessageId = MessageId.make("message-steer");
+    const nextSteerMessageId = MessageId.make("message-next-steer");
+    const runningTurn = {
+      ...completedTurn,
+      state: "running" as const,
+      completedAt: null,
+    };
+    const runningSession = {
+      ...readySession,
+      status: "running" as const,
+      activeTurnId: runningTurn.turnId,
+    };
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({
+        messages: [
+          {
+            id: previousSteerMessageId,
+            role: "user",
+            text: "steer",
+            turnId: runningTurn.turnId,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        latestTurn: runningTurn,
+        session: runningSession,
+      }),
+      nextSteerMessageId,
+    );
+
     expect(
       hasServerAcknowledgedLocalDispatch({
-        ...common,
-        latestTurnStartFailureId: "turn-start-failure-1",
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: previousSteerMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "running",
+        latestTurn: runningTurn,
+        session: runningSession,
+        projectedMessages: [
+          {
+            id: nextSteerMessageId,
+            role: "user",
+          },
+        ],
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
       }),
     ).toBe(true);
-    expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
   });
 
   it("acknowledges only a new turn-start failure", () => {
+    const expectedUserMessageId = MessageId.make("message-turn-start-failure");
     const localDispatch = {
-      ...createLocalDispatchSnapshot(makeThread()),
+      ...createLocalDispatchSnapshot(makeThread(), expectedUserMessageId),
       latestTurnStartFailureId: "turn-start-failure-old",
     };
     const common = {
       localDispatch,
       phase: "ready" as const,
       latestTurn: null,
-      latestUserMessageId: localDispatch.latestUserMessageId,
       session: null,
+      projectedMessages: [],
       hasPendingApproval: false,
       hasPendingUserInput: false,
       threadError: null,
