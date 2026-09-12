@@ -24,8 +24,10 @@ Do not ask contributors to install the OpenAI `build-ios-apps` plugin globally.
 
 1. Call `session_show_defaults` before discovery, build, launch, or UI work.
 2. Call `list_sims` and select one explicit simulator UDID. Prefer a simulator that is already booted; boot an installed simulator when verification requires it, but do not create or download runtimes without user authorization.
-3. Call `session_set_defaults` with the project or workspace, scheme, Debug configuration, simulator ID, and bundle identifier when known.
+3. Call `session_set_defaults` with the project or workspace, scheme, Debug configuration, simulator ID, and bundle identifier when known. Keep `persist` false so worktree-specific workspace and simulator values never enter project configuration. Leave `derivedDataPath` unset unless the task explicitly needs an override; XcodeBuildMCP derives an isolated default from the selected workspace or project path.
 4. Keep every subsequent build, launch, screenshot, log capture, and UI action pinned to that same UDID.
+
+Concurrent worktree verification requires one XcodeBuildMCP server process/session per job because session defaults are mutable. Never multiplex two active simulator jobs through one session.
 
 Avoid generic Mac window automation for switching among Simulator windows. Explicit device identity is more reliable.
 
