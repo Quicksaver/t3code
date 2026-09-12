@@ -115,9 +115,6 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   );
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
-  const draftThread = useComposerDraftStore((store) =>
-    serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
-  );
   const threadClassification = classifyThreadDetail({
     hasLocalDraft: draftThread !== null,
     hasServerShell: serverThreadShell !== null,
