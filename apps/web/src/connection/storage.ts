@@ -36,7 +36,7 @@ import * as Semaphore from "effect/Semaphore";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 7;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -44,7 +44,8 @@ const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
 const SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION = 1;
-const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 5;
+// Invalidate disposable snapshots from before archive and command-output cache repairs.
+const THREAD_CACHE_EVICTION_DATABASE_VERSION = 7;
 
 const StoredShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(SHELL_SNAPSHOT_CACHE_SCHEMA_VERSION),
@@ -143,7 +144,7 @@ export function upgradeConnectionDatabase(
     database.createObjectStore(VCS_REFS_STORE_NAME);
   }
 
-  if (oldVersion > 0 && oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
+  if (oldVersion > 0 && oldVersion < THREAD_CACHE_EVICTION_DATABASE_VERSION) {
     transaction?.objectStore(THREAD_STORE_NAME).clear();
   }
 }

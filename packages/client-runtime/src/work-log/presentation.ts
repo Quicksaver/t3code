@@ -23,6 +23,7 @@ export interface WorkLogPresentationEntry {
   readonly toolData?: unknown;
   readonly tone: "thinking" | "tool" | "info" | "error";
   readonly command?: string;
+  readonly exitCode?: number;
   readonly detail?: string;
   readonly viewedImagePath?: string;
   readonly changedFiles?: ReadonlyArray<string>;
@@ -418,6 +419,7 @@ function workEntryIndicatesToolFailureFromOutput(
     return true;
   }
   if (!workLogEntryIsToolLike(entry)) return false;
+  if (entry.exitCode != null && entry.exitCode !== 0) return true;
   const output = includeCommand
     ? [entry.detail, entry.command].filter(Boolean).join("\n")
     : (entry.detail ?? "");

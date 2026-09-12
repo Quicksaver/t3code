@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  WORK_LOG_ACTIVITY_LIMITS,
+  WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER,
+} from "@t3tools/shared/toolActivity";
 import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
@@ -44,55 +48,50 @@ describe("projectActivityPayload", () => {
     expect(data.somethingClientNeverReads).toBeUndefined();
   });
 
-  it("keeps a bounded Codex command output summary", () => {
+  it("keeps rich Codex command output within the shared activity budget", () => {
+    const aggregatedOutput = `hello from codex\n${"x".repeat(
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars,
+    )}`;
     const projected = projectActivityPayload(
       activity({
         itemType: "command_execution",
         data: {
           item: {
             command: "/bin/zsh -lc 'printf hello'",
-            aggregatedOutput: `hello from codex\n${"x".repeat(5000)}`,
+            aggregatedOutput,
           },
         },
       }),
     );
     const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
-    expect(data.item).toEqual({
-      command: "/bin/zsh -lc 'printf hello'",
-      aggregatedOutput: "hello from codex",
+    const boundedOutput = `${aggregatedOutput.slice(
+      0,
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars -
+        WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER.length,
+    )}${WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER}`;
+    expect(data).toEqual({
+      item: {
+        command: "/bin/zsh -lc 'printf hello'",
+        aggregatedOutput: boundedOutput,
+      },
+      rawOutput: { truncated: true },
     });
-    expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
+    expect(boundedOutput).toHaveLength(WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars);
+    expect(JSON.stringify(projected.payload).length).toBeLessThan(
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars + 500,
+    );
   });
 
-  it("keeps preview normalization and fence-only fallback while scanning lines", () => {
-    const preview = projectActivityPayload(
-      activity({
-        itemType: "command_execution",
-        data: { rawOutput: `\`\`\`\n  actual\tresult  \n${"x".repeat(5000)}` },
-      }),
-    );
-    const fences = projectActivityPayload(
-      activity({
-        itemType: "command_execution",
-        data: { rawOutput: "```\r\n \t \n```\n" },
-      }),
-    );
-
-    expect((preview.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
-      content: "actual result",
-    });
-    expect((fences.payload as { data: { rawOutput: unknown } }).data.rawOutput).toEqual({
-      content: "2 lines",
-    });
-  });
-
-  it("keeps bounded Claude and ACP command output summaries", () => {
+  it("keeps rich Claude, ACP, and direct command output in dedicated projected fields", () => {
+    const claudeOutput = `hello from claude\n${"y".repeat(5000)}`;
+    const acpOutput = `hello from acp\n${"z".repeat(5000)}`;
+    const directOutput = `hello from direct output\n${"d".repeat(5000)}`;
     const claude = projectActivityPayload(
       activity({
         itemType: "command_execution",
         data: {
           command: "printf hello",
-          rawOutput: { stdout: `hello from claude\n${"y".repeat(5000)}` },
+          rawOutput: { stdout: claudeOutput },
         },
       }),
     );
@@ -104,22 +103,92 @@ describe("projectActivityPayload", () => {
           content: [
             {
               type: "content",
-              content: { type: "text", text: `hello from acp\n${"z".repeat(5000)}` },
+              content: { type: "text", text: acpOutput },
             },
           ],
+        },
+      }),
+    );
+    const direct = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          command: "printf hello",
+          rawOutput: directOutput,
         },
       }),
     );
 
     const claudeData = (claude.payload as Record<string, unknown>).data as Record<string, unknown>;
     const acpData = (acp.payload as Record<string, unknown>).data as Record<string, unknown>;
-    expect(claudeData.rawOutput).toEqual({ content: "hello from claude" });
-    expect(acpData.rawOutput).toEqual({ content: "hello from acp" });
-    expect(JSON.stringify(claude.payload).length).toBeLessThan(500);
-    expect(JSON.stringify(acp.payload).length).toBeLessThan(500);
+    const directData = (direct.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(claudeData).toEqual({
+      command: "printf hello",
+      rawOutput: { stdout: claudeOutput },
+    });
+    expect(acpData).toEqual({
+      command: "printf hello",
+      rawOutput: { content: acpOutput },
+    });
+    expect(directData).toEqual({
+      command: "printf hello",
+      rawOutput: { content: directOutput },
+    });
   });
 
-  it("keeps bounded Claude command input and result summaries", () => {
+  it("bounds direct and ACP command output at the shared activity limit", () => {
+    const oversizedOutput = `output start\n${"o".repeat(
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars,
+    )}`;
+    const boundedOutput = `${oversizedOutput.slice(
+      0,
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars -
+        WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER.length,
+    )}${WORK_LOG_COMMAND_OUTPUT_TRUNCATED_MARKER}`;
+    const direct = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          command: "printf direct",
+          rawOutput: oversizedOutput,
+        },
+      }),
+    );
+    const acp = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          command: "printf acp",
+          content: [
+            {
+              type: "content",
+              content: { type: "text", text: oversizedOutput },
+            },
+          ],
+        },
+      }),
+    );
+
+    const directData = (direct.payload as Record<string, unknown>).data as Record<string, unknown>;
+    const acpData = (acp.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(directData).toEqual({
+      command: "printf direct",
+      rawOutput: { content: boundedOutput, truncated: true },
+    });
+    expect(acpData).toEqual({
+      command: "printf acp",
+      rawOutput: { content: boundedOutput, truncated: true },
+    });
+    expect(boundedOutput).toHaveLength(WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars);
+    expect(JSON.stringify(direct.payload).length).toBeLessThan(
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars + 500,
+    );
+    expect(JSON.stringify(acp.payload).length).toBeLessThan(
+      WORK_LOG_ACTIVITY_LIMITS.maxCommandOutputChars + 500,
+    );
+  });
+
+  it("normalizes Claude and OpenCode command inputs before slimming provider data", () => {
     const claude = projectActivityPayload(
       activity({
         itemType: "command_execution",
@@ -127,13 +196,7 @@ describe("projectActivityPayload", () => {
         data: {
           toolName: "Bash",
           input: { command: "vp test run" },
-          result: {
-            type: "tool_result",
-            content: [
-              { type: "text", text: "tests passed" },
-              { type: "text", text: "x".repeat(5_000) },
-            ],
-          },
+          result: { content: "x".repeat(5_000) },
         },
       }),
     );
@@ -154,17 +217,13 @@ describe("projectActivityPayload", () => {
 
     expect(claude.payload).toMatchObject({
       toolCallId: "claude-call-1",
-      data: {
-        toolName: "Bash",
-        command: "vp test run",
-        rawOutput: { content: "tests passed" },
-      },
+      data: { command: "vp test run" },
     });
     expect(openCode.payload).toMatchObject({
       toolCallId: "opencode-call-1",
       data: { command: "vp lint" },
     });
-    expect(JSON.stringify(claude.payload).length).toBeLessThan(250);
+    expect(JSON.stringify(claude.payload).length).toBeLessThan(200);
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
