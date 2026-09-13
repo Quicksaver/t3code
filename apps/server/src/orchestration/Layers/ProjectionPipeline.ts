@@ -47,6 +47,7 @@ import {
   type ProjectionThread,
   ProjectionThreadRepository,
 } from "../../persistence/Services/ProjectionThreads.ts";
+import { ProjectionMagiRepository } from "../../persistence/Services/ProjectionMagi.ts";
 import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
@@ -56,7 +57,9 @@ import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/La
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionMagiRepositoryLive } from "../../persistence/Layers/ProjectionMagi.ts";
 import { ServerConfig } from "../../config.ts";
+import * as MagiControlBroker from "../../mcp/MagiControlBroker.ts";
 import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
@@ -133,12 +136,45 @@ type ProjectionThreadParentFields = Pick<
   | "subagentStartedAt"
   | "subagentCompletedAt"
   | "subagentStatus"
+  | "magiRunId"
+  | "magiParticipantId"
+  | "magiRootThreadId"
+  | "magiParentThreadId"
+  | "magiProviderThreadId"
+  | "magiStartedAt"
+  | "magiCompletedAt"
+  | "magiStatus"
 >;
 
 function mapThreadParentRelationFields(
   threadId: ThreadId,
   parentRelation: OrchestrationThreadParentRelation | undefined,
 ): ProjectionThreadParentFields {
+  if (parentRelation?.kind === "magi") {
+    return {
+      magiRootThreadId: parentRelation.rootThreadId,
+      magiParentThreadId: parentRelation.parentThreadId,
+      magiProviderThreadId: parentRelation.providerThreadId,
+      magiStartedAt: parentRelation.startedAt,
+      magiCompletedAt: parentRelation.completedAt,
+      magiStatus: parentRelation.status,
+      parentKind: "magi",
+      rootThreadId: parentRelation.rootThreadId,
+      parentThreadId: parentRelation.parentThreadId,
+      parentTurnId: null,
+      parentItemId: null,
+      parentActivitySequence: 0,
+      providerThreadId: parentRelation.providerThreadId,
+      titleSeed: null,
+      subagentDepth: parentRelation.depth,
+      subagentStartedAt: parentRelation.startedAt,
+      subagentCompletedAt: parentRelation.completedAt,
+      subagentStatus: parentRelation.status,
+      magiRunId: parentRelation.runId,
+      magiParticipantId: parentRelation.participantId,
+    };
+  }
+
   if (parentRelation?.kind !== "subagent") {
     return {
       parentKind: "root",
@@ -153,6 +189,8 @@ function mapThreadParentRelationFields(
       subagentStartedAt: null,
       subagentCompletedAt: null,
       subagentStatus: null,
+      magiRunId: null,
+      magiParticipantId: null,
     };
   }
 
@@ -169,6 +207,8 @@ function mapThreadParentRelationFields(
     subagentStartedAt: parentRelation.startedAt,
     subagentCompletedAt: parentRelation.completedAt,
     subagentStatus: parentRelation.status,
+    magiRunId: null,
+    magiParticipantId: null,
   };
 }
 
@@ -540,6 +580,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionStateRepository = yield* ProjectionStateRepository;
     const projectionProjectRepository = yield* ProjectionProjectRepository;
     const projectionThreadRepository = yield* ProjectionThreadRepository;
+    const projectionMagiRepository = yield* ProjectionMagiRepository;
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
     const projectionThreadPullRequestRepository =
@@ -677,6 +718,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
             ...mapThreadParentRelationFields(event.payload.threadId, event.payload.parentRelation),
+            activeMagiRun: null,
             linkedPullRequest: null,
             branchPullRequest: null,
             latestTurnId: null,
@@ -1030,14 +1072,36 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
           });
-          if (Option.isNone(existingRow)) {
-            return;
+          if (Option.isSome(existingRow)) {
+            yield* projectionThreadRepository.upsert({
+              ...existingRow.value,
+              deletedAt: event.payload.deletedAt,
+              updatedAt: event.payload.deletedAt,
+            });
           }
-          yield* projectionThreadRepository.upsert({
-            ...existingRow.value,
-            deletedAt: event.payload.deletedAt,
-            updatedAt: event.payload.deletedAt,
-          });
+          const activeMagiRun = yield* projectionMagiRepository.findActiveRun(
+            event.payload.threadId,
+          );
+          const magiCancellationSucceeded = Option.isNone(activeMagiRun)
+            ? true
+            : yield* MagiControlBroker.proxy
+                .cancelRun(activeMagiRun.value.detail.summary.runId)
+                .pipe(
+                  Effect.as(true),
+                  Effect.catch((error) =>
+                    Effect.logWarning(
+                      "Magi root deletion retained durable cleanup state after cancellation failed",
+                      {
+                        threadId: event.payload.threadId,
+                        runId: activeMagiRun.value.detail.summary.runId,
+                        error,
+                      },
+                    ).pipe(Effect.as(false)),
+                  ),
+                );
+          if (magiCancellationSucceeded) {
+            yield* projectionMagiRepository.deleteByOwnerThreadId(event.payload.threadId);
+          }
           return;
         }
 
@@ -2231,6 +2295,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
 ).pipe(
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
+  Layer.provideMerge(ProjectionMagiRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadPullRequests.layer),

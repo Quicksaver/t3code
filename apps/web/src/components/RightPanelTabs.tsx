@@ -24,6 +24,7 @@ import {
   GitPullRequest,
   GitPullRequestArrow,
   Globe2,
+  Network,
   Plus,
   TerminalSquare,
   Volume2,
@@ -118,6 +119,7 @@ interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddDevice: () => void;
+  onAddMagi?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -126,9 +128,11 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   deviceAvailable: boolean;
+  magiAvailable?: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
+  liveMagiRunCount?: number;
   children: ReactNode;
 }
 
@@ -157,6 +161,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
   device: "Devices are only available from a thread.",
+  magi: "Magi is not available for this conversation.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -181,6 +186,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: "No linked pull requests available.",
   agents: "Available from a thread.",
   device: "Available from a thread.",
+  magi: "Available for Magi-capable conversations.",
 } as const;
 
 type TabContextMenuAction =
@@ -321,6 +327,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddDevice: () => void;
+  onAddMagi?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -329,7 +336,9 @@ function RightPanelEmptyState(props: {
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
   deviceAvailable: boolean;
+  magiAvailable?: boolean;
   liveAgentCount: number;
+  liveMagiRunCount?: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -407,6 +416,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
       badgeCount: 0,
+    },
+    {
+      label: "Magi",
+      description: "Configure or inspect consensus runs.",
+      icon: Network,
+      shortcut: "G",
+      available: props.magiAvailable === true,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.magi,
+      onClick: props.onAddMagi ?? (() => undefined),
+      badgeCount: props.liveMagiRunCount ?? 0,
     },
   ] as const;
 
@@ -632,6 +651,8 @@ function surfaceTitle(
       return "Agents";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "magi":
+      return "Magi";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -723,6 +744,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "magi":
+      return <Network className="size-3 shrink-0" />;
   }
 }
 
@@ -924,6 +947,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.deviceAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: "Magi",
+      icon: Network,
+      shortcut: "G",
+      available: props.magiAvailable === true,
+      disabledReason: SURFACE_DISABLED_REASONS.magi,
+      onClick: props.onAddMagi ?? (() => undefined),
     },
   ] as const;
 
@@ -1397,6 +1428,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
             onAddDevice={props.onAddDevice}
+            {...(props.onAddMagi ? { onAddMagi: props.onAddMagi } : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1405,7 +1437,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
             deviceAvailable={props.deviceAvailable}
+            {...(props.magiAvailable !== undefined ? { magiAvailable: props.magiAvailable } : {})}
             liveAgentCount={props.liveAgentCount}
+            liveMagiRunCount={props.liveMagiRunCount ?? 0}
           />
         ) : (
           props.children

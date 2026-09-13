@@ -26,14 +26,13 @@ export type ThreadActionMenuId =
   | "archive"
   | "delete";
 
-type ThreadParentRelationLike = { readonly kind: "root" | "subagent" } | null | undefined;
+type ThreadParentRelationLike = { readonly kind: "root" | "subagent" | "magi" } | null | undefined;
 
-/** Missing relations are legacy roots; persisted subagent relations are the
- * only relation shape that removes root lifecycle permissions. */
+/** Missing relations are legacy roots; children cannot use root lifecycle actions. */
 export function canUseRootThreadLifecycleActions(
   thread: { readonly parentRelation?: ThreadParentRelationLike } | null | undefined,
 ): boolean {
-  return thread?.parentRelation?.kind !== "subagent";
+  return thread?.parentRelation == null || thread.parentRelation.kind === "root";
 }
 
 /** Defense-in-depth gate for action ids returned by a stale native menu. */

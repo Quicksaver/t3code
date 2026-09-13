@@ -4,6 +4,7 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  MagiParticipantId,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -1183,6 +1184,40 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
     );
   }
+
+  it.effect("persists Magi panel preferences", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const next = yield* serverSettings.updateSettings({
+        magi: {
+          lastPanelRoster: [
+            {
+              participantId: MagiParticipantId.make("first"),
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.6-sol",
+              },
+              personalityId: DEFAULT_SERVER_SETTINGS.magi.personalities[0]!.id,
+              weight: 1,
+            },
+            {
+              participantId: MagiParticipantId.make("second"),
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-5.6-sol",
+              },
+              personalityId: DEFAULT_SERVER_SETTINGS.magi.personalities[1]!.id,
+              weight: 1,
+            },
+          ],
+          lastPanelConsensusThresholdPercent: 100,
+          lastPanelMagiTurnLimit: 1,
+        },
+      });
+
+      assert.strictEqual(next.magi.lastPanelRoster.length, 2);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
