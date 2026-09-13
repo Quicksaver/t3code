@@ -84,7 +84,7 @@ const AggregateReplayStatsRowSchema = Schema.Struct({
   payloadBytes: Schema.Number,
   hasCreateEvent: Schema.Number,
 });
-const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
+export const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
 
 function inferActorKind(

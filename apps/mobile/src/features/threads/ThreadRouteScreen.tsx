@@ -363,6 +363,19 @@ function ThreadRouteContent(
   );
   const gitActionProgress = useGitActionProgress(gitActionProgressTarget);
 
+  const handleOpenParentThread = useCallback(() => {
+    const relation = selectedThread?.parentRelation;
+    if (!selectedThread || relation?.kind !== "subagent") {
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(relation.parentThreadId),
+      }),
+    );
+  }, [navigation, selectedThread]);
+
   const handleOpenGitInspector = useCallback(() => {
     if (!fileInspector.supported) {
       if (selectedThread === null) {
@@ -499,10 +512,21 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (
-      !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
+    if (!selectedThread) {
+      return;
+    }
+    const activeTurnId = selectedThread.session?.activeTurnId ?? null;
+    if (selectedThread.parentRelation?.kind === "subagent") {
+      if (
+        selectedThread.parentRelation.status !== "running" &&
+        selectedThread.session?.status !== "running" &&
+        selectedThread.session?.status !== "starting"
+      ) {
+        return;
+      }
+    } else if (
+      selectedThread.session?.status !== "running" &&
+      selectedThread.session?.status !== "starting"
     ) {
       return;
     }
@@ -510,9 +534,7 @@ function ThreadRouteContent(
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.session.activeTurnId
-          ? { turnId: selectedThread.session.activeTurnId }
-          : {}),
+        ...(activeTurnId ? { turnId: activeTurnId } : {}),
       },
     });
   }, [interruptThreadTurn, selectedThread]);
@@ -886,6 +908,9 @@ function ThreadRouteContent(
           dispatchingMessageId={composer.dispatchingQueuedMessageId}
           layoutVariant={layout.variant}
           usesAutomaticContentInsets={usesNativeHeaderGlass}
+          onOpenParentThread={
+            selectedThread.parentRelation?.kind === "subagent" ? handleOpenParentThread : undefined
+          }
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
           onPickDraftMedia={composer.onPickDraftMedia}

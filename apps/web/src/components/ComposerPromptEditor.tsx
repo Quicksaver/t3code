@@ -26,6 +26,7 @@ import {
   $isLineBreakNode,
   $isRangeSelection,
   $isTextNode,
+  $nodesOfType,
   $createLineBreakNode,
   $createParagraphNode,
   $createTextNode,
@@ -80,6 +81,7 @@ import {
   splitPromptIntoComposerSegments,
 } from "~/composer-editor-mentions";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
+import { planComposerControlledUpdate } from "~/composer-editor-controlled-update";
 import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
@@ -372,6 +374,15 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
 
   override getTextContent(): string {
     return `$${this.__skillName}`;
+  }
+
+  updateMetadata(skillLabel: string, skillDescription: string | null): void {
+    if (this.__skillLabel === skillLabel && this.__skillDescription === skillDescription) {
+      return;
+    }
+    const writable = this.getWritable();
+    writable.__skillLabel = skillLabel;
+    writable.__skillDescription = skillDescription;
   }
 
   override isInline(): true {
@@ -816,6 +827,18 @@ function $setComposerEditorPrompt(
       continue;
     }
     $appendTextWithLineBreaks(paragraph, segment.text);
+  }
+}
+
+function $refreshComposerSkillMetadata(
+  skillMetadata: ReadonlyMap<string, ComposerSkillMetadata>,
+): void {
+  for (const node of $nodesOfType(ComposerSkillNode)) {
+    const metadata = skillMetadata.get(node.__skillName);
+    node.updateMetadata(
+      metadata?.label ?? formatProviderSkillDisplayName({ name: node.__skillName }),
+      metadata?.description ?? null,
+    );
   }
 }
 
@@ -1720,17 +1743,6 @@ function ComposerPromptEditorInner({
       return;
     }
 
-    const normalizedExpandedCursor = expandCollapsedComposerCursor(value, normalizedCursor);
-    snapshotRef.current = {
-      value,
-      cursor: normalizedCursor,
-      expandedCursor: normalizedExpandedCursor,
-      contextIds: collectInlineContextIds(value),
-    };
-    selectionRangeRef.current = {
-      start: normalizedExpandedCursor,
-      end: normalizedExpandedCursor,
-    };
     skillsSignatureRef.current = skillsSignature;
 
     const rootElement = editor.getRootElement();
@@ -1739,17 +1751,36 @@ function ComposerPromptEditorInner({
       return;
     }
 
+    const updatePlan = planComposerControlledUpdate({
+      previousSnapshot,
+      value,
+      controlledCursor: normalizedCursor,
+      skillsChanged,
+      isFocused,
+    });
+    snapshotRef.current = {
+      value,
+      cursor: updatePlan.snapshotCursor,
+      expandedCursor: expandCollapsedComposerCursor(value, updatePlan.snapshotCursor),
+      contextIds: collectInlineContextIds(value),
+    };
+    selectionRangeRef.current = {
+      start: snapshotRef.current.expandedCursor,
+      end: snapshotRef.current.expandedCursor,
+    };
+
     isApplyingControlledUpdateRef.current = true;
     const isCiteInsertion = citationCommentRequestRef.current?.value === value;
     let citationToOpen: ComposerCitationCommentTarget | null = null;
     editor.update(
       () => {
-        const shouldRewriteEditorState = previousSnapshot.value !== value || skillsChanged;
-        if (shouldRewriteEditorState) {
+        if (updatePlan.rewriteEditorState) {
           $setComposerEditorPrompt(value, skillMetadataRef.current);
+        } else if (updatePlan.refreshSkillMetadata) {
+          $refreshComposerSkillMetadata(skillMetadataRef.current);
         }
-        if (shouldRewriteEditorState || isFocused) {
-          $setSelectionAtComposerOffset(normalizedCursor);
+        if (updatePlan.selectionCursor !== null) {
+          $setSelectionAtComposerOffset(updatePlan.selectionCursor);
         }
         citationToOpen = $consumeComposerCitationCommentRequest(citationCommentRequestRef);
       },

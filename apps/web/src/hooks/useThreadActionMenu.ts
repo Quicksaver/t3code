@@ -13,6 +13,8 @@ import { useCallback, useMemo } from "react";
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  canUseRootThreadLifecycleActions,
+  isRootThreadLifecycleAction,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -128,6 +130,7 @@ export function useThreadActionMenu(input: {
         // what the user is looking at.
         const thread = readThreadShell(threadRef);
         if (!thread) return;
+        const canUseRootLifecycleActions = canUseRootThreadLifecycleActions(thread);
         const now = new Date();
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
@@ -146,11 +149,13 @@ export function useThreadActionMenu(input: {
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
+          permissions: { rootLifecycle: canUseRootLifecycleActions },
           snoozePresets,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
         const action: ThreadActionMenuId = clicked.value;
+        if (!canUseRootLifecycleActions && isRootThreadLifecycleAction(action)) return;
         if (action.startsWith("snooze:")) {
           const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;

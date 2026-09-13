@@ -4,7 +4,9 @@
  * spawn batch).
  *
  * Visualization rules (from live-test feedback):
- * - Spawn order is stable. Activity and completion update rows in place.
+ * - Direct-agent branches with live work precede idle and settled branches;
+ *   descendants stay immediately below their parent at sidebar-like depth.
+ * - Within a liveness tier, spawn order is stable and updates stay in place.
  * - Agent rows reserve three fixed lines for identity, activity, and metrics;
  *   changing data must never change their height.
  * - Workflow expansion is presentation state. A live run stays expanded when
@@ -23,7 +25,7 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, use, useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -137,17 +139,46 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+const AgentNavigationContext = createContext<{
+  readonly titleByAgentId: ReadonlyMap<string, string>;
+  readonly onOpenAgent: ((agentId: string) => void) | null;
+}>({ titleByAgentId: new Map(), onOpenAgent: null });
+const EMPTY_AGENT_TITLES: ReadonlyMap<string, string> = new Map();
+
+export function resolveAgentRowNavigation(
+  agent: Pick<RuntimeSubagent, "id" | "title">,
+  navigation: {
+    readonly titleByAgentId: ReadonlyMap<string, string>;
+    readonly onOpenAgent: ((agentId: string) => void) | null;
+  },
+): { readonly title: string; readonly onOpen: (() => void) | null } {
+  const persistedTitle = navigation.titleByAgentId.get(agent.id);
+  return {
+    title: persistedTitle ?? agent.title,
+    onOpen:
+      persistedTitle !== undefined && navigation.onOpenAgent !== null
+        ? () => navigation.onOpenAgent?.(agent.id)
+        : null,
+  };
+}
+
+/** Flat status line. Child conversations are directly navigable only when
+ * the beta preference supplies both a resolved title and an open callback. */
+function AgentRow({ agent, depth = 0 }: { agent: RuntimeSubagent; depth?: number }) {
+  const navigation = use(AgentNavigationContext);
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
+  const { title, onOpen } = resolveAgentRowNavigation(agent, navigation);
+  const settled =
+    agent.status !== "running" &&
+    agent.status !== "pending" &&
+    agent.status !== "waiting" &&
+    agent.status !== "failed";
   const role =
-    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
-      ? null
-      : agent.role;
+    agent.role?.trim().toLocaleLowerCase() === title.trim().toLocaleLowerCase() ? null : agent.role;
   const metadata = [
     modelLabel,
     agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
@@ -155,20 +186,48 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
 
-  return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+  const content = (
+    <div
+      className={cn(
+        "grid grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md",
+        onOpen
+          ? "h-[4.375rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]"
+          : "h-[3.875rem] px-1.5 py-1",
+      )}
+    >
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+        <span
+          className={cn(
+            "min-w-0 truncate text-sm",
+            onOpen && settled ? "font-normal text-secondary-label" : "font-medium",
+          )}
+        >
+          {title}
+        </span>
         {role ? (
-          <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
+          <span
+            className={cn(
+              "max-w-28 shrink-0 truncate rounded-sm border px-1",
+              onOpen
+                ? "border-border text-[11px] text-secondary-label"
+                : "border-border/60 font-mono text-[.65rem] text-muted-foreground",
+            )}
+          >
             {role}
           </span>
         ) : null}
       </span>
-      <span className="col-start-3 row-start-1 min-w-14 text-right font-mono text-[.7rem] text-muted-foreground/80">
+      <span
+        className={cn(
+          "col-start-3 row-start-1 min-w-14 text-right",
+          onOpen
+            ? "text-xs text-secondary-label"
+            : "font-mono text-[.7rem] text-muted-foreground/80",
+        )}
+      >
         <span className="inline-flex items-center gap-1">
           <AgentElapsed agent={agent} />
           {agent.status === "completed" ? (
@@ -179,15 +238,43 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       <span
         className={cn(
           "col-start-2 col-end-4 row-start-2 block truncate text-xs",
-          agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+          agent.status === "failed"
+            ? "text-destructive-foreground"
+            : onOpen
+              ? "text-secondary-label"
+              : "text-muted-foreground",
         )}
       >
         {activity ?? statusLabel}
       </span>
-      <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
+      <span
+        className={cn(
+          "col-start-2 col-end-4 row-start-3 truncate tabular-nums",
+          onOpen
+            ? "text-xs text-secondary-label"
+            : "font-mono text-[.7rem] text-muted-foreground/70",
+        )}
+      >
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{statusLabel}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ paddingLeft: `${Math.min(Math.max(depth, 0), 6) * 0.75}rem` }}>
+      {onOpen ? (
+        <button
+          type="button"
+          className="w-full cursor-pointer overflow-hidden rounded-md bg-transparent text-left text-foreground outline-none select-none hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring active:bg-accent"
+          onClick={onOpen}
+          aria-label={`Open ${title}`}
+        >
+          {content}
+        </button>
+      ) : (
+        content
+      )}
     </div>
   );
 }
@@ -526,11 +613,19 @@ export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  titleByAgentId = EMPTY_AGENT_TITLES,
+  onOpenAgent = null,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  titleByAgentId?: ReadonlyMap<string, string>;
+  onOpenAgent?: ((agentId: string) => void) | null;
 }) {
+  const navigation = useMemo(
+    () => ({ titleByAgentId, onOpenAgent }),
+    [onOpenAgent, titleByAgentId],
+  );
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -545,41 +640,47 @@ export function AgentsPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-2 p-2">
-          {model.workflows.map((group) => (
-            <WorkflowSection
-              key={group.workflow.id}
-              group={group}
-              environmentId={environmentId}
-              threadId={threadId}
-            />
-          ))}
-          {model.directAgents.length > 0 ? (
-            <section>
-              <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
-                Direct spawns
-              </div>
-              {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
-              ))}
-            </section>
-          ) : null}
-        </div>
-      </ScrollArea>
-      <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
-        <span className="flex items-center gap-2">
-          {model.runningCount + model.waitingCount > 0 ? (
-            <span className="text-info-foreground">
-              ● {model.runningCount + model.waitingCount} working
-            </span>
-          ) : null}
-          {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
-          {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
-        </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
-      </footer>
-    </div>
+    <AgentNavigationContext value={navigation}>
+      <div className="flex h-full min-h-0 flex-col">
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-2 p-2">
+            {model.workflows.map((group) => (
+              <WorkflowSection
+                key={group.workflow.id}
+                group={group}
+                environmentId={environmentId}
+                threadId={threadId}
+              />
+            ))}
+            {model.directAgents.length > 0 ? (
+              <section>
+                <div className="px-1.5 pt-1 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground">
+                  Direct spawns
+                </div>
+                {model.directAgents.map((agent) => (
+                  <AgentRow
+                    key={agent.id}
+                    agent={agent}
+                    depth={model.directAgentDepthById.get(agent.id) ?? 0}
+                  />
+                ))}
+              </section>
+            ) : null}
+          </div>
+        </ScrollArea>
+        <footer className="flex items-center justify-between border-t border-border/60 px-3 py-1.5 font-mono text-[.7rem] text-muted-foreground">
+          <span className="flex items-center gap-2">
+            {model.runningCount + model.waitingCount > 0 ? (
+              <span className="text-info-foreground">
+                ● {model.runningCount + model.waitingCount} working
+              </span>
+            ) : null}
+            {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
+            {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
+          </span>
+          <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        </footer>
+      </div>
+    </AgentNavigationContext>
   );
 }

@@ -17,7 +17,10 @@
  * folding (completion can create an agent; a late start only fills
  * metadata).
  */
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type {
+  OrchestrationThreadActivity,
+  OrchestrationThreadParentRelation,
+} from "@t3tools/contracts";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -71,7 +74,11 @@ export interface RuntimeSubagent {
   readonly result: string | null;
   readonly error: string | null;
   readonly outputFile: string | null;
+  /** Agent that launched this task when the provider exposes one. */
+  readonly owningAgentId: string | null;
   readonly parentAgentId: string | null;
+  /** Provider hierarchy path, for example /root/researcher/verifier. */
+  readonly agentPath: string | null;
   readonly agentIndex: number | null;
   readonly phaseIndex: number | null;
   readonly phaseTitle: string | null;
@@ -102,6 +109,57 @@ export function isTerminalSubagentStatus(status: RuntimeSubagentStatus): boolean
  * but resumable; waiting counts as active because it needs the user. */
 export function isActiveSubagentStatus(status: RuntimeSubagentStatus): boolean {
   return status === "pending" || status === "running" || status === "waiting";
+}
+
+type ProjectedSubagentStatus = Extract<
+  OrchestrationThreadParentRelation,
+  { kind: "subagent" }
+>["status"];
+
+export interface ProjectedSubagentLifecycle {
+  readonly status: ProjectedSubagentStatus;
+  readonly completedAt: string | null;
+}
+
+const PROJECTED_TERMINAL_STATUS: ReadonlyMap<ProjectedSubagentStatus, RuntimeSubagentStatus> =
+  new Map([
+    ["completed", "completed"],
+    ["errored", "failed"],
+    ["interrupted", "interrupted"],
+    ["stopped", "interrupted"],
+  ]);
+
+/**
+ * Repairs an active activity-fold row when the persisted child-thread
+ * projection has already reached a terminal state. Providers can omit or
+ * lose the matching parent task.completed row, but the projected child
+ * lifecycle is authoritative and must not leave the Agents surface working
+ * forever. Existing terminal and idle rows retain their richer activity
+ * result, error, and resumability semantics.
+ */
+export function reconcileSubagentProjectionStatuses(
+  agents: ReadonlyArray<RuntimeSubagent>,
+  projectionByAgentId: ReadonlyMap<string, ProjectedSubagentLifecycle>,
+): ReadonlyArray<RuntimeSubagent> {
+  let changed = false;
+  const reconciled = agents.map((agent) => {
+    if (!isActiveSubagentStatus(agent.status)) return agent;
+
+    const projection = projectionByAgentId.get(agent.id);
+    const terminalStatus = projection
+      ? PROJECTED_TERMINAL_STATUS.get(projection.status)
+      : undefined;
+    if (!projection || !terminalStatus) return agent;
+
+    changed = true;
+    return {
+      ...agent,
+      status: terminalStatus,
+      completedAt: agent.completedAt ?? projection.completedAt,
+    };
+  });
+
+  return changed ? reconciled : agents;
 }
 
 const RECENT_ACTIVITY_LIMIT = 6;
@@ -240,7 +298,9 @@ interface MutableAgent {
   result: string | null;
   error: string | null;
   outputFile: string | null;
+  owningAgentId: string | null;
   parentAgentId: string | null;
+  agentPath: string | null;
   agentIndex: number | null;
   phaseIndex: number | null;
   phaseTitle: string | null;
@@ -297,7 +357,9 @@ function getOrCreate(
     result: null,
     error: null,
     outputFile: null,
+    owningAgentId: asString(payload.agentId) ?? null,
     parentAgentId: asString(payload.parentAgentId) ?? null,
+    agentPath: asString(payload.agentPath) ?? null,
     agentIndex: asCount(payload.agentIndex) ?? null,
     phaseIndex: asCount(payload.phaseIndex) ?? null,
     phaseTitle: asString(payload.phaseTitle) ?? null,
@@ -326,11 +388,15 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   if (model) agent.model = model;
   const effort = asString(payload.effort);
   if (effort) agent.effort = effort;
+  const owningAgentId = asString(payload.agentId);
+  if (owningAgentId) agent.owningAgentId = owningAgentId;
   const parentAgentId = asString(payload.parentAgentId);
   if (parentAgentId) {
     agent.parentAgentId = parentAgentId;
     if (agent.kind === "subagent") agent.kind = "workflow_agent";
   }
+  const agentPath = asString(payload.agentPath);
+  if (agentPath) agent.agentPath = agentPath;
   const workflowName = asString(payload.workflowName);
   if (workflowName) agent.workflowName = workflowName;
   if (asString(payload.taskType) === "local_workflow") agent.kind = "workflow";
@@ -698,6 +764,7 @@ export interface AgentPanelWorkflowGroup {
 export interface AgentPanelModel {
   readonly workflows: ReadonlyArray<AgentPanelWorkflowGroup>;
   readonly directAgents: ReadonlyArray<RuntimeSubagent>;
+  readonly directAgentDepthById: ReadonlyMap<string, number>;
   readonly runningCount: number;
   readonly waitingCount: number;
   readonly idleCount: number;
@@ -710,6 +777,7 @@ export interface AgentPanelModel {
 const EMPTY_PANEL_MODEL: AgentPanelModel = {
   workflows: [],
   directAgents: [],
+  directAgentDepthById: new Map(),
   runningCount: 0,
   waitingCount: 0,
   idleCount: 0,
@@ -721,6 +789,103 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
 
 export function emptyAgentPanelModel(): AgentPanelModel {
   return EMPTY_PANEL_MODEL;
+}
+
+function normalizedAgentPath(path: string | null): string | null {
+  if (path === null) return null;
+  const normalized = `/${path
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("/")}`;
+  return normalized === "/" ? null : normalized;
+}
+
+function parentAgentPath(path: string | null): string | null {
+  const normalized = normalizedAgentPath(path);
+  if (normalized === null) return null;
+  const boundary = normalized.lastIndexOf("/");
+  if (boundary <= 0) return null;
+  const parent = normalized.slice(0, boundary);
+  return parent === "/root" ? null : parent;
+}
+
+/**
+ * Direct agents render as a stable hierarchy. A branch with live work sorts
+ * before a fully settled branch, then siblings retain first-seen order. This
+ * keeps a settled parent immediately above its live descendant without
+ * promoting the child out of its lineage.
+ */
+function orderDirectAgentTree(agents: ReadonlyArray<RuntimeSubagent>): {
+  readonly agents: ReadonlyArray<RuntimeSubagent>;
+  readonly depthById: ReadonlyMap<string, number>;
+} {
+  const byId = new Map(agents.map((agent) => [agent.id, agent] as const));
+  const byPath = new Map<string, RuntimeSubagent>();
+  for (const agent of agents) {
+    const path = normalizedAgentPath(agent.agentPath);
+    if (path !== null && !byPath.has(path)) byPath.set(path, agent);
+  }
+
+  const parentIdById = new Map<string, string>();
+  for (const agent of agents) {
+    const explicitParentId = [agent.parentAgentId, agent.owningAgentId].find(
+      (candidate) => candidate !== null && candidate !== agent.id && byId.has(candidate),
+    );
+    const pathParentId = byPath.get(parentAgentPath(agent.agentPath) ?? "")?.id;
+    const parentId = explicitParentId ?? pathParentId;
+    if (parentId !== undefined && parentId !== agent.id) {
+      parentIdById.set(agent.id, parentId);
+    }
+  }
+
+  const childrenById = new Map<string, RuntimeSubagent[]>();
+  for (const agent of agents) {
+    const parentId = parentIdById.get(agent.id);
+    if (parentId === undefined) continue;
+    const children = childrenById.get(parentId) ?? [];
+    children.push(agent);
+    childrenById.set(parentId, children);
+  }
+
+  const branchRankById = new Map<string, number>();
+  const branchRank = (agent: RuntimeSubagent, visiting = new Set<string>()): number => {
+    const cached = branchRankById.get(agent.id);
+    if (cached !== undefined) return cached;
+    if (visiting.has(agent.id)) return 2;
+    const nextVisiting = new Set(visiting).add(agent.id);
+    let rank = isActiveSubagentStatus(agent.status) ? 0 : agent.status === "idle" ? 1 : 2;
+    for (const child of childrenById.get(agent.id) ?? []) {
+      rank = Math.min(rank, branchRank(child, nextVisiting));
+    }
+    branchRankById.set(agent.id, rank);
+    return rank;
+  };
+  const compare = (left: RuntimeSubagent, right: RuntimeSubagent): number =>
+    branchRank(left) - branchRank(right) ||
+    left.firstSeenAt.localeCompare(right.firstSeenAt) ||
+    left.id.localeCompare(right.id);
+  for (const children of childrenById.values()) children.sort(compare);
+
+  const roots = agents
+    .filter((agent) => !parentIdById.has(agent.id))
+    .slice()
+    .sort(compare);
+  const ordered: RuntimeSubagent[] = [];
+  const depthById = new Map<string, number>();
+  const visited = new Set<string>();
+  const visit = (agent: RuntimeSubagent, depth: number) => {
+    if (visited.has(agent.id)) return;
+    visited.add(agent.id);
+    ordered.push(agent);
+    depthById.set(agent.id, depth);
+    for (const child of childrenById.get(agent.id) ?? []) visit(child, depth + 1);
+  };
+  for (const root of roots) visit(root, 0);
+  // Corrupt or partial provider lineage can contain cycles or omit a root.
+  // Keep every row visible and deterministic instead of dropping the cycle.
+  for (const agent of agents.slice().sort(compare)) visit(agent, 0);
+  return { agents: ordered, depthById };
 }
 
 /**
@@ -844,13 +1009,11 @@ export function deriveAgentPanelModel({
     totalTokens += agent.usage?.totalTokens ?? 0;
   }
 
+  const directTree = orderDirectAgentTree(direct);
   return {
     workflows: workflowGroups,
-    // Updates and the >100-agent retention ranking must never reshuffle rows
-    // that remain visible.
-    directAgents: direct
-      .slice()
-      .sort((a, b) => a.firstSeenAt.localeCompare(b.firstSeenAt) || a.id.localeCompare(b.id)),
+    directAgents: directTree.agents,
+    directAgentDepthById: directTree.depthById,
     runningCount,
     waitingCount,
     idleCount,

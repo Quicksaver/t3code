@@ -8,18 +8,18 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("051_ProjectionThreadMessageContext", (it) => {
+layer("064_ProjectionThreadMessageContext", (it) => {
   it.effect("accepts context added by an earlier development migration", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 63 });
       yield* sql`
         ALTER TABLE projection_thread_messages
         ADD COLUMN context_json TEXT
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 51 });
+      yield* runMigrations({ toMigrationInclusive: 64 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_thread_messages)
