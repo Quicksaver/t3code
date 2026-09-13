@@ -4,7 +4,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import ChatView from "./ChatView";
-import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
+import {
+  canLoadStandaloneThreadConversation,
+  resolveDisabledSubagentParentThreadRef,
+  resolveDraftPromotionNavigationTarget,
+  threadHasStarted,
+} from "./ChatView.logic";
+import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { SidebarInset } from "./ui/sidebar";
 import {
@@ -62,7 +68,35 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     : null;
   const serverThreadRef: ScopedThreadRef | null =
     target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
-  const serverThread = useThread(serverThreadRef);
+  const serverThreadShell = useThreadShell(serverThreadRef);
+  const draftThread = useComposerDraftStore((store) =>
+    serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
+  );
+  const subagentConversationVisibilityEnabled = useClientSettings(
+    (settings) => settings.subagentConversationVisibilityEnabled,
+  );
+  const clientSettingsHydrated = useClientSettingsHydrated();
+  const canLoadConversation = canLoadStandaloneThreadConversation({
+    threadShell: serverThreadShell,
+    hasLocalDraft: draftThread !== null,
+    clientSettingsHydrated,
+    subagentConversationVisibilityEnabled,
+  });
+  const disabledSubagentParentRef = resolveDisabledSubagentParentThreadRef({
+    threadShell: serverThreadShell,
+    clientSettingsHydrated,
+    subagentConversationVisibilityEnabled,
+  });
+  const detailThreadRef = canLoadConversation ? serverThreadRef : null;
+  const serverThread = useThread(detailThreadRef);
+  useEffect(() => {
+    if (!disabledSubagentParentRef) return;
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(disabledSubagentParentRef),
+      replace: true,
+    });
+  }, [disabledSubagentParentRef, navigate]);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
   );
@@ -78,14 +112,11 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const shell = useEnvironmentQuery(
     serverThreadRef === null ? null : environmentShell.stateAtom(serverThreadRef.environmentId),
   );
-  const serverThreadShell = useThreadShell(serverThreadRef);
-  const serverThreadDetail = useThreadDetail(serverThreadRef);
-  const serverThreadStatus = useThreadStatus(serverThreadRef);
+  const serverThreadDetail = useThreadDetail(detailThreadRef);
+  const serverThreadStatus = useThreadStatus(detailThreadRef);
   const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
-  const draftThread = useComposerDraftStore((store) =>
-    serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
-  );
+
   const promotedDraftId = useComposerDraftStore((store) =>
     target.kind === "server" ? store.getDraftIdByRef(target.threadRef) : null,
   );
@@ -194,7 +225,10 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         />
       );
     }
-  } else if (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null)) {
+  } else if (
+    canLoadConversation &&
+    (renderState === "ready" || (renderState === "loading" && serverThreadShell !== null))
+  ) {
     view = (
       <ChatView
         {...(nextChatViewKey ? { key: nextChatViewKey.key } : {})}

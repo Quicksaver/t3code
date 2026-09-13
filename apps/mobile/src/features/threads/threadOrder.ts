@@ -51,6 +51,7 @@ type OrderRow = Pick<
   | "createdAt"
   | "unsettledAt"
   | "pinnedAt"
+  | "settledOverride"
 >;
 
 export interface PendingThreadOrder {
@@ -100,7 +101,11 @@ export function createThreadMovePlanner(input: {
     const assignments = planPinnedReorder({ orderedIds: nextIds, keysById, movedId });
     return assignments === null ||
       assignments.length === 0 ||
-      assignments.some((assignment) => !writableIds.has(assignment.id))
+      assignments.some((assignment) => {
+        if (!writableIds.has(assignment.id)) return true;
+        const row = input.ordered.find((entry) => rowId(entry) === assignment.id);
+        return row !== undefined && input.section === "active" && row.settledOverride === "settled";
+      })
       ? null
       : assignments;
   };

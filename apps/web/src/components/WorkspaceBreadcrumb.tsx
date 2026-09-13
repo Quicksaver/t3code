@@ -6,16 +6,32 @@ interface WorkspaceBreadcrumbProps {
   readonly ariaLabel: string;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly trailingAction?: ReactNode;
 }
 
-export function WorkspaceBreadcrumb({ ariaLabel, children, className }: WorkspaceBreadcrumbProps) {
+export function WorkspaceBreadcrumb({
+  ariaLabel,
+  children,
+  className,
+  trailingAction,
+}: WorkspaceBreadcrumbProps) {
+  const hasTrailingAction = trailingAction !== undefined && trailingAction !== null;
+
   return (
-    <nav aria-label={ariaLabel} className={cn("min-w-0", className)}>
+    <nav
+      aria-label={ariaLabel}
+      className={cn("min-w-0", hasTrailingAction && "flex items-center", className)}
+    >
       {/* Keep the flexible container draggable in Electron. Interactive
           descendants are excluded by the shared .drag-region CSS rules. */}
       <ol className="m-0 flex min-w-0 list-none items-center gap-2 p-0 text-sm sm:gap-3">
         {children}
       </ol>
+      {hasTrailingAction ? (
+        <div data-workspace-breadcrumb-trailing-action className="ml-2 flex shrink-0 items-center">
+          {trailingAction}
+        </div>
+      ) : null}
     </nav>
   );
 }

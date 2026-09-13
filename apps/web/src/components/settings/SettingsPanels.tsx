@@ -2319,6 +2319,19 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
+          {...searchableSetting("subagent-conversations")}
+          description="Allows subagents to open as separate conversations from agent activity. Leave this off to avoid loading or surfacing child conversation detail. Agent progress and archive behavior are unchanged."
+          control={
+            <Switch
+              checked={settings.subagentConversationVisibilityEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ subagentConversationVisibilityEnabled: Boolean(checked) })
+              }
+              aria-label="Subagent conversations"
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."
           resetAction={
