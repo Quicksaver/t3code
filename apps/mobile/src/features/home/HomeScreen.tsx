@@ -32,7 +32,7 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { scopedProjectKey } from "../../lib/scopedEntities";
+import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
@@ -58,6 +58,7 @@ import { resolveThreadProviderInstance } from "../threads/thread-provider-instan
 import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
+  resolveThreadListV2OrderingTargets,
   buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -77,6 +78,7 @@ import {
 } from "./homeListItems";
 import {
   buildHomeProjectScopes,
+  buildHomeProjectTitleIndex,
   buildHomeThreadGroups,
   sortHomeProjectScopes,
   type HomeProjectSortOrder,
@@ -470,18 +472,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [v2ProjectScopeKey, v2ScopeProjects],
   );
   const v2ProjectTitleByProjectKey = useMemo(
-    () =>
-      new Map(
-        v2ScopeProjects.flatMap((scope) =>
-          scope.projectRefs.map(
-            (projectRef) =>
-              [
-                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
-                scope.title,
-              ] as const,
-          ),
-        ),
-      ),
+    () => buildHomeProjectTitleIndex(v2ScopeProjects),
     [v2ScopeProjects],
   );
   const v2ScopedProjectKeys = useMemo(
@@ -495,8 +486,9 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
     [v2ScopedProjectGroup],
   );
-  // Thread List v2 (beta): one flat list in creation order, no grouping.
-  // Settled threads collapse into a recency tail below the card block.
+  // Thread List v2: root conversations stay in creation order while subagent
+  // descendants disclose as compact nested rows. Settled roots collapse into
+  // a recency tail below the card block.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
@@ -539,6 +531,21 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
+  const [expandedSubagentThreadKeys, setExpandedSubagentThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const handleToggleSubagentThread = useCallback((thread: EnvironmentThreadShell) => {
+    const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+    setExpandedSubagentThreadKeys((current) => {
+      const next = new Set(current);
+      if (next.has(threadKey)) {
+        next.delete(threadKey);
+      } else {
+        next.add(threadKey);
+      }
+      return next;
+    });
+  }, []);
   // The settled tail renders in pages; expansion resets when the filter
   // context changes so environment/search flips never inherit a deep page.
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -668,7 +675,17 @@ export function HomeScreen(props: HomeScreenProps) {
           queuedThreadKeys,
         }),
       });
-    return { pinned: sectionPlanner("pinned"), active: sectionPlanner("active") };
+    return {
+      pinned: sectionPlanner("pinned"),
+      active: sectionPlanner("active"),
+      targets: resolveThreadListV2OrderingTargets({
+        queuedThreadKeys,
+        threads: props.threads,
+        now: new Date().toISOString(),
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+      }),
+    };
   }, [
     serverConfigs,
     props.threads,
@@ -697,6 +714,7 @@ export function HomeScreen(props: HomeScreenProps) {
       threads: props.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
+      expandedThreadKeys: expandedSubagentThreadKeys,
       searchQuery: props.searchQuery,
       matchedThreadKeys,
       settlementEnvironmentIds,
@@ -711,6 +729,7 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [
     pendingOrder,
     queuedThreadKeys,
+    expandedSubagentThreadKeys,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -826,14 +845,23 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
-      const movePlanner = item.item.pinned ? threadMovePlanners.pinned : threadMovePlanners.active;
-      const movedId = `${thread.environmentId}:${thread.id}`;
+      const orderingTarget = threadMovePlanners.targets.get(
+        scopedThreadKey(thread.environmentId, thread.id),
+      );
+      const canMove = (direction: "up" | "down") =>
+        pendingOrder === null &&
+        orderingTarget !== undefined &&
+        threadMovePlanners[orderingTarget.section](orderingTarget.representativeKey, direction) !==
+          null;
       return (
         <ThreadListV2Row
           onNewThreadOnBranch={props.onNewThreadOnBranch}
           thread={thread}
           variant={item.item.variant}
-          hasQueuedMessages={queuedThreadKeys.has(movedId)}
+          hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
+          depth={item.item.depth}
+          descendantCount={item.item.descendantCount}
+          descendantsExpanded={item.item.descendantsExpanded}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
           snoozePresetMinute={nowMinute}
@@ -862,6 +890,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
+          onToggleDescendants={handleToggleSubagentThread}
           onRegenerateThreadTitle={handleRegenerateThreadTitle}
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -869,12 +898,12 @@ export function HomeScreen(props: HomeScreenProps) {
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           reorderSupported={
-            item.item.pinned
+            orderingTarget?.section === "pinned"
               ? pinReorderEnvironmentIds.has(thread.environmentId)
               : activeReorderEnvironmentIds.has(thread.environmentId)
           }
-          canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
-          canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
+          canMoveUp={canMove("up")}
+          canMoveDown={canMove("down")}
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -902,6 +931,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleUnsettleThread,
+      handleToggleSubagentThread,
       pinningEnvironmentIds,
       machineByEnvironmentId,
       pinReorderEnvironmentIds,
@@ -1005,6 +1035,7 @@ export function HomeScreen(props: HomeScreenProps) {
               variant="compact"
               thread={thread}
               hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
+              depth={item.depth}
               environmentLabel={
                 props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }

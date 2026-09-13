@@ -26,7 +26,11 @@ import {
   createThreadMovePlanner,
   threadDropLifecycle,
 } from "../threads/threadOrder";
-import { getThreadListV2OrderedSection } from "../threads/threadListV2";
+import {
+  getThreadListV2OrderedSection,
+  getThreadListV2DropUnpinTargets,
+  resolveThreadListV2OrderingTargets,
+} from "../threads/threadListV2";
 
 /** Version skew: never send settle/unsettle to a server that predates them
     (capability defaults false on decode for older servers). */
@@ -406,7 +410,7 @@ export function useThreadListActions(): {
     [pinMutation],
   );
   const unpinThread = useCallback(
-    async (thread: EnvironmentThreadShell) => {
+    async (thread: EnvironmentThreadShell, options?: { haptic?: boolean }) => {
       if (!environmentSupportsPinning(thread.environmentId)) {
         Alert.alert(
           "Could not unpin thread",
@@ -414,7 +418,7 @@ export function useThreadListActions(): {
         );
         return false;
       }
-      selectionHaptic();
+      if (options?.haptic !== false) selectionHaptic();
       const result = await unpinMutation({
         environmentId: thread.environmentId,
         input: { threadId: thread.id },
@@ -491,13 +495,14 @@ export function useThreadListActions(): {
       );
       if (!current || current.archivedAt !== null) return false;
       thread = current;
-      const section =
+      const requestedSection =
         typeof direction === "object" && direction.section !== undefined
           ? direction.section
           : thread.pinnedAt != null
             ? "pinned"
             : "active";
-      if (section === "settled") {
+      if (requestedSection === "settled") {
+        if (thread.parentRelation?.kind === "subagent") return false;
         if (!environmentSupportsSettlement(thread.environmentId)) return false;
         appAtomRegistry.set(threadDropBusyAtom, true);
         try {
@@ -507,6 +512,37 @@ export function useThreadListActions(): {
         }
       }
       const configs = appAtomRegistry.get(environmentServerConfigsAtom);
+      const orderingScope = {
+        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
+        threads: shells,
+        now: new Date().toISOString(),
+        settlementEnvironmentIds: new Set(
+          [...configs].flatMap(([id, config]) =>
+            config.environment.capabilities.threadSettlement === true ? [id] : [],
+          ),
+        ),
+        snoozeEnvironmentIds: new Set(
+          [...configs].flatMap(([id, config]) =>
+            config.environment.capabilities.threadSnooze === true ? [id] : [],
+          ),
+        ),
+      };
+      const orderingTargets = resolveThreadListV2OrderingTargets(orderingScope);
+      const orderingTarget = orderingTargets.get(scopedThreadKey(thread.environmentId, thread.id));
+      const explicitSection = typeof direction === "object" && direction.section !== undefined;
+      if (thread.parentRelation?.kind === "subagent") return false;
+      if (orderingTarget === undefined && !explicitSection) return false;
+      const section = explicitSection ? requestedSection : orderingTarget!.section;
+      const rootKey = scopedThreadKey(thread.environmentId, thread.id);
+      const crossesSection = orderingTarget !== undefined && section !== orderingTarget.section;
+      const movedId = crossesSection ? rootKey : (orderingTarget?.representativeKey ?? rootKey);
+      if (typeof direction === "object" && direction.targetId !== null) {
+        direction = {
+          ...direction,
+          targetId:
+            orderingTargets.get(direction.targetId)?.representativeKey ?? direction.targetId,
+        };
+      }
       const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {
         const capabilities = configs.get(environmentId)?.environment.capabilities;
         return section === "pinned"
@@ -520,33 +556,24 @@ export function useThreadListActions(): {
         );
         return false;
       }
-      const ordered = getThreadListV2OrderedSection({
-        threads: shells,
-        section,
-        now: new Date().toISOString(),
-        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
-        settlementEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSettlement === true ? [id] : [],
-          ),
-        ),
-        snoozeEnvironmentIds: new Set(
-          [...configs].flatMap(([id, config]) =>
-            config.environment.capabilities.threadSnooze === true ? [id] : [],
-          ),
-        ),
-      });
+      const ordered = getThreadListV2OrderedSection({ ...orderingScope, section });
       const assignments = createThreadMovePlanner({
         allThreads: shells,
         ordered,
         section,
         reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),
-      })(scopedThreadKey(thread.environmentId, thread.id), direction);
+      })(movedId, direction);
       if (assignments === null) return false;
       const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
       const crossSection = !ordered.some(
-        (row) => row.id === thread.id && row.environmentId === thread.environmentId,
+        (row) => scopedThreadKey(row.environmentId, row.id) === movedId,
       );
+      const unpinTargets =
+        crossSection && section === "active"
+          ? getThreadListV2DropUnpinTargets({ ...orderingScope, thread })
+          : [];
+      if (unpinTargets.some((target) => !environmentSupportsPinning(target.environmentId)))
+        return false;
       if (
         crossSection &&
         (((section === "pinned" || thread.pinnedAt != null) &&
@@ -568,7 +595,7 @@ export function useThreadListActions(): {
             createPendingThreadOrder({
               section,
               ordered,
-              movedId: scopedThreadKey(thread.environmentId, thread.id),
+              movedId,
               direction,
               assignments,
             }),
@@ -590,7 +617,9 @@ export function useThreadListActions(): {
               return false;
             }
           } else {
-            if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+            for (const target of unpinTargets) {
+              if (!(await unpinThread(target, { haptic: false }))) return false;
+            }
             if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
             if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
           }
