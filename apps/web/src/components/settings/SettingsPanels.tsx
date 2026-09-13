@@ -126,6 +126,7 @@ import {
   NumberFieldInput,
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Slider } from "../ui/slider";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -1062,19 +1063,6 @@ export function AppearanceSettingsPanel() {
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
-  const glassOpacityRatio =
-    (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
-  const glassOpacitySliderStyle = {
-    "--settings-slider-progress": `${glassOpacityRatio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - glassOpacityRatio}rem`,
-  } as CSSProperties;
-  const appearanceContrastRatio =
-    (settings.appearanceContrast - MIN_APPEARANCE_CONTRAST) /
-    (MAX_APPEARANCE_CONTRAST - MIN_APPEARANCE_CONTRAST);
-  const appearanceContrastSliderStyle = {
-    "--settings-slider-progress": `${appearanceContrastRatio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - appearanceContrastRatio}rem`,
-  } as CSSProperties;
   const panelAnimationDurationRatio =
     (settings.panelAnimationDurationMs - MIN_PANEL_ANIMATION_DURATION_MS) /
     (MAX_PANEL_ANIMATION_DURATION_MS - MIN_PANEL_ANIMATION_DURATION_MS);
@@ -1082,7 +1070,6 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-progress": `${panelAnimationDurationRatio * 100}%`,
     "--settings-slider-fill-offset": `${0.5 - panelAnimationDurationRatio}rem`,
   } as CSSProperties;
-
   return (
     <SettingsPageContainer>
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
@@ -1127,9 +1114,9 @@ export function AppearanceSettingsPanel() {
               >
                 {settings.appearanceContrast}%
               </output>
-              <input
+              <Slider
                 aria-label="Contrast"
-                className="settings-slider min-w-0 flex-1"
+                className="min-w-0 flex-1"
                 id="appearance-contrast"
                 max={MAX_APPEARANCE_CONTRAST}
                 min={MIN_APPEARANCE_CONTRAST}
@@ -1144,8 +1131,6 @@ export function AppearanceSettingsPanel() {
                   }
                 }}
                 step={5}
-                style={appearanceContrastSliderStyle}
-                type="range"
                 value={settings.appearanceContrast}
               />
             </div>
@@ -1173,9 +1158,9 @@ export function AppearanceSettingsPanel() {
               >
                 {settings.glassOpacity}%
               </output>
-              <input
+              <Slider
                 aria-label="Glass opacity"
-                className="settings-slider min-w-0 flex-1"
+                className="min-w-0 flex-1"
                 id="glass-opacity"
                 max={MAX_GLASS_OPACITY}
                 min={MIN_GLASS_OPACITY}
@@ -1190,8 +1175,6 @@ export function AppearanceSettingsPanel() {
                   }
                 }}
                 step={5}
-                style={glassOpacitySliderStyle}
-                type="range"
                 value={settings.glassOpacity}
               />
             </div>

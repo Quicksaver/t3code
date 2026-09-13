@@ -181,6 +181,7 @@ export interface CodexSessionRuntimeOptions {
   readonly appServerArgs?: ReadonlyArray<string>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -193,6 +194,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -542,11 +545,12 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
-function buildThreadStartParams(input: {
+export function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly magiParticipant?: boolean;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -556,6 +560,15 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    ...(input.magiParticipant
+      ? {
+          config: {
+            multi_agent_mode: {
+              custom: "Participant subagents are unavailable in this Magi session.",
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -617,6 +630,8 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
 }): Effect.Effect<
@@ -635,12 +650,14 @@ export function buildTurnStartParams(input: {
   }
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
-  const collaborationMode = buildCodexCollaborationMode({
-    ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
-    browserToolsAvailable: input.browserToolsAvailable ?? true,
-  });
+  const collaborationMode = input.magiParticipant
+    ? undefined
+    : buildCodexCollaborationMode({
+        ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
+        browserToolsAvailable: input.browserToolsAvailable ?? true,
+      });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
@@ -651,6 +668,7 @@ export function buildTurnStartParams(input: {
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
+    ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
   }).pipe(
     Effect.mapError((cause) =>
@@ -724,6 +742,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly magiParticipant?: boolean;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -731,6 +750,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.magiParticipant !== undefined ? { magiParticipant: input.magiParticipant } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -2377,6 +2397,9 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.magiParticipant !== undefined
+          ? { magiParticipant: options.magiParticipant }
+          : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2455,6 +2478,10 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+            ...(options.magiParticipant !== undefined
+              ? { magiParticipant: options.magiParticipant }
+              : {}),
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.

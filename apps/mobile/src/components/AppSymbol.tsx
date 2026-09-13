@@ -29,7 +29,10 @@ import IconChevronDown from "@tabler/icons-react-native/IconChevronDown";
 import IconChevronLeft from "@tabler/icons-react-native/IconChevronLeft";
 import IconChevronRight from "@tabler/icons-react-native/IconChevronRight";
 import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
+import IconCircle from "@tabler/icons-react-native/IconCircle";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
+import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
+import IconCircleMinus from "@tabler/icons-react-native/IconCircleMinus";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
@@ -120,6 +123,8 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "chart.bar.xaxis": IconChartBar,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
+  circle: IconCircle,
+  "circle.dotted": IconCircleDashed,
   clock: IconClock,
   ticket: IconTicket,
   cloud: IconCloud,
@@ -134,6 +139,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "doc.text": IconFileText,
   ellipsis: IconDots,
   moon: IconMoon,
+  "minus.circle": IconCircleMinus,
   "ellipsis.circle": IconDotsCircleHorizontal,
   "exclamationmark.triangle": IconAlertTriangle,
   eye: IconEye,

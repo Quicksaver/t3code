@@ -8,7 +8,7 @@ import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePrimarySessionState } from "~/environments/primary";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
-import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
+import { isEnvironmentSettingsAvailable } from "./EnvironmentSettingsPanel.logic";
 import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
@@ -30,7 +30,7 @@ export function useAvailableSettingsSearchItems() {
         hasCloudPublicConfig: hasCloudPublicConfig(),
         hasEnvironment: environments.some((environment) => environment.serverConfig !== null),
         hasProviderSettingsEnvironment: environments.some((environment) =>
-          isProviderSettingsEnvironmentAvailable({
+          isEnvironmentSettingsAvailable({
             connectionPhase: environment.connection.phase,
             hasServerConfig: environment.serverConfig !== null,
           }),
