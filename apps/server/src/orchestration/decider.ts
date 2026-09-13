@@ -55,6 +55,117 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+type ThreadDeleteCommand = Extract<OrchestrationCommand, { type: "thread.delete" }>;
+type ThreadArchiveCommand = Extract<OrchestrationCommand, { type: "thread.archive" }>;
+
+function compareSubagentLifecycleOrder(left: OrchestrationThread, right: OrchestrationThread) {
+  const leftDepth = left.parentRelation?.kind === "subagent" ? left.parentRelation.depth : 0;
+  const rightDepth = right.parentRelation?.kind === "subagent" ? right.parentRelation.depth : 0;
+  if (leftDepth !== rightDepth) {
+    return rightDepth - leftDepth;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function subagentParentRelationCreatesCycle(
+  readModel: OrchestrationReadModel,
+  threadId: OrchestrationThread["id"],
+  parentRelation: OrchestrationThread["parentRelation"] | undefined,
+): boolean {
+  if (parentRelation?.kind !== "subagent") {
+    return false;
+  }
+
+  const threadById = new Map(readModel.threads.map((thread) => [thread.id, thread] as const));
+  const visitedThreadIds = new Set<OrchestrationThread["id"]>([threadId]);
+  let currentThreadId = parentRelation.parentThreadId;
+
+  while (true) {
+    if (visitedThreadIds.has(currentThreadId)) {
+      return true;
+    }
+    visitedThreadIds.add(currentThreadId);
+
+    const currentThread = threadById.get(currentThreadId);
+    if (currentThread?.parentRelation?.kind !== "subagent") {
+      return false;
+    }
+    currentThreadId = currentThread.parentRelation.parentThreadId;
+  }
+}
+
+const validateSubagentParentRelation = Effect.fn("validateSubagentParentRelation")(
+  function* (input: {
+    readonly readModel: OrchestrationReadModel;
+    readonly command: OrchestrationCommand;
+    readonly threadId: OrchestrationThread["id"];
+    readonly parentRelation: OrchestrationThread["parentRelation"] | undefined;
+  }) {
+    if (input.parentRelation?.kind !== "subagent") {
+      return;
+    }
+
+    if (subagentParentRelationCreatesCycle(input.readModel, input.threadId, input.parentRelation)) {
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: input.command.type,
+        detail: `Thread '${input.threadId}' parent relation would create a cycle.`,
+      });
+    }
+
+    yield* requireThread({
+      readModel: input.readModel,
+      command: input.command,
+      threadId: input.parentRelation.parentThreadId,
+    });
+  },
+);
+
+function listActiveSubagentDescendants(
+  readModel: OrchestrationReadModel,
+  parentThreadId: OrchestrationThread["id"],
+): readonly OrchestrationThread[] {
+  const descendants: OrchestrationThread[] = [];
+  const pendingParentThreadIds = new Set<OrchestrationThread["id"]>([parentThreadId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const thread of readModel.threads) {
+      if (thread.deletedAt !== null || thread.parentRelation?.kind !== "subagent") {
+        continue;
+      }
+      if (!pendingParentThreadIds.has(thread.parentRelation.parentThreadId)) {
+        continue;
+      }
+      if (pendingParentThreadIds.has(thread.id)) {
+        continue;
+      }
+      descendants.push(thread);
+      pendingParentThreadIds.add(thread.id);
+      changed = true;
+    }
+  }
+
+  return descendants.toSorted(compareSubagentLifecycleOrder);
+}
+
+function listProjectLifecycleRootThreads(
+  readModel: OrchestrationReadModel,
+  projectId: OrchestrationThread["projectId"],
+): readonly OrchestrationThread[] {
+  const activeThreads = listThreadsByProjectId(readModel, projectId).filter(
+    (thread) => thread.deletedAt === null,
+  );
+  const activeThreadIds = new Set(activeThreads.map((thread) => thread.id));
+
+  return activeThreads.filter((thread) => {
+    if (thread.parentRelation?.kind !== "subagent") {
+      return true;
+    }
+    return !activeThreadIds.has(thread.parentRelation.parentThreadId);
+  });
+}
+
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
  * approval or user-input request with no later resolution for the same
@@ -340,16 +451,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       if (activeThreads.length > 0) {
+        const lifecycleRootThreads = listProjectLifecycleRootThreads(readModel, command.projectId);
+        const threadsToDelete =
+          lifecycleRootThreads.length > 0
+            ? lifecycleRootThreads
+            : activeThreads.toSorted(compareSubagentLifecycleOrder);
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...activeThreads.map(
-              (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
-                type: "thread.delete",
-                commandId: command.commandId,
-                threadId: thread.id,
-              }),
-            ),
+            ...threadsToDelete.map((thread): ThreadDeleteCommand => ({
+              type: "thread.delete",
+              commandId: command.commandId,
+              threadId: thread.id,
+            })),
             {
               type: "project.delete",
               commandId: command.commandId,
@@ -386,6 +500,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* validateSubagentParentRelation({
+        readModel,
+        command,
+        threadId: command.threadId,
+        parentRelation: command.parentRelation,
+      });
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -404,6 +524,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...(command.parentRelation !== undefined
+            ? { parentRelation: command.parentRelation }
+            : {}),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -416,6 +539,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantDeleteCommands = listActiveSubagentDescendants(
+        readModel,
+        command.threadId,
+      ).map((thread): ThreadDeleteCommand => ({
+        type: "thread.delete",
+        commandId: command.commandId,
+        threadId: thread.id,
+      }));
+      if (descendantDeleteCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantDeleteCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -438,6 +575,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantArchiveCommands = listActiveSubagentDescendants(readModel, command.threadId)
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread): ThreadArchiveCommand => ({
+          type: "thread.archive",
+          commandId: command.commandId,
+          threadId: thread.id,
+        }));
+      if (descendantArchiveCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantArchiveCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -902,6 +1052,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* validateSubagentParentRelation({
+        readModel,
+        command,
+        threadId: command.threadId,
+        parentRelation: command.parentRelation,
+      });
       // Old clients only see the derived single link. Unlink that request through
       // the same command path as modern clients, including stack dismissal, while
       // retaining other links they cannot see. Historical metadata events still replay unchanged.
@@ -1026,6 +1182,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             : {}),
           ...(branch !== undefined ? { branch } : {}),
           ...(command.worktreePath !== undefined ? { worktreePath: command.worktreePath } : {}),
+          ...(command.parentRelation !== undefined
+            ? { parentRelation: command.parentRelation }
+            : {}),
           ...(command.linkedPullRequest !== undefined
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
@@ -1525,7 +1684,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          metadata: { deferredTurn: true },
+          metadata: thread.parentRelation?.kind === "subagent" ? {} : { deferredTurn: true },
         })),
         type: "thread.message-sent",
         payload: {
@@ -1535,7 +1694,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           text: command.message.text,
           attachments: command.message.attachments,
           ...(command.message.context !== undefined ? { context: command.message.context } : {}),
-          turnId: null,
+          turnId: command.turnId ?? null,
           streaming: false,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,

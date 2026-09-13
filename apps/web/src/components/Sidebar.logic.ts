@@ -15,7 +15,7 @@ import {
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
-  getThreadSortTimestamp,
+  getLatestThreadSortTimestamp,
   resolveSettledThreadTimestamp,
   sortThreads,
   toSortableTimestamp,
@@ -25,6 +25,9 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
+
+export { canUseRootThreadLifecycleActions } from "./threadActionMenu.logic";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -50,7 +53,7 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // activities, growing as agents work) for as long as the row stays visible,
 // so this limit is a direct renderer-heap and server-load multiplier — keep
 // it small; cold opens still render instantly from the cached snapshot.
-const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
+export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 // A small buffer keeps the next few rows warm without leasing every row that
 // content-visibility leaves mounted below the scroll viewport.
 const SIDEBAR_ROW_SUBSCRIPTION_OVERSCAN_PX = 160;
@@ -465,15 +468,20 @@ export async function archiveSelectedThreadEntries<
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;
+  canUseLifecycleActions: boolean;
 }): readonly ContextMenuItem<"mark-unread" | "archive" | "delete">[] {
   return [
     { id: "mark-unread", label: `Mark unread (${input.count})` },
-    {
-      id: "archive",
-      label: `Archive (${input.count})`,
-      disabled: input.hasRunningThread,
-    },
-    { id: "delete", label: `Delete (${input.count})`, destructive: true },
+    ...(input.canUseLifecycleActions
+      ? [
+          {
+            id: "archive" as const,
+            label: `Archive (${input.count})`,
+            disabled: input.hasRunningThread,
+          },
+          { id: "delete" as const, label: `Delete (${input.count})`, destructive: true },
+        ]
+      : []),
   ];
 }
 
@@ -641,6 +649,16 @@ export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+export function canUseSelectedRootThreadLifecycleActions(
+  threadKeys: readonly string[],
+  threadByKey: ReadonlyMap<string, Pick<SidebarThreadSummary, "parentRelation">>,
+): boolean {
+  return threadKeys.every((threadKey) => {
+    const thread = threadByKey.get(threadKey);
+    return thread !== undefined && canUseRootThreadLifecycleActions(thread);
+  });
 }
 
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
@@ -1148,10 +1166,7 @@ export function getProjectSortTimestamp(
   sortOrder: Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
   if (projectThreads.length > 0) {
-    return projectThreads.reduce(
-      (latest, thread) => Math.max(latest, getThreadSortTimestamp(thread, sortOrder)),
-      Number.NEGATIVE_INFINITY,
-    );
+    return getLatestThreadSortTimestamp(projectThreads, sortOrder);
   }
 
   if (sortOrder === "created_at") {

@@ -24,8 +24,8 @@ import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } 
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
-import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -41,6 +41,7 @@ import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+  canUseThreadListV2LifecycleActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -98,6 +99,79 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
+const SIDEBAR_V2_ROW_HORIZONTAL_INSET = 12;
+const SCREEN_V2_ROW_HORIZONTAL_INSET = 20;
+const THREAD_LINEAGE_INDENT_STEP = 16;
+
+function subagentStatusPresentation(thread: EnvironmentThreadShell): {
+  readonly label: string;
+  readonly className: string;
+} {
+  const relation = thread.parentRelation?.kind === "subagent" ? thread.parentRelation : null;
+  if (relation?.status === "running") {
+    return { label: "Running", className: "text-adaptive-sky-600-400" };
+  }
+  if (relation?.status === "errored") {
+    return { label: "Failed", className: "text-adaptive-red-700-300" };
+  }
+  if (relation?.status === "interrupted") {
+    return { label: "Interrupted", className: "text-foreground-tertiary" };
+  }
+  if (relation?.status === "stopped") {
+    return { label: "Stopped", className: "text-foreground-tertiary" };
+  }
+  return { label: "Completed", className: "text-foreground-tertiary" };
+}
+
+const ThreadListV2SubagentIndicator = memo(function ThreadListV2SubagentIndicator(props: {
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly selected: boolean;
+  readonly testID: string;
+  readonly threadTitle: string;
+  readonly onToggle: () => void;
+}) {
+  const theme = useUniwindTheme();
+  const borderColor = theme["--color-border"];
+  const backgroundColor = theme["--color-subtle"];
+  const foregroundColor = theme["--color-foreground-muted"];
+  if (props.count === 0) return null;
+  return (
+    <Pressable
+      accessibilityLabel={`${props.expanded ? "Collapse" : "Expand"} ${props.count} subagent${props.count === 1 ? "" : "s"} for ${props.threadTitle}`}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: props.expanded }}
+      hitSlop={6}
+      testID={props.testID}
+      onPress={(event) => {
+        event.stopPropagation();
+        props.onToggle();
+      }}
+      className="flex-row items-center gap-0.5 rounded-md border px-1.5 py-0.5"
+      style={({ pressed }) => ({
+        backgroundColor: props.selected ? "rgba(255,255,255,0.16)" : backgroundColor,
+        borderColor: props.selected ? "rgba(255,255,255,0.28)" : borderColor,
+        opacity: pressed ? 0.65 : 1,
+      })}
+    >
+      <Text
+        className={cn(
+          "text-2xs font-t3-medium tabular-nums",
+          props.selected ? "text-white" : "text-foreground-muted",
+        )}
+      >
+        {props.count}
+      </Text>
+      <SymbolView
+        name="chevron.right"
+        size={9}
+        tintColor={props.selected ? "#ffffff" : foregroundColor}
+        type="monochrome"
+        style={{ transform: [{ rotate: props.expanded ? "90deg" : "0deg" }] }}
+      />
+    </Pressable>
+  );
+});
 
 function ThreadListV2Section(props: {
   readonly label: string;
@@ -446,6 +520,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly variant: "card" | "slim";
   /** A message for this thread is waiting in the outbox. */
   readonly hasQueuedMessages?: boolean;
+  readonly depth: number;
+  readonly descendantCount: number;
+  readonly descendantsExpanded: boolean;
   /** Snoozed-shelf row: shows its wake time and offers Wake. */
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
@@ -490,6 +567,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly onToggleDescendants: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   /** False on environments whose server predates thread.settle/unsettle:
@@ -533,6 +611,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onUnsnoozeThread,
     onUnsettleThread,
     onArchiveThread,
+    onToggleDescendants,
     onPinThread,
     onUnpinThread,
     onMoveThread,
@@ -546,9 +625,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
+  const depthInset = Math.max(0, props.depth) * THREAD_LINEAGE_INDENT_STEP;
+  const canUseLifecycleActions = canUseThreadListV2LifecycleActions(thread);
+  const isSubagent = thread.parentRelation?.kind === "subagent";
 
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
+  const subagentStatus = subagentStatusPresentation(thread);
+  const iconSubtleColor = theme["--color-foreground-tertiary"];
+  const toggleDescendants = useCallback(
+    () => onToggleDescendants(thread),
+    [onToggleDescendants, thread],
+  );
   // Settled rows label by the same stamp they sort by, so order and label
   // can't disagree. updatedAt is always present, so the resolver never
   // returns null here.
@@ -709,6 +797,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [arrangementMenuItems, titleMenuItems],
   );
+  const subagentMenuActions = useMemo<MenuAction[]>(
+    () => [
+      ...arrangementMenuItems.filter((item) => item.id === "pin" || item.id === "unpin"),
+      ...titleMenuItems,
+    ],
+    [arrangementMenuItems, titleMenuItems],
+  );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
@@ -848,6 +943,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
         {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+        <ThreadListV2SubagentIndicator
+          count={props.descendantCount}
+          expanded={props.descendantsExpanded}
+          selected={selected}
+          testID={`thread-list-v2-subagent-toggle-${thread.id}`}
+          threadTitle={thread.title}
+          onToggle={toggleDescendants}
+        />
         {pinnedRow ? (
           <SymbolView
             name="pin"
@@ -1002,7 +1105,76 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
 
   const rowContent = (close: () => void) =>
-    variant === "card" ? (
+    isSubagent ? (
+      <RowPressable
+        accessibilityHint="Opens the subagent conversation"
+        accessibilityLabel={thread.title}
+        accessibilityRole="button"
+        accessibilityState={{ selected }}
+        className={sidebarPane ? undefined : "bg-screen"}
+        onPress={() => {
+          close();
+          onSelectThread(thread);
+        }}
+        interactionClassName={rowAppearance.interactionClassName}
+        interactionOpacity={rowAppearance.interactionOpacity}
+        style={rowAppearance.style}
+      >
+        <View
+          className="min-h-[40px] flex-row items-center gap-2 py-1.5"
+          style={{
+            paddingLeft:
+              (sidebarPane ? SIDEBAR_V2_ROW_HORIZONTAL_INSET : SCREEN_V2_ROW_HORIZONTAL_INSET) +
+              depthInset,
+            paddingRight: sidebarPane
+              ? SIDEBAR_V2_ROW_HORIZONTAL_INSET
+              : SCREEN_V2_ROW_HORIZONTAL_INSET,
+          }}
+        >
+          <SymbolView
+            name={{ ios: "cpu", android: "auto_awesome" }}
+            size={13}
+            tintColor={selected ? "#ffffff" : iconSubtleColor}
+            type="monochrome"
+          />
+          <Text
+            className={cn(
+              "flex-1 text-sm font-t3-medium",
+              selected
+                ? selectedThreadRowColors.foregroundClassName
+                : rowAppearance.mutedForegroundClassName,
+            )}
+            numberOfLines={1}
+          >
+            {thread.title}
+          </Text>
+          <ThreadListV2SubagentIndicator
+            count={props.descendantCount}
+            expanded={props.descendantsExpanded}
+            selected={selected}
+            testID={`thread-list-v2-subagent-toggle-${thread.id}`}
+            threadTitle={thread.title}
+            onToggle={toggleDescendants}
+          />
+          <Text
+            className={cn(
+              "text-xs",
+              selected
+                ? selectedThreadRowColors.mutedForegroundClassName
+                : subagentStatus.className,
+            )}
+          >
+            {subagentStatus.label}
+          </Text>
+        </View>
+        {!sidebarPane ? (
+          <View
+            className="h-px bg-border-subtle"
+            style={{ marginLeft: SCREEN_V2_ROW_HORIZONTAL_INSET + depthInset }}
+          />
+        ) : null}
+      </RowPressable>
+    ) : variant === "card" ? (
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={rowAppearance.interactionClassName}
@@ -1055,10 +1227,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {/* Settled history recedes: dimmed favicon + muted title. */}
         <View
-          className={cn(
-            "min-h-[44px] flex-row items-center gap-2.5 py-2",
-            sidebarPane ? "px-3" : "px-5",
-          )}
+          className="min-h-[44px] flex-row items-center gap-2.5 py-2"
+          style={{
+            paddingLeft:
+              (sidebarPane ? SIDEBAR_V2_ROW_HORIZONTAL_INSET : SCREEN_V2_ROW_HORIZONTAL_INSET) +
+              depthInset,
+            paddingRight: sidebarPane
+              ? SIDEBAR_V2_ROW_HORIZONTAL_INSET
+              : SCREEN_V2_ROW_HORIZONTAL_INSET,
+          }}
         >
           {props.project ? (
             <View className="opacity-40">
@@ -1093,6 +1270,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
           </View>
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
+          <ThreadListV2SubagentIndicator
+            count={props.descendantCount}
+            expanded={props.descendantsExpanded}
+            selected={selected}
+            testID={`thread-list-v2-subagent-toggle-${thread.id}`}
+            threadTitle={thread.title}
+            onToggle={toggleDescendants}
+          />
           <Text
             className={cn(
               "text-sm tabular-nums",
@@ -1111,6 +1296,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       </RowPressable>
     );
+
+  if (!canUseLifecycleActions) {
+    if (subagentMenuActions.length === 0) {
+      return rowContent(() => undefined);
+    }
+    return (
+      <ControlPillMenu
+        actions={subagentMenuActions}
+        onPressAction={handleMenuAction}
+        shouldOpenOnLongPress
+      >
+        {rowContent(() => undefined)}
+      </ControlPillMenu>
+    );
+  }
 
   return (
     <View collapsable={false}>

@@ -443,6 +443,9 @@ export function projectEvent(
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
+            ...(payload.parentRelation !== undefined
+              ? { parentRelation: payload.parentRelation }
+              : {}),
             messages: [],
             activities: [],
             checkpoints: [],
@@ -613,6 +616,9 @@ export function projectEvent(
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.parentRelation !== undefined
+                ? { parentRelation: payload.parentRelation }
+                : {}),
               ...(payload.title !== undefined ? { title: payload.title } : {}),
               ...(payload.titleState !== undefined ? { titleState: payload.titleState } : {}),
               ...(payload.titleRegeneration !== undefined

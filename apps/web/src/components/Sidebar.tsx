@@ -44,6 +44,7 @@ import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   CircleAlertIcon,
@@ -110,8 +111,10 @@ import {
 } from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
+  buildSidebarProjectScopeKeys,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
+  selectSidebarProjectLineageThreads,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -123,6 +126,7 @@ import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { filterStandaloneSubagentConversations } from "../subagentControls";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
@@ -151,13 +155,15 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { buildThreadActionMenuItems, isRootThreadLifecycleAction } from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
+  canUseRootThreadLifecycleActions,
+  canUseSelectedRootThreadLifecycleActions,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
@@ -190,6 +196,14 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import {
+  collectSearchableSidebarThreads,
+  resolveSidebarSubagentCount,
+  rootSidebarThreads,
+  sidebarSubagentDescendantCounts,
+  sidebarThreadKey,
+  visibleSidebarThreads,
+} from "./SidebarSubagents.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
   createSidebarCollisionDetection,
@@ -269,6 +283,45 @@ function threadTimeLabel(thread: SidebarThreadSummary): string {
   return compactSidebarTimeLabel(formatRelativeTimeLabel(timestamp));
 }
 
+export function SubagentCountButton(props: {
+  count: number;
+  threadTitle: string;
+  onOpen: () => void;
+}) {
+  if (props.count === 0) return null;
+  return (
+    <button
+      type="button"
+      data-testid="sidebar-v2-subagent-indicator"
+      aria-label={`Open ${props.count} running subagent${props.count === 1 ? "" : "s"} for ${props.threadTitle}`}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        props.onOpen();
+      }}
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border/70 bg-background/60 px-1 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >
+      <BotIcon aria-hidden className="size-3" />
+      <span>{props.count}</span>
+    </button>
+  );
+}
+
+export function SubagentRunningTooltipRow(props: { count: number }) {
+  if (props.count === 0) return null;
+  return (
+    <div
+      data-testid="sidebar-v2-tooltip-subagent-indicator"
+      className="flex min-w-0 items-center gap-2"
+    >
+      <BotIcon aria-hidden className="size-3 shrink-0 stroke-muted-foreground" />
+      <div className="min-w-0 truncate text-foreground/75">
+        {props.count} subagent{props.count === 1 ? "" : "s"} running
+      </div>
+    </div>
+  );
+}
+
 // Settled rows read "how long ago did this wrap up", matching their sort
 // key: both go through resolveSettledThreadTimestamp so label and order can't
 // disagree.
@@ -329,6 +382,7 @@ function SidebarThreadTooltip({
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
+  subagentCount,
 }: {
   thread: SidebarThreadSummary;
   project: ProjectFaviconProject | null;
@@ -345,6 +399,7 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
+  subagentCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
@@ -422,6 +477,7 @@ function SidebarThreadTooltip({
               </div>
             </div>
           ) : null}
+          <SubagentRunningTooltipRow count={subagentCount} />
           {thread.session?.lastError ? (
             <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
@@ -970,7 +1026,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   // Slim rows are either settled (action: un-settle) or merely quiet
@@ -1030,7 +1086,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
    * composer. Absent when the sidebar cannot open server threads.
    */
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
-}) {
+  trailingDecoration: ReactNode;
+  subagentCount: number;
+};
+
+const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     isRenaming,
     onCancelRename,
@@ -1109,8 +1169,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
 
-  // Same semantics as the legacy sidebar (never-visited counts as read):
-  // switching sidebars must not light up every historical thread as unread.
+  // Same semantics as v1 (never-visited counts as read): flipping the beta
+  // flag must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
   // A woken thread reappears at its original position (the sort is
@@ -1230,6 +1290,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
+      subagentCount={props.subagentCount}
     />
   );
 
@@ -1401,7 +1462,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     ],
   );
 
-  // All sidebar rows share one surface model. Live threads used to look
+  // All Sidebar V2 rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
@@ -1633,6 +1694,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               remain visible AND clickable while the row is hovered. Only
               the time/jump label yields to the settle affordance. */}
             {prBadge}
+            {props.trailingDecoration}
             {sortable?.isDragging ? (
               dragDestination
             ) : (
@@ -1947,6 +2009,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
                 </span>
               ) : null}
+              {props.trailingDecoration}
               <span
                 aria-hidden
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
@@ -1985,6 +2048,36 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {detailsTooltip}
       </Tooltip>
     </li>
+  );
+});
+
+type SidebarSubagentThreadRowProps = Omit<
+  SidebarThreadRowProps,
+  "subagentCount" | "trailingDecoration"
+> & {
+  descendantCount: number;
+  activeSubagentCount?: number | undefined;
+  onOpenSubagents: () => void;
+};
+
+/** Keeps branch-specific lineage decoration outside upstream's row model. */
+const SidebarSubagentThreadRow = memo(function SidebarSubagentThreadRow(
+  props: SidebarSubagentThreadRowProps,
+) {
+  const { activeSubagentCount, descendantCount, onOpenSubagents, ...rowProps } = props;
+  const count = resolveSidebarSubagentCount({ descendantCount, activeSubagentCount });
+  return (
+    <SidebarThreadRow
+      {...rowProps}
+      subagentCount={count}
+      trailingDecoration={
+        <SubagentCountButton
+          count={count}
+          threadTitle={props.thread.title}
+          onOpen={onOpenSubagents}
+        />
+      }
+    />
   );
 });
 
@@ -2143,6 +2236,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           branchMismatch={branchMismatch}
           terminalStatus={terminalStatus}
           terminalProcessCount={runningTerminalIds.length}
+          subagentCount={0}
         />
       </Tooltip>
     </li>
@@ -2160,6 +2254,9 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const subagentConversationVisibilityEnabled = useClientSettings(
+    (s) => s.subagentConversationVisibilityEnabled,
+  );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2431,14 +2528,7 @@ export default function Sidebar() {
     [projectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(
-    () =>
-      scopedProjectGroup === null
-        ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
+    () => buildSidebarProjectScopeKeys(scopedProjectGroup),
     [scopedProjectGroup],
   );
   // A persisted scope whose project is gone falls back to all projects, but
@@ -2482,6 +2572,26 @@ export default function Sidebar() {
     clearSelection();
   }, [clearSelection, projectScopeKey]);
 
+  const structuralThreads = useMemo(
+    () => selectSidebarProjectLineageThreads({ threads, projectKeys: scopedProjectKeys }),
+    [scopedProjectKeys, threads],
+  );
+  const runningThreadKeys = useMemo(
+    () => new Set(visibleSidebarThreads(structuralThreads, null).map(sidebarThreadKey)),
+    [structuralThreads],
+  );
+  const rootThreads = useMemo(
+    () => rootSidebarThreads(structuralThreads, structuralThreads),
+    [structuralThreads],
+  );
+  const descendantCountByThreadKey = useMemo(
+    () =>
+      sidebarSubagentDescendantCounts({
+        allThreads: structuralThreads,
+        visibleThreadKeys: runningThreadKeys,
+      }),
+    [runningThreadKeys, structuralThreads],
+  );
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
       if (isMobile) {
@@ -2546,19 +2656,13 @@ export default function Sidebar() {
     // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
-    const visible = threads.filter(
-      (thread) =>
-        thread.archivedAt === null &&
-        (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-    );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
     const snoozed: EnvironmentThreadShell[] = [];
     const settled: EnvironmentThreadShell[] = [];
     const draggable = new Set<string>();
     const activeReorderable = new Set<string>();
-    for (const thread of visible) {
+    for (const thread of rootThreads) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user
@@ -2636,15 +2740,39 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    nowMinute,
+    optimisticDrop,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+    rootThreads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const searchableThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
-    [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
+    () =>
+      collectSearchableSidebarThreads({
+        allThreads: filterStandaloneSubagentConversations(
+          structuralThreads,
+          subagentConversationVisibilityEnabled,
+        ),
+        activeRoots: [...pinnedThreads, ...activeThreads],
+        snoozedRoots: snoozedThreads,
+        settledRoots: settledThreads,
+      }),
+    [
+      activeThreads,
+      pinnedThreads,
+      settledThreads,
+      snoozedThreads,
+      structuralThreads,
+      subagentConversationVisibilityEnabled,
+    ],
   );
   const searchEnvironmentIds = useMemo(
     () =>
@@ -2784,13 +2912,7 @@ export default function Sidebar() {
     () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
-  const orderedThreadKeys = useMemo(
-    () =>
-      orderedThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      ),
-    [orderedThreads],
-  );
+  const orderedThreadKeys = useMemo(() => orderedThreads.map(sidebarThreadKey), [orderedThreads]);
   // Rows call back into the click handler without carrying the ordered list as
   // a prop — a fresh array identity per shell update would defeat every row's
   // memoization. The ref keeps shift-range-select working against the list as
@@ -2798,13 +2920,7 @@ export default function Sidebar() {
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   orderedThreadKeysRef.current = orderedThreadKeys;
   const threadByKey = useMemo(
-    () =>
-      new Map(
-        orderedThreads.map(
-          (thread) =>
-            [scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)), thread] as const,
-        ),
-      ),
+    () => new Map(orderedThreads.map((thread) => [sidebarThreadKey(thread), thread] as const)),
     [orderedThreads],
   );
   // Handlers read these through refs: depending on per-update Map/Set
@@ -2869,6 +2985,13 @@ export default function Sidebar() {
       });
     },
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
+  );
+  const openThreadAgents = useCallback(
+    (threadRef: ScopedThreadRef) => {
+      useRightPanelStore.getState().open(threadRef, "agents");
+      navigateToThread(threadRef);
+    },
+    [navigateToThread],
   );
 
   // Dropping files on a row opens that thread and attaches the files there.
@@ -3811,6 +3934,10 @@ export default function Sidebar() {
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
+      const canUseLifecycleActions = canUseSelectedRootThreadLifecycleActions(
+        threadKeys,
+        threadByKeyRef.current,
+      );
       // Snooze (N) is offered when every selected thread can actually take
       // it — a mixed selection with blocked-on-you work would half-apply.
       const selectionNow = new Date();
@@ -3818,11 +3945,13 @@ export default function Sidebar() {
         const thread = threadByKeyRef.current.get(threadKey);
         return thread ? [thread] : [];
       });
-      const canSnoozeSelection = selectedThreads.every(
-        (thread) =>
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true &&
-          canSnooze(thread, { now: selectionNow.toISOString() }),
-      );
+      const canSnoozeSelection =
+        canUseLifecycleActions &&
+        selectedThreads.every(
+          (thread) =>
+            serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze ===
+              true && canSnooze(thread, { now: selectionNow.toISOString() }),
+        );
       const titleRegenerationThreads = selectedThreads.filter(
         (thread) =>
           serverConfigs.get(thread.environmentId)?.environment.capabilities
@@ -3851,7 +3980,7 @@ export default function Sidebar() {
         api.contextMenu.show(
           [
             ...(unpinMenuItem ? [unpinMenuItem] : []),
-            { id: "settle", label: `Settle (${count})` },
+            ...(canUseLifecycleActions ? [{ id: "settle", label: `Settle (${count})` }] : []),
             ...(canSnoozeSelection
               ? [
                   {
@@ -3869,7 +3998,9 @@ export default function Sidebar() {
               : []),
             ...(titleRegenerationMenuItem ? [titleRegenerationMenuItem] : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
-            { id: "delete", label: `Delete (${count})`, destructive: true },
+            ...(canUseLifecycleActions
+              ? [{ id: "delete", label: `Delete (${count})`, destructive: true }]
+              : []),
           ],
           position,
         ),
@@ -3967,6 +4098,7 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value === "settle") {
+        if (!canUseLifecycleActions) return;
         // Post-settle navigation must skip threads settling in this same
         // batch — they are all leaving the card block together. Rows that
         // are already explicitly settled are skipped: nothing to do on a
@@ -3990,6 +4122,7 @@ export default function Sidebar() {
         return;
       }
       if (clicked.value !== "delete") return;
+      if (!canUseLifecycleActions) return;
       if (confirmThreadDelete) {
         const confirmed = await settlePromise(() =>
           api.dialogs.confirm(
@@ -4059,13 +4192,14 @@ export default function Sidebar() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const canUseLifecycleActions = canUseRootThreadLifecycleActions(thread);
         const threadWorkspacePath =
           thread.worktreePath ??
           projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
           null;
-        // Un-settle pins the thread active until real activity clears the pin.
-        // Environments without
-        // the settlement capability get no lifecycle items at all.
+        // Environment capability and per-thread root permission are separate
+        // menu inputs. Unsupported environments get no lifecycle items, and
+        // subagents never receive root lifecycle actions.
         const supportsSettlement =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
           true;
@@ -4113,12 +4247,20 @@ export default function Sidebar() {
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
+              permissions: { rootLifecycle: canUseLifecycleActions },
               snoozePresets,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (
+          clicked.value !== null &&
+          !canUseLifecycleActions &&
+          isRootThreadLifecycleAction(clicked.value)
+        ) {
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -4226,6 +4368,7 @@ export default function Sidebar() {
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
           case "archive": {
+            if (!canUseLifecycleActions) return;
             if (confirmThreadArchive) {
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(`Archive thread "${thread.title}"?`),
@@ -4254,6 +4397,7 @@ export default function Sidebar() {
             return;
           }
           case "delete": {
+            if (!canUseLifecycleActions) return;
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(
@@ -4705,7 +4849,7 @@ export default function Sidebar() {
                         const isCard = section === "active" || section === "pinned";
                         const rowVariant = isCard ? "card" : "slim";
                         return (
-                          <SidebarThreadRow
+                          <SidebarSubagentThreadRow
                             // Fade between card and compact rows while the outer
                             // sortable wrapper keeps its identity during a drag.
                             key={`${threadKey}:${rowVariant}`}
@@ -4793,6 +4937,11 @@ export default function Sidebar() {
                             onSnooze={attemptSnooze}
                             onUnsnooze={attemptUnsnooze}
                             onUnpin={attemptUnpin}
+                            descendantCount={descendantCountByThreadKey.get(threadKey) ?? 0}
+                            activeSubagentCount={thread.activeSubagentCount}
+                            onOpenSubagents={() =>
+                              openThreadAgents(scopeThreadRef(thread.environmentId, thread.id))
+                            }
                             onAcknowledgeWoke={acknowledgeWoke}
                             onFileDropThreads={handleThreadFileDrop}
                           />
