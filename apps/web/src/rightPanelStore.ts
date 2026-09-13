@@ -5,7 +5,7 @@
  * surface descriptors and the active surface, while each feature continues to
  * own its durable resource state. Browser surfaces point at preview tab ids,
  * terminal surfaces point at terminal session ids, file surfaces point at
- * workspace paths, and diff/files remain singleton surfaces.
+ * workspace paths, and diff/files/source-control remain singleton surfaces.
  */
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -26,6 +26,7 @@ const RIGHT_PANEL_KINDS = [
   "preview",
   "device",
   "terminal",
+  "source-control",
   "pull-request",
   "pull-requests",
   "agents",
@@ -40,10 +41,19 @@ export interface DeviceTabTarget {
   name: string;
 }
 
+export interface TerminalSurfaceTarget {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly cwd: string;
+  readonly worktreePath: string | null;
+  readonly label?: string;
+}
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | { id: "source-control"; kind: "source-control" }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -51,6 +61,7 @@ export type RightPanelSurface =
       terminalIds: string[];
       activeTerminalId: string;
       splitDirection?: "horizontal" | "vertical";
+      target?: TerminalSurfaceTarget;
     }
   | { id: "diff"; kind: "diff" }
   | { id: "files"; kind: "files" }
@@ -58,6 +69,7 @@ export type RightPanelSurface =
       id: `file:${string}` | `attachment:${string}`;
       kind: "file";
       /** Workspace-relative, or absolute for a host file outside the workspace. */
+      cwd?: string;
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
@@ -94,6 +106,8 @@ const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
+// v12 replaces ambiguous cwd/path file-surface ids with encoded tuple ids.
+// v13 lets a terminal tab retain a project and environment other than its conversation's.
 const RIGHT_PANEL_STORAGE_VERSION = 13;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
@@ -136,7 +150,7 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number, cwd?: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -149,7 +163,7 @@ interface RightPanelStoreState {
       url?: string;
     },
   ) => void;
-  openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  openTerminal: (ref: ScopedThreadRef, terminalId: string, target?: TerminalSurfaceTarget) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -191,6 +205,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "source-control":
+      return { id: "source-control", kind };
     case "agents":
       return { id: "agents", kind };
     case "device":
@@ -205,16 +221,43 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
 
+export function fileSurfaceId(relativePath: string, cwd?: string): `file:${string}` {
+  return `file:${encodeURIComponent(JSON.stringify([cwd ?? null, relativePath]))}`;
+}
+
 const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  cwd?: string,
 ): RightPanelSurface => ({
-  id: `file:${relativePath}`,
+  id: fileSurfaceId(relativePath, cwd),
   kind: "file",
+  ...(cwd ? { cwd } : {}),
   relativePath,
   revealLine,
   revealRequestId,
+});
+
+export function terminalSurfaceId(
+  terminalId: string,
+  target?: Pick<TerminalSurfaceTarget, "environmentId">,
+): `terminal:${string}` {
+  return target
+    ? `terminal:${encodeURIComponent(JSON.stringify([target.environmentId, terminalId]))}`
+    : `terminal:${terminalId}`;
+}
+
+const terminalSurface = (
+  terminalId: string,
+  target?: TerminalSurfaceTarget,
+): RightPanelSurface => ({
+  id: terminalSurfaceId(terminalId, target),
+  kind: "terminal",
+  resourceId: terminalId,
+  terminalIds: [terminalId],
+  activeTerminalId: terminalId,
+  ...(target ? { target } : {}),
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -224,14 +267,6 @@ const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface =>
   revealLine: null,
   revealRequestId: 0,
   attachment,
-});
-
-const terminalSurface = (terminalId: string): RightPanelSurface => ({
-  id: `terminal:${terminalId}`,
-  kind: "terminal",
-  resourceId: terminalId,
-  terminalIds: [terminalId],
-  activeTerminalId: terminalId,
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
@@ -366,12 +401,16 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             .map(([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
+              const migratedSurfaceIds = new Map<string, string>();
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     // Dropped surface kind: plans now render inline in the
                     // transcript (v9).
                     if ((surface as { kind?: string }).kind === "plan") return [];
                     if (surface.kind === "file") {
+                      if (typeof surface.relativePath !== "string") return [];
+                      const { cwd: _persistedCwd, ...surfaceWithoutCwd } = surface;
+                      const cwd = typeof _persistedCwd === "string" ? _persistedCwd : undefined;
                       const revealLine =
                         typeof surface.revealLine === "number" &&
                         Number.isFinite(surface.revealLine)
@@ -383,7 +422,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      const migratedSurface = fileSurface(
+                        surfaceWithoutCwd.relativePath,
+                        revealLine,
+                        revealRequestId,
+                        cwd,
+                      );
+                      migratedSurfaceIds.set(surface.id, migratedSurface.id);
+                      return [migratedSurface];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -405,11 +451,29 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       ];
                     }
                     if (surface.kind !== "terminal") return [surface];
-                    if (
-                      !("resourceId" in surface) ||
-                      typeof surface.resourceId !== "string" ||
-                      surface.id !== `terminal:${surface.resourceId}`
-                    ) {
+                    if (!("resourceId" in surface) || typeof surface.resourceId !== "string") {
+                      return [];
+                    }
+                    const rawTarget = "target" in surface ? surface.target : undefined;
+                    const target =
+                      rawTarget &&
+                      typeof rawTarget === "object" &&
+                      typeof rawTarget.environmentId === "string" &&
+                      typeof rawTarget.projectId === "string" &&
+                      typeof rawTarget.cwd === "string" &&
+                      (rawTarget.worktreePath === null ||
+                        typeof rawTarget.worktreePath === "string")
+                        ? {
+                            environmentId: rawTarget.environmentId,
+                            projectId: rawTarget.projectId,
+                            cwd: rawTarget.cwd,
+                            worktreePath: rawTarget.worktreePath,
+                            ...(typeof rawTarget.label === "string"
+                              ? { label: rawTarget.label }
+                              : {}),
+                          }
+                        : undefined;
+                    if (surface.id !== terminalSurfaceId(surface.resourceId, target)) {
                       return [];
                     }
                     const terminalIds =
@@ -429,20 +493,26 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       terminalIds.includes(surface.activeTerminalId)
                         ? surface.activeTerminalId
                         : (terminalIds[0] ?? surface.resourceId);
+                    const { target: _persistedTarget, ...surfaceWithoutTarget } = surface;
                     return [
                       {
-                        ...surface,
+                        ...surfaceWithoutTarget,
                         terminalIds: terminalIds.length > 0 ? terminalIds : [surface.resourceId],
                         activeTerminalId,
+                        ...(target ? { target } : {}),
                       },
                     ];
                   })
                 : [];
               const rawActiveSurfaceId = validThreadState?.activeSurfaceId;
+              const migratedActiveSurfaceId =
+                typeof rawActiveSurfaceId === "string"
+                  ? (migratedSurfaceIds.get(rawActiveSurfaceId) ?? rawActiveSurfaceId)
+                  : rawActiveSurfaceId;
               const persistedActiveSurfaceId = surfaces.some(
-                (surface) => surface.id === rawActiveSurfaceId,
+                (surface) => surface.id === migratedActiveSurfaceId,
               )
-                ? (rawActiveSurfaceId ?? null)
+                ? (migratedActiveSurfaceId ?? null)
                 : rawActiveSurfaceId === "pull-request"
                   ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
                   : null;
@@ -578,13 +648,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
-      openFile: (ref, relativePath, line) =>
+      openFile: (ref, relativePath, line, cwd) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
-            const surfaceId = `file:${relativePath}` as const;
+            const surfaceId = fileSurfaceId(relativePath, cwd);
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -593,6 +663,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               (existing?.revealRequestId ?? 0) + 1,
+              cwd,
             );
             return {
               isOpen: true,
@@ -617,10 +688,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         ),
-      openTerminal: (ref, terminalId) =>
+      openTerminal: (ref, terminalId, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, terminalSurface(terminalId)),
+            upsertSurface(current, terminalSurface(terminalId, target)),
           ),
         ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>

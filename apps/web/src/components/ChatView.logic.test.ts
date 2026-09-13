@@ -24,6 +24,7 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type RightPanelSurface,
+  fileSurfaceId,
   pullRequestSurface,
   selectActiveRightPanelSurface,
   useRightPanelStore,
@@ -44,6 +45,7 @@ import {
   canLoadStandaloneThreadConversation,
   deriveAgentChildConversationByProviderId,
   deriveAgentChildLifecycleByProviderId,
+  clearThreadErrorRecord,
   deriveComposerSendState,
   deriveLockedProvider,
   dismissBranchMismatchForSession,
@@ -53,12 +55,14 @@ import {
   hasEnvironmentReconnectWarningGraceElapsed,
   shouldRefocusComposerOnWindowFocus,
   isBranchMismatchDismissedForSession,
+  isLatestRequestSequence,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveRightPanelControlsOwner,
   resolveDisabledSubagentParentThreadRef,
+  retainThreadKeyRecord,
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
   restorePlanFollowUpComposer,
@@ -78,6 +82,7 @@ import {
   resolveThreadSwitchTimeline,
   threadKeysShareEnvironment,
   timelineHasEphemeralPreviewUrls,
+  shouldApplySourceControlMetadataUpdateResult,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
   codexArtifactTemplatePromptToAppend,
@@ -373,7 +378,7 @@ describe("proactive panels", () => {
       ).toBe(false);
       expect(
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref)?.id,
-      ).toBe("file:src/second.ts");
+      ).toBe(fileSurfaceId("src/second.ts"));
     },
   );
 
@@ -2291,6 +2296,87 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         targetThreadId: threadId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("clearThreadErrorRecord", () => {
+  it("clears only the selected thread error", () => {
+    expect(
+      clearThreadErrorRecord(
+        {
+          "environment-local:thread-1": "metadata failed",
+          "environment-local:thread-2": "send failed",
+        },
+        "environment-local:thread-1",
+      ),
+    ).toEqual({
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    });
+  });
+
+  it("keeps the same object when the selected thread has no error", () => {
+    const existing = {
+      "environment-local:thread-1": null,
+      "environment-local:thread-2": "send failed",
+    };
+
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-1")).toBe(existing);
+    expect(clearThreadErrorRecord(existing, "environment-local:thread-3")).toBe(existing);
+  });
+});
+
+describe("retainThreadKeyRecord", () => {
+  it("drops stale thread keys", () => {
+    expect(
+      retainThreadKeyRecord(
+        {
+          "environment-local:thread-1": "send failed",
+          "environment-local:thread-2": null,
+        },
+        new Set(["environment-local:thread-1"]),
+      ),
+    ).toEqual({
+      "environment-local:thread-1": "send failed",
+    });
+  });
+
+  it("preserves reference identity when no keys are pruned", () => {
+    const existing = {
+      "environment-local:thread-1": "send failed",
+    };
+
+    expect(retainThreadKeyRecord(existing, new Set(["environment-local:thread-1"]))).toBe(existing);
+  });
+});
+
+describe("shouldApplySourceControlMetadataUpdateResult", () => {
+  it("allows only the latest metadata update result for a thread", () => {
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 2,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: 2,
+        requestSequence: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySourceControlMetadataUpdateResult({
+        currentSequence: undefined,
+        requestSequence: 1,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isLatestRequestSequence", () => {
+  it("rejects a stop completion after a newer thread starts another request", () => {
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 3 })).toBe(false);
+    expect(isLatestRequestSequence({ currentSequence: 4, requestSequence: 4 })).toBe(true);
   });
 });
 

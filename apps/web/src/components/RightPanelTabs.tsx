@@ -21,6 +21,7 @@ import {
   ChevronRight,
   FileDiff,
   Files,
+  GitBranch,
   GitPullRequest,
   GitPullRequestArrow,
   Globe2,
@@ -37,6 +38,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -71,8 +73,17 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
-import { previewBridge } from "./preview/previewBridge";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
+import {
+  browserTabMuteMenuItem,
+  resolveBrowserTabRuntimeState,
+  setBrowserTabAudioMuted,
+} from "./rightPanelBrowserTabState";
+import {
+  type AddPanelSurfaceAction,
+  buildAddSurfaceActions,
+  surfaceShortcutActionForKey,
+} from "./rightPanelSurfaceActions";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
 interface RightPanelTabsProps {
@@ -115,6 +126,7 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddSourceControl: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
@@ -124,6 +136,7 @@ interface RightPanelTabsProps {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  sourceControlAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
@@ -151,19 +164,6 @@ export function shouldOpenDefaultBrowserProfileFromMenuClick(
 ): boolean {
   return pointerType !== "touch";
 }
-
-const SURFACE_DISABLED_REASONS = {
-  browser: "Browser previews are only available in the T3 Code desktop app.",
-  terminal: "Terminal surfaces are only available from a project thread.",
-  files: "Files are only available when a project is open.",
-  diff: "Diff is only available for server threads in Git repositories.",
-  pullRequest: "This thread's branch has no pull request yet.",
-  pullRequests: "No linked pull requests are available for this thread.",
-  agents: "Agents are only available from a thread.",
-  device: "Devices are only available from a thread.",
-  magi: "Magi is not available for this conversation.",
-} as const;
-
 /** Overlays that must win over the launcher's letter shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="dialog-popup"]',
@@ -175,19 +175,6 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
-
-/** One-line unavailability hints for the empty-state rows. */
-const SURFACE_UNAVAILABLE_HINTS = {
-  browser: "Only available in the desktop app.",
-  terminal: "Available when a project is open.",
-  files: "Available when a project is open.",
-  diff: "Available for Git repositories.",
-  pullRequest: "No pull request on this branch yet.",
-  pullRequests: "No linked pull requests available.",
-  agents: "Available from a thread.",
-  device: "Available from a thread.",
-  magi: "Available for Magi-capable conversations.",
-} as const;
 
 type TabContextMenuAction =
   | "rename"
@@ -202,63 +189,6 @@ const TAB_SCROLL_EDGE_TOLERANCE = 1;
 
 function tabScrollViewport(root: HTMLDivElement | null): HTMLDivElement | null {
   return root?.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]') ?? null;
-}
-
-/**
- * Desktop preview tab backing a surface, or null for non-preview surfaces, the
- * "new browser tab" placeholder, and the web build where no desktop tab exists.
- */
-function previewTabIdOf(
-  surface: RightPanelSurface,
-  sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
-): string | null {
-  if (surface.kind !== "preview" || !surface.resourceId) return null;
-  return sessions[surface.resourceId]?.tabId ?? null;
-}
-
-/**
- * Label and enabled state for a preview tab's mute menu entry.
- * Stays disabled until desktop overlay state arrives: a server session id can
- * resolve while the preview manager's createTab is still in flight, and muting
- * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
- */
-export function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
-  const muted = input.overlay?.audioMuted ?? false;
-  return {
-    label: muted ? "Unmute tab" : "Mute tab",
-    disabled: input.overlay === null || !input.canResolveRuntimeTabId,
-  };
-}
-
-type TabAudioState = "none" | "audible" | "muted";
-
-/**
- * A muted tab that is not making sound shows nothing: mute is armed silently,
- * and the indicator only appears once there is audio to speak of.
- */
-function tabAudioState(overlay: DesktopPreviewOverlay | null): TabAudioState {
-  if (!overlay?.audible) return "none";
-  return overlay.audioMuted ? "muted" : "audible";
-}
-
-type SurfaceShortcutEvent = Pick<
-  KeyboardEvent,
-  "altKey" | "ctrlKey" | "defaultPrevented" | "isComposing" | "key" | "metaKey"
->;
-
-export function surfaceShortcutActionForKey<
-  const Action extends { available: boolean; shortcut: string },
->(actions: readonly Action[], event: SurfaceShortcutEvent): Action | null {
-  if (event.defaultPrevented || event.isComposing) return null;
-  if (event.metaKey || event.ctrlKey || event.altKey) return null;
-  return (
-    actions.find(
-      (action) => action.available && action.shortcut.toLowerCase() === event.key.toLowerCase(),
-    ) ?? null
-  );
 }
 
 /**
@@ -289,7 +219,7 @@ function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement })
 
 function SurfaceMenuItem(props: {
   available: boolean;
-  disabledReason?: string;
+  disabledReason: string | undefined;
   shortcut: string;
   onClick: () => void;
   children: ReactNode;
@@ -317,119 +247,16 @@ function SurfaceMenuItem(props: {
  * surfaces stay visible with a one-line reason.
  */
 function RightPanelEmptyState(props: {
-  onAddBrowser: () => void;
+  actions: readonly AddPanelSurfaceAction[];
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
-  onAddTerminal: () => void;
-  onAddDiff: () => void;
-  onAddFiles: () => void;
-  onAddPullRequest: () => void;
-  onAddPullRequests: () => void;
-  onAddAgents: () => void;
-  onAddDevice: () => void;
-  onAddMagi?: () => void;
-  browserAvailable: boolean;
-  terminalAvailable: boolean;
-  diffAvailable: boolean;
-  filesAvailable: boolean;
-  pullRequestAvailable: boolean;
-  pullRequestsAvailable: boolean;
-  agentsAvailable: boolean;
-  deviceAvailable: boolean;
-  magiAvailable?: boolean;
-  liveAgentCount: number;
-  liveMagiRunCount?: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
-      onClick: props.onAddBrowser,
-      badgeCount: 0,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
-      onClick: props.onAddTerminal,
-      badgeCount: 0,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
-      onClick: props.onAddFiles,
-      badgeCount: 0,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
-      onClick: props.onAddDiff,
-      badgeCount: 0,
-    },
-    {
-      label: "Pull request",
-      icon: GitPullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
-      onClick: props.onAddPullRequest,
-      badgeCount: 0,
-    },
-    {
-      label: "Linked pull requests",
-      icon: GitPullRequestArrow,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
-      onClick: props.onAddPullRequests,
-      badgeCount: 0,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
-      onClick: props.onAddAgents,
-      badgeCount: props.liveAgentCount,
-    },
-    {
-      label: "Device",
-      description: "Watch an iOS Simulator or Android Emulator.",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
-      onClick: props.onAddDevice,
-      badgeCount: 0,
-    },
-    {
-      label: "Magi",
-      description: "Configure or inspect consensus runs.",
-      icon: Network,
-      shortcut: "G",
-      available: props.magiAvailable === true,
-      disabledReason: SURFACE_UNAVAILABLE_HINTS.magi,
-      onClick: props.onAddMagi ?? (() => undefined),
-      badgeCount: props.liveMagiRunCount ?? 0,
-    },
-  ] as const;
+  const actions = props.actions;
 
-  type SurfaceAction = (typeof actions)[number];
+  type SurfaceAction = AddPanelSurfaceAction;
 
   const availableActions = actions.filter((action) => action.available);
   const highlightIndex =
@@ -640,9 +467,12 @@ function surfaceTitle(
       );
     case "terminal":
       return (
+        surface.target?.label ??
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
+    case "source-control":
+      return "Version Control";
     case "pull-request":
       return `#${surface.number}`;
     case "pull-requests":
@@ -724,6 +554,8 @@ function SurfaceIcon({
       );
     case "terminal":
       return <TerminalSquare className="size-3 shrink-0" />;
+    case "source-control":
+      return <GitBranch className="size-3 shrink-0" />;
     case "pull-request":
       return (
         <PullRequestSurfaceIcon
@@ -846,6 +678,59 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
+  const [emptyStateActions, menuActions] = useMemo(() => {
+    const actionProps = {
+      browserAvailable: props.browserAvailable,
+      diffAvailable: props.diffAvailable,
+      filesAvailable: props.filesAvailable,
+      terminalAvailable: props.terminalAvailable,
+      sourceControlAvailable: props.sourceControlAvailable,
+      pullRequestAvailable: props.pullRequestAvailable,
+      onAddPullRequests: props.onAddPullRequests,
+      onAddDevice: props.onAddDevice,
+      pullRequestsAvailable: props.pullRequestsAvailable,
+      deviceAvailable: props.deviceAvailable,
+      agentsAvailable: props.agentsAvailable,
+      liveAgentCount: props.liveAgentCount,
+      onAddMagi: props.onAddMagi ?? (() => undefined),
+      magiAvailable: props.magiAvailable === true,
+      liveMagiRunCount: props.liveMagiRunCount ?? 0,
+      onAddBrowser: props.onAddBrowser,
+      onAddDiff: props.onAddDiff,
+      onAddFiles: props.onAddFiles,
+      onAddAgents: props.onAddAgents,
+      onAddPullRequest: props.onAddPullRequest,
+      onAddSourceControl: props.onAddSourceControl,
+      onAddTerminal: props.onAddTerminal,
+    };
+    return [
+      buildAddSurfaceActions(actionProps, "empty-state"),
+      buildAddSurfaceActions(actionProps, "menu"),
+    ] as const;
+  }, [
+    props.onAddPullRequests,
+    props.onAddDevice,
+    props.pullRequestsAvailable,
+    props.deviceAvailable,
+    props.agentsAvailable,
+    props.browserAvailable,
+    props.diffAvailable,
+    props.filesAvailable,
+    props.liveAgentCount,
+    props.onAddMagi,
+    props.magiAvailable,
+    props.liveMagiRunCount,
+    props.onAddAgents,
+    props.onAddBrowser,
+    props.onAddDiff,
+    props.onAddFiles,
+    props.onAddPullRequest,
+    props.onAddSourceControl,
+    props.onAddTerminal,
+    props.pullRequestAvailable,
+    props.sourceControlAvailable,
+    props.terminalAvailable,
+  ]);
   const [tabScrollState, setTabScrollState] = useState({
     hasOverflow: false,
     canScrollLeft: false,
@@ -883,83 +768,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
-  const addSurfaceActions = [
-    {
-      label: "Browser",
-      icon: Globe2,
-      shortcut: "B",
-      available: props.browserAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.browser,
-      onClick: props.onAddBrowser,
-    },
-    {
-      label: "Terminal",
-      icon: TerminalSquare,
-      shortcut: "T",
-      available: props.terminalAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.terminal,
-      onClick: props.onAddTerminal,
-    },
-    {
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.files,
-      onClick: props.onAddFiles,
-    },
-    {
-      label: "Diff",
-      icon: FileDiff,
-      shortcut: "D",
-      available: props.diffAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.diff,
-      onClick: props.onAddDiff,
-    },
-    {
-      label: "Pull request",
-      icon: GitPullRequest,
-      shortcut: "P",
-      available: props.pullRequestAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
-      onClick: props.onAddPullRequest,
-    },
-    {
-      label: "Linked pull requests",
-      icon: GitPullRequestArrow,
-      shortcut: "L",
-      available: props.pullRequestsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
-      onClick: props.onAddPullRequests,
-    },
-    {
-      label: "Agents",
-      icon: Bot,
-      shortcut: "A",
-      available: props.agentsAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.agents,
-      onClick: props.onAddAgents,
-    },
-    {
-      label: "Device",
-      icon: Smartphone,
-      shortcut: "M",
-      available: props.deviceAvailable,
-      disabledReason: SURFACE_DISABLED_REASONS.device,
-      onClick: props.onAddDevice,
-    },
-    {
-      label: "Magi",
-      icon: Network,
-      shortcut: "G",
-      available: props.magiAvailable === true,
-      disabledReason: SURFACE_DISABLED_REASONS.magi,
-      onClick: props.onAddMagi ?? (() => undefined),
-    },
-  ] as const;
-
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
+    const action = surfaceShortcutActionForKey(menuActions, event.nativeEvent);
     if (!action) return;
     event.preventDefault();
     event.stopPropagation();
@@ -984,21 +794,23 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (surface.kind === "file" && surface.attachment === undefined) {
         items.push({ id: "copy-path", label: "Copy path" });
       }
-      const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
+      const browserTab = resolveBrowserTabRuntimeState({
+        surface,
+        sessions: props.previewSessions,
+        desktopByTabId: props.desktopByTabId,
+        previewRuntimeTabId: props.previewRuntimeTabId,
+      });
       // Desktop overlay state only arrives once the preview manager has created
       // the tab. A server session id alone can still be ahead of that, and
       // muting then fails with PreviewTabNotFoundError that nobody surfaces.
-      const menuOverlay = menuPreviewTabId
-        ? (props.desktopByTabId[menuPreviewTabId] ?? null)
-        : null;
-      const menuMuted = menuOverlay?.audioMuted ?? false;
+      const menuMuted = browserTab.overlay?.audioMuted ?? false;
       if (surface.kind === "preview") {
         // Not gated on audibility: silencing a quiet tab ahead of time is the
         // point, so the item is offered whenever the tab is mutable at all.
         items.push({
           id: "toggle-mute",
-          ...tabMuteMenuItem({
-            overlay: menuOverlay,
+          ...browserTabMuteMenuItem({
+            overlay: browserTab.overlay,
             canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
           }),
         });
@@ -1033,14 +845,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           }
           break;
         case "toggle-mute": {
-          // menuOverlay repeats the disabled gate above: the desktop tab must
+          // The overlay repeats the disabled gate above: the desktop tab must
           // exist before it can be addressed, however the menu was dismissed.
-          const runtimeTabId =
-            menuPreviewTabId && menuOverlay
-              ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
-              : null;
-          if (runtimeTabId) {
-            void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
+          if (browserTab.runtimeTabId && browserTab.overlay) {
+            setBrowserTabAudioMuted(browserTab.runtimeTabId, !menuMuted);
           }
           break;
         }
@@ -1157,15 +965,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               const active = surface.id === props.activeSurfaceId;
               const pending = props.pendingSurfaceIds.has(surface.id);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
-              const previewTabId = previewTabIdOf(surface, props.previewSessions);
-              // Desktop state is keyed by the session id, but desktop actions
-              // must be addressed with the runtime id.
-              const audio = tabAudioState(
-                previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
-              );
-              const audioRuntimeTabId = previewTabId
-                ? (props.previewRuntimeTabId?.(previewTabId) ?? null)
-                : null;
+              const browserTab = resolveBrowserTabRuntimeState({
+                surface,
+                sessions: props.previewSessions,
+                desktopByTabId: props.desktopByTabId,
+                previewRuntimeTabId: props.previewRuntimeTabId,
+              });
+              const audioRuntimeTabId = browserTab.runtimeTabId;
               return (
                 <div
                   key={surface.id}
@@ -1200,24 +1006,27 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       />
                     ) : null}
                   </PanelTabCloseButton>
-                  {audio === "none" || !audioRuntimeTabId ? null : (
+                  {browserTab.audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger
                         render={
                           <button
                             type="button"
                             className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
-                            aria-label={audio === "muted" ? `Unmute ${title}` : `Mute ${title}`}
+                            aria-label={
+                              browserTab.audio === "muted" ? `Unmute ${title}` : `Mute ${title}`
+                            }
                             onClick={(event) => {
                               // Sibling of the close button, inside a tab that
                               // activates on click: keep this to the toggle.
                               event.stopPropagation();
-                              void previewBridge
-                                ?.setAudioMuted(audioRuntimeTabId, audio !== "muted")
-                                .catch(() => undefined);
+                              setBrowserTabAudioMuted(
+                                audioRuntimeTabId,
+                                browserTab.audio !== "muted",
+                              );
                             }}
                           >
-                            {audio === "muted" ? (
+                            {browserTab.audio === "muted" ? (
                               <VolumeOff className="size-3" />
                             ) : (
                               <Volume2 className="size-3" />
@@ -1225,7 +1034,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           </button>
                         }
                       />
-                      <TooltipPopup>{audio === "muted" ? "Unmute tab" : "Mute tab"}</TooltipPopup>
+                      <TooltipPopup>
+                        {browserTab.audio === "muted" ? "Unmute tab" : "Mute tab"}
+                      </TooltipPopup>
                     </Tooltip>
                   )}
                   {renamingDevice === surface.id ? (
@@ -1294,7 +1105,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   className="min-w-44"
                   onKeyDownCapture={handleAddSurfaceMenuKeyDown}
                 >
-                  {addSurfaceActions.map((action) => {
+                  {menuActions.map((action) => {
                     const Icon = action.icon;
                     // Browser collapses into one row: clicking the trigger opens
                     // the default profile (the common case stays one click),
@@ -1347,7 +1158,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     return (
                       <SurfaceMenuItem
-                        key={action.label}
+                        key={action.id}
                         available={action.available}
                         disabledReason={action.disabledReason}
                         shortcut={action.shortcut}
@@ -1418,28 +1229,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
-            onAddBrowser={props.onAddBrowser}
+            actions={emptyStateActions}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
-            onAddTerminal={props.onAddTerminal}
-            onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
-            onAddPullRequest={props.onAddPullRequest}
-            onAddPullRequests={props.onAddPullRequests}
-            onAddAgents={props.onAddAgents}
-            onAddDevice={props.onAddDevice}
-            {...(props.onAddMagi ? { onAddMagi: props.onAddMagi } : {})}
-            browserAvailable={props.browserAvailable}
-            terminalAvailable={props.terminalAvailable}
-            diffAvailable={props.diffAvailable}
-            filesAvailable={props.filesAvailable}
-            pullRequestAvailable={props.pullRequestAvailable}
-            pullRequestsAvailable={props.pullRequestsAvailable}
-            agentsAvailable={props.agentsAvailable}
-            deviceAvailable={props.deviceAvailable}
-            {...(props.magiAvailable !== undefined ? { magiAvailable: props.magiAvailable } : {})}
-            liveAgentCount={props.liveAgentCount}
-            liveMagiRunCount={props.liveMagiRunCount ?? 0}
           />
         ) : (
           props.children

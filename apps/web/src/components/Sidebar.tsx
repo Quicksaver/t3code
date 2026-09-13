@@ -254,7 +254,13 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  Tooltip,
+  TooltipCardPopup,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -415,11 +421,10 @@ function SidebarThreadTooltip({
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   const magiRunLabel = activeMagiRunLabel(thread);
   return (
-    <TooltipPopup
+    <TooltipCardPopup
       side="right"
       align="start"
       sideOffset={4}
-      variant="glass"
       className="max-w-80 text-left whitespace-normal [&_[data-slot=tooltip-viewport]]:p-0"
     >
       <div className="flex min-w-0 max-w-80 flex-col gap-2 p-[var(--floating-content-inset)]">
@@ -508,7 +513,7 @@ function SidebarThreadTooltip({
           </div>
         ) : null}
       </div>
-    </TooltipPopup>
+    </TooltipCardPopup>
   );
 }
 

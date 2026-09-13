@@ -389,7 +389,7 @@ interface PublishRepositoryDialogProps {
   readonly gitCwd: string;
 }
 
-function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const sourceControlDiscovery = useEnvironmentQuery(
