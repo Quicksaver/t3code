@@ -65,9 +65,6 @@ install_dmg() {
 
   trap cleanup EXIT
 
-  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-  sleep 2
-
   print "Mounting $dmg..."
   hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_dir"
 
@@ -76,21 +73,33 @@ install_dmg() {
     return 1
   fi
 
+  signature_details="$(codesign -d --verbose=4 "$source_app" 2>&1 || true)"
+  if [[ "$signature_details" != *"Authority="* || "$signature_details" == *"Signature=adhoc"* ]]; then
+    print -u2 "The DMG needs certificate signing. Rebuild with pnpm run dist:desktop:dmg:arm64."
+    return 1
+  fi
+  codesign --verify --deep --strict --verbose=2 "$source_app"
+
+  # Existing certificate identities must remain compatible across updates.
+  # The first move from an ad-hoc build intentionally establishes a new identity.
+  if [[ -d "$APP_PATH" ]]; then
+    signature_details="$(codesign -d --verbose=4 "$APP_PATH" 2>&1 || true)"
+    if [[ "$signature_details" == *"Authority="* ]]; then
+      local requirement
+      requirement="$(codesign -d -r- "$APP_PATH" 2>&1 | sed -n 's/^designated => //p')"
+      if [[ -z "$requirement" ]] || ! codesign --verify --strict -R="$requirement" "$source_app"; then
+        print -u2 "The new build has a different signing identity. The installed app has been left untouched."
+        return 1
+      fi
+    fi
+  fi
+
+  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  sleep 2
+
   print "Installing to $APP_PATH..."
   rm -rf -- "$APP_PATH"
   ditto "$source_app" "$APP_PATH"
-
-  if ! codesign --verify --deep --strict "$APP_PATH" >/dev/null 2>&1; then
-    signature_details="$(codesign -d --verbose=4 "$APP_PATH" 2>&1 || true)"
-    if [[ "$signature_details" != *"Signature=adhoc"* &&
-      "$signature_details" != *"code object is not signed at all"* ]]; then
-      print -u2 "The installed application has an invalid non-local signature"
-      return 1
-    fi
-
-    print "Applying a local ad-hoc application signature..."
-    codesign --force --deep --sign - --preserve-metadata=entitlements "$APP_PATH"
-  fi
 
   print "Verifying the installed application..."
   codesign --verify --deep --strict --verbose=2 "$APP_PATH"
