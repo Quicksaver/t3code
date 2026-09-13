@@ -2874,10 +2874,12 @@ pending_approval_requests AS (
           "ProjectionSnapshotQuery.getCounts:decodeRow",
         ),
       ),
-      Effect.map((row): ProjectionSnapshotCounts => ({
-        projectCount: row.projectCount,
-        threadCount: row.threadCount,
-      })),
+      Effect.map(
+        (row): ProjectionSnapshotCounts => ({
+          projectCount: row.projectCount,
+          threadCount: row.threadCount,
+        }),
+      ),
     );
 
   const getEventReplayStats: ProjectionSnapshotQueryShape["getEventReplayStats"] = (input) =>
@@ -2888,10 +2890,12 @@ pending_approval_requests AS (
           "ProjectionSnapshotQuery.getEventReplayStats:decodeRow",
         ),
       ),
-      Effect.map((row): ProjectionEventReplayStats => ({
-        eventCount: row.eventCount,
-        payloadBytes: row.payloadBytes,
-      })),
+      Effect.map(
+        (row): ProjectionEventReplayStats => ({
+          eventCount: row.eventCount,
+          payloadBytes: row.payloadBytes,
+        }),
+      ),
     );
 
   const searchThreads: ProjectionSnapshotQueryShape["searchThreads"] = Effect.fn(
@@ -3063,15 +3067,17 @@ pending_approval_requests AS (
         projectId: threadRow.value.projectId,
         workspaceRoot: threadRow.value.workspaceRoot,
         worktreePath: threadRow.value.worktreePath,
-        checkpoints: checkpointRows.map((row): OrchestrationCheckpointSummary => ({
-          turnId: row.turnId,
-          checkpointTurnCount: row.checkpointTurnCount,
-          checkpointRef: row.checkpointRef,
-          status: row.status,
-          files: row.files,
-          assistantMessageId: row.assistantMessageId,
-          completedAt: row.completedAt,
-        })),
+        checkpoints: checkpointRows.map(
+          (row): OrchestrationCheckpointSummary => ({
+            turnId: row.turnId,
+            checkpointTurnCount: row.checkpointTurnCount,
+            checkpointRef: row.checkpointRef,
+            status: row.status,
+            files: row.files,
+            assistantMessageId: row.assistantMessageId,
+            completedAt: row.completedAt,
+          }),
+        ),
       });
     });
 

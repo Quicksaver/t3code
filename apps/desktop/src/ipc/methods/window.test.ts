@@ -1,4 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,9 +14,30 @@ import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import {
   getLocalEnvironmentBootstraps,
+  getPreviewAutomationHostMetadata,
   getWindowFullscreenState,
   pickProjectFavicon,
 } from "./window.ts";
+
+describe("getPreviewAutomationHostMetadata", () => {
+  for (const [hostPlatform, previewPlatform] of [
+    ["darwin", "macos"],
+    ["win32", "windows"],
+    ["linux", "linux"],
+    ["freebsd", "unknown"],
+  ] as const) {
+    it.effect(`maps ${hostPlatform} renderer identity metadata`, () =>
+      Effect.gen(function* () {
+        const result = yield* getPreviewAutomationHostMetadata.handler();
+
+        assert.deepEqual(result, {
+          label: NodeOS.hostname(),
+          platform: previewPlatform,
+        });
+      }).pipe(Effect.provideService(HostProcessPlatform, hostPlatform)),
+    );
+  }
+});
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
