@@ -2,6 +2,16 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
+/** Send shell syntax over stdin so the SSH login shell never reinterprets it. */
+export const remoteDeviceCommand = (script: string, stdin?: string, nodeBootstrap = false) => ({
+  remoteCommandArgs: ["sh", "-s"],
+  stdin:
+    remoteDeviceEnvironment(nodeBootstrap) +
+    (stdin === undefined
+      ? `${script} </dev/null\n`
+      : `printf %s ${quoteRemoteArg(stdin)} | { ${script}; }\n`),
+});
+
 /** Resolve common non-interactive SDK and Node locations without sourcing user shell scripts. */
 export const remoteDeviceEnvironment = (
   nodeBootstrap = false,

@@ -86,6 +86,8 @@ an optional identity file and port. These resolve on the environment server,
 so use the SSH configuration and keys available there. Password prompts are
 not supported.
 
+An SSH alias must resolve on every selected environment, including the host's own environment. If one environment reports that it cannot resolve the hostname, add the alias to that machine's SSH configuration or use a hostname or address that all selected environments can resolve.
+
 **Test connection** checks SSH, Node, npm, and platform tools without installing
 anything, with a result for each selected environment. Targets that resolve to
 the environment’s own machine are skipped, since its devices are already local.
