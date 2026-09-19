@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 import {
+  ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
@@ -53,6 +54,7 @@ import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
+import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
@@ -99,6 +101,8 @@ import {
   restoreComposerDraftSnapshot,
   updateComposerDraftSettings,
   scheduleUnusedComposerAttachmentCleanup,
+  setComposerDraftMagiArm,
+  useComposerDraft,
   type ComposerDraft,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
@@ -128,6 +132,7 @@ import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-sha
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
+import { MagiPanelSheet } from "./MagiPanelSheet";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -294,6 +299,8 @@ export function NewTaskDraftScreen(props: {
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [magiVisible, setMagiVisible] = useState(false);
+  const composerDraft = useComposerDraft(flow.draftKey);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const wasFocusedBeforePreviewRef = useRef(false);
@@ -1692,6 +1699,17 @@ export function NewTaskDraftScreen(props: {
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>
+                    {selectedEnvironmentServerConfig?.environment.capabilities.magi === true ? (
+                      <ComposerInlineControl
+                        accessibilityLabel={composerDraft.magiArm ? "Magi armed" : "Configure Magi"}
+                        disabled={isComposerInteractionLocked}
+                        emphasized={composerDraft.magiArm !== undefined}
+                        iconNode={<MagiConsensusIcon size={16} />}
+                        label={composerDraft.magiArm ? "Magi armed" : "Magi"}
+                        onPress={() => setMagiVisible(true)}
+                        showChevron={false}
+                      />
+                    ) : null}
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
@@ -1757,12 +1775,29 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const magiDraftKey = flow.draftKey;
+  const magiSheet =
+    magiDraftKey &&
+    selectedProject !== null &&
+    selectedEnvironmentServerConfig?.environment.capabilities.magi === true ? (
+      <MagiPanelSheet
+        visible={magiVisible}
+        environmentId={selectedProject.environmentId}
+        threadId={ThreadId.make(`draft-${magiDraftKey}`)}
+        activeRun={null}
+        draftArm={composerDraft.magiArm ?? null}
+        onDraftArmChange={(config) => setComposerDraftMagiArm(magiDraftKey, config)}
+        onClose={() => setMagiVisible(false)}
+      />
+    ) : null;
+
   if (isAndroid) {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
         <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
         <MaterialScreenContent>
+          {magiSheet}
           {heroViewport}
 
           <KeyboardStickyView
@@ -1792,6 +1827,8 @@ export function NewTaskDraftScreen(props: {
           onPress={closeNewTask}
         />
       </NativeHeaderToolbar>
+
+      {magiSheet}
 
       {heroViewport}
       <KeyboardStickyView

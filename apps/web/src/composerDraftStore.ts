@@ -6,6 +6,7 @@ import {
   defaultInstanceIdForDriver,
   EnvironmentId,
   ModelSelection,
+  MagiRunConfig,
   ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -252,6 +253,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  magiArm: Schema.optionalKey(MagiRunConfig),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -403,6 +405,8 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  /** Unsent first-message Magi arm; promoted with the bootstrap command. */
+  magiArm: MagiRunConfig | null;
 }
 
 /**
@@ -426,7 +430,8 @@ export function composerDraftHasUserContent(
     draft.persistedAttachments.length > 0 ||
     draft.terminalContexts.length > 0 ||
     draft.previewAnnotations.length > 0 ||
-    draft.reviewComments.length > 0
+    draft.reviewComments.length > 0 ||
+    draft.magiArm !== null
   );
 }
 
@@ -613,6 +618,7 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setMagiArm: (threadRef: ComposerThreadTarget, config: MagiRunConfig | null) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   /** Returns the ids the draft accepted; duplicates and over-cap attachments are left out. */
   addImages: (
@@ -736,6 +742,16 @@ function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelect
   } as DeepMutable<ModelSelection>;
 }
 
+function cloneMagiRunConfig(config: MagiRunConfig): DeepMutable<MagiRunConfig> {
+  return {
+    ...config,
+    participants: config.participants.map((participant) => ({
+      ...participant,
+      modelSelection: cloneModelSelection(participant.modelSelection),
+    })),
+  };
+}
+
 function compactModelSelectionByProvider(
   selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
 ): DeepMutable<Record<ProviderInstanceId, ModelSelection>> {
@@ -789,6 +805,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  magiArm: null,
 });
 
 /**
@@ -811,6 +828,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    magiArm: null,
   };
 }
 
@@ -904,7 +922,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.magiArm === null
   );
 }
 
@@ -2132,7 +2151,8 @@ export function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.magiArm === null
     ) {
       continue;
     }
@@ -2196,6 +2216,7 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.magiArm ? { magiArm: cloneMagiRunConfig(draft.magiArm) } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2462,6 +2483,7 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    magiArm: persistedDraft.magiArm ?? null,
   };
 }
 
@@ -3287,6 +3309,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        setMagiArm: (threadRef, config) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && config === null) return state;
+            const nextDraft: ComposerThreadDraftState = {
+              ...(existing ?? createEmptyThreadDraft()),
+              magiArm: config,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         addImage: (threadRef, image) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           const threadId = resolveComposerThreadId(get(), threadRef);
@@ -4002,6 +4040,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               terminalContexts: [],
               previewAnnotations: [],
               reviewComments: [],
+              magiArm: null,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

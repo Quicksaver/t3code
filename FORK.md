@@ -672,7 +672,7 @@ Magi is an implemented fork feature for provider-neutral, weighted consensus own
 Projection integration:
 
 - `ProjectionThreads`, `ProjectionPipeline`, and `ProjectionSnapshotQuery` preserve Magi lineage and `activeMagiRun` alongside `pullRequests` and `unsettledAt` through SQL columns, row schemas, read models, shells, and payloads. Bootstrap uses complete paged replay, with regression coverage beyond 1,000 events.
-- The standalone Magi branch adds one `052_MagiProjections` migration directly after `base/main`, containing its final schema, uniqueness rule, and proposal terminology. `main` preserves the Magi migrations already recorded at core IDs 48 through 50 and uses core migration 60 for WIP-history convergence. Every migration uses `effect_sql_migrations`; do not restore a feature-specific ledger.
+- The standalone Magi branch adds one `054_MagiProjections` migration directly after `base/main`, containing its final schema, uniqueness rule, and proposal terminology. `main` preserves the Magi migrations already recorded at core IDs 48 through 50 and uses core migration 60 for WIP-history convergence. Every migration uses `effect_sql_migrations`; do not restore a feature-specific ledger.
 
 Provider and completion integration:
 
@@ -684,7 +684,7 @@ Provider and completion integration:
 
 Client ownership:
 
-- The Settings header owns environment and project selection. Magi and Providers consume that selected environment through `EnvironmentSettingsPanel*`; Magi has no second tab selector, and `ProviderSettingsPanel.logic.ts` remains a compatibility adapter. `SettingsListDetail.tsx` owns the shared list and editor structure.
+- The Settings header owns environment and project selection. Magi and Providers consume that selected environment through `EnvironmentSettingsPanel*`; Magi has no second tab selector, and `ProviderSettingsPanel.logic.ts` remains a compatibility adapter. `SettingsListDetail.tsx` owns the shared list and editor structure and follows the settings container width so narrow panels keep their mobile layout. Empty-input MCP schemas normalize to explicit object schemas for Effect rc.115 toolkit registration.
 - `useMagiRunHistory` owns the latest summary, expanded 100-run subscription, and transition behavior. The expanded panel explicitly includes sibling and nested native-child runs. It polls both that history and the owner-only latest summary, so more than 100 newer descendant runs cannot crowd the owner out of timeline updates. `ChatView` passes aggregated history to the panel and the owner-only summary to the timeline; the timeline must not query independently or fabricate a thread id.
 - Web and mobile share `MagiConsensusIcon`. It uses `withUniwind(Svg)`, `currentColor`, `accent-icon`, and explicit overrides, and remains outside the theme escape-hatch allowlist.
 

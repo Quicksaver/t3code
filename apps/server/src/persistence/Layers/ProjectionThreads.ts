@@ -12,12 +12,18 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection, ThreadLinkedPullRequest, ThreadTitleState } from "@t3tools/contracts";
+import {
+  ActiveMagiRunSummary,
+  ModelSelection,
+  ThreadLinkedPullRequest,
+  ThreadTitleState,
+} from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
     modelSelection: Schema.fromJsonString(ModelSelection),
     titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
+    activeMagiRun: Schema.optional(Schema.NullOr(Schema.fromJsonString(ActiveMagiRunSummary))),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   }),
@@ -52,6 +58,15 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           subagent_started_at,
           subagent_completed_at,
           subagent_status,
+          magi_root_thread_id,
+          magi_parent_thread_id,
+          magi_run_id,
+          magi_participant_id,
+          magi_provider_thread_id,
+          magi_started_at,
+          magi_completed_at,
+          magi_status,
+          active_magi_run_json,
           linked_pull_request_json,
           branch_pull_request_json,
           latest_turn_id,
@@ -96,6 +111,15 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.subagentStartedAt},
           ${row.subagentCompletedAt},
           ${row.subagentStatus},
+          ${row.magiRootThreadId ?? null},
+          ${row.magiParentThreadId ?? null},
+          ${row.magiRunId ?? null},
+          ${row.magiParticipantId ?? null},
+          ${row.magiProviderThreadId ?? null},
+          ${row.magiStartedAt ?? null},
+          ${row.magiCompletedAt ?? null},
+          ${row.magiStatus ?? null},
+          ${row.activeMagiRun == null ? null : JSON.stringify(row.activeMagiRun)},
           ${row.linkedPullRequest === undefined || row.linkedPullRequest === null ? null : JSON.stringify(row.linkedPullRequest)},
           ${row.branchPullRequest === undefined || row.branchPullRequest === null ? null : JSON.stringify(row.branchPullRequest)},
           ${row.latestTurnId},
@@ -129,65 +153,74 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           branch = excluded.branch,
           worktree_path = excluded.worktree_path,
           parent_kind = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.parent_kind
             ELSE excluded.parent_kind
           END,
           root_thread_id = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.root_thread_id
             ELSE excluded.root_thread_id
           END,
           parent_thread_id = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.parent_thread_id
             ELSE excluded.parent_thread_id
           END,
           parent_turn_id = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.parent_turn_id
             ELSE excluded.parent_turn_id
           END,
           parent_item_id = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.parent_item_id
             ELSE excluded.parent_item_id
           END,
           parent_activity_sequence = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.parent_activity_sequence
             ELSE excluded.parent_activity_sequence
           END,
           provider_thread_id = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.provider_thread_id
             ELSE excluded.provider_thread_id
           END,
           title_seed = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.title_seed
             ELSE excluded.title_seed
           END,
           subagent_depth = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.subagent_depth
             ELSE excluded.subagent_depth
           END,
           subagent_started_at = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.subagent_started_at
             ELSE excluded.subagent_started_at
           END,
           subagent_completed_at = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.subagent_completed_at
             ELSE excluded.subagent_completed_at
           END,
           subagent_status = CASE
-            WHEN projection_threads.parent_kind = 'subagent' AND excluded.parent_kind != 'subagent'
+            WHEN projection_threads.parent_kind IN ('subagent', 'magi') AND excluded.parent_kind = 'root'
               THEN projection_threads.subagent_status
             ELSE excluded.subagent_status
           END,
+          magi_root_thread_id = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_root_thread_id ELSE excluded.magi_root_thread_id END,
+          magi_parent_thread_id = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_parent_thread_id ELSE excluded.magi_parent_thread_id END,
+          magi_run_id = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_run_id ELSE excluded.magi_run_id END,
+          magi_participant_id = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_participant_id ELSE excluded.magi_participant_id END,
+          magi_provider_thread_id = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_provider_thread_id ELSE excluded.magi_provider_thread_id END,
+          magi_started_at = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_started_at ELSE excluded.magi_started_at END,
+          magi_completed_at = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_completed_at ELSE excluded.magi_completed_at END,
+          magi_status = CASE WHEN projection_threads.parent_kind = 'magi' AND excluded.parent_kind = 'root' THEN projection_threads.magi_status ELSE excluded.magi_status END,
+          active_magi_run_json = excluded.active_magi_run_json,
           linked_pull_request_json = excluded.linked_pull_request_json,
           branch_pull_request_json = excluded.branch_pull_request_json,
           latest_turn_id = excluded.latest_turn_id,
@@ -239,6 +272,15 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           subagent_started_at AS "subagentStartedAt",
           subagent_completed_at AS "subagentCompletedAt",
           subagent_status AS "subagentStatus",
+          magi_root_thread_id AS "magiRootThreadId",
+          magi_parent_thread_id AS "magiParentThreadId",
+          magi_run_id AS "magiRunId",
+          magi_participant_id AS "magiParticipantId",
+          magi_provider_thread_id AS "magiProviderThreadId",
+          magi_started_at AS "magiStartedAt",
+          magi_completed_at AS "magiCompletedAt",
+          magi_status AS "magiStatus",
+          active_magi_run_json AS "activeMagiRun",
           linked_pull_request_json AS "linkedPullRequest",
           branch_pull_request_json AS "branchPullRequest",
           latest_turn_id AS "latestTurnId",

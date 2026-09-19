@@ -116,6 +116,12 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { spawnAndCollect } from "../providerSnapshot.ts";
+import {
+  CLAUDE_MAGI_CAPABILITIES,
+  claudeMagiDisallowedTools,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -225,6 +231,10 @@ const remapClaudeForkTurnBoundaries = (
 };
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+// Magi tools intentionally wait for participant evidence. Keep Claude's MCP
+// transport alive beyond its 60-second default so a slow round can still
+// return to the arbitrator; user cancellation remains the product stop path.
+const T3_CODE_MCP_TOOL_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 type ClaudeTextStreamKind = Extract<
   RuntimeContentStreamKind,
   "assistant_text" | "reasoning_text" | "reasoning_summary_text"
@@ -4393,6 +4403,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
     function* (input) {
+      input = normalizeMagiSessionStartInput(input);
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
@@ -4889,6 +4900,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         (launchArgSkipPermissions === null || launchArgSkipPermissions === "true"
           ? "bypassPermissions"
           : runtimeModeToPermission[input.runtimeMode]);
+      const disallowedTools = claudeMagiDisallowedTools(input.control);
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
@@ -4940,6 +4952,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
+        ...(disallowedTools.length > 0 ? { disallowedTools } : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
@@ -4953,12 +4966,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(mcpSession
           ? {
               mcpServers: {
-                "t3-code": {
+                t3_code: {
                   type: "http",
                   url: mcpSession.endpoint,
                   headers: {
                     Authorization: mcpSession.authorizationHeader,
                   },
+                  timeout: T3_CODE_MCP_TOOL_TIMEOUT_MS,
+                  // Context artifacts must be available before a participant's first turn.
+                  alwaysLoad: true,
                 },
               },
             }
@@ -5137,6 +5153,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   );
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    input = normalizeMagiSendTurnInput(input);
     const context = yield* requireSession(input.threadId);
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
@@ -5485,6 +5502,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const getContextUsage: NonNullable<ClaudeAdapterShape["getContextUsage"]> = Effect.fn(
+    "getContextUsage",
+  )(function* (threadId) {
+    const context = yield* requireSession(threadId);
+    const usage = context.lastKnownTokenUsage;
+    if (!usage) return null;
+    return {
+      usedTokens: usage.usedTokens,
+      limitTokens: usage.maxTokens ?? context.lastKnownContextWindow ?? null,
+      measuredAt: context.session.updatedAt,
+    };
+  });
+
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
       const context = yield* requireSession(threadId);
@@ -5569,6 +5599,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      magi: CLAUDE_MAGI_CAPABILITIES,
     },
     compaction: { type: "slash-command", command: "/compact" },
     startSession,
@@ -5576,6 +5607,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     interruptTurn,
     readThread,
     rollbackThread,
+    getContextUsage,
     respondToRequest,
     respondToUserInput,
     stopSession,

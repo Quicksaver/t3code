@@ -171,6 +171,7 @@ function makeSyntheticSubagentThreadShell(input: {
     hasActionableProposedPlan: false,
     backgroundLiveness: null,
     activeSubagentCount: 0,
+    activeMagiRun: null,
     planProgress: null,
   } satisfies Required<OrchestrationThreadShell>;
 
