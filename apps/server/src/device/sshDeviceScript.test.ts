@@ -13,7 +13,9 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
 it("runs Windows npm probe and installation through Node with paths containing spaces", async () => {
-  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture "));
+  const home = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture ")),
+  );
   try {
     const node = NodePath.join(home, "Node runtime", "node.exe");
     const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
