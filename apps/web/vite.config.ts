@@ -9,7 +9,11 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
-import { DEV_PROXIED_PATH_PREFIXES, resolveDevProxyTarget } from "@t3tools/shared/devProxy";
+import {
+  DEV_LOOPBACK_HOST,
+  DEV_PROXIED_PATH_PREFIXES,
+  resolveDevProxyTarget,
+} from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -29,7 +33,7 @@ const isSingleOriginDev = process.env.T3CODE_SINGLE_ORIGIN_DEV === "1";
 
 const port = Number(process.env.PORT ?? 5733);
 const explicitHost = process.env.HOST?.trim();
-const host = explicitHost || "localhost";
+const host = explicitHost || DEV_LOOPBACK_HOST;
 const configuredWsUrl = isSingleOriginDev ? undefined : process.env.VITE_WS_URL?.trim();
 const configuredHttpUrl = isSingleOriginDev ? undefined : process.env.VITE_HTTP_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";

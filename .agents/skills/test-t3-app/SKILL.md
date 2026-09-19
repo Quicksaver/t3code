@@ -66,3 +66,4 @@ On a host where the preview and worktree have a verified direct environment rout
 Replace `5733` with the selected worktree web port. Preserve the complete pairing path and fragment, navigate it exactly once, and continue in the same tab. For an already authenticated tab, use the same target with the required non-secret path.
 
 Do not pass a loopback pairing URL such as `http://127.0.0.1:<web-port>/pair#token=...` directly to `preview_open` or `preview_navigate`. Use `--share` whenever the controlled preview, a human, or another device is not in the checkout host's direct network namespace.
+Retain the `tabId` of each tab created for this test. At final teardown, close only those owned tabs with `preview_close`, passing each `tabId` explicitly, before stopping the test environment. Confirm each close returns `tabId: null`.

@@ -43,8 +43,8 @@ export async function uploadBrowserRecording(
     },
     transport: (url) => {
       const controller = new AbortController();
-      // Encoding, saving and minting consume the same request budget. Leave time to reply.
-      const remainingMs = deadlineMs - Date.now() - 1_000;
+      // The host deadline already reserves response grace for the complete stop operation.
+      const remainingMs = deadlineMs - Date.now();
       return {
         abort: () => controller.abort(),
         done:
@@ -72,7 +72,7 @@ export async function uploadBrowserRecording(
       });
     }
     const cause = result.status === "failed" ? result.error : undefined;
-    if (Date.now() >= deadlineMs - 1_000) {
+    if (Date.now() >= deadlineMs) {
       throw new PreviewAutomationRecordingDeadlineExpiredError({ threadId, cause });
     }
     throw new PreviewAutomationRecordingTransferError({
