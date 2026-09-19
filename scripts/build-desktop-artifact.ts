@@ -3972,6 +3972,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
   localSigning: Flag.Boolean("local-signing").pipe(
+    Flag.withDefault(false),
     Flag.withDescription(
       "Sign a local macOS build with an Apple Development certificate, without notarization.",
     ),
