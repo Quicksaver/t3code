@@ -1004,6 +1004,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         ThreadId.make("magi-shell-participant"),
       );
       assert.equal(Option.getOrNull(participantDetail)?.parentRelation?.kind, "magi");
+      const participantRuntime = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.deepEqual(
+        Option.getOrNull(participantRuntime)?.parentRelation,
+        Option.getOrNull(participantDetail)?.parentRelation,
+      );
 
       const participantShell = yield* snapshotQuery.getThreadShellById(
         ThreadId.make("magi-shell-participant"),
@@ -3239,10 +3246,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
           data: {
             item: {
               command: "vp test run",
-              aggregatedOutput: "failed command",
+              aggregatedOutput: `failed command\n${"w".repeat(8192)}`,
             },
             files: [{ path: "apps/server/src/failed.ts" }],
-            rawOutput: { content: "failed output" },
+            rawOutput: { stdout: "failed output" },
           },
         });
       }
