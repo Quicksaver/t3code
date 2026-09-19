@@ -20,7 +20,12 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+import {
+  quoteRemoteArg,
+  remoteDeviceEnvironment,
+  remoteDeviceNodeEnvironment,
+  remoteDeviceScript,
+} from "./sshDeviceScript.ts";
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
@@ -60,7 +65,8 @@ const bootstrap = (
   runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
     remoteCommandArgs: commandArgs(
-      'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
+      remoteDeviceNodeEnvironment +
+        'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
     ),
     stdin: remoteDeviceScript(owner, mode),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,

@@ -384,7 +384,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const avds = yield* ready.run("emulator", ["-list-avds"]);
       if (avds.code !== 0) {
         details.push(
-          `Could not list Android virtual devices (emulator -list-avds, exit code ${avds.code}). Discovered devices remain available. ${avds.stderr.trim() || avds.stdout.trim()}`.trim(),
+          `Could not list Android virtual devices (emulator -list-avds, exit code ${avds.code}). Discovered devices remain available. ${(avds.stderr.trim() || avds.stdout.trim()).slice(-2000)}`.trim(),
         );
       } else
         for (const name of avds.stdout

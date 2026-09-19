@@ -108,6 +108,17 @@ for (const hostId of [LOCAL_DEVICE_HOST_ID, "mac-ssh"]) {
             expect(partial.hostStatusDetail).toBe(partial.hostStatuses[hostId]?.detail);
 
           enumeration = {
+            code: failure.code,
+            stdout: "",
+            stderr: "verbose-prefix" + "x".repeat(3000) + failure.stderr,
+          };
+          const bounded = yield* service.list;
+          expect(bounded.devices).toEqual(partial.devices);
+          expect(bounded.hostStatuses[hostId]?.detail).not.toContain("verbose-prefix");
+          expect(bounded.hostStatuses[hostId]?.detail?.endsWith(failure.stderr)).toBe(true);
+          expect(bounded.hostStatuses[hostId]?.detail?.length).toBeLessThan(2300);
+
+          enumeration = {
             code: 0,
             stderr: "",
             stdout: "Running_AVD\r\nStopped_AVD\r\nStopped_AVD\r\n",
