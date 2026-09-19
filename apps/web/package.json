@@ -31,6 +31,7 @@
     "@t3tools/shared": "workspace:*",
     "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",
+    "@tanstack/react-virtual": "^3.14.11",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-task-item": "^3.31.3",
     "@tiptap/extension-task-list": "^3.31.3",
