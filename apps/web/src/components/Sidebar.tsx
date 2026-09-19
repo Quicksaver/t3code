@@ -160,6 +160,7 @@ import { buildThreadActionMenuItems, isRootThreadLifecycleAction } from "./threa
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
+  filterVisibleSidebarThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -2386,8 +2387,6 @@ export default function Sidebar() {
     [routeDraftThread, routeTarget],
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
-  const routeTargetRef = useRef(routeTarget);
-  routeTargetRef.current = routeTarget;
   // Post-settle navigation validates against the CURRENT route, not the one
   // captured when the settle started: if the user navigated elsewhere while
   // the command was in flight, completing it must not yank them away.
@@ -2667,6 +2666,11 @@ export default function Sidebar() {
         override holds until all of them appear in canonical state. */
     readonly assignedKeys: ReadonlyMap<string, string>;
   } | null>(null);
+  // Settled threads stay in the live shell stream (settled ≠ archived), so
+  // the partition works directly off live shells: no archived-snapshot
+  // merging. Archived threads remain hidden here — including while a local
+  // archive command is still in flight — because archive keeps its original
+  // "remove from sidebar" meaning.
   const {
     pinnedThreads,
     draggableThreadKeys,
@@ -2688,7 +2692,7 @@ export default function Sidebar() {
     const settled: EnvironmentThreadShell[] = [];
     const draggable = new Set<string>();
     const activeReorderable = new Set<string>();
-    for (const thread of rootThreads) {
+    for (const thread of filterVisibleSidebarThreads(rootThreads)) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
       // Threads on servers without the settlement capability (old server,
       // or descriptor not loaded yet) never classify as settled: the user

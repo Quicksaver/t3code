@@ -327,6 +327,11 @@ export function useThreadActions() {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      // The local composer draft intentionally survives archive, but its
+      // pending server uploads are transient and never enter the cold bundle.
+      // Release them now; opening the restored draft starts fresh uploads from
+      // its local image data.
+      releaseComposerDraftUploads(threadRef);
       opts.onArchived?.();
 
       if (shouldNavigateToDraft) {

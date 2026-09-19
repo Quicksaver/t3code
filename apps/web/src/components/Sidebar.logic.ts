@@ -6,7 +6,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { ContextMenuItem, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/unstable/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
@@ -386,8 +386,9 @@ type ScopedSidebarProject = SidebarProject & {
 };
 
 type ScopedSidebarThread = ThreadSortInput & {
-  environmentId: string;
-  projectId: string;
+  id: ThreadId;
+  environmentId: EnvironmentId;
+  projectId: ProjectId;
   archivedAt: string | null;
 };
 
@@ -1134,6 +1135,12 @@ export function resolveProjectStatusIndicator(
   return highestPriorityStatus;
 }
 
+export function filterVisibleSidebarThreads<T extends Pick<SidebarThreadSummary, "archivedAt">>(
+  threads: readonly T[],
+): T[] {
+  return threads.filter((thread) => thread.archivedAt === null);
+}
+
 export function getFallbackThreadIdAfterDelete<
   T extends Pick<Thread, "id" | "projectId" | "createdAt" | "updatedAt"> & ThreadSortInput,
 >(input: {
@@ -1235,7 +1242,9 @@ export function sortLogicalProjectsForSidebar<
   );
   const threadsByProjectKey = new Map<string, TThread[]>();
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (thread.archivedAt !== null) {
+      continue;
+    }
     const projectKey = groupKeyByProjectRef.get(`${thread.environmentId}\0${thread.projectId}`);
     if (!projectKey) continue;
     const existing = threadsByProjectKey.get(projectKey);
