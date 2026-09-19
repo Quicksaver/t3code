@@ -1,10 +1,10 @@
 ---
-name: comments-from-worktrees
+name: babysit-worktrees
 description: Address pull request comments for every active non-main worktree.
 disable-model-invocation: true
 ---
 
-# Address comments from worktrees
+# Babysit worktrees
 
 This skill requires unsandboxed execution. If the environment is sandboxed, report that blocker and stop.
 
@@ -14,4 +14,4 @@ Instruct each subagent to use the global `$babysit` skill. Do not load `$babysit
 
 Be silent while you patiently wait for each subagent terminal result.
 
-After every subagent finishes, use `$pick-from-worktrees` if any subagent made changes. Otherwise, report the collected results and stop.
+After every subagent finishes, use `$rebuild-main` if any subagent made changes. Otherwise, report the collected results and stop.

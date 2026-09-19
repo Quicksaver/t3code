@@ -1,10 +1,10 @@
 ---
-name: pick-from-worktrees
+name: rebuild-main
 description: Rebuild local main from base/fork and the active worktree commits.
 disable-model-invocation: true
 ---
 
-# Pick from worktrees
+# Rebuild main
 
 The goal is to rebuild `main` from `base/fork` and the active worktree commits, preserving their customizations and tracking. The rebuilt `main` should be a clean fast-forward of `base/main`, with all worktree customizations applied in order.
 

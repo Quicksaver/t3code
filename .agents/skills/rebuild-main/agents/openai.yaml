@@ -1,5 +1,5 @@
 interface:
-  display_name: "Pick From Worktrees"
+  display_name: "Rebuild Main"
   short_description: "Rebuild local main from active-worktree commits."
 
 policy:
