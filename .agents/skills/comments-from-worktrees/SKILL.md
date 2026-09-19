@@ -10,7 +10,7 @@ This skill requires unsandboxed execution. If the environment is sandboxed, repo
 
 Load `$spawn-worktrees`.
 
-Instruct each subagent to use the global `$piz-comments` skill. Do not load `$piz-comments` or perform its work yourself.
+Instruct each subagent to use the global `$babysit` skill. Do not load `$babysit` or perform its work yourself.
 
 Be silent while you patiently wait for each subagent terminal result.
 
