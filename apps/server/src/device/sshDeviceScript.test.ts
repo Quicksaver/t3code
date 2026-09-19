@@ -17,6 +17,38 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
+it("requires a complete Android SDK on SSH hosts while retaining iOS availability", () => {
+  for (const missing of ["emulator/emulator", "cmdline-tools/latest/bin/avdmanager", null]) {
+    const result = NodeChildProcess.spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `
+Object.defineProperty(process,'platform',{value:'darwin'});
+process.env.ANDROID_HOME='/fixture/sdk';
+require('node:child_process').spawnSync=()=>({status:0,stdout:'ok',stderr:''});
+require('node:fs').existsSync=(file)=>!${JSON.stringify(missing)} || !file.replaceAll('\\\\','/').endsWith(${JSON.stringify(missing)});
+` + remoteDeviceScript("fixture", "probe"),
+      ],
+      { encoding: "utf8", timeout: 10000 },
+    );
+    expect(result.status).toBe(0);
+    const platforms = JSON.parse(result.stdout).platforms;
+    expect(platforms).toContainEqual({ platform: "ios", available: true });
+    expect(platforms).toContainEqual(
+      missing
+        ? {
+            platform: "android",
+            available: false,
+            reason: expect.stringContaining(
+              missing.startsWith("emulator") ? "Android Emulator" : "Command-line Tools",
+            ),
+          }
+        : { platform: "android", available: true },
+    );
+  }
+});
+
 it.effect(
   "passes bootstrap code through the remote login shell without reinterpreting quotes",
   () =>
@@ -77,6 +109,16 @@ it("runs Windows npm probe and installation through Node with paths containing s
     const calls = NodePath.join(home, "npm calls.jsonl");
     await NodeFSP.mkdir(NodePath.dirname(npm), { recursive: true });
     await NodeFSP.copyFile(process.execPath, node);
+    const sdk = NodePath.join(home, "Android SDK");
+    for (const relative of [
+      "platform-tools/adb.exe",
+      "emulator/emulator.exe",
+      "cmdline-tools/latest/bin/avdmanager.bat",
+    ]) {
+      const file = NodePath.join(sdk, relative);
+      await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+      await NodeFSP.writeFile(file, "fixture");
+    }
     await NodeFSP.writeFile(
       npm,
       `const fs = require('node:fs');
@@ -99,9 +141,22 @@ childProcess.spawnSync = (command, args, options) => command === 'adb'
   : originalSpawnSync(command, args, options);
 ` + remoteDeviceScript("fixture", mode),
       );
-      return exec(node, [script], { env: { ...process.env, PATH: npmPath } });
+      return exec(node, [script], { env: { ...process.env, PATH: npmPath, ANDROID_HOME: sdk } });
     };
     expect(JSON.parse((await invoke("probe")).stdout).nodePath).toBe(node);
+    await NodeFSP.rename(
+      NodePath.join(sdk, "emulator/emulator.exe"),
+      NodePath.join(sdk, "emulator/disabled.exe"),
+    );
+    expect(JSON.parse((await invoke("probe")).stdout).platforms).toContainEqual({
+      platform: "android",
+      available: false,
+      reason: expect.stringContaining("Android Emulator is missing"),
+    });
+    await NodeFSP.rename(
+      NodePath.join(sdk, "emulator/disabled.exe"),
+      NodePath.join(sdk, "emulator/emulator.exe"),
+    );
     await expect(invoke("start")).rejects.toMatchObject({
       stderr: expect.stringContaining(
         "Installing expo-device-hub: exit code 23: fixture registry unavailable",
@@ -112,6 +167,7 @@ childProcess.spawnSync = (command, args, options) => command === 'adb'
       .split("\n")
       .map((line) => JSON.parse(line));
     expect(invocations).toEqual([
+      { node, args: ["--version"] },
       { node, args: ["--version"] },
       {
         node,
@@ -269,6 +325,16 @@ describe("remote helper lifecycle", () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
         await NodeFSP.mkdir(bin);
+        const sdk = NodePath.join(home, "sdk");
+        for (const relative of [
+          "platform-tools/adb",
+          "emulator/emulator",
+          "cmdline-tools/latest/bin/avdmanager",
+        ]) {
+          const file = NodePath.join(sdk, relative);
+          await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+          await NodeFSP.writeFile(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+        }
         await NodeFSP.writeFile(NodePath.join(bin, "adb"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
         const root = NodePath.join(home, ".t3/device");
         const hubDir = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
@@ -317,7 +383,12 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              ANDROID_HOME: sdk,
+              PATH: `${bin}:${process.env.PATH}`,
+            },
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };

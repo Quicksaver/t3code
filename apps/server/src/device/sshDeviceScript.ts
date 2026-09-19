@@ -1,4 +1,5 @@
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { deviceHubWindowsImport } from "./deviceHubWindows.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
@@ -40,6 +41,7 @@ const owner = ${JSON.stringify(owner)};
 const mode = ${JSON.stringify(mode)};
 const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
 const agentVersion = ${JSON.stringify(AGENT_DEVICE_VERSION)};
+const hubWindowsImport = ${JSON.stringify(deviceHubWindowsImport)};
 ` +
   String.raw`
 const fs = require('node:fs');
@@ -130,10 +132,20 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || (process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Android', 'Sdk')
+    : path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Android/sdk' : 'Android/Sdk'));
+  const tool = (relative) => fs.existsSync(path.join(sdk, relative));
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  const androidReason = !tool('platform-tools/adb' + suffix) ? 'Android SDK Platform-Tools are missing. Install the Android SDK and set ANDROID_HOME.'
+    : !tool('emulator/emulator' + suffix) ? 'Android Emulator is missing. Install it in Android Studio SDK Manager.'
+    : !tool('cmdline-tools/latest/bin/avdmanager' + (process.platform === 'win32' ? '.bat' : '')) ? 'Android SDK Command-line Tools (latest) are missing. Install them in Android Studio SDK Manager.'
+    : null;
+  const android = androidReason === null;
+  if (android) process.env.ANDROID_HOME = sdk;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
@@ -163,18 +175,19 @@ async function install(name, version, entry) {
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
+  const windowsImport = process.platform === 'win32' ? hubWindowsImport : null;
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || (windowsImport !== null && hub.windowsImport !== windowsImport) || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
       const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
+      const child = spawn(process.execPath, [...(process.platform === 'win32' ? ['--import', hubWindowsImport] : []), hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
       child.unref();
-      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry };
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, windowsImport };
       write(hubFile, hub);
       const deadline = Date.now() + 30000;
       let listening = false;
