@@ -51,12 +51,14 @@ export function clientStatus(
 
 /** Keep native sources stable during ensure, as with a normal build; endpoint checks reject detected edits. */
 export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(operations: {
+  prepare?: Effect.Effect<void, E, R>;
   fingerprint: Effect.Effect<string, E, R>;
   installedBinary: Effect.Effect<string | null, E, R>;
   readRecord: Effect.Effect<NativeClientRecord | null, E, R>;
   build: Effect.Effect<void, E, R>;
   saveRecord: (record: NativeClientRecord) => Effect.Effect<void, E2, R2>;
 }) {
+  if (operations.prepare) yield* operations.prepare;
   const fingerprint = yield* operations.fingerprint;
   const status = clientStatus(
     fingerprint,
@@ -288,6 +290,111 @@ export const installedBinary = Effect.fn("installedBinary")(function* (
   return yield* digest(hashes.sort().join("\n"));
 });
 
+/** Normalize Windows dependency paths before capturing the compatibility fingerprint. */
+export const prepareNativeClient = Effect.fn("nativeClient.prepare")(function* (
+  platform: NativePlatform,
+  run: typeof command = command,
+) {
+  if (platform !== "android" || (yield* HostProcessPlatform) !== "win32") return;
+  const path = yield* Path.Path;
+  const { repo } = yield* roots;
+  yield* run(
+    yield* HostProcessExecutablePath,
+    [path.join(repo, "scripts/worktree-android-dependencies.ts"), "ensure", "--worktree", repo],
+    true,
+    repo,
+  );
+});
+
+export const buildNativeClient = Effect.fn("nativeClient.build")(function* (
+  platform: NativePlatform,
+  device: string,
+  run: typeof command = command,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const { repo, mobile } = yield* roots;
+  yield* Console.error(
+    "Native client is missing, stale, or unverified. Building and installing a development client...",
+  );
+  const tracked = yield* run("git", ["ls-files", `apps/mobile/${platform}`], false, repo);
+  if (tracked)
+    return yield* new NativeClientError({
+      message: "Native directory contains tracked files; clean prebuild would overwrite them.",
+    });
+  if (platform === "android" && (yield* HostProcessPlatform) === "win32") {
+    const avdOutput = yield* run("adb", ["-s", device, "emu", "avd", "name"]);
+    const names = avdOutput
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && line !== "OK");
+    const avdName = names[0];
+    if (names.length !== 1 || !avdName || !/^[\w.-]+$/.test(avdName)) {
+      return yield* new NativeClientError({
+        message: `Could not resolve the AVD name for ${device}.`,
+      });
+    }
+    yield* run(
+      yield* HostProcessExecutablePath,
+      [
+        path.join(repo, "scripts/worktree-android-build.ts"),
+        "build",
+        "--worktree",
+        repo,
+        "--device",
+        avdName,
+      ],
+      true,
+      repo,
+    );
+    return;
+  }
+  yield* run(
+    "vp",
+    ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
+    true,
+  );
+  if (platform === "ios") {
+    const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
+    yield* run("pod", ["install"], true, path.join(mobile, "ios"));
+    // Target this simulator only, without Expo's desktop activation or log streaming.
+    yield* run(
+      "xcrun",
+      [
+        "xcodebuild",
+        "-workspace",
+        path.join(mobile, "ios/T3CodeDev.xcworkspace"),
+        "-scheme",
+        "T3CodeDev",
+        "-configuration",
+        "Debug",
+        "-destination",
+        `id=${device}`,
+        "-derivedDataPath",
+        output,
+        "build",
+      ],
+      true,
+    );
+    yield* run(
+      "xcrun",
+      [
+        "simctl",
+        "install",
+        device,
+        path.join(output, "Build/Products/Debug-iphonesimulator/T3CodeDev.app"),
+      ],
+      true,
+    );
+  } else {
+    yield* run(
+      "vp",
+      ["exec", "expo", "run:android", "--device", device, "--no-bundler", "--variant", "debug"],
+      true,
+    );
+  }
+}, Effect.scoped);
+
 const main = Command.make(
   "mobile-native-client",
   {
@@ -312,6 +419,7 @@ const main = Command.make(
       `${yield* digest(device)}.json`,
     );
     const operations = {
+      prepare: prepareNativeClient(platform),
       fingerprint: fingerprint(platform),
       installedBinary: installedBinary(platform, device),
       readRecord: fs.readFileString(recordPath).pipe(
@@ -322,76 +430,7 @@ const main = Command.make(
           () => Effect.succeed(null),
         ),
       ),
-      build: Effect.gen(function* () {
-        yield* Console.error(
-          "Native client is missing, stale, or unverified. Building and installing a development client...",
-        );
-        const tracked = yield* command(
-          "git",
-          ["ls-files", `apps/mobile/${platform}`],
-          false,
-          (yield* roots).repo,
-        );
-        if (tracked)
-          return yield* new NativeClientError({
-            message:
-              "Native directory contains tracked files; clean prebuild would overwrite them.",
-          });
-        yield* command(
-          "vp",
-          ["exec", "expo", "prebuild", "--clean", "--platform", platform, "--no-install"],
-          true,
-        );
-        if (platform === "ios") {
-          const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
-          const { mobile } = yield* roots;
-          yield* command("pod", ["install"], true, path.join(mobile, "ios"));
-          // Target this simulator only, without Expo's desktop activation or log streaming.
-          yield* command(
-            "xcrun",
-            [
-              "xcodebuild",
-              "-workspace",
-              path.join(mobile, "ios/T3CodeDev.xcworkspace"),
-              "-scheme",
-              "T3CodeDev",
-              "-configuration",
-              "Debug",
-              "-destination",
-              `id=${device}`,
-              "-derivedDataPath",
-              output,
-              "build",
-            ],
-            true,
-          );
-          yield* command(
-            "xcrun",
-            [
-              "simctl",
-              "install",
-              device,
-              path.join(output, "Build/Products/Debug-iphonesimulator/T3CodeDev.app"),
-            ],
-            true,
-          );
-        } else {
-          yield* command(
-            "vp",
-            [
-              "exec",
-              "expo",
-              "run:android",
-              "--device",
-              device,
-              "--no-bundler",
-              "--variant",
-              "debug",
-            ],
-            true,
-          );
-        }
-      }).pipe(Effect.scoped),
+      build: buildNativeClient(platform, device),
       saveRecord: Effect.fn(function* (record: NativeClientRecord) {
         yield* fs.makeDirectory(path.dirname(recordPath), { recursive: true });
         yield* fs.writeFileString(recordPath, yield* encodeRecord(record));

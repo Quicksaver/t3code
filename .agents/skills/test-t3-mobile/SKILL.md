@@ -5,6 +5,8 @@ description: Test T3 Code's native iOS and Android app through its Device panel 
 
 # Test T3 Mobile
 
+Load `$worktrees` for exact-source staging and runtime ownership. Acquire the selected device host's `mobile` lease before native preparation or device interaction. Keep the upstream Device panel and returned AgentDevice command as the automation path. Release the lease after owned device sessions and processes are closed.
+
 ## Open the device
 
 Call `device_list`, then `device_open` with the selected host and device IDs.
@@ -33,6 +35,8 @@ From the checkout being tested on the selected device host, run:
 ```bash
 node scripts/mobile-native-client.ts ensure <ios|android> <device-id>
 ```
+
+On Windows, pass the selected emulator's actual ADB serial. The helper resolves its AVD name and delegates the complete build to the worktree wrapper, preserving short CMake staging, dependency preparation, and the bounded Ninja retry. Follow `$worktrees` to provision a worktree-owned AVD when needed.
 
 This reuses a matching native client or builds and installs one. Authorized
 mobile verification includes that build step unless the user prohibits it.

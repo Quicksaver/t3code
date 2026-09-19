@@ -158,6 +158,7 @@ interface BuildCliInput {
   readonly skipBuild: Option.Option<boolean>;
   readonly keepStage: Option.Option<boolean>;
   readonly signed: Option.Option<boolean>;
+  readonly localSigning?: boolean;
   readonly verbose: Option.Option<boolean>;
   readonly mockUpdates: Option.Option<boolean>;
   readonly mockUpdateServerPort: Option.Option<number>;
@@ -179,6 +180,27 @@ const getDefaultArch = Effect.fn("getDefaultArch")(function* (platform: typeof B
 
   return yield* getDefaultBuildArch(platform, config);
 });
+
+export class LocalMacSigningError extends Schema.TaggedError<LocalMacSigningError>()(
+  "LocalMacSigningError",
+  { message: Schema.String },
+) {}
+const isLocalMacSigningError = Schema.is(LocalMacSigningError);
+
+/** Pick one certificate explicitly so local builds cannot silently become ad-hoc signed. */
+export function resolveLocalMacSigningIdentity(identities: string, selected?: string): string {
+  const candidates = [
+    ...identities.matchAll(/^\s*\d+\) ([A-Fa-f0-9]{40}) "Apple Development:[^"]+"\s*$/gmu),
+  ].map((match) => match[1]!.toUpperCase());
+  const requested = selected?.trim().toUpperCase();
+  if (requested && candidates.includes(requested)) return requested;
+  if (!requested && candidates.length === 1) return candidates[0]!;
+  throw new LocalMacSigningError({
+    message: requested
+      ? "T3CODE_MACOS_SIGNING_IDENTITY must match the SHA-1 of a valid Apple Development certificate."
+      : "Local macOS builds need one Apple Development certificate. If several are available, set T3CODE_MACOS_SIGNING_IDENTITY to the certificate SHA-1 to use consistently.",
+  });
+}
 
 export class MacPasskeySigningConfigurationResolutionError extends Schema.TaggedError<MacPasskeySigningConfigurationResolutionError>()(
   "MacPasskeySigningConfigurationResolutionError",
@@ -915,6 +937,7 @@ interface ResolvedBuildOptions {
   readonly skipBuild: boolean;
   readonly keepStage: boolean;
   readonly signed: boolean;
+  readonly localSigning: boolean;
   readonly verbose: boolean;
   readonly mockUpdates: boolean;
   readonly mockUpdateServerPort: number | undefined;
@@ -1630,6 +1653,13 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
   const skipBuild = resolveBooleanFlag(input.skipBuild, env.skipBuild);
   const keepStage = resolveBooleanFlag(input.keepStage, env.keepStage);
   const signed = resolveBooleanFlag(input.signed, env.signed);
+  const localSigning = input.localSigning ?? false;
+  if (localSigning && (platform !== "mac" || hostPlatform !== "darwin" || signed)) {
+    return yield* new LocalMacSigningError({
+      message:
+        "--local-signing requires a macOS host and target and cannot be combined with --signed.",
+    });
+  }
   const verbose = resolveBooleanFlag(input.verbose, env.verbose);
 
   const mockUpdates = resolveBooleanFlag(input.mockUpdates, env.mockUpdates);
@@ -1656,6 +1686,7 @@ export const resolveBuildOptions = Effect.fn("resolveBuildOptions")(function* (
     skipBuild,
     keepStage,
     signed,
+    localSigning,
     verbose,
     mockUpdates,
     mockUpdateServerPort,
@@ -2636,6 +2667,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   // source file was never written fails the electron-builder step.
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
+  localMacSigningIdentity?: string,
 ) {
   const buildConfig: Record<string, unknown> = {
     appId: DESKTOP_APP_ID,
@@ -2700,6 +2732,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(localMacSigningIdentity
+        ? {
+            // electron-builder's non-MAS selector excludes Apple Development.
+            // The custom hook replaces this placeholder with our pinned identity.
+            identity: "-",
+            sign: path.join(repoRoot, "scripts/sign-local-macos.ts"),
+            type: "development",
+            forceCodeSigning: true,
+            notarize: false,
+          }
+        : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3326,6 +3369,34 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
+  let localMacSigningIdentity: string | undefined;
+  if (options.localSigning) {
+    const identities = yield* spawnAndCollectOutput(
+      ChildProcess.make("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    if (identities.exitCode !== 0) {
+      return yield* new LocalMacSigningError({
+        message: "Could not read local macOS signing identities.",
+      });
+    }
+    localMacSigningIdentity = yield* Effect.try({
+      try: () =>
+        resolveLocalMacSigningIdentity(
+          identities.stdout,
+          loadRepoEnv({ repoRoot }).T3CODE_MACOS_SIGNING_IDENTITY,
+        ),
+      catch: (cause) =>
+        isLocalMacSigningError(cause)
+          ? cause
+          : new LocalMacSigningError({
+              message: "Could not select a local macOS signing identity.",
+            }),
+    });
+  }
   if (hostPlatform === "linux" && options.platform === "linux") {
     yield* preflightLinuxDesktopBuild(options.arch);
   }
@@ -3659,6 +3730,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
+      localMacSigningIdentity,
     ),
     dependencies: stageDependencies,
     devDependencies: {
@@ -3745,6 +3817,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     delete buildEnv.APPLE_API_KEY;
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
+  }
+  delete buildEnv.T3CODE_MACOS_LOCAL_SIGNING_IDENTITY;
+  if (localMacSigningIdentity) {
+    buildEnv.T3CODE_MACOS_LOCAL_SIGNING_IDENTITY = localMacSigningIdentity;
   }
 
   if (hostPlatform === "win32") {
@@ -3894,6 +3970,11 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
       "Enable signing/notarization discovery; Windows uses Azure Trusted Signing (env: T3CODE_DESKTOP_SIGNED).",
     ),
     Flag.optional,
+  ),
+  localSigning: Flag.Boolean("local-signing").pipe(
+    Flag.withDescription(
+      "Sign a local macOS build with an Apple Development certificate, without notarization.",
+    ),
   ),
   verbose: Flag.Boolean("verbose").pipe(
     Flag.withDescription("Stream subprocess stdout (env: T3CODE_DESKTOP_VERBOSE)."),

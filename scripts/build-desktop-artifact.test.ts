@@ -15,6 +15,8 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  LocalMacSigningError,
+  resolveLocalMacSigningIdentity,
   BundleNotSelfContainedError,
   BuildCommandFailedError,
   parseWslRuntimeArchiveMembers,
@@ -1877,6 +1879,101 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("signs local macOS artifacts without release provisioning or notarization", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        "arm64",
+        "A".repeat(40),
+      );
+      const mac = config.mac as Record<string, unknown>;
+      assert.deepStrictEqual(mac.target, ["dmg", "zip"]);
+      assert.equal(mac.type, "development");
+      assert.equal(mac.forceCodeSigning, true);
+      assert.equal(mac.notarize, false);
+      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-local-macos\.ts$/);
+      assert.notProperty(mac, "provisioningProfile");
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it("requires an unambiguous valid Apple Development identity for local signing", () => {
+    const first = "A".repeat(40);
+    const second = "B".repeat(40);
+    const identities = `  1) ${first} "Apple Development: First (TEAM1)"\n  2) ${second} "Apple Development: Second (TEAM2)"\n     2 valid identities found`;
+    assert.throws(() => resolveLocalMacSigningIdentity(identities), LocalMacSigningError);
+    assert.equal(resolveLocalMacSigningIdentity(identities, first.toLowerCase()), first);
+    assert.throws(
+      () => resolveLocalMacSigningIdentity(identities, "C".repeat(40)),
+      LocalMacSigningError,
+    );
+    assert.throws(
+      () => resolveLocalMacSigningIdentity("0 valid identities found"),
+      LocalMacSigningError,
+    );
+    assert.equal(
+      resolveLocalMacSigningIdentity(`1) ${first} "Apple Development: First (TEAM1)"`),
+      first,
+    );
+    assert.throws(
+      () => resolveLocalMacSigningIdentity(`1) ${first} "Developer ID Application: First"`),
+      LocalMacSigningError,
+    );
+    assert.throws(
+      () =>
+        resolveLocalMacSigningIdentity(
+          `1) ${first} "Apple Development: First" (CSSMERR_TP_CERT_EXPIRED)`,
+        ),
+      LocalMacSigningError,
+    );
+  });
+
+  it.effect("limits local signing to macOS development builds", () =>
+    Effect.gen(function* () {
+      for (const [platform, host, signed, allowed] of [
+        ["mac", "darwin", false, true],
+        ["mac", "darwin", true, false],
+        ["mac", "win32", false, false],
+        ["win", "win32", false, false],
+        ["linux", "linux", false, false],
+      ] as const) {
+        const resolution = resolveBuildOptions({
+          platform: Option.some(platform),
+          target: Option.none(),
+          arch: Option.some("arm64"),
+          buildVersion: Option.none(),
+          outputDir: Option.none(),
+          skipBuild: Option.none(),
+          keepStage: Option.none(),
+          signed: Option.some(signed),
+          localSigning: true,
+          verbose: Option.none(),
+          mockUpdates: Option.none(),
+          mockUpdateServerPort: Option.none(),
+          wslRuntime: Option.none(),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcessPlatform, host),
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+        );
+        if (allowed) {
+          assert.equal((yield* resolution).localSigning, true);
+        } else {
+          assert.instanceOf(yield* Effect.flip(resolution), LocalMacSigningError);
+        }
+      }
+    }),
   );
 
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>
