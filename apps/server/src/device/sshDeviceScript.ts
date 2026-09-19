@@ -3,7 +3,10 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 /** Resolve common non-interactive SDK and Node locations without sourcing user shell scripts. */
-export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export const remoteDeviceEnvironment = (
+  nodeBootstrap = false,
+) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+${nodeBootstrap ? `node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
@@ -37,6 +40,20 @@ const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
+// Windows cannot spawn npm.cmd directly. Run its JS entry with the selected Node,
+// keeping paths and arguments out of a command shell for both probe and install.
+const runNpm = (args, options) => {
+  if (process.platform !== 'win32') return run('npm', args, options);
+  const directories = [path.dirname(process.execPath), ...(process.env.PATH || '').split(path.delimiter)];
+  const entry = directories.filter(Boolean).map(dir => path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'npm', 'bin', 'npm-cli.js')).find(file => fs.existsSync(file));
+  if (!entry) throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
+  return run(process.execPath, [entry, ...args], options);
+};
+const commandFailure = result => [
+  result.error?.message,
+  result.signal ? 'signal ' + result.signal : result.status !== null ? 'exit code ' + result.status : null,
+  (result.stderr?.trim() || result.stdout?.trim())?.slice(-2000),
+].filter(Boolean).join(': ');
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
 const stopHub = hub => {
@@ -89,8 +106,8 @@ async function install(name, version, entry) {
   try {
     if (complete()) return file;
     staging = fs.mkdtempSync(path.join(path.dirname(dir), '.install-'));
-    const result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-    if (result.status !== 0) throw Error('Installing ' + name + ': ' + (result.error?.message || result.stderr?.slice(-2000)));
+    const result = runNpm(['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
+    if (result.error || result.status !== 0) throw Error('Installing ' + name + ': ' + commandFailure(result));
     if (!fs.existsSync(path.join(staging, 'node_modules', name, entry))) throw Error('Missing installed entry for ' + name);
     fs.writeFileSync(path.join(staging, '.install-complete'), version);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -109,8 +126,9 @@ async function install(name, version, entry) {
     { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
   ];
   if (mode === 'probe') {
-    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
-    if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
+    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
+    const npm = runNpm(['--version']);
+    if (npm.error || npm.status !== 0) throw Error(npm.error?.code === 'ENOENT' ? 'npm is missing from the non-interactive SSH PATH: ' + npm.error.message : 'npm probe failed: ' + commandFailure(npm));
     console.log(JSON.stringify({ nodePath: process.execPath, platforms })); return;
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });

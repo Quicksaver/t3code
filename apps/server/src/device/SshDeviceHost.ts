@@ -47,10 +47,10 @@ const targetFor = (config: SshDeviceHostConfig) => ({
 });
 const identityArgs = (config: SshDeviceHostConfig) =>
   config.identityFile ? ["-i", config.identityFile] : [];
-const commandArgs = (script: string) => [
+const commandArgs = (script: string, nodeBootstrap = false) => [
   "sh",
   "-c",
-  quoteRemoteArg(remoteDeviceEnvironment + script),
+  quoteRemoteArg(remoteDeviceEnvironment(nodeBootstrap) + script),
 ];
 const bootstrap = (
   config: SshDeviceHostConfig,
@@ -61,6 +61,7 @@ const bootstrap = (
     preHostArgs: identityArgs(config),
     remoteCommandArgs: commandArgs(
       'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
+      true,
     ),
     stdin: remoteDeviceScript(owner, mode),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
