@@ -378,6 +378,8 @@ The custom behavior is focused on making tool activity easier to read in long-ru
 
 ## File Change And Command Activity Boxes
 
+Approval request kinds come from the shared client-runtime mapper, including permission approvals. Collab identity additionally reads parent-collab and nested item identifiers, so late child output folds into its original row without affecting unrelated command ordering.
+
 Shared client-runtime `presentation.ts` remains authoritative for compact tool labels, T3 MCP labels and icons, grouping categories and count summaries, superseded-marker filtering, and viewed-image discovery. `workLogActivity.ts` composes its rich command and file fields with provider-neutral browser, computer, icon, and source metadata.
 
 File-change and command activities are rendered as clickable, expandable rows in the conversation work log.
