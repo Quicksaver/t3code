@@ -147,6 +147,8 @@ This section is the shared routing policy for full verification runs. Keep platf
 
 ## Preview Automation Reliability
 
+Stable-host discovery evicts a timed-out registration and accepts its replacement under the same host identity. The broker regression covers both stale-host timeout and successful re-registration.
+
 **Worktree branch:** `fix/preview-automation-reliability`
 
 The fork keeps product-native preview automation bounded and recoverable across the web host, MCP server, and Electron CDP controller. Upstream owns retained preview guests, recording capture, picture-in-picture, and the inline mini-player; the fork continues to own the bounded one-shot automation path, control-session recovery, and degraded semantic snapshots.
