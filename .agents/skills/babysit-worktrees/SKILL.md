@@ -14,4 +14,4 @@ Instruct each subagent to use the global `$babysit` skill. Do not load `$babysit
 
 Be silent while you patiently wait for each subagent terminal result.
 
-After every subagent finishes, use `$rebuild-main` if any subagent made changes. Otherwise, report the collected results and stop.
+As subagents finish, cherrypick any new commits created on their branches onto local `main` that are not already present; ensure `base/fork` documentation is also updated as needed.

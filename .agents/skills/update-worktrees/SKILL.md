@@ -10,7 +10,7 @@ First, fetch `upstream/main` and fast-forward our branch `base/main`. This is a 
 
 Then load `$spawn-worktrees`. Instruct each subagent to use `$update-worktree`. Updating the control branch above is the only worktree mutation you perform yourself. Do not load `$update-worktree`, validate child changes, or modify any other worktree, edit, or push any branch yourself.
 
-Be silent while you patiently wait for each subagent terminal result.
+Be silent while you patiently wait for each subagent terminal result. Output only blockers or other potentially actionable failures or awaiting inputs while you keep monitoring.
 
 The job is finished once every assigned branch has one combined customization commit directly above the selected `base/main` commit, with its upstream tracking unchanged. Only fast-forward `base/main`; customization commits stay on their assigned branches. Even if newer commits are found in `upstream/main`, do not pursue them.
 
