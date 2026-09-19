@@ -3,7 +3,10 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
 /** Resolve common non-interactive SDK and Node locations without sourcing user shell scripts. */
-export const remoteDeviceEnvironment = `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+export const remoteDeviceEnvironment = (
+  nodeBootstrap = false,
+) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+${nodeBootstrap ? `node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
@@ -15,10 +18,6 @@ if [ -z "$JAVA_HOME" ] && ! command -v java >/dev/null 2>&1; then
   done
 fi
 if [ -n "$JAVA_HOME" ]; then export PATH="$JAVA_HOME/bin:$PATH"; fi
-`;
-
-/** Prefer a supported Node during bootstrap without probing it for every device command. */
-export const remoteDeviceNodeEnvironment = `node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 `;
 
 /** Node runs this on the host. All paths it returns belong to that host. */

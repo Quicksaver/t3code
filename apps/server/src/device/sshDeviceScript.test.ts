@@ -7,12 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import {
-  quoteRemoteArg,
-  remoteDeviceEnvironment,
-  remoteDeviceNodeEnvironment,
-  remoteDeviceScript,
-} from "./sshDeviceScript.ts";
+import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
@@ -119,8 +114,26 @@ for (const supported of [true, false]) {
           try {
             const bin = NodePath.join(home, "selected-node/bin");
             const fallback = NodePath.join(home, ".local/bin");
+            const sdk = NodePath.join(home, "android-sdk");
+            const jvm = NodePath.join(home, "java-home");
             await NodeFSP.mkdir(bin, { recursive: true });
             await NodeFSP.mkdir(fallback, { recursive: true });
+            for (const [tool, directory] of [
+              ["adb", NodePath.join(sdk, "platform-tools")],
+              ["java", NodePath.join(jvm, "bin")],
+            ] as const) {
+              await NodeFSP.mkdir(directory, { recursive: true });
+              await NodeFSP.writeFile(
+                NodePath.join(directory, tool),
+                `#!/bin/sh\necho configured-${tool}\n`,
+                { mode: 0o755 },
+              );
+              await NodeFSP.writeFile(
+                NodePath.join(fallback, tool),
+                `#!/bin/sh\necho wrong-${tool}\n`,
+                { mode: 0o755 },
+              );
+            }
             for (const tool of ["node", "npm"]) {
               await NodeFSP.writeFile(
                 NodePath.join(bin, tool),
@@ -139,12 +152,15 @@ for (const supported of [true, false]) {
             }
             const result = await exec(
               "/bin/sh",
-              ["-c", `${remoteDeviceEnvironment}${remoteDeviceNodeEnvironment}\nnode; npm`],
+              ["-c", `${remoteDeviceEnvironment(true)}\nnode; npm; adb; java`],
               {
-                env: { HOME: home, PATH: bin, JAVA_HOME: "", ANDROID_HOME: "" },
+                env: { HOME: home, PATH: bin, JAVA_HOME: jvm, ANDROID_HOME: sdk },
               },
             );
-            expect(result.stdout).toBe(supported ? "selected\nselected\n" : "fallback\nfallback\n");
+            expect(result.stdout).toBe(
+              (supported ? "selected\nselected\n" : "fallback\nfallback\n") +
+                "configured-adb\nconfigured-java\n",
+            );
           } finally {
             await NodeFSP.rm(home, { recursive: true, force: true });
           }
@@ -166,7 +182,7 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
           "#!/bin/sh\necho test-java\n",
           { mode: 0o755 },
         );
-        const result = await exec("/bin/sh", ["-c", `${remoteDeviceEnvironment}\njava`], {
+        const result = await exec("/bin/sh", ["-c", `${remoteDeviceEnvironment()}\njava`], {
           env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
         });
         expect(result.stdout.trim()).toBe("test-java");
