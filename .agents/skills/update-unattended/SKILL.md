@@ -7,7 +7,7 @@ disable-model-invocation: true
 Follow these steps sequentially:
 
 - use `$update-worktrees`. On blockers, report and do not proceed;
-- use `$pick-from-worktrees`. If unsuccessful, report and do not proceed;
+- use `$rebuild-main`. If unsuccessful, report and do not proceed;
 - push all tracked branches to origin;
 - sync main branch on the other devices; project is tracked on windows desktop and macbook pro
 - cleanup all temporary and leftover branches and stashes created during this process

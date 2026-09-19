@@ -1,5 +1,5 @@
 interface:
-  display_name: "Comments From Worktrees"
+  display_name: "Babysit Worktrees"
   short_description: "Address PR comments in active non-main worktrees."
 
 policy:
