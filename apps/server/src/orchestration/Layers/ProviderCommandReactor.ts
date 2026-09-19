@@ -64,6 +64,7 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import * as MagiControlBroker from "../../mcp/MagiControlBroker.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
@@ -824,6 +825,7 @@ const make = Effect.gen(function* () {
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
+    readonly magiInstructions?: string;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
     if (!thread) {
@@ -874,6 +876,14 @@ const make = Effect.gen(function* () {
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+      ...(input.magiInstructions !== undefined
+        ? {
+            control: {
+              instructions: input.magiInstructions,
+              magiControlEnabled: true,
+            },
+          }
+        : {}),
     };
   });
 
@@ -1470,6 +1480,18 @@ const make = Effect.gen(function* () {
       turnsAfterCompaction.set(event.payload.threadId, queued);
       return;
     }
+    const magiInstructions = yield* MagiControlBroker.proxy
+      .getArmedTurnInstructions(event.payload.threadId, message.text)
+      .pipe(
+        Effect.map(Option.some),
+        Effect.catchCause((cause) =>
+          handleTurnStartFailure(cause).pipe(Effect.as(Option.none<string | null>())),
+        ),
+      );
+    if (Option.isNone(magiInstructions)) {
+      return;
+    }
+
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
       threadId: event.payload.threadId,
       messageText: projectComposerContextForProvider({
@@ -1482,6 +1504,7 @@ const make = Effect.gen(function* () {
         : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,
+      ...(magiInstructions.value !== null ? { magiInstructions: magiInstructions.value } : {}),
     }).pipe(
       Effect.map(Option.some),
       Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),

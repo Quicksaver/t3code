@@ -46,6 +46,11 @@ import {
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
+  OPENCODE_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
+import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
   OpenCodeRuntimeError,
@@ -2829,6 +2834,13 @@ export function makeOpenCodeAdapter(
 
     const startSession: OpenCodeAdapterShape["startSession"] = Effect.fn("startSession")(
       function* (input) {
+        input = normalizeMagiSessionStartInput(input);
+        const magiPermissions =
+          input.control?.executionProfile === "magi-read-only"
+            ? {
+                readOnly: true as const,
+              }
+            : undefined;
         const binaryPath = openCodeSettings.binaryPath;
         const serverUrl = openCodeSettings.serverUrl;
         const serverPassword = openCodeSettings.serverPassword;
@@ -2913,7 +2925,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: reusable.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, magiPermissions),
                     }),
                   );
                   return { openCodeSession: reusable, created: false };
@@ -2940,7 +2952,7 @@ export function makeOpenCodeAdapter(
                   yield* runOpenCodeSdk("session.update", () =>
                     client.session.update({
                       sessionID: forked.id,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode, magiPermissions),
                     }),
                   );
                   return { openCodeSession: forked, created: true };
@@ -2954,7 +2966,7 @@ export function makeOpenCodeAdapter(
                 const createdSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
                     ...(input.title ? { title: input.title } : {}),
-                    permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    permission: buildOpenCodePermissionRules(input.runtimeMode, magiPermissions),
                   }),
                 );
                 if (!createdSession.data) {
@@ -3093,6 +3105,7 @@ export function makeOpenCodeAdapter(
     );
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+      input = normalizeMagiSendTurnInput(input);
       const context = yield* ensureSessionContext(sessions, input.threadId);
       yield* awaitOpenCodeContextReady(context);
       const modelSelection =
@@ -4007,6 +4020,9 @@ export function makeOpenCodeAdapter(
       },
     );
 
+    const getContextUsage: NonNullable<OpenCodeAdapterShape["getContextUsage"]> = (threadId) =>
+      ensureSessionContext(sessions, threadId).pipe(Effect.as(null));
+
     const stopAll: OpenCodeAdapterShape["stopAll"] = () =>
       Effect.gen(function* () {
         const contexts = [...sessions.values()];
@@ -4026,6 +4042,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        magi: OPENCODE_MAGI_CAPABILITIES,
       },
       startSession,
       sendTurn,
@@ -4038,6 +4055,7 @@ export function makeOpenCodeAdapter(
       hasSession,
       readThread,
       rollbackThread,
+      getContextUsage,
       stopAll,
       get streamEvents() {
         return Stream.fromQueue(runtimeEvents);

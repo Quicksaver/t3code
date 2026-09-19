@@ -15,6 +15,7 @@ interface PanelLayoutControlsProps {
   rightPanelUnavailableLabel?: string;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
+  liveMagiRunCount?: number;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
@@ -29,9 +30,21 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
   liveAgentCount,
+  liveMagiRunCount = 0,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  const liveCount = liveAgentCount + liveMagiRunCount;
+  const activityLabel = [
+    liveAgentCount > 0
+      ? `${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+      : null,
+    liveMagiRunCount > 0
+      ? `${liveMagiRunCount} Magi ${liveMagiRunCount === 1 ? "run" : "runs"} ongoing`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -66,21 +79,19 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             pressed={rightPanelOpen}
             onPressedChange={onToggleRightPanel}
             aria-label={
-              liveAgentCount > 0
-                ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                : "Toggle right panel"
+              liveCount > 0 ? `Toggle right panel, ${activityLabel}` : "Toggle right panel"
             }
             variant="ghost"
             size="sm"
             disabled={!rightPanelAvailable}
           >
             <PanelRightIcon className="size-4" />
-            {liveAgentCount > 0 ? (
+            {liveCount > 0 ? (
               <span
                 aria-hidden
                 className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
               >
-                {liveAgentCount}
+                {liveCount}
               </span>
             ) : null}
           </Toggle>
@@ -88,9 +99,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipPopup side="bottom">
           {rightPanelAvailable
             ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
-                liveAgentCount > 0
-                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                  : ""
+                liveCount > 0 ? ` · ${activityLabel}` : ""
               }`
             : rightPanelUnavailableLabel}
         </TooltipPopup>

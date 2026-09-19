@@ -84,6 +84,11 @@ import {
   XAiExitPlanModeRequest,
 } from "../acp/XAiAcpExtension.ts";
 import { type GrokAdapterShape } from "../Services/GrokAdapter.ts";
+import {
+  ACP_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
@@ -955,6 +960,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       withThreadLock(
         input.threadId,
         Effect.gen(function* () {
+          input = normalizeMagiSessionStartInput(input);
           if (input.provider !== undefined && input.provider !== PROVIDER) {
             return yield* new ProviderAdapterValidationError({
               provider: PROVIDER,
@@ -1528,6 +1534,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             detail: "Change permissions with T3's permission selector instead of /always-approve.",
           });
         }
+        input = normalizeMagiSendTurnInput(input);
         const prepared = yield* withThreadLock(
           input.threadId,
           Effect.gen(function* () {
@@ -2156,6 +2163,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         });
       });
 
+    const getContextUsage: NonNullable<GrokAdapterShape["getContextUsage"]> = (threadId) =>
+      requireSession(threadId).pipe(Effect.as(null));
+
     const stopSession: GrokAdapterShape["stopSession"] = (threadId) =>
       withThreadLock(
         threadId,
@@ -2188,13 +2198,18 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     return {
       provider: PROVIDER,
-      capabilities: { sessionModelSwitch: "in-session", supportsConversationRollback: false },
+      capabilities: {
+        sessionModelSwitch: "in-session",
+        supportsConversationRollback: false,
+        magi: ACP_MAGI_CAPABILITIES,
+      },
       compaction: { type: "slash-command", command: "/compact" },
       startSession,
       sendTurn,
       interruptTurn,
       readThread,
       rollbackThread,
+      getContextUsage,
       respondToRequest,
       respondToUserInput,
       stopSession,

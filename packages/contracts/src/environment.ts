@@ -166,6 +166,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Absent on older servers, where clients must clone with the blocking
       `sourceControl.cloneRepository` call instead. */
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes the complete Magi v1 protocol and all built-in provider
+      adapters have opted into its conformance profile. */
+  magi: Schema.optionalKey(Schema.Boolean),
   /** Server detects `platform.machine` and persists the `environmentIcon`
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */

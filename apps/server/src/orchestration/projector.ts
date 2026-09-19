@@ -432,6 +432,9 @@ export function projectEvent(
             worktreePath: payload.worktreePath,
             pullRequests: [],
             branchPullRequest: null,
+            ...(payload.parentRelation !== undefined
+              ? { parentRelation: payload.parentRelation }
+              : {}),
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,

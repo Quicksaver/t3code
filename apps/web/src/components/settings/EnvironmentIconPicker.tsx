@@ -24,7 +24,7 @@ import {
 import {
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
+} from "./EnvironmentSettingsPanel.logic";
 
 /**
  * Why the picker is inert, in the order the user can do something about it.

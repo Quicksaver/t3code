@@ -96,9 +96,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
-  const endpoint = NetAddress.isInetAddress(httpServer.address)
-    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
-    : "http://127.0.0.1/mcp";
+  const endpointBase = NetAddress.isInetAddress(httpServer.address)
+    ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}`
+    : "http://127.0.0.1";
 
   const hashToken = (token: string) =>
     crypto
@@ -120,15 +120,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       const providerSessionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const rawToken = yield* crypto.randomBytes(32).pipe(Effect.map(tokenFromBytes), Effect.orDie);
       const tokenHash = yield* hashToken(rawToken);
+      const capabilities = new Set<McpInvocationContext.McpCapability>(request.capabilities);
+      if (!capabilities.has("magi-context")) capabilities.add("pull-requests");
       const scope: McpInvocationContext.McpInvocationScope = {
         environmentId,
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set<McpInvocationContext.McpCapability>([
-          "pull-requests",
-          ...request.capabilities,
-        ]),
+        capabilities,
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -142,7 +141,13 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           threadId: scope.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
-          endpoint,
+          endpoint: capabilities.has("magi-context")
+            ? `${endpointBase}/mcp/context`
+            : capabilities.has("preview") && capabilities.has("magi-control")
+              ? `${endpointBase}/mcp/all`
+              : capabilities.has("preview")
+                ? `${endpointBase}/mcp`
+                : `${endpointBase}/mcp/magi`,
           authorizationHeader: `Bearer ${rawToken}`,
           capabilities: scope.capabilities,
         },
