@@ -7,10 +7,65 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+import {
+  quoteRemoteArg,
+  remoteDeviceCommand,
+  remoteDeviceEnvironment,
+  remoteDeviceScript,
+} from "./sshDeviceScript.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+
+it.effect(
+  "passes bootstrap code through the remote login shell without reinterpreting quotes",
+  () =>
+    Effect.gen(function* () {
+      const value = "spaces 'single' \"double\" $HOME `literal`\nsecond line";
+      const command = remoteDeviceCommand(
+        "exec node",
+        `process.stdout.write(${JSON.stringify(value)});`,
+        true,
+      );
+      const result = NodeChildProcess.spawnSync(
+        (yield* HostProcessPlatform) === "win32" ? "pwsh" : "sh",
+        (yield* HostProcessPlatform) === "win32"
+          ? ["-NoProfile", "-NonInteractive", "-Command", command.remoteCommandArgs.join(" ")]
+          : ["-c", command.remoteCommandArgs.join(" ")],
+        { input: command.stdin, encoding: "utf8", timeout: 10000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(value);
+    }),
+);
+
+it.effect(
+  "preserves remote arguments and exact stdin, and reports failure through the login shell",
+  () =>
+    Effect.gen(function* () {
+      const value = "quotes ' \" $HOME\nno trailing newline";
+      const code =
+        "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8')}));process.exitCode=23";
+      const command = remoteDeviceCommand(
+        `exec ${[process.execPath.replaceAll("\\", "/"), "-e", code, value].map(quoteRemoteArg).join(" ")}`,
+        value,
+      );
+      const result = NodeChildProcess.spawnSync(
+        (yield* HostProcessPlatform) === "win32" ? "pwsh" : "sh",
+        (yield* HostProcessPlatform) === "win32"
+          ? ["-NoProfile", "-NonInteractive", "-Command", command.remoteCommandArgs.join(" ")]
+          : ["-c", command.remoteCommandArgs.join(" ")],
+        { input: command.stdin, encoding: "utf8", timeout: 10000 },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      // PowerShell -Command normalizes a failing native command to exit code 1.
+      expect(result.status).toBe((yield* HostProcessPlatform) === "win32" ? 1 : 23);
+      expect(JSON.parse(result.stdout)).toEqual({ args: [value], input: value });
+    }),
+);
 
 it("runs Windows npm probe and installation through Node with paths containing spaces", async () => {
   const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture "));
