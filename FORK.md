@@ -761,6 +761,8 @@ Primary files:
 
 ## Version Control Panel Work
 
+The shared add-surface descriptor also owns Magi availability, shortcut, and live-run badge. Version Control retains its singleton placement and last menu position; mobile uses the upstream shared screen header.
+
 **Worktree branch:** `feat/version-control-panel-work`
 
 The first-class Version Control panel is integrated on `main`; the active worktree remains its maintenance owner. Treat the Version Control singleton right-panel surface, its native mobile screen, live VCS status watcher, Actionable and Remotes panel model, selected-file commit/stash flow, branch/commit/stash/remote actions, compare-base semantics, review-patch construction, and Version Control panel RPC/contracts as part of the fork's customization set during upstream updates. The native screen reuses the server-authoritative panel RPCs and shared branch/change presentation rules, and is opened from the mobile Git action menu through the explicit `Version Control` action.
