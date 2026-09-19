@@ -94,6 +94,8 @@ Node 22 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host.
 
+If Android Emulator is missing or cannot list virtual devices, already discovered iOS and Android devices remain available. The host status reports the enumeration error; install or repair Android Emulator on that host and refresh to include stopped Android virtual devices.
+
 The picker identifies devices by host when several hosts are configured.
 Connections recover after interruptions. Removing a host closes its device
 sessions and stops its T3 helpers when reachable; simulators keep running.
