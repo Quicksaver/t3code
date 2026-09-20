@@ -463,7 +463,7 @@ export function makeSourceControlPanelActions(
       ...(force ? ["--force-with-lease"] : []),
       "-u",
       remoteName,
-      `${branchName}:refs/heads/${remoteBranchName}`,
+      `refs/heads/${branchName}:refs/heads/${remoteBranchName}`,
     ]).pipe(Effect.asVoid);
   });
 
