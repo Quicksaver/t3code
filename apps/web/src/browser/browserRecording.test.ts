@@ -106,6 +106,7 @@ class FakeMediaRecorder {
   static supportedTypes = new Set(["video/webm;codecs=vp9"]);
   static outputMimeType: string | undefined;
   static stopError: unknown;
+  deferStop = false;
   static isTypeSupported(type: string): boolean {
     return this.supportedTypes.has(type);
   }
@@ -137,6 +138,19 @@ class FakeMediaRecorder {
   stop(): void {
     if (FakeMediaRecorder.stopError !== undefined) throw FakeMediaRecorder.stopError;
     this.state = "inactive";
+    if (this.deferStop) return;
+    this.finishStop();
+  }
+
+  emitChunk(data: Blob): void {
+    for (const listener of this.listeners.get("dataavailable") ?? []) {
+      const event = Object.assign(new Event("dataavailable"), { data });
+      if (typeof listener === "function") listener(event);
+      else listener.handleEvent(event);
+    }
+  }
+
+  finishStop(): void {
     for (const listener of this.listeners.get("stop") ?? []) {
       if (typeof listener === "function") listener(new Event("stop"));
       else listener.handleEvent(new Event("stop"));
@@ -193,6 +207,75 @@ describe("browser recording", () => {
 
     await stopBrowserRecording("recording-tab");
     expect(startupEvents).toEqual(["publish:recording-tab", "start-screencast"]);
+  });
+
+  it("waits for the original encoder flush after a stop deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    await startBrowserRecording("flush-retry");
+    const recorder = FakeMediaRecorder.instances[0]!;
+    recorder.deferStop = true;
+    recorder.emitChunk(new Blob(["first"]));
+    const first = expect(stopBrowserRecording("flush-retry", 40)).rejects.toMatchObject({
+      operation: "stop-deadline",
+    });
+    await vi.advanceTimersByTimeAsync(40);
+    await first;
+    const retry = stopBrowserRecording("flush-retry", 100);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(save).not.toHaveBeenCalled();
+    recorder.emitChunk(new Blob(["last"]));
+    recorder.finishStop();
+    await retry;
+    expect(new TextDecoder().decode(save.mock.calls[0]![2])).toBe("firstlast");
+  });
+
+  it("releases startup state when settings hydration exceeds its deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const hydration = deferred<void>();
+    vi.mocked(ensureClientSettingsHydrated).mockReturnValueOnce(hydration.promise);
+    const started = expect(
+      startBrowserRecording("hydration-timeout", null, "hydration-timeout", 40),
+    ).rejects.toBeInstanceOf(BrowserRecordingCaptureTimeoutError);
+    await vi.advanceTimersByTimeAsync(40);
+    await started;
+    expect(readActiveBrowserRecordingTabIds().has("hydration-timeout")).toBe(false);
+    expect(useBrowserSurfaceStore.getState().activityByTabId["hydration-timeout"]).toBeUndefined();
+    hydration.resolve();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(startScreencast).not.toHaveBeenCalled();
+  });
+
+  it("bounds paint readiness by a short startup deadline", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn(() => 1),
+    );
+    const started = expect(
+      startBrowserRecording("paint-timeout", null, "paint-timeout", 40),
+    ).rejects.toBeInstanceOf(BrowserRecordingCaptureTimeoutError);
+    await vi.advanceTimersByTimeAsync(40);
+    await started;
+    expect(readActiveBrowserRecordingTabIds().has("paint-timeout")).toBe(false);
+    expect(startScreencast).not.toHaveBeenCalled();
+  });
+
+  it("cancels a queued grant when its startup deadline expires", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const blocked = deferred<void>();
+    startScreencast.mockImplementationOnce(() => blocked.promise);
+    const first = startBrowserRecording("grant-owner");
+    await vi.advanceTimersByTimeAsync(0);
+    const queued = expect(
+      startBrowserRecording("grant-timeout", null, "grant-timeout", 40),
+    ).rejects.toBeInstanceOf(BrowserRecordingCaptureTimeoutError);
+    await vi.advanceTimersByTimeAsync(40);
+    await queued;
+    expect(readActiveBrowserRecordingTabIds().has("grant-timeout")).toBe(false);
+    blocked.resolve();
+    await first;
+    await stopBrowserRecording("grant-owner");
+    expect(startScreencast.mock.calls.map(([tabId]) => tabId)).toEqual(["grant-owner"]);
   });
 
   it("routes gesture-free starts through the desktop capture trigger", async () => {

@@ -80,3 +80,32 @@ it("does not send bytes after the host deadline and releases the pending attachm
     expect.objectContaining({ attachmentId: "uploaded-file" }),
   );
 });
+
+it.each(["http", "transport"])(
+  "preserves a late %s failure instead of making it retryable",
+  async (kind) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        vi.setSystemTime(1600);
+        if (kind === "transport") throw new TypeError("connection failed");
+        return new Response(null, { status: 500 });
+      }),
+    );
+    await expect(
+      uploadBrowserRecording(threadRef, artifact, new Blob(["video"]), 1500),
+    ).rejects.toMatchObject({ _tag: "PreviewAutomationRecordingTransferError" });
+  },
+);
+
+it("classifies a transport deadline abort as retryable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new DOMException("timed out", "TimeoutError");
+    }),
+  );
+  await expect(
+    uploadBrowserRecording(threadRef, artifact, new Blob(["video"]), 1500),
+  ).rejects.toMatchObject({ _tag: "PreviewAutomationRecordingDeadlineExpiredError" });
+});

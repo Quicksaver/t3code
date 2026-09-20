@@ -132,6 +132,7 @@ interface ActiveRecording {
   releaseSurfaceActivity: (() => void) | null;
   stream: MediaStream | null;
   recorder: MediaRecorder | null;
+  recorderStopped: Promise<void> | null;
   retainForUpload: boolean;
   savedBlob?: Blob;
   uploadPromise?: Promise<string>;
@@ -399,7 +400,9 @@ const clearActiveRecording = (recording: ActiveRecording): void => {
   publishActiveRecordingTabIds();
 };
 
-const waitForBrowserRecordingPaint = async (): Promise<void> => {
+const waitForBrowserRecordingPaint = async (
+  timeoutMs = BROWSER_RECORDING_PAINT_SETTLE_TIMEOUT_MS,
+): Promise<void> => {
   let firstFrameId: number | null = null;
   let secondFrameId: number | null = null;
   let timeoutId: number | null = null;
@@ -413,7 +416,10 @@ const waitForBrowserRecordingPaint = async (): Promise<void> => {
     });
   });
   const timedOut = new Promise<void>((resolve) => {
-    timeoutId = window.setTimeout(resolve, BROWSER_RECORDING_PAINT_SETTLE_TIMEOUT_MS);
+    timeoutId = window.setTimeout(
+      resolve,
+      Math.min(BROWSER_RECORDING_PAINT_SETTLE_TIMEOUT_MS, timeoutMs),
+    );
   });
   try {
     await Promise.race([painted, timedOut]);
@@ -595,6 +601,29 @@ export async function startBrowserRecording(
   const deadline = timeoutMs === undefined ? null : Date.now() + timeoutMs;
   const remainingStartupBudget = (): number | undefined =>
     deadline === null ? undefined : Math.max(0, deadline - Date.now());
+  const startupDeadlineError = new BrowserRecordingCaptureTimeoutError({
+    tabId,
+    timeoutMs: timeoutMs ?? 0,
+  });
+  const awaitStartup = async <A>(promise: Promise<A>): Promise<A> => {
+    const remainingMs = remainingStartupBudget();
+    if (remainingMs === undefined) return await promise;
+    if (remainingMs <= 0) {
+      void promise.catch(() => undefined);
+      throw startupDeadlineError;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(startupDeadlineError), remainingMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  };
   const activeRecording = activeRecordings.get(tabId);
   if (activeRecording) {
     if (activeRecording.lifecycle.phase === "recording") {
@@ -634,17 +663,20 @@ export async function startBrowserRecording(
     releaseSurfaceActivity,
     stream: null,
     recorder: null,
+    recorderStopped: null,
     lifecycle: startingLifecycle,
   };
   activeRecordings.set(tabId, recording);
   publishActiveRecordingTabIds();
+  let cancelCapture: (() => void) | undefined;
   try {
-    await ensureClientSettingsHydrated().catch((cause: unknown) => {
+    await awaitStartup(ensureClientSettingsHydrated()).catch((cause: unknown) => {
       clearActiveRecording(recording);
       throw cause;
     });
     const frameRate = getClientSettings().browserRecordingFrameRate;
-    await waitForBrowserRecordingPaint();
+    await awaitStartup(waitForBrowserRecordingPaint(remainingStartupBudget()));
+    if (remainingStartupBudget() === 0) throw startupDeadlineError;
     const throwIfStartupCancelled = async (): Promise<void> => {
       // Once a grant starts, a stop lets startup finish so the caller receives an artifact.
       // Only a contended start can be cancelled before it reaches native capture.
@@ -674,6 +706,7 @@ export async function startBrowserRecording(
       startingLifecycle.grantStarted = true;
       await throwIfStartupCancelled();
       const capture = prepareTabMediaCapture(tabId, frameRate);
+      cancelCapture = capture.cancel;
       try {
         const startBudget = remainingStartupBudget();
         if (startBudget === undefined) await bridge.recording.startScreencast(tabId);
@@ -724,12 +757,14 @@ export async function startBrowserRecording(
       }
     });
     startingLifecycle.setQueuedForGrant(grant.queued);
-    const stream = await Promise.race([
-      grant.result,
-      startingLifecycle.cancelledBeforeGrantSignal.then(() => {
-        throw new BrowserRecordingStartCancelledError({ tabId });
-      }),
-    ]);
+    const stream = await awaitStartup(
+      Promise.race([
+        grant.result,
+        startingLifecycle.cancelledBeforeGrantSignal.then(() => {
+          throw new BrowserRecordingStartCancelledError({ tabId });
+        }),
+      ]),
+    );
     await throwIfStartupCancelled();
 
     let recorder: MediaRecorder;
@@ -775,6 +810,17 @@ export async function startBrowserRecording(
       recording.lifecycle = { phase: "recording" };
     }
     return startedAt;
+  } catch (cause) {
+    if (cause === startupDeadlineError) {
+      startingLifecycle.cancelBeforeGrant();
+      cancelCapture?.();
+      if (startingLifecycle.grantStarted) {
+        await cleanupFailedRecordingStart(bridge, recording, deadline);
+      } else {
+        clearActiveRecording(recording);
+      }
+    }
+    throw cause;
   } finally {
     settleStartup?.();
   }
@@ -821,7 +867,7 @@ const finalizeBrowserRecording = async (
     } else {
       try {
         await awaitWithinRecordingStopDeadline(
-          stopMediaRecorder(recording.recorder),
+          (recording.recorderStopped ??= stopMediaRecorder(recording.recorder)),
           deadline,
           tabId,
         );
@@ -890,7 +936,7 @@ const finalizeBrowserRecording = async (
 
   const cleanupErrors: unknown[] = [];
   try {
-    await stopMediaRecorder(recording.recorder);
+    await (recording.recorderStopped ??= stopMediaRecorder(recording.recorder));
   } catch (cause) {
     cleanupErrors.push(cause);
   }

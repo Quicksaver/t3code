@@ -50,11 +50,21 @@ export async function waitForPreviewViewportReadiness(input: {
   while (Date.now() <= deadline) {
     input.assertCurrent();
     let viewportState: Awaited<ReturnType<typeof input.readViewport>> = null;
+    const remainingReadMs = deadline - Date.now();
+    if (remainingReadMs <= 0) break;
+    let readTimeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      viewportState = await input.readViewport();
+      viewportState = await Promise.race([
+        input.readViewport(),
+        new Promise<null>((resolve) => {
+          readTimeout = setTimeout(() => resolve(null), remainingReadMs);
+        }),
+      ]);
     } catch {
       // Registration and navigation can transiently replace the guest while
       // React applies the server snapshot. Retry until the operation deadline.
+    } finally {
+      if (readTimeout !== undefined) clearTimeout(readTimeout);
     }
     input.assertCurrent();
     if (viewportState && isPreviewViewportReady({ setting: input.setting, ...viewportState })) {

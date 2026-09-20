@@ -106,6 +106,23 @@ describe("waitForPreviewViewportReadiness", () => {
     }
   });
 
+  it("returns at the deadline when the guest never answers a viewport read", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = waitForPreviewViewportReadiness({
+        setting,
+        timeoutMs: 40,
+        assertCurrent: vi.fn(),
+        readViewport: () => new Promise(() => {}),
+      });
+      await vi.advanceTimersByTimeAsync(40);
+      await expect(result).resolves.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("revalidates runtime identity after an awaited viewport read", async () => {
     let resolveViewport!: (value: typeof readyViewport) => void;
     const readViewport = vi.fn(
