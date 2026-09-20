@@ -491,6 +491,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const clearConfirmingArchive = useCallback(() => {
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
   }, [setConfirmingArchiveThreadKey, threadKey]);
+  useEffect(() => {
+    if (isArchiveBlocked) clearConfirmingArchive();
+  }, [clearConfirmingArchive, isArchiveBlocked]);
   const handleMouseLeave = useCallback(() => {
     clearConfirmingArchive();
   }, [clearConfirmingArchive]);
@@ -1935,7 +1938,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }),
           );
         }
-        removeFromSelection(archiveOutcome.archivedThreadKeys);
+        removeFromSelection(
+          getThreadKeysToDeselectAfterDelete(
+            threadKeys,
+            new Set(archiveOutcome.archivedThreadKeys),
+            (threadKey) => {
+              const threadRef = parseScopedThreadKey(threadKey);
+              return threadRef !== null && readThreadShell(threadRef) !== null;
+            },
+          ),
+        );
         if (archiveOutcome.mutationFailure) {
           if (!isAtomCommandInterrupted(archiveOutcome.mutationFailure)) {
             const error = squashAtomCommandFailure(archiveOutcome.mutationFailure);
