@@ -173,6 +173,14 @@ layer("ThreadColdStorage", (it) => {
         ),
       );
       assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
       yield* storage.archiveThread(threadId, quiesce);
       assert.deepStrictEqual(
         yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
@@ -188,6 +196,82 @@ layer("ThreadColdStorage", (it) => {
       );
       assert.deepStrictEqual(
         yield* sql`SELECT thread_id FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}`,
+        [],
+      );
+    }),
+  );
+
+  it.effect("keeps active-shell cleanup discoverable until cold deletes have committed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const threadId = ThreadId.make("thread-active-cleanup-order");
+      yield* insertArchivedThread(threadId, "Retry active cleanup");
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER fail_cold_delete BEFORE DELETE ON cold_archive.archive_threads
+        BEGIN SELECT RAISE(ABORT, 'cold cleanup failure'); END
+      `);
+      yield* Effect.flip(storage.finishRestoreTree(threadId)).pipe(
+        Effect.ensuring(sql.unsafe("DROP TRIGGER temp.fail_cold_delete").pipe(Effect.orDie)),
+      );
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER fail_active_manifest BEFORE DELETE ON thread_archive_manifests
+        BEGIN SELECT RAISE(ABORT, 'manifest cleanup failure'); END
+      `);
+      yield* Effect.flip(storage.archiveThread(threadId, Effect.die("Must not quiesce"))).pipe(
+        Effect.ensuring(sql.unsafe("DROP TRIGGER temp.fail_active_manifest").pipe(Effect.orDie)),
+      );
+      assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+      yield* storage.archiveThread(threadId, Effect.die("Must not quiesce"));
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [],
+      );
+    }),
+  );
+
+  it.effect("commits cold cleanup before removing an aborted archive manifest", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const threadId = ThreadId.make("thread-aborted-archive-order");
+      yield* insertArchivedThread(threadId, "Archive became stale");
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER activate_before_archive_delete
+        AFTER INSERT ON cold_archive.archive_threads
+        BEGIN UPDATE projection_threads SET archived_at = NULL WHERE thread_id = NEW.thread_id; END
+      `);
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER fail_aborted_manifest BEFORE DELETE ON thread_archive_manifests
+        BEGIN SELECT RAISE(ABORT, 'manifest cleanup failure'); END
+      `);
+      yield* Effect.flip(storage.archiveThread(threadId)).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* sql.unsafe("DROP TRIGGER temp.activate_before_archive_delete");
+            yield* sql.unsafe("DROP TRIGGER temp.fail_aborted_manifest");
+          }).pipe(Effect.orDie),
+        ),
+      );
+      assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT archived_at FROM projection_threads WHERE thread_id = ${threadId}`,
+        [{ archived_at: null }],
+      );
+      yield* storage.archiveThread(threadId, Effect.die("Must not quiesce"));
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
         [],
       );
     }),

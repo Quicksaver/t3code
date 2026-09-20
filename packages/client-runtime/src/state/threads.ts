@@ -341,16 +341,23 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
 
   const removeCachedThread = Effect.fn("EnvironmentThreadState.removeCachedThread")(function* () {
-    if (resumeCache !== undefined && (resumeCache.owner !== owner || resumeCache.invalidated))
-      return;
-    yield* evictCachedThread(cache, environmentId, threadId);
+    yield* evictCachedThread(
+      cache,
+      environmentId,
+      threadId,
+      () => resumeCache === undefined || resumeCache.owner === owner,
+    );
   });
 
   const reviveOwnedCachedThread = Effect.fn("EnvironmentThreadState.reviveOwnedCachedThread")(
     function* () {
-      if (resumeCache !== undefined && resumeCache.owner !== owner) return;
-      yield* reviveCachedThread(cache, environmentId, threadId);
-      if (resumeCache) resumeCache.invalidated = false;
+      yield* reviveCachedThread(
+        cache,
+        environmentId,
+        threadId,
+        () => resumeCache === undefined || resumeCache.owner === owner,
+      );
+      if (resumeCache?.owner === owner) resumeCache.invalidated = false;
     },
   );
 
@@ -463,10 +470,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* remember;
     // A shell eviction may precede this detail event. Its invalidation blocks
     // bodies, but the current owner's terminal, body-free state is safe to keep.
-    if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
-    if (resumeCache !== undefined && (resumeCache.owner !== owner || resumeCache.invalidated))
-      return;
     yield* removeCachedThread();
+    if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   });
 
   // Body of applyItem, running under applyLock.

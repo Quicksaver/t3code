@@ -145,6 +145,7 @@ function awaitThreadState(
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
   readonly cache?: Persistence.EnvironmentCacheStore["Service"];
+  readonly removeThread?: Persistence.EnvironmentCacheStore["Service"]["removeThread"];
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -243,7 +244,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
           Effect.andThen(options?.saveThread?.(environmentId, thread) ?? Effect.void),
         ),
       removeThread: (_environmentId, threadId) =>
-        Ref.update(removedThreads, (current) => [...current, threadId]),
+        Ref.update(removedThreads, (current) => [...current, threadId]).pipe(
+          Effect.andThen(options?.removeThread?.(_environmentId, threadId) ?? Effect.void),
+        ),
       loadServerConfig: () => Effect.succeed(Option.none()),
       saveServerConfig: () => Effect.void,
       loadVcsRefs: () => Effect.succeed(Option.none()),
@@ -1026,6 +1029,94 @@ describe("EnvironmentThreads", () => {
       );
 
       expect(yield* Ref.get(savedThreads)).toEqual([]);
+    }),
+  );
+
+  for (const operation of ["evict", "revive"] as const) {
+    it.effect(`rechecks ownership when a queued cache ${operation} acquires its permit`, () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const block = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const harness = yield* makeHarness({
+          cached: BASE_THREAD,
+          ...(operation === "evict" ? { saveThread: () => block } : { removeThread: () => block }),
+        });
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        const holding = yield* (
+          operation === "evict"
+            ? persistCachedThread(
+                harness.cache,
+                TARGET.environmentId,
+                { snapshotSequence: 7, thread: BASE_THREAD },
+                cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID),
+              )
+            : evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID)
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        let ownsCache = true;
+        const queued = yield* (
+          operation === "evict"
+            ? evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID, () => ownsCache)
+            : reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID, () => ownsCache)
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const generation = cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID);
+        ownsCache = false;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(holding);
+        yield* Fiber.join(queued);
+        expect(cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(
+          generation,
+        );
+        expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(
+          operation === "revive",
+        );
+        expect(yield* Ref.get(harness.removedThreads)).toEqual(
+          operation === "revive" ? [THREAD_ID] : [],
+        );
+      }),
+    );
+  }
+
+  it.effect("retries a failed archive eviction for the current cache owner", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const removed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        cached: BASE_THREAD,
+        resumeCache: { snapshot: undefined, owner: undefined },
+        removeThread: () =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(
+                  new Persistence.ConnectionPersistenceError({
+                    operation: "remove-thread",
+                    message: "Temporary cache removal failure",
+                  }),
+                )
+              : Deferred.succeed(removed, undefined).pipe(Effect.asVoid);
+          }),
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, archivedAt: "2026-04-01T02:00:00.000Z" }),
+      );
+      yield* Queue.offer(harness.inputs, titleUpdated("First eviction processed", 9));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.title === "First eviction processed",
+      );
+      expect(attempts).toBe(1);
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, archivedAt: "2026-04-01T02:00:00.000Z" }),
+      );
+      yield* Deferred.await(removed);
+      expect(attempts).toBe(2);
     }),
   );
 
