@@ -641,11 +641,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         if (
           Option.isNone(current.data) ||
           (yield* Ref.get(pendingOlderPage)) !== null ||
+          // Lifecycle events need the per-item cache eviction and revival effects.
           items.some(
             (item) =>
               item.kind === "snapshot" ||
               (item.kind === "event" &&
-                (item.event.type === "thread.reverted" || item.event.type === "thread.deleted")),
+                (item.event.type === "thread.reverted" ||
+                  item.event.type === "thread.deleted" ||
+                  item.event.type === "thread.archived" ||
+                  item.event.type === "thread.unarchived")),
           )
         ) {
           for (const item of items) {

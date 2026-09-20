@@ -454,11 +454,11 @@ const deleted = (): OrchestrationThreadStreamItem => ({
   },
 });
 
-const archived = (): OrchestrationThreadStreamItem => ({
+const archived = (sequence = 3): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
     eventId: EventId.make("event-archived"),
-    sequence: 3,
+    sequence,
     occurredAt: "2026-04-01T02:00:00.000Z",
     commandId: null,
     causationEventId: null,
@@ -475,11 +475,11 @@ const archived = (): OrchestrationThreadStreamItem => ({
   },
 });
 
-const unarchived = (): OrchestrationThreadStreamItem => ({
+const unarchived = (sequence = 4): OrchestrationThreadStreamItem => ({
   kind: "event",
   event: {
     eventId: EventId.make("event-unarchived"),
-    sequence: 4,
+    sequence,
     occurredAt: "2026-04-01T03:00:00.000Z",
     commandId: null,
     causationEventId: null,
@@ -1840,6 +1840,63 @@ describe("EnvironmentThreads", () => {
         yield* Effect.yieldNow;
       }
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+    }),
+  );
+
+  it.effect("evicts cached data without repersisting a body archived in a batch", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offerAll(harness.inputs, [
+        titleUpdated("Settled before archive", CACHED_SNAPSHOT_SEQUENCE + 1),
+        archived(CACHED_SNAPSHOT_SEQUENCE + 2),
+      ]);
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.archivedAt != null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+      expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(true);
+      expect(resumeCache.snapshot).toBeUndefined();
+    }),
+  );
+
+  it.effect("revives and persists cached data after an unarchive in a batch", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offer(harness.inputs, archived(CACHED_SNAPSHOT_SEQUENCE + 1));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.archivedAt != null,
+      );
+      yield* Queue.offerAll(harness.inputs, [
+        unarchived(CACHED_SNAPSHOT_SEQUENCE + 2),
+        titleUpdated("Restored in batch", CACHED_SNAPSHOT_SEQUENCE + 3),
+      ]);
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.title === "Restored in batch",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(false);
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)).toMatchObject({
+        snapshotSequence: CACHED_SNAPSHOT_SEQUENCE + 3,
+        thread: { title: "Restored in batch", archivedAt: null },
+      });
+      expect(resumeCache.invalidated).toBe(false);
     }),
   );
 
