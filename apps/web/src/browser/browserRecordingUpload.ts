@@ -26,6 +26,7 @@ export async function uploadBrowserRecording(
   if (blob.size > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
     throw new PreviewAutomationRecordingTooLargeError({ threadId });
   }
+  const deadlineError = new PreviewAutomationRecordingDeadlineExpiredError({ threadId });
   const result = await runAttachmentUploadCycle({
     registry: appAtomRegistry,
     createUploadUrl: attachmentEnvironment.createUploadUrl,
@@ -49,16 +50,22 @@ export async function uploadBrowserRecording(
         abort: () => controller.abort(),
         done:
           remainingMs <= 0
-            ? Promise.reject(new Error("Recording transfer deadline expired."))
+            ? Promise.reject(deadlineError)
             : fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": artifact.mimeType },
                 body: blob,
                 signal: AbortSignal.any([controller.signal, AbortSignal.timeout(remainingMs)]),
-              }).then((response) => {
-                if (!response.ok)
-                  throw new Error(`Recording upload rejected (${response.status}).`);
-              }),
+              })
+                .catch((cause: unknown) => {
+                  if (cause instanceof DOMException && cause.name === "TimeoutError")
+                    throw deadlineError;
+                  throw cause;
+                })
+                .then((response) => {
+                  if (!response.ok)
+                    throw new Error(`Recording upload rejected (${response.status}).`);
+                }),
       };
     },
   });
@@ -72,9 +79,7 @@ export async function uploadBrowserRecording(
       });
     }
     const cause = result.status === "failed" ? result.error : undefined;
-    if (Date.now() >= deadlineMs) {
-      throw new PreviewAutomationRecordingDeadlineExpiredError({ threadId, cause });
-    }
+    if (cause === deadlineError) throw deadlineError;
     throw new PreviewAutomationRecordingTransferError({
       threadId,
       cause,

@@ -2095,6 +2095,58 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("keeps a replacement control session when an old restoration times out", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const listeners = new Map<string, () => void>();
+        const makeGuest = (on: ReturnType<typeof vi.fn>) => {
+          let attached = false;
+          const detach = vi.fn(() => {
+            attached = false;
+          });
+          const sendCommand = vi.fn(async () => undefined);
+          const wc = makeTestPreviewWebContents({
+            id: 42,
+            debugger: {
+              isAttached: () => attached,
+              attach: vi.fn(() => {
+                attached = true;
+              }),
+              detach,
+              sendCommand,
+            },
+          });
+          Object.assign(wc, { on });
+          return { wc, detach, sendCommand, isAttached: () => attached };
+        };
+        const previous = makeGuest(
+          vi.fn((event: string, listener: () => void) => {
+            listeners.set(event, listener);
+          }),
+        );
+        fromId.mockReturnValue(previous.wc);
+        yield* manager.createTab("restore_replacement");
+        yield* manager.registerWebview("restore_replacement", 42);
+        yield* manager.setColorScheme("restore_replacement", "dark");
+        previous.sendCommand.mockClear();
+        previous.sendCommand.mockImplementationOnce(() => new Promise<undefined>(() => undefined));
+        listeners.get("devtools-closed")?.();
+        yield* settle(() => previous.sendCommand.mock.calls.length > 0);
+        expect(previous.sendCommand).toHaveBeenCalledOnce();
+        const replacement = makeGuest(vi.fn());
+        fromId.mockReturnValue(replacement.wc);
+        yield* manager.registerWebview("restore_replacement", 42);
+        yield* settle(() => replacement.sendCommand.mock.calls.length > 0);
+        expect(replacement.isAttached()).toBe(true);
+
+        yield* TestClock.adjust(14_750);
+
+        expect(replacement.detach).not.toHaveBeenCalled();
+        expect(replacement.isAttached()).toBe(true);
+      }),
+    ),
+  );
+
   effectIt.effect("does not persist a color-scheme mutation after its deadline", () =>
     withManager((manager) =>
       Effect.gen(function* () {

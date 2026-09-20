@@ -2882,41 +2882,51 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // session attaches so a concurrent setColorScheme is not overwritten with
   // a stale snapshot.
   const restoreControlSession = (tabId: string, wc: Electron.WebContents) =>
-    Effect.gen(function* () {
-      const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (beforeAttach?.webContentsId !== wc.id) return;
-      const control = yield* ensureControlSession(wc);
-      const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-      if (afterAttach?.webContentsId !== wc.id) {
-        yield* detachControlSession(wc.id);
-        return;
-      }
-      if (afterAttach.colorScheme !== "system") {
-        yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
-          control.debugger.sendCommand("Emulation.setEmulatedMedia", {
-            features: [
-              {
-                name: "prefers-color-scheme",
-                value: afterAttach.colorScheme,
-              },
-            ],
-          }),
-        );
-      }
-    }).pipe(
-      Effect.timeoutOption(
-        Math.max(1, DEFAULT_AUTOMATION_TIMEOUT_MS - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS),
-      ),
-      Effect.flatMap((result) =>
-        Option.isSome(result)
-          ? Effect.void
-          : Effect.logWarning("Timed out restoring the preview control session.", {
-              tabId,
-              webContentsId: wc.id,
-            }).pipe(Effect.andThen(detachControlSession(wc.id))),
-      ),
-      Effect.ignore,
-    );
+    Effect.suspend(() => {
+      let restoredControl: BrowserControlSession | undefined;
+      return Effect.gen(function* () {
+        const beforeAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (beforeAttach?.webContentsId !== wc.id) return;
+        const control = yield* ensureControlSession(wc);
+        restoredControl = control;
+        const afterAttach = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (afterAttach?.webContentsId !== wc.id) {
+          yield* detachControlSession(wc.id, control);
+          return;
+        }
+        if (afterAttach.colorScheme !== "system") {
+          yield* attemptPromise(
+            { operation: "applyColorScheme", tabId, webContentsId: wc.id },
+            () =>
+              control.debugger.sendCommand("Emulation.setEmulatedMedia", {
+                features: [
+                  {
+                    name: "prefers-color-scheme",
+                    value: afterAttach.colorScheme,
+                  },
+                ],
+              }),
+          );
+        }
+      }).pipe(
+        Effect.timeoutOption(
+          Math.max(1, DEFAULT_AUTOMATION_TIMEOUT_MS - AUTOMATION_TIMEOUT_RESPONSE_GRACE_MS),
+        ),
+        Effect.flatMap((result) =>
+          Option.isSome(result)
+            ? Effect.void
+            : Effect.logWarning("Timed out restoring the preview control session.", {
+                tabId,
+                webContentsId: wc.id,
+              }).pipe(
+                Effect.andThen(
+                  restoredControl ? detachControlSession(wc.id, restoredControl) : Effect.void,
+                ),
+              ),
+        ),
+        Effect.ignore,
+      );
+    });
 
   const reconcileRegisteredGuestState = Effect.fn("PreviewManager.reconcileRegisteredGuestState")(
     function* (
