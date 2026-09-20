@@ -332,7 +332,7 @@ describe("SourceControlPanelService", () => {
         makeTestLayer((input) =>
           Effect.sync(() => {
             calls.push(input);
-            return input.operation === "vcs.panel.upstreamForRef"
+            return input.operation === "vcs.panel.branchUpstream"
               ? failure("no upstream")
               : success();
           }),
