@@ -215,6 +215,8 @@ describe("SourceControlPanelService", () => {
         service.undoLatestCommit({ cwd, sha: invalid }),
         service.undoLatestCommit({ cwd, branchName: invalid }),
         service.fetchRemote({ cwd, remoteName: "--upload-pack=unexpected" }),
+        service.pushBranch({ cwd, branchName: "--receive-pack=unexpected" }),
+        service.pushBranch({ cwd, branchName: "main", remoteName: "--receive-pack=unexpected" }),
         service.applyStash({ cwd, stashRef: "--index" }),
         service.popStash({ cwd, stashRef: "--index" }),
         service.dropStash({ cwd, stashRef: invalid }),
@@ -279,6 +281,27 @@ describe("SourceControlPanelService", () => {
       assert.deepStrictEqual(
         calls.map((call) => call.args),
         [["rebase", "--", "feature/source-control"]],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("publishes to an explicit remote without consulting the upstream", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      yield* service.pushBranch({ cwd: "/repo", branchName: "feature", remoteName: "upstream" });
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [["push", "-u", "upstream", "feature:refs/heads/feature"]],
       );
     }).pipe(
       Effect.provide(
