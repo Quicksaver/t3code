@@ -903,7 +903,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
         yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
         unmount();
         yield* Deferred.await(first.closed);
-        expect(removals).toBe(1);
+        expect(removals).toBe(shellFirst ? 2 : 1);
         yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
         const before = h.counts();
         const remount = h.registry.mount(h.stateAtom);

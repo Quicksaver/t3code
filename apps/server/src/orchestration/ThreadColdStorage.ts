@@ -453,6 +453,8 @@ const make = Effect.gen(function* () {
   const deleteRestoredBundle = Effect.fn("deleteRestoredArchiveBundle")(function* (
     threadId: string,
   ) {
+    // Commit cold cleanup before dropping its main-database recovery marker.
+    // A transaction spanning attached WAL files cannot preserve that ordering.
     yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`, [
       threadId,
     ]);
@@ -501,7 +503,7 @@ const make = Effect.gen(function* () {
         );
         if (activeShell.length > 0) {
           // Finalization never quiesces or archives the already-active thread.
-          yield* sql.withTransaction(deleteRestoredBundle(threadId));
+          yield* deleteRestoredBundle(threadId);
           yield* reclaimFreePages();
         }
       }
@@ -620,18 +622,6 @@ const make = Effect.gen(function* () {
           [threadId],
         )) as ReadonlyArray<SqlRow>;
         if (archivedShell.length === 0) {
-          yield* sql.unsafe(
-            `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`,
-            [threadId],
-          );
-          yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
-            threadId,
-          ]);
-          yield* sql.unsafe(
-            `DELETE FROM thread_archive_manifests
-             WHERE thread_id = ? AND status = 'archiving'`,
-            [threadId],
-          );
           return false;
         }
         for (const [table, keyColumn] of [...ARCHIVED_THREAD_TABLES].toReversed()) {
@@ -648,7 +638,19 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    if (!archivedAtDestructiveBoundary) return;
+    if (!archivedAtDestructiveBoundary) {
+      yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`, [
+        threadId,
+      ]);
+      yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
+        threadId,
+      ]);
+      yield* sql.unsafe(
+        `DELETE FROM thread_archive_manifests WHERE thread_id = ? AND status = 'archiving'`,
+        [threadId],
+      );
+      return;
+    }
 
     yield* completeArchiveCleanup(threadId);
   });
@@ -873,13 +875,9 @@ const make = Effect.gen(function* () {
          WHERE root_thread_id = ? AND status = 'restored'`,
         [rootThreadId],
       )) as ReadonlyArray<SqlRow>;
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const row of rows) {
-            yield* deleteRestoredBundle(String(row.thread_id));
-          }
-        }),
-      );
+      for (const row of rows) {
+        yield* deleteRestoredBundle(String(row.thread_id));
+      }
       yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.incremental_vacuum(2048)`);
     }).pipe(
       Effect.ensuring(

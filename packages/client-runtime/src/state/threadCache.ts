@@ -188,10 +188,12 @@ export const evictCachedThread = Effect.fn("EnvironmentThreadCache.evict")(funct
   cache: EnvironmentCacheStore["Service"],
   environmentId: EnvironmentId,
   threadId: ThreadId,
+  isCurrent: () => boolean = () => true,
 ) {
   return yield* withThreadCacheState(cache, environmentId, threadId, (state) =>
     state.lock.withPermit(
       Effect.gen(function* () {
+        if (!isCurrent()) return false;
         state.generation += 1;
         state.evicted = true;
         for (const onEviction of state.evictionListeners) onEviction();
@@ -217,10 +219,12 @@ export const reviveCachedThread = Effect.fn("EnvironmentThreadCache.revive")(fun
   cache: EnvironmentCacheStore["Service"],
   environmentId: EnvironmentId,
   threadId: ThreadId,
+  isCurrent: () => boolean = () => true,
 ) {
   yield* withThreadCacheState(cache, environmentId, threadId, (state) =>
     state.lock.withPermit(
       Effect.sync(() => {
+        if (!isCurrent()) return;
         if (state.evicted) {
           // Invalidate writes that captured the eviction generation while the
           // tombstone was active before making the cache writable again.
