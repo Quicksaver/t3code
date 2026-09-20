@@ -432,10 +432,15 @@ export function makeSourceControlPanelActions(
 
   const pushBranchDirect = Effect.fn("pushBranchDirect")(function* (
     cwd: string,
-    branchName: string,
+    rawBranchName: string,
     force: boolean,
-    publishRemoteName?: string,
+    rawPublishRemoteName?: string,
   ) {
+    const branchName = yield* validateOperand("vcs.panel.pushBranch", cwd, rawBranchName);
+    const publishRemoteName =
+      rawPublishRemoteName === undefined
+        ? undefined
+        : yield* validateOperand("vcs.panel.pushBranch", cwd, rawPublishRemoteName);
     const upstream = publishRemoteName ? "" : ((yield* upstreamForRef(cwd, branchName)) ?? "");
     const remoteNames =
       upstream.length > 0
