@@ -6,17 +6,18 @@ import {
   archivedThreadActionKey,
   archivedThreadSearchScore,
   nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
   releaseArchivedThreadActionLock,
   tryAcquireArchivedThreadActionLock,
 } from "./archivedThreadList.js";
 const environmentId = EnvironmentId.make("environment-1");
 
 function scoreArchivedTitle(title: string, query: string): number | null {
-  const normalizedQuery = normalizeSearchQuery(query);
+  const search = parseArchivedThreadSearchInput(query);
   return archivedThreadSearchScore({
     normalizedTitle: normalizeSearchQuery(title),
-    normalizedQuery,
-    tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
+    normalizedQuery: search.normalizedQuery,
+    tokens: search.tokens,
   });
 }
 
@@ -54,6 +55,16 @@ describe("archivedThreadSearchScore", () => {
     expect(fewerTokens).not.toBeNull();
     expect(moreTokens).not.toBeNull();
     expect(moreTokens!).toBeLessThan(fewerTokens!);
+  });
+
+  it("ranks distinct matches above repeated occurrences of one query term", () => {
+    const query = "alpha alpha alpha beta gamma";
+    const oneTerm = scoreArchivedTitle("Alpha", query);
+    const twoTerms = scoreArchivedTitle("Beta Gamma", query);
+
+    expect(oneTerm).not.toBeNull();
+    expect(twoTerms).not.toBeNull();
+    expect(twoTerms!).toBeLessThan(oneTerm!);
   });
 
   it("matches titles case-insensitively and rejects unrelated titles", () => {

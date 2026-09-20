@@ -90,9 +90,10 @@ export function archivedThreadSearchScore(input: {
     return Math.min(phraseScore, ARCHIVED_THREAD_PHRASE_SCORE_MAX);
   }
 
+  const distinctTokens = [...new Set(input.tokens)];
   let matchedTokenCount = 0;
   let tokenScore = 0;
-  for (const token of input.tokens) {
+  for (const token of distinctTokens) {
     const score = scoreQueryMatch({
       value: input.normalizedTitle,
       query: token,
@@ -114,7 +115,7 @@ export function archivedThreadSearchScore(input: {
     return null;
   }
 
-  if (matchedTokenCount === input.tokens.length) {
+  if (matchedTokenCount === distinctTokens.length) {
     return (
       ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET +
       Math.min(tokenScore, ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX)
@@ -123,7 +124,7 @@ export function archivedThreadSearchScore(input: {
 
   return (
     ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET +
-    (input.tokens.length - matchedTokenCount) * ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET +
+    (distinctTokens.length - matchedTokenCount) * ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET +
     Math.min(tokenScore, ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET - 1)
   );
 }
