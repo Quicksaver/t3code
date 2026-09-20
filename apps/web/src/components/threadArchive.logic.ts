@@ -6,6 +6,7 @@ export function formatArchiveSkippedDescription(skippedCount: number): string {
     : `${skippedCount} threads were no longer eligible for this archive action and were skipped.`;
 }
 
+/** Stops on mutation failure, continues after follow-up failure, and reports each archive at most once. */
 export async function archiveSelectedThreadEntries<
   TEntry extends { readonly threadKey: string },
   TResult extends { readonly _tag: "Success" | "Failure" },
@@ -61,6 +62,7 @@ export function getCompletedArchiveThreadKeys(input: {
 
 const sharedThreadArchiveReservations = new Map<string, Promise<ReadonlySet<string>>>();
 
+/** Shares per-thread reservations; waiters skip completed keys (including eligibility skips) and retry the rest. */
 export async function withCoordinatedThreadArchiveEntries<
   TEntry extends { readonly threadKey: string },
 >(input: {
