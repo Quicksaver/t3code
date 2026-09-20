@@ -1,9 +1,23 @@
+import {
+  archivedThreadSearchScore,
+  compareArchivedThreads,
+  type ArchivedThreadSortState,
+} from "@t3tools/client-runtime/state/archivedThreadList";
+export {
+  archivedThreadActionKey,
+  archivedThreadTimestampValue,
+  nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
+  tryAcquireArchivedThreadActionLock,
+  type ArchivedThreadSortField,
+  type ArchivedThreadSortState,
+} from "@t3tools/client-runtime/state/archivedThreadList";
 import type {
   ContextMenuItem,
   EnvironmentId,
   OrchestrationProjectShell,
   OrchestrationThreadShell,
-  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
@@ -12,7 +26,7 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
+import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import {
   resolveEnvironmentOptionLabel,
   shouldShowEnvironmentIndicator,
@@ -51,24 +65,11 @@ export function scopeArchivedThreadSnapshots(
     });
 }
 
-const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
-const ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET = 5_000;
-const ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET = 1_000;
-const ARCHIVED_THREAD_PHRASE_SCORE_MAX = ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
-const ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX =
-  ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET - ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
 const DEFAULT_ARCHIVED_PROJECT_BULK_ACTION_CONCURRENCY = 4;
 
-export type ArchivedThreadSortField = "archivedAt" | "createdAt";
-export type ArchivedThreadSortDirection = "asc" | "desc";
 export type ArchivedProjectBulkScope = "all" | "matching";
 export type ArchivedThreadContextMenuId = "unarchive" | "delete";
 export type ArchivedProjectContextMenuId = "unarchive-all" | "delete-all";
-
-export interface ArchivedThreadSortState {
-  readonly field: ArchivedThreadSortField;
-  readonly direction: ArchivedThreadSortDirection;
-}
 
 export type ArchivedProjectBulkThread = {
   readonly id: ThreadId;
@@ -95,12 +96,6 @@ export interface ArchivedThreadGroup {
   readonly project: ArchivedThreadGroupProject;
   readonly threads: ReadonlyArray<ArchivedThreadGroupThread>;
   readonly searchScore: number;
-}
-
-export interface ArchivedThreadSearchInput {
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-  readonly isSearching: boolean;
 }
 
 export function buildArchivedThreadContextMenuItems(): ReadonlyArray<
@@ -162,42 +157,11 @@ export class ArchivedProjectBulkActionError extends AggregateError {
   }
 }
 
-export interface ArchivedThreadActionLock {
-  readonly keys: ReadonlyArray<string>;
-}
-
 function archivedProjectGroupKey(
   environmentId: EnvironmentId,
   projectId: OrchestrationProjectShell["id"],
 ): string {
   return JSON.stringify([environmentId, projectId]);
-}
-
-export function archivedThreadActionKey(threadRef: ScopedThreadRef): string {
-  return JSON.stringify([threadRef.environmentId, threadRef.threadId]);
-}
-
-export function tryAcquireArchivedThreadActionLock(
-  inFlightThreadKeys: Set<string>,
-  threadRefs: ReadonlyArray<ScopedThreadRef>,
-): ArchivedThreadActionLock | null {
-  const keys = [...new Set(threadRefs.map(archivedThreadActionKey))];
-  if (keys.some((key) => inFlightThreadKeys.has(key))) {
-    return null;
-  }
-  for (const key of keys) {
-    inFlightThreadKeys.add(key);
-  }
-  return { keys };
-}
-
-export function releaseArchivedThreadActionLock(
-  inFlightThreadKeys: Set<string>,
-  lock: ArchivedThreadActionLock,
-): void {
-  for (const key of lock.keys) {
-    inFlightThreadKeys.delete(key);
-  }
 }
 
 export function resolveArchivedProjectEnvironmentLabel(input: {
@@ -226,82 +190,9 @@ export function resolveArchivedProjectEnvironmentLabel(input: {
   });
 }
 
-export function parseArchivedThreadSearchInput(query: string): ArchivedThreadSearchInput {
-  const normalizedQuery = normalizeSearchQuery(query);
-  return {
-    normalizedQuery,
-    tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
-    isSearching: normalizedQuery.length > 0,
-  };
-}
-
 export function hasArchivedThreads(snapshots: ReadonlyArray<ArchivedSnapshotEntry>): boolean {
   return snapshots.some(({ snapshot }) =>
     snapshot.threads.some((thread) => thread.archivedAt !== null),
-  );
-}
-
-// Lower search scores are more relevant, matching the shared search-ranking helpers.
-export function archivedThreadSearchScore(input: {
-  readonly normalizedTitle: string;
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-}): number | null {
-  if (input.normalizedQuery.length === 0) {
-    return 0;
-  }
-
-  if (!input.normalizedTitle) {
-    return null;
-  }
-
-  const phraseScore = scoreQueryMatch({
-    value: input.normalizedTitle,
-    query: input.normalizedQuery,
-    exactBase: 0,
-    prefixBase: 1,
-    boundaryBase: 2,
-    includesBase: 3,
-  });
-  if (phraseScore !== null) {
-    return Math.min(phraseScore, ARCHIVED_THREAD_PHRASE_SCORE_MAX);
-  }
-
-  let matchedTokenCount = 0;
-  let tokenScore = 0;
-  for (const token of input.tokens) {
-    const score = scoreQueryMatch({
-      value: input.normalizedTitle,
-      query: token,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
-    });
-    if (score === null) {
-      continue;
-    }
-
-    matchedTokenCount += 1;
-    tokenScore += score;
-  }
-
-  if (matchedTokenCount === 0) {
-    return null;
-  }
-
-  if (matchedTokenCount === input.tokens.length) {
-    return (
-      ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET +
-      Math.min(tokenScore, ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX)
-    );
-  }
-
-  return (
-    ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET +
-    (input.tokens.length - matchedTokenCount) * ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET +
-    Math.min(tokenScore, ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET - 1)
   );
 }
 
@@ -358,22 +249,6 @@ export async function runArchivedProjectThreadActions(
 
 export function archivedProjectBulkScopeLabel(scope: ArchivedProjectBulkScope): string {
   return scope === "matching" ? "matching archived conversations" : "all archived conversations";
-}
-
-export function archivedThreadTimestampValue(
-  thread: { readonly archivedAt: string | null; readonly createdAt: string },
-  field: ArchivedThreadSortField,
-): string {
-  if (field === "createdAt" || thread.archivedAt === null) return thread.createdAt;
-  return Number.isNaN(Date.parse(thread.archivedAt)) ? thread.createdAt : thread.archivedAt;
-}
-
-function archivedThreadSortTimestamp(
-  thread: { readonly archivedAt: string | null; readonly createdAt: string },
-  field: ArchivedThreadSortField,
-): number {
-  const timestamp = Date.parse(archivedThreadTimestampValue(thread, field));
-  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 export function archivedProjectBulkFailureDescription(
@@ -460,26 +335,6 @@ export function archivedProjectBulkActionExceptionDescription(error: unknown): s
             : ""
         }`,
   ].join(" ");
-}
-
-export function compareArchivedThreads<
-  T extends { readonly id: string; readonly archivedAt: string | null; readonly createdAt: string },
->(left: T, right: T, sort: ArchivedThreadSortState): number {
-  const leftTimestamp = archivedThreadSortTimestamp(left, sort.field);
-  const rightTimestamp = archivedThreadSortTimestamp(right, sort.field);
-  const timestampComparison =
-    sort.direction === "asc" ? leftTimestamp - rightTimestamp : rightTimestamp - leftTimestamp;
-  return timestampComparison || left.id.localeCompare(right.id);
-}
-
-export function nextArchivedThreadSortState(
-  current: ArchivedThreadSortState,
-  field: ArchivedThreadSortField,
-): ArchivedThreadSortState {
-  if (current.field !== field) {
-    return { field, direction: "desc" };
-  }
-  return { field, direction: current.direction === "desc" ? "asc" : "desc" };
 }
 
 export function buildArchivedThreadGroups(input: {

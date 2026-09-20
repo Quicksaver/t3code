@@ -6,10 +6,8 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { describe, expect, it } from "vite-plus/test";
@@ -17,20 +15,15 @@ import {
   archivedProjectBulkActionExceptionDescription,
   ArchivedProjectBulkActionError,
   archivedProjectBulkFailureDescription,
-  archivedThreadActionKey,
-  archivedThreadSearchScore,
   archivedThreadTimestampValue,
   buildArchivedProjectContextMenuItems,
   buildArchivedThreadContextMenuItems,
   buildArchivedThreadGroups,
   hasArchivedThreads,
-  nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   resolveArchivedProjectEnvironmentLabel,
-  releaseArchivedThreadActionLock,
   runArchivedProjectThreadActions,
   scopeArchivedThreadSnapshots,
-  tryAcquireArchivedThreadActionLock,
 } from "./ArchiveSettings.logic";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -66,15 +59,6 @@ describe("archive context menus", () => {
     ]);
   });
 });
-
-function scoreArchivedTitle(title: string, query: string): number | null {
-  const normalizedQuery = normalizeSearchQuery(query);
-  return archivedThreadSearchScore({
-    normalizedTitle: normalizeSearchQuery(title),
-    normalizedQuery,
-    tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
-  });
-}
 
 function makeProject(
   input: Partial<OrchestrationProjectShell> & Pick<OrchestrationProjectShell, "id" | "title">,
@@ -202,48 +186,6 @@ describe("resolveArchivedProjectEnvironmentLabel", () => {
   });
 });
 
-describe("archivedThreadSearchScore", () => {
-  it("ranks phrase matches ahead of all-token and partial-token matches", () => {
-    const phraseMatch = scoreArchivedTitle("Alpha Beta cleanup", "alpha beta");
-    const allTokenMatch = scoreArchivedTitle("Alpha cleanup Beta", "alpha beta");
-    const partialTokenMatch = scoreArchivedTitle("Alpha cleanup", "alpha beta");
-
-    expect(phraseMatch).not.toBeNull();
-    expect(allTokenMatch).not.toBeNull();
-    expect(partialTokenMatch).not.toBeNull();
-    expect(phraseMatch!).toBeLessThan(allTokenMatch!);
-    expect(allTokenMatch!).toBeLessThan(partialTokenMatch!);
-  });
-
-  it("preserves search ranking tiers for matches late in long titles", () => {
-    const latePhraseMatch = scoreArchivedTitle(`${"x".repeat(600)} alpha beta`, "alpha beta");
-    const earlyAllTokenMatch = scoreArchivedTitle("Alpha cleanup Beta", "alpha beta");
-    const lateAllTokenMatch = scoreArchivedTitle(`Alpha ${"x".repeat(3_000)} Beta`, "alpha beta");
-    const earlyPartialTokenMatch = scoreArchivedTitle("Alpha cleanup", "alpha beta");
-
-    expect(latePhraseMatch).not.toBeNull();
-    expect(earlyAllTokenMatch).not.toBeNull();
-    expect(lateAllTokenMatch).not.toBeNull();
-    expect(earlyPartialTokenMatch).not.toBeNull();
-    expect(latePhraseMatch!).toBeLessThan(earlyAllTokenMatch!);
-    expect(lateAllTokenMatch!).toBeLessThan(earlyPartialTokenMatch!);
-  });
-
-  it("ranks partial matches by matched-token count before token position", () => {
-    const fewerTokens = scoreArchivedTitle("Alpha only", "alpha beta gamma");
-    const moreTokens = scoreArchivedTitle(`${"x".repeat(1_200)} Alpha Beta`, "alpha beta gamma");
-
-    expect(fewerTokens).not.toBeNull();
-    expect(moreTokens).not.toBeNull();
-    expect(moreTokens!).toBeLessThan(fewerTokens!);
-  });
-
-  it("matches titles case-insensitively and rejects unrelated titles", () => {
-    expect(scoreArchivedTitle("Release Candidate Notes", "candidate")).not.toBeNull();
-    expect(scoreArchivedTitle("Release Candidate Notes", "missing")).toBeNull();
-  });
-});
-
 describe("scopeArchivedThreadSnapshots", () => {
   const remoteEnvironmentId = EnvironmentId.make("remote");
   const project = makeProject({ id: ProjectId.make("same-project"), title: "Project" });
@@ -323,17 +265,23 @@ describe("buildArchivedThreadGroups", () => {
       projectId: firstProject.id,
       title: "Newer",
     });
+    const newest = makeThread({
+      archivedAt: "2026-06-04T00:00:00.000Z",
+      id: ThreadId.make("thread-newest"),
+      projectId: secondProject.id,
+      title: "Newest",
+    });
     const search = parseArchivedThreadSearchInput("");
 
     const result = buildArchivedThreadGroups({
-      snapshots: [makeSnapshot([firstProject, secondProject], [older, newer])],
+      snapshots: [makeSnapshot([firstProject, secondProject], [older, newer, newest])],
       normalizedSearchQuery: search.normalizedQuery,
       searchTokens: search.tokens,
       isSearching: search.isSearching,
       sort: { field: "archivedAt", direction: "desc" },
     });
 
-    expect(result.map((group) => group.project.id)).toEqual(["project-1"]);
+    expect(result.map((group) => group.project.id)).toEqual(["project-1", "project-2"]);
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-newer", "thread-older"]);
   });
 
@@ -596,17 +544,6 @@ describe("hasArchivedThreads", () => {
   });
 });
 
-describe("nextArchivedThreadSortState", () => {
-  it("toggles the active sort field and defaults new fields to descending", () => {
-    expect(
-      nextArchivedThreadSortState({ field: "archivedAt", direction: "desc" }, "archivedAt"),
-    ).toEqual({ field: "archivedAt", direction: "asc" });
-    expect(
-      nextArchivedThreadSortState({ field: "archivedAt", direction: "asc" }, "createdAt"),
-    ).toEqual({ field: "createdAt", direction: "desc" });
-  });
-});
-
 describe("runArchivedProjectThreadActions", () => {
   it("runs all archived project thread actions and returns failures", async () => {
     const threads = Array.from({ length: 6 }, (_, index) => ({
@@ -676,37 +613,6 @@ describe("runArchivedProjectThreadActions", () => {
     expect(new Set(attemptedThreadIds)).toEqual(
       new Set(["thread-0", "thread-1", "thread-2", "thread-3"]),
     );
-  });
-});
-
-describe("archived thread action locks", () => {
-  const firstThreadRef = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
-  const secondThreadRef = scopeThreadRef(environmentId, ThreadId.make("thread-2"));
-
-  it("blocks overlapping row and bulk actions until the original lock is released", () => {
-    const inFlightThreadKeys = new Set<string>();
-    const bulkLock = tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [
-      firstThreadRef,
-      secondThreadRef,
-    ]);
-
-    expect(bulkLock).not.toBeNull();
-    expect(tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [firstThreadRef])).toBeNull();
-
-    releaseArchivedThreadActionLock(inFlightThreadKeys, bulkLock!);
-
-    expect(tryAcquireArchivedThreadActionLock(inFlightThreadKeys, [firstThreadRef])).not.toBeNull();
-  });
-
-  it("uses collision-safe environment and thread identity", () => {
-    const firstKey = archivedThreadActionKey(
-      scopeThreadRef(EnvironmentId.make("environment:a"), ThreadId.make("thread")),
-    );
-    const secondKey = archivedThreadActionKey(
-      scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("a:thread")),
-    );
-
-    expect(firstKey).not.toBe(secondKey);
   });
 });
 

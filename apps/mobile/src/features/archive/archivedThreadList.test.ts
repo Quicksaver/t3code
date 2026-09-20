@@ -11,7 +11,6 @@ import {
   archivedThreadTimestampValue,
   buildArchivedThreadGroups,
   formatArchivedThreadRelativeTime,
-  nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   releaseArchivedThreadActionLock,
   runArchivedThreadActions,
@@ -377,17 +376,6 @@ describe("buildArchivedThreadGroups", () => {
 });
 
 describe("archive list controls", () => {
-  it("toggles a selected sort field and defaults a new field to descending", () => {
-    expect(nextArchivedThreadSortState(defaultSort, "archivedAt")).toEqual({
-      field: "archivedAt",
-      direction: "asc",
-    });
-    expect(nextArchivedThreadSortState(defaultSort, "createdAt")).toEqual({
-      field: "createdAt",
-      direction: "desc",
-    });
-  });
-
   it("runs bulk actions with bounded concurrency and reports partial failures", async () => {
     let active = 0;
     let maximumActive = 0;

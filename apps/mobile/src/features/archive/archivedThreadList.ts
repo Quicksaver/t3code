@@ -1,3 +1,21 @@
+import {
+  archivedThreadActionKey as sharedArchivedThreadActionKey,
+  tryAcquireArchivedThreadActionLock as acquireSharedArchivedThreadActionLock,
+  archivedThreadSearchScore,
+  archivedThreadSortTimestamp,
+  compareArchivedThreads,
+  type ArchivedThreadSearchInput,
+  type ArchivedThreadSortState,
+} from "@t3tools/client-runtime/state/archivedThreadList";
+export {
+  archivedThreadTimestampValue,
+  nextArchivedThreadSortState,
+  parseArchivedThreadSearchInput,
+  releaseArchivedThreadActionLock,
+  type ArchivedThreadSortField,
+  type ArchivedThreadSortState,
+} from "@t3tools/client-runtime/state/archivedThreadList";
+
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import {
   scopeProject,
@@ -6,33 +24,13 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
+import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { relativeTime } from "../../lib/time";
 
-const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
-const ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET = 5_000;
-const ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET = 1_000;
-const ARCHIVED_THREAD_PHRASE_SCORE_MAX = ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
-const ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX =
-  ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET - ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET - 1;
 const DEFAULT_ARCHIVED_THREAD_ACTION_CONCURRENCY = 4;
-
-export type ArchivedThreadSortField = "archivedAt" | "createdAt";
-export type ArchivedThreadSortDirection = "asc" | "desc";
-
-export interface ArchivedThreadSortState {
-  readonly field: ArchivedThreadSortField;
-  readonly direction: ArchivedThreadSortDirection;
-}
-
-export interface ArchivedThreadSearchInput {
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-  readonly isSearching: boolean;
-}
 
 export interface ArchivedThreadGroup {
   readonly key: string;
@@ -61,37 +59,23 @@ export class ArchivedThreadActionError extends AggregateError {
 
 export type ArchivedThreadActionResult = "succeeded" | "failed" | "skipped";
 
-export interface ArchivedThreadActionLock {
-  readonly keys: ReadonlyArray<string>;
-}
-
 export function archivedThreadActionKey(
   thread: Pick<EnvironmentThreadShell, "environmentId" | "id">,
 ): string {
-  return JSON.stringify([thread.environmentId, thread.id]);
+  return sharedArchivedThreadActionKey({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
 }
 
 export function tryAcquireArchivedThreadActionLock(
   reservedThreadKeys: Set<string>,
   threads: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "id">>,
-): ArchivedThreadActionLock | null {
-  const keys = [...new Set(threads.map(archivedThreadActionKey))];
-  if (keys.some((key) => reservedThreadKeys.has(key))) {
-    return null;
-  }
-  for (const key of keys) {
-    reservedThreadKeys.add(key);
-  }
-  return { keys };
-}
-
-export function releaseArchivedThreadActionLock(
-  reservedThreadKeys: Set<string>,
-  lock: ArchivedThreadActionLock,
-): void {
-  for (const key of lock.keys) {
-    reservedThreadKeys.delete(key);
-  }
+) {
+  return acquireSharedArchivedThreadActionLock(
+    reservedThreadKeys,
+    threads.map((thread) => ({ environmentId: thread.environmentId, threadId: thread.id })),
+  );
 }
 
 export function archivedThreadActionSummaryDescription(
@@ -152,103 +136,8 @@ function archivedProjectGroupKey(environmentId: EnvironmentId, projectId: string
   return JSON.stringify([environmentId, projectId]);
 }
 
-export function archivedThreadTimestampValue(
-  thread: Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
-  field: ArchivedThreadSortField,
-): string {
-  if (field === "createdAt" || thread.archivedAt === null) return thread.createdAt;
-  return Number.isNaN(Date.parse(thread.archivedAt)) ? thread.createdAt : thread.archivedAt;
-}
-
-function archivedThreadTimestamp(
-  thread: Pick<EnvironmentThreadShell, "archivedAt" | "createdAt">,
-  field: ArchivedThreadSortField,
-): number {
-  const timestamp = Date.parse(archivedThreadTimestampValue(thread, field));
-  return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
 export function formatArchivedThreadRelativeTime(input: string): string | null {
   return Number.isNaN(Date.parse(input)) ? null : relativeTime(input);
-}
-
-export function parseArchivedThreadSearchInput(query: string): ArchivedThreadSearchInput {
-  const normalizedQuery = normalizeSearchQuery(query);
-  return {
-    normalizedQuery,
-    tokens: normalizedQuery.split(/\s+/u).filter((token) => token.length > 0),
-    isSearching: normalizedQuery.length > 0,
-  };
-}
-
-// Lower scores are more relevant, matching the shared search-ranking helpers.
-export function archivedThreadSearchScore(input: {
-  readonly normalizedTitle: string;
-  readonly normalizedQuery: string;
-  readonly tokens: ReadonlyArray<string>;
-}): number | null {
-  if (input.normalizedQuery.length === 0) return 0;
-  if (!input.normalizedTitle) return null;
-
-  const phraseScore = scoreQueryMatch({
-    value: input.normalizedTitle,
-    query: input.normalizedQuery,
-    exactBase: 0,
-    prefixBase: 1,
-    boundaryBase: 2,
-    includesBase: 3,
-  });
-  if (phraseScore !== null) return Math.min(phraseScore, ARCHIVED_THREAD_PHRASE_SCORE_MAX);
-
-  let matchedTokenCount = 0;
-  let tokenScore = 0;
-  for (const token of input.tokens) {
-    const score = scoreQueryMatch({
-      value: input.normalizedTitle,
-      query: token,
-      exactBase: 0,
-      prefixBase: 2,
-      boundaryBase: 4,
-      includesBase: 6,
-      ...(token.length >= 3 ? { fuzzyBase: 100 } : {}),
-    });
-    if (score === null) continue;
-    matchedTokenCount += 1;
-    tokenScore += score;
-  }
-
-  if (matchedTokenCount === 0) return null;
-  if (matchedTokenCount === input.tokens.length) {
-    return (
-      ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET +
-      Math.min(tokenScore, ARCHIVED_THREAD_ALL_TOKENS_SCORE_MAX)
-    );
-  }
-  return (
-    ARCHIVED_THREAD_PARTIAL_TOKENS_SCORE_OFFSET +
-    (input.tokens.length - matchedTokenCount) * ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET +
-    Math.min(tokenScore, ARCHIVED_THREAD_MISSING_TOKEN_SCORE_OFFSET - 1)
-  );
-}
-
-export function compareArchivedThreads(
-  left: EnvironmentThreadShell,
-  right: EnvironmentThreadShell,
-  sort: ArchivedThreadSortState,
-): number {
-  const leftTimestamp = archivedThreadTimestamp(left, sort.field);
-  const rightTimestamp = archivedThreadTimestamp(right, sort.field);
-  const timestampComparison =
-    sort.direction === "asc" ? leftTimestamp - rightTimestamp : rightTimestamp - leftTimestamp;
-  return timestampComparison || left.id.localeCompare(right.id);
-}
-
-export function nextArchivedThreadSortState(
-  current: ArchivedThreadSortState,
-  field: ArchivedThreadSortField,
-): ArchivedThreadSortState {
-  if (current.field !== field) return { field, direction: "desc" };
-  return { field, direction: current.direction === "desc" ? "asc" : "desc" };
 }
 
 export function buildArchivedThreadGroups(input: {
@@ -320,9 +209,9 @@ export function buildArchivedThreadGroups(input: {
         key: Order.String,
       }),
       (group: ArchivedThreadGroup) => {
-        let timestamp = archivedThreadTimestamp(group.threads[0]!, input.sort.field);
+        let timestamp = archivedThreadSortTimestamp(group.threads[0]!, input.sort.field);
         for (let index = 1; index < group.threads.length; index += 1) {
-          const candidate = archivedThreadTimestamp(group.threads[index]!, input.sort.field);
+          const candidate = archivedThreadSortTimestamp(group.threads[index]!, input.sort.field);
           timestamp =
             input.sort.direction === "asc"
               ? Math.min(timestamp, candidate)
