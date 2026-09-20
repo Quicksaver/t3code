@@ -237,6 +237,15 @@ export function makeSourceControlPanelActions(
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> => effect.pipe(Effect.ensuring(invalidateRefs(cwd)));
+  const validateOperand = (operation: string, cwd: string, value: string) =>
+    validateGitPositionalName({
+      operation,
+      cwd,
+      args: [],
+      kind: "Git revision or remote",
+      value,
+    });
+
   const stageFiles: SourceControlPanelService["Service"]["stageFiles"] = (input) =>
     run(
       "vcs.panel.stageFiles",
@@ -333,6 +342,7 @@ export function makeSourceControlPanelActions(
       input.originalPath ? [input.originalPath, input.path] : [input.path],
     );
     if (source.kind === "commit") {
+      yield* validateOperand("vcs.panel.readCommitFileDiff", input.cwd, source.sha);
       const patch = yield* run("vcs.panel.readCommitFileDiff", input.cwd, [
         "show",
         "--format=",
@@ -344,6 +354,8 @@ export function makeSourceControlPanelActions(
       return { path: input.path, staged: false, patch };
     }
     if (source.kind === "compare") {
+      yield* validateOperand("vcs.panel.readCompareFileDiff", input.cwd, source.baseRef);
+      yield* validateOperand("vcs.panel.readCompareFileDiff", input.cwd, source.refName);
       const patch = yield* run("vcs.panel.readCompareFileDiff", input.cwd, [
         "diff",
         ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
@@ -354,6 +366,7 @@ export function makeSourceControlPanelActions(
       return { path: input.path, staged: false, patch };
     }
     if (source.kind === "stash") {
+      yield* validateOperand("vcs.panel.readStashFileDiff", input.cwd, source.stashRef);
       let patch = yield* run("vcs.panel.readStashFileDiff", input.cwd, [
         "diff",
         ...REVIEW_DIFF_MINIMAL_PATCH_ARGS,
@@ -732,6 +745,10 @@ export function makeSourceControlPanelActions(
   const undoLatestCommit: SourceControlPanelService["Service"]["undoLatestCommit"] = Effect.fn(
     "undoLatestCommit",
   )(function* (input) {
+    if (input.sha !== undefined)
+      yield* validateOperand("vcs.panel.undoLatestCommit", input.cwd, input.sha);
+    if (input.branchName !== undefined)
+      yield* validateOperand("vcs.panel.undoLatestCommit", input.cwd, input.branchName);
     const currentBranch = yield* run("vcs.panel.currentBranch", input.cwd, [
       "branch",
       "--show-current",
@@ -754,14 +771,19 @@ export function makeSourceControlPanelActions(
     ]).pipe(Effect.asVoid);
   });
 
-  const revertCommit: SourceControlPanelService["Service"]["revertCommit"] = (input) =>
-    run("vcs.panel.revertCommit", input.cwd, ["revert", "--no-edit", input.sha]).pipe(
+  const revertCommit: SourceControlPanelService["Service"]["revertCommit"] = Effect.fn(
+    "revertCommit",
+  )(function* (input) {
+    yield* validateOperand("vcs.panel.revertCommit", input.cwd, input.sha);
+    yield* run("vcs.panel.revertCommit", input.cwd, ["revert", "--no-edit", input.sha]).pipe(
       Effect.asVoid,
     );
+  });
 
   const checkoutCommit: SourceControlPanelService["Service"]["checkoutCommit"] = Effect.fn(
     "checkoutCommit",
   )(function* (input) {
+    yield* validateOperand("vcs.panel.checkoutCommit", input.cwd, input.sha);
     yield* run("vcs.panel.checkoutCommit", input.cwd, ["checkout", "--detach", input.sha]).pipe(
       Effect.asVoid,
     );
@@ -820,7 +842,12 @@ export function makeSourceControlPanelActions(
     fetchRemote: (input) =>
       withRefInvalidation(
         input.cwd,
-        run("vcs.panel.fetchRemote", input.cwd, ["fetch", input.remoteName]).pipe(Effect.asVoid),
+        validateOperand("vcs.panel.fetchRemote", input.cwd, input.remoteName).pipe(
+          Effect.flatMap((remoteName) =>
+            run("vcs.panel.fetchRemote", input.cwd, ["fetch", remoteName]),
+          ),
+          Effect.asVoid,
+        ),
       ),
     addRemote: Effect.fn("addRemote")(function* (input) {
       const remoteName = yield* validateGitPositionalName({
@@ -888,30 +915,41 @@ export function makeSourceControlPanelActions(
       });
     },
     applyStash: (input) =>
-      run("vcs.panel.applyStash", input.cwd, [
-        "stash",
-        "apply",
-        input.stashRef ?? "stash@{0}",
-      ]).pipe(Effect.asVoid),
+      validateOperand("vcs.panel.applyStash", input.cwd, input.stashRef ?? "stash@{0}").pipe(
+        Effect.flatMap((stashRef) =>
+          run("vcs.panel.applyStash", input.cwd, ["stash", "apply", stashRef]),
+        ),
+        Effect.asVoid,
+      ),
     popStash: (input) =>
-      run("vcs.panel.popStash", input.cwd, ["stash", "pop", input.stashRef ?? "stash@{0}"]).pipe(
+      validateOperand("vcs.panel.popStash", input.cwd, input.stashRef ?? "stash@{0}").pipe(
+        Effect.flatMap((stashRef) =>
+          run("vcs.panel.popStash", input.cwd, ["stash", "pop", stashRef]),
+        ),
         Effect.asVoid,
       ),
     dropStash: (input) =>
-      run("vcs.panel.dropStash", input.cwd, ["stash", "drop", input.stashRef ?? "stash@{0}"]).pipe(
+      validateOperand("vcs.panel.dropStash", input.cwd, input.stashRef ?? "stash@{0}").pipe(
+        Effect.flatMap((stashRef) =>
+          run("vcs.panel.dropStash", input.cwd, ["stash", "drop", stashRef]),
+        ),
         Effect.asVoid,
       ),
-    compare: (input) => {
+    compare: Effect.fn("compare")(function* (input) {
       const left = targetRef(input.left);
       const right = targetRef(input.right);
+      if (input.left.kind !== "working-tree")
+        yield* validateOperand("vcs.panel.compare", input.cwd, left);
+      if (input.right.kind !== "working-tree")
+        yield* validateOperand("vcs.panel.compare", input.cwd, right);
       const range = left && right ? `${left}..${right}` : left || right;
       const reverse = input.left.kind === "working-tree" && input.right.kind !== "working-tree";
       const args = range
         ? ["diff", ...REVIEW_DIFF_MINIMAL_PATCH_ARGS, ...(reverse ? ["--reverse"] : []), range]
         : ["diff", ...REVIEW_DIFF_PATCH_ARGS];
-      return run("vcs.panel.compare", input.cwd, args).pipe(
+      return yield* run("vcs.panel.compare", input.cwd, args).pipe(
         Effect.map((patch): VcsPanelCompareResult => ({ patch })),
       );
-    },
+    }),
   };
 }

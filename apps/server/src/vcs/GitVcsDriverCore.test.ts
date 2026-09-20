@@ -206,9 +206,15 @@ it.effect("bounds Git bursts across drivers without timing out queued commands",
   }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
+it.effect.each([
+  { args: ["push"], timeoutMs: null },
+  { args: ["push"], timeoutMs: 30_001 },
+  { args: ["push"], timeoutMs: undefined },
+  { args: ["fetch", "origin"], timeoutMs: undefined },
+  { args: ["commit"], timeoutMs: undefined },
+])(
   "keeps all Git slots available with a pending command whose timeout is $timeoutMs",
-  ({ timeoutMs }) =>
+  ({ args, timeoutMs }) =>
     Effect.gen(function* () {
       const slowGate = yield* Deferred.make<void>();
       const fastGate = yield* Deferred.make<void>();
@@ -220,7 +226,7 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
             active++;
             yield* Queue.offer(starts, undefined);
             const gate =
-              ChildProcess.isStandardCommand(command) && command.args[0] === "push"
+              ChildProcess.isStandardCommand(command) && command.args[0] !== "status"
                 ? slowGate
                 : fastGate;
             return ChildProcessSpawner.makeHandle({
@@ -235,7 +241,12 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const slow = yield* driver
-        .execute({ operation: "test.slowGit", cwd: "/repo", args: ["push"], timeoutMs })
+        .execute({
+          operation: "test.slowGit",
+          cwd: "/repo",
+          args,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        })
         .pipe(Effect.forkChild);
       yield* Queue.take(starts);
       const burst = yield* Effect.all(

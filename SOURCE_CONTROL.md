@@ -328,7 +328,7 @@ Before considering source-control changes complete, run the focused checks for t
 ```sh
 pnpm exec vp test run apps/server/src/sourceControl/SourceControlPanelService.test.ts apps/server/src/vcs/VcsStatusBroadcaster.test.ts apps/server/src/vcs/GitVcsDriverCore.test.ts
 pnpm exec vp test run apps/web/src/components/ChatView.sourceControl.test.ts apps/web/src/components/source-control/SourceControlPanel.logic.test.ts apps/web/src/diffFileActions.test.ts apps/web/src/state/sourceControlPanel.test.ts
-pnpm exec vp test run packages/contracts/src/git.test.ts packages/shared/src/git.test.ts packages/client-runtime/src/state/vcsAction.test.ts
+pnpm exec vp test run packages/contracts/src/git.test.ts packages/shared/src/git.test.ts packages/client-runtime/src/state/vcsAction.test.ts packages/client-runtime/src/state/vcs.test.ts
 pnpm exec vp run --filter @t3tools/web typecheck
 pnpm exec vp run --filter t3 typecheck
 ```

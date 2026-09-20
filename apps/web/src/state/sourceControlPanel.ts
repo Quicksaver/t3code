@@ -332,7 +332,7 @@ export function resolveSourceControlPanelPresentationState(input: {
   readonly statusError: unknown;
 }): SourceControlPanelPresentationState {
   if (!input.snapshot) {
-    if (input.loading) {
+    if (input.loading || (input.statusPending && !input.error && !input.statusError)) {
       return {
         status: "loading",
         message: "Loading repository state...",

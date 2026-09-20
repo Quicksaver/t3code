@@ -295,7 +295,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             })
           }
         />
-        <View className="ml-12 h-px bg-border" />
+        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
