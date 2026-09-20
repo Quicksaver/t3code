@@ -9,7 +9,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../persistence/Layers/Sqlite.ts";
 import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -37,6 +40,53 @@ const layer = it.layer(
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-cold-storage-" })),
     Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+it.effect("reclaims an active thread's restored bundle after storage restarts", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-restart-restored-finalization");
+    const persistentLayer = ThreadColdStorage.layer.pipe(
+      Layer.provideMerge(makeSqlitePersistenceLive(config.dbPath)),
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const storage = yield* ThreadColdStorage.ThreadColdStorage;
+        yield* insertArchivedThread(threadId, "Restored before restart");
+        yield* storage.archiveThread(threadId);
+        assert.isTrue(yield* storage.restoreTree(threadId));
+        yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+        // The process ends after committing unarchive and before finalization.
+      }).pipe(Effect.provide(persistentLayer)),
+    );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const storage = yield* ThreadColdStorage.ThreadColdStorage;
+        assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+        yield* storage.archiveThread(threadId, Effect.die("Must not quiesce after restart"));
+        assert.deepStrictEqual(
+          yield* sql`SELECT archived_at FROM projection_threads WHERE thread_id = ${threadId}`,
+          [{ archived_at: null }],
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+          [],
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+          [],
+        );
+      }).pipe(Effect.provide(persistentLayer)),
+    );
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-finalize-restart-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
   ),
 );
 
@@ -81,6 +131,108 @@ layer("ThreadColdStorage", (it) => {
       assert.deepStrictEqual(reserved, [{ status: "restored" }]);
       yield* storage.finishRestoreTree(root);
       for (const id of [magiChild, child, hotChild, root]) yield* storage.deleteThread(id);
+    }),
+  );
+
+  it.effect("commits complete bundle metadata before deleting hot rows", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const threadId = ThreadId.make("thread-durable-bundle-before-delete");
+      yield* insertArchivedThread(threadId, "Interrupted archive handoff");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-durable-bundle', ${threadId}, NULL, 'user', 'survive interruption', '[]',
+          0, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER block_archive_hot_delete
+        BEFORE DELETE ON projection_thread_messages
+        BEGIN SELECT RAISE(ABORT, 'interrupted hot-row deletion'); END
+      `);
+      yield* Effect.flip(storage.archiveThread(threadId)).pipe(
+        Effect.ensuring(
+          sql.unsafe("DROP TRIGGER temp.block_archive_hot_delete").pipe(Effect.orDie),
+        ),
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+        [{ text: "survive interruption" }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [{ thread_id: threadId }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [{ status: "archiving" }],
+      );
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      assert.deepStrictEqual(
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+        [{ text: "survive interruption" }],
+      );
+      yield* storage.deleteThread(threadId);
+    }),
+  );
+
+  it.effect("rediscovers failed finalization without quiescing an active thread", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const threadId = ThreadId.make("thread-retry-restored-finalization");
+      yield* insertArchivedThread(threadId, "Retry finalization");
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-retry-finalization', ${threadId}, NULL, 'user', 'keep active data', '[]',
+          0, '2026-07-01T00:00:00.000Z', '2026-07-01T00:00:00.000Z'
+        )
+      `;
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+      const quiesce = Effect.die("Finalization must not stop an active thread");
+      yield* storage.archiveThread(threadId, quiesce);
+      assert.deepStrictEqual(
+        yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [{ status: "restored" }],
+      );
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER block_bundle_finalization
+        BEFORE DELETE ON thread_archive_manifests
+        BEGIN SELECT RAISE(ABORT, 'temporary finalization failure'); END
+      `);
+      yield* Effect.flip(storage.finishRestoreTree(threadId)).pipe(
+        Effect.ensuring(
+          sql.unsafe("DROP TRIGGER temp.block_bundle_finalization").pipe(Effect.orDie),
+        ),
+      );
+      assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+      yield* storage.archiveThread(threadId, quiesce);
+      assert.deepStrictEqual(
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+        [{ text: "keep active data" }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}`,
+        [],
+      );
     }),
   );
 

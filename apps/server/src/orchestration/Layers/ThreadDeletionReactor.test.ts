@@ -640,6 +640,74 @@ effectIt.effect("coalesces concurrent lifecycle failures into one delayed rescan
   }),
 );
 
+effectIt.effect("unarchive events reclaim bundles left by failed finalization", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const sql = yield* SqlClient.SqlClient;
+    const storage = yield* ThreadColdStorage.ThreadColdStorage;
+    const threadId = ThreadId.make("thread-unarchive-finalize-retry");
+    const reactorLayer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.die("Finalization must not stop the provider"),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closeTerminal: () => Effect.die("Finalization must not close the terminal"),
+      runArchiveQuiesce: false,
+      archiveThread: (id) =>
+        storage.archiveThread(id, Effect.die("Active-shell cleanup must not quiesce")),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at, archived_at
+        ) VALUES (
+          ${threadId}, 'project-finalize', 'Finalize after unarchive',
+          '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
+          'full-access', 'default', '2026-07-20T00:00:00.000Z',
+          '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
+        )
+      `;
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER fail_finalization BEFORE DELETE ON thread_archive_manifests
+        BEGIN SELECT RAISE(ABORT, 'temporary finalization failure'); END
+      `);
+      yield* Effect.flip(storage.finishRestoreTree(threadId)).pipe(
+        Effect.ensuring(sql.unsafe("DROP TRIGGER temp.fail_finalization").pipe(Effect.orDie)),
+      );
+      yield* PubSub.publish(events, unarchivedEvent(threadId));
+      yield* reactor.drainThrough(2);
+      assert.deepStrictEqual(
+        yield* sql`SELECT archived_at FROM projection_threads WHERE thread_id = ${threadId}`,
+        [{ archived_at: null }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+    }).pipe(Effect.provide(reactorLayer));
+  }).pipe(
+    Effect.provide(
+      ThreadColdStorage.layer.pipe(
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-finalize-retry-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 effectIt.effect("force-deleting a project removes an already-cold archived thread", () =>
   Effect.gen(function* () {
     const events = yield* PubSub.unbounded<OrchestrationEvent>();

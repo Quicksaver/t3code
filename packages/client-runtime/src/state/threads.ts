@@ -367,8 +367,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
 
   const removeCachedThread = Effect.fn("EnvironmentThreadState.removeCachedThread")(function* () {
+    if (resumeCache !== undefined && (resumeCache.owner !== owner || resumeCache.invalidated))
+      return;
     yield* evictCachedThread(cache, environmentId, threadId);
   });
+
+  const reviveOwnedCachedThread = Effect.fn("EnvironmentThreadState.reviveOwnedCachedThread")(
+    function* () {
+      if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+      yield* reviveCachedThread(cache, environmentId, threadId);
+      if (resumeCache) resumeCache.invalidated = false;
+    },
+  );
 
   const setConnecting = SubscriptionRef.update(state, (current) =>
     current.status === "deleted" || Option.isSome(current.error)
@@ -538,8 +548,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       if (item.snapshot.thread.archivedAt !== null) {
         yield* removeCachedThread();
       } else {
-        yield* reviveCachedThread(cache, environmentId, threadId);
-        if (resumeCache?.owner === owner) resumeCache.invalidated = false;
+        yield* reviveOwnedCachedThread();
       }
       yield* setThread(item.snapshot.thread, pageStateFromSnapshot(item.snapshot.page));
       return;
@@ -570,8 +579,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     const result = applyThreadDetailEvent(current.data.value, item.event);
     if (result.kind === "updated") {
       if (item.event.type === "thread.unarchived") {
-        yield* reviveCachedThread(cache, environmentId, threadId);
-        if (resumeCache?.owner === owner) resumeCache.invalidated = false;
+        yield* reviveOwnedCachedThread();
       }
       yield* setThread(result.thread, "keep");
       if (item.event.type === "thread.archived") {
