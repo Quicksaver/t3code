@@ -16,7 +16,12 @@ import {
 export function useMagiRunHistory(input: {
   readonly threadRef: ScopedThreadRef;
   readonly expanded: boolean;
-}): { history: MagiListRunsResult | null; latestOwnedRun: MagiRunSummary | null } {
+}): {
+  history: MagiListRunsResult | null;
+  latestOwnedRun: MagiRunSummary | null;
+  historyLoading: boolean;
+  historyFailed: boolean;
+} {
   const latestTarget = useMemo(
     () => ({
       environmentId: input.threadRef.environmentId,
@@ -98,6 +103,10 @@ export function useMagiRunHistory(input: {
   }, [input.expanded, latestResult, latestTarget]);
 
   return {
+    historyLoading:
+      input.expanded && expandedHistory === null && !AsyncResult.isFailure(expandedResult),
+    historyFailed:
+      input.expanded && expandedHistory === null && AsyncResult.isFailure(expandedResult),
     history: resolveMagiRunHistory({
       expanded: input.expanded,
       latest: latestHistory,

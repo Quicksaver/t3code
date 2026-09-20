@@ -1,3 +1,4 @@
+import { useHasActiveMagi } from "../../state/magi";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -521,12 +522,13 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   } = props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
+  const hasActiveMagi = useHasActiveMagi(thread);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
   const threadAccessibilityLabel = [
     thread.title,
-    thread.activeMagiRun ? "Magi active" : null,
+    hasActiveMagi ? "Magi active" : null,
     pr?.accessibilityLabel,
     props.hasQueuedMessages ? "messages queued to send" : null,
   ]
@@ -689,7 +691,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             )}
           >
             <View className="flex-row items-center justify-between gap-2">
-              {thread.activeMagiRun ? <MagiConsensusIcon size={16} /> : null}
+              {hasActiveMagi ? <MagiConsensusIcon size={16} /> : null}
               <Text
                 className={cn(
                   "flex-1 text-lg font-t3-bold",
@@ -763,7 +765,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       >
         <View className="gap-[3px]">
           <View className="flex-row items-center justify-between gap-2">
-            {thread.activeMagiRun ? (
+            {hasActiveMagi ? (
               <MagiConsensusIcon
                 size={15}
                 colorClassName={visuallySelected ? "thread-selected-foreground" : "accent-icon"}

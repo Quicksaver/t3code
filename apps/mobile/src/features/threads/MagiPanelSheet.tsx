@@ -333,6 +333,14 @@ export function MagiPanelSheet(props: {
           </View>
         ) : null}
 
+        {historyQuery.data === null ? (
+          <Text
+            accessibilityLiveRegion="polite"
+            className="px-4 py-3 text-sm text-foreground-muted"
+          >
+            {historyQuery.error ? "Could not load Magi runs." : "Loading Magi runs…"}
+          </Text>
+        ) : null}
         {current.name === "overview" ? (
           <ScrollView contentContainerClassName="gap-4 p-4 pb-10">
             <Text className="text-sm text-foreground-muted">

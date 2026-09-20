@@ -2076,7 +2076,12 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelControlsAtRoot = rightPanelPresent && !shouldUseRightPanelSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
-  const { history: magiHistory, latestOwnedRun: latestOwnedMagiRun } = useMagiRunHistory({
+  const {
+    history: magiHistory,
+    latestOwnedRun: latestOwnedMagiRun,
+    historyLoading: magiHistoryLoading,
+    historyFailed: magiHistoryFailed,
+  } = useMagiRunHistory({
     threadRef: activeThreadRef ?? routeThreadRef,
     expanded: rightPanelOpen && activeRightPanelSurface?.kind === "magi",
   });
@@ -9697,6 +9702,8 @@ export default function ChatView(props: ChatViewProps) {
         isVisible={rightPanelOpen}
         activeRun={activeThreadShell?.activeMagiRun ?? null}
         history={magiHistory}
+        historyLoading={magiHistoryLoading}
+        historyFailed={magiHistoryFailed}
         providers={providerStatuses}
         settings={settings}
         {...(isLocalDraftThread
