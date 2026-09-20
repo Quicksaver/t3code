@@ -255,7 +255,13 @@ const make = Effect.gen(function* () {
             // Close the pre-archive preview lease at the authoritative restore
             // transition as well, without letting a stale archive job close a
             // preview for an already-active thread later.
-            handleEvent = closeThreadPreviews(event.payload.threadId);
+            handleEvent = closeThreadPreviews(event.payload.threadId).pipe(
+              // A committed unarchive can leave a restored bundle after a
+              // finalization failure. The same worker retries that cleanup.
+              Effect.andThen(
+                enqueueLifecycleJob({ type: "archive", threadId: event.payload.threadId }),
+              ),
+            );
           } else {
             handleEvent = Effect.void;
           }

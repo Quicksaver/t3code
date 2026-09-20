@@ -450,6 +450,18 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const deleteRestoredBundle = Effect.fn("deleteRestoredArchiveBundle")(function* (
+    threadId: string,
+  ) {
+    yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`, [
+      threadId,
+    ]);
+    yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
+      threadId,
+    ]);
+    yield* sql.unsafe(`DELETE FROM thread_archive_manifests WHERE thread_id = ?`, [threadId]);
+  });
+
   const archiveImpl = Effect.fn("archiveThreadImpl")(function* (
     threadId: ThreadId,
     allowRestored: boolean,
@@ -475,13 +487,25 @@ const make = Effect.gen(function* () {
       yield* completeArchiveCleanup(threadId);
       return;
     }
+    const rootThreadId = String(source.root_thread_id ?? threadId);
     if (threadRows.length === 0) {
+      if (source.status === "restored" && !activeRestoreRoots.has(rootThreadId)) {
+        const activeShell = yield* sql.unsafe(
+          `SELECT 1 FROM projection_threads
+           WHERE thread_id = ? AND archived_at IS NULL AND deleted_at IS NULL`,
+          [threadId],
+        );
+        if (activeShell.length > 0) {
+          // Finalization never quiesces or archives the already-active thread.
+          yield* sql.withTransaction(deleteRestoredBundle(threadId));
+          yield* reclaimFreePages();
+        }
+      }
       if (source.status === "pending" || source.status === "archiving") {
         yield* discardIncompleteArchive(threadId);
       }
       return;
     }
-    const rootThreadId = String(source.root_thread_id ?? threadId);
     // A restored manifest reserves this archive epoch for an in-flight
     // unarchive only while this process owns that restore. A reservation left
     // behind by a crashed process is durable recovery work, while a later
@@ -571,8 +595,17 @@ const make = Effect.gen(function* () {
       compressedBytes += compressed.byteLength;
     }
 
-    // Chunk creation stays retryable outside the hot-row deletion transaction.
-    // A retry replaces every partial chunk before deleting source data.
+    yield* sql.unsafe(
+      `INSERT INTO ${ARCHIVE_SCHEMA}.archive_threads
+        (thread_id, root_thread_id, archive_version, archived_at, original_bytes,
+         compressed_bytes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      [threadId, rootThreadId, ARCHIVE_VERSION, archivedAt, originalBytes, compressedBytes],
+    );
+
+    // WAL does not commit attached files atomically. Persist the complete bundle
+    // first so the destructive success path writes only main. Retries replace it
+    // while the original hot rows are still available.
     const archivedAtDestructiveBoundary = yield* sql.withTransaction(
       Effect.gen(function* () {
         const archivedShell = (yield* sql.unsafe(
@@ -597,13 +630,6 @@ const make = Effect.gen(function* () {
           );
           return false;
         }
-        yield* sql.unsafe(
-          `INSERT INTO ${ARCHIVE_SCHEMA}.archive_threads
-            (thread_id, root_thread_id, archive_version, archived_at, original_bytes,
-             compressed_bytes, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-          [threadId, rootThreadId, ARCHIVE_VERSION, archivedAt, originalBytes, compressedBytes],
-        );
         for (const [table, keyColumn] of [...ARCHIVED_THREAD_TABLES].toReversed()) {
           yield* sql.unsafe(`DELETE FROM ${table} WHERE ${keyColumn} = ?`, [threadId]);
         }
@@ -848,17 +874,7 @@ const make = Effect.gen(function* () {
       yield* sql.withTransaction(
         Effect.gen(function* () {
           for (const row of rows) {
-            const restoredThreadId = String(row.thread_id);
-            yield* sql.unsafe(
-              `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE thread_id = ?`,
-              [restoredThreadId],
-            );
-            yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
-              restoredThreadId,
-            ]);
-            yield* sql.unsafe(`DELETE FROM thread_archive_manifests WHERE thread_id = ?`, [
-              restoredThreadId,
-            ]);
+            yield* deleteRestoredBundle(String(row.thread_id));
           }
         }),
       );
@@ -934,7 +950,8 @@ const make = Effect.gen(function* () {
        INNER JOIN projection_threads
          ON projection_threads.thread_id = thread_archive_manifests.thread_id
         AND projection_threads.deleted_at IS NULL
-        AND projection_threads.archived_at = thread_archive_manifests.archived_at
+        AND (projection_threads.archived_at = thread_archive_manifests.archived_at
+          OR projection_threads.archived_at IS NULL)
        WHERE thread_archive_manifests.status = 'restored'
        UNION ALL
        SELECT projection_threads.thread_id, projection_threads.archived_at
