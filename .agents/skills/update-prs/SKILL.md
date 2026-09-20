@@ -8,6 +8,6 @@ disable-model-invocation: true
 
 Load `$spawn-worktrees`.
 
-Instruct each subagent to use the global `$piz-pr` skill. Do not load `$piz-pr` or perform its work yourself.
+Instruct each subagent to use the global `$pr` skill. Do not load `$pr` or perform its work yourself.
 
 Be silent while you patiently wait for each subagent terminal result. Then report the collected results.
