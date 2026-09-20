@@ -28,11 +28,14 @@ import { EmptyState } from "../../components/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import {
+  formatArchivedThreadRelativeTime,
+  type ArchivedThreadGroup,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -194,7 +197,9 @@ function ArchivedThreadRow(props: {
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const cardColor = useUniwindTheme()["--color-card"];
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
+  const timestamp = formatArchivedThreadRelativeTime(
+    props.thread.archivedAt ?? props.thread.updatedAt,
+  );
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
