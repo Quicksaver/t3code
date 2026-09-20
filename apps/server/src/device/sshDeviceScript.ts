@@ -70,7 +70,10 @@ const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8'));
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
 const stopHub = hub => {
   if (!hub || hub.owner !== owner) return;
-  const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
+  const inspection = process.platform === 'win32'
+    ? run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); (Get-CimInstance Win32_Process -Filter "ProcessId = ' + Number(hub.pid) + '").CommandLine'])
+    : run('ps', ['-p', String(hub.pid), '-o', 'command=']);
+  const command = !inspection.error && inspection.status === 0 ? inspection.stdout || '' : '';
   if (command.includes(hub.entryPath) && command.includes(String(hub.port))) {
     try { process.kill(hub.pid, 'SIGTERM'); } catch {}
   }

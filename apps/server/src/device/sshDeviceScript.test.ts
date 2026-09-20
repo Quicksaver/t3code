@@ -17,6 +17,93 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
+it("stops only verified Windows hubs during removal and adapter replacement", async () => {
+  const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 hub identity "));
+  try {
+    const root = NodePath.join(home, ".t3/device");
+    const state = NodePath.join(root, "hosts/fixture");
+    const tool = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
+    const entry = NodePath.join(tool, "node_modules/expo-device-hub/dist/server/cli.mjs");
+    const sdk = NodePath.join(home, "sdk");
+    await NodeFSP.mkdir(state, { recursive: true });
+    await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+    await NodeFSP.writeFile(entry, "");
+    await NodeFSP.writeFile(NodePath.join(tool, ".install-complete"), DEVICE_HUB_VERSION);
+    for (const relative of [
+      "platform-tools/adb.exe",
+      "emulator/emulator.exe",
+      "cmdline-tools/latest/bin/avdmanager.bat",
+    ]) {
+      const file = NodePath.join(sdk, relative);
+      await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+      await NodeFSP.writeFile(file, "");
+    }
+    const hub = { owner: "fixture", pid: 12345, port: 54321, entryPath: entry };
+    const matchingCommand = `node "${entry}" --port ${hub.port}`;
+    for (const mode of ["stop", "start"] as const) {
+      for (const condition of [
+        "match",
+        "entry-mismatch",
+        "port-mismatch",
+        "failed",
+        "other-owner",
+      ] as const) {
+        await NodeFSP.writeFile(
+          NodePath.join(state, "hub.json"),
+          JSON.stringify({
+            ...hub,
+            owner: condition === "other-owner" ? "another-owner" : hub.owner,
+          }),
+        );
+        const command =
+          condition === "entry-mismatch"
+            ? `node unrelated.mjs --port ${hub.port}`
+            : condition === "port-mismatch"
+              ? `node "${entry}" --port 123`
+              : matchingCommand;
+        const result = NodeChildProcess.spawnSync(
+          process.execPath,
+          [
+            "-e",
+            `
+Object.defineProperty(process, 'platform', { value: 'win32' });
+require('node:os').homedir = () => ${JSON.stringify(home)};
+const calls = [];
+process.kill = (pid, signal) => { calls.push({ pid, signal }); };
+const childProcess = require('node:child_process');
+childProcess.spawnSync = (command) => command === 'powershell.exe'
+  ? { status: ${condition === "failed" ? 1 : 0}, stdout: ${JSON.stringify(command)} }
+  : { status: 1, stdout: '' };
+childProcess.spawn = () => {
+  calls.push({ spawned: true });
+  const child = new (require('node:events').EventEmitter)();
+  Object.assign(child, { pid: 23456, exitCode: null, signalCode: null, unref() {} });
+  process.nextTick(() => child.emit('spawn'));
+  return child;
+};
+global.fetch = async () => ({ ok: true });
+process.on('exit', () => console.log(JSON.stringify({ calls })));
+` + remoteDeviceScript("fixture", mode),
+          ],
+          {
+            encoding: "utf8",
+            timeout: 10000,
+            env: { ...process.env, ANDROID_HOME: sdk },
+          },
+        );
+        expect(result.status, result.stderr).toBe(0);
+        const output = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+        expect(output.calls).toEqual([
+          ...(condition === "match" ? [{ pid: hub.pid, signal: "SIGTERM" }] : []),
+          ...(mode === "start" ? [{ spawned: true }] : []),
+        ]);
+      }
+    }
+  } finally {
+    await NodeFSP.rm(home, { recursive: true, force: true });
+  }
+});
+
 it("requires a complete Android SDK on SSH hosts while retaining iOS availability", () => {
   for (const missing of ["emulator/emulator", "cmdline-tools/latest/bin/avdmanager", null]) {
     const result = NodeChildProcess.spawnSync(

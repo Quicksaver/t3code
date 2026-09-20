@@ -251,7 +251,7 @@ export function DevicePanel(props: {
           <div
             key={host.id}
             role="status"
-            className="whitespace-pre-line border-b px-3 py-2 text-xs text-muted-foreground"
+            className="whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
           >
             {host.label}: {status.detail}
           </div>
