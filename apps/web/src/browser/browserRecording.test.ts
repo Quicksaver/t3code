@@ -689,6 +689,43 @@ describe("browser recording", () => {
     expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
   });
 
+  it.each(["stalled", "failed"])(
+    "preserves diagnostics when startup cleanup is %s",
+    async (mode) => {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const grant = deferred<void>();
+      const cleanup = deferred<undefined>();
+      const nativeFailure = new Error("native stop failed");
+      startScreencast.mockImplementationOnce(() => grant.promise);
+      stopScreencast.mockImplementationOnce(() =>
+        mode === "stalled" ? cleanup.promise : Promise.reject(nativeFailure),
+      );
+      const result = startBrowserRecording("cleanup-deadline", null, "cleanup-deadline", 40).catch(
+        (cause: unknown) => cause,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(startScreencast).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(41);
+      const cause = await result;
+      if (mode === "stalled") {
+        expect(cause).toBeInstanceOf(BrowserRecordingCaptureTimeoutError);
+      } else {
+        expect(cause).toMatchObject({
+          _tag: "BrowserRecordingOperationError",
+          operation: "cleanup",
+          cause: expect.objectContaining({
+            cause: expect.any(BrowserRecordingCaptureTimeoutError),
+            errors: [expect.any(BrowserRecordingCaptureTimeoutError), nativeFailure],
+          }),
+        });
+      }
+      expect(readActiveBrowserRecordingTabIds().has("cleanup-deadline")).toBe(false);
+      cleanup.resolve(undefined);
+      grant.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  );
+
   it("records separate tabs concurrently", async () => {
     const firstThreadRef = {
       environmentId: EnvironmentId.make("environment-recording"),

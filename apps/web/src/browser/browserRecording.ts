@@ -434,8 +434,12 @@ const cleanupFailedRecordingStart = async (
   bridge: NonNullable<typeof previewBridge>,
   recording: ActiveRecording,
   deadline: number | null,
+  options: { readonly ignoreDeadlineExpiry?: boolean } = {},
 ): Promise<unknown | undefined> => {
   const errors: unknown[] = [];
+  const deadlineError = new Error(
+    `Browser recording startup cleanup exceeded its deadline for tab ${recording.tabId}.`,
+  );
   try {
     const remainingMs = deadline === null ? undefined : Math.max(0, deadline - Date.now());
     const stop =
@@ -450,15 +454,7 @@ const cleanupFailedRecordingStart = async (
         await Promise.race([
           stop,
           new Promise<never>((_, reject) => {
-            timeout = setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    `Browser recording startup cleanup exceeded its deadline for tab ${recording.tabId}.`,
-                  ),
-                ),
-              remainingMs,
-            );
+            timeout = setTimeout(() => reject(deadlineError), remainingMs);
           }),
         ]);
       } finally {
@@ -466,7 +462,7 @@ const cleanupFailedRecordingStart = async (
       }
     }
   } catch (error) {
-    errors.push(error);
+    if (!options.ignoreDeadlineExpiry || error !== deadlineError) errors.push(error);
   }
   try {
     await stopMediaRecorder(recording.recorder);
@@ -815,7 +811,21 @@ export async function startBrowserRecording(
       startingLifecycle.cancelBeforeGrant();
       cancelCapture?.();
       if (startingLifecycle.grantStarted) {
-        await cleanupFailedRecordingStart(bridge, recording, deadline);
+        // The startup budget is already exhausted; only genuine cleanup failures add diagnostics.
+        const cleanupCause = await cleanupFailedRecordingStart(bridge, recording, deadline, {
+          ignoreDeadlineExpiry: true,
+        });
+        if (cleanupCause !== undefined) {
+          throw new BrowserRecordingOperationError({
+            operation: "cleanup",
+            tabId,
+            cause: new AggregateError(
+              [cause, cleanupCause],
+              `Browser recording startup and cleanup failed for tab ${tabId}.`,
+              { cause },
+            ),
+          });
+        }
       } else {
         clearActiveRecording(recording);
       }
