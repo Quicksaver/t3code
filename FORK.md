@@ -745,7 +745,7 @@ Archive eligibility also treats process-local `working` or `monitoring` liveness
 
 Disabled archive buttons remain the pointer target so clicks cannot fall through to row navigation. Every default-sidebar, chat-header, and Legacy Sidebar entry point uses one process-wide reservation pool keyed by the collision-safe target identity, preventing duplicate confirmations or mutations until the current action settles.
 
-Blocked archive controls keep pointer targeting while presenting a not-allowed cursor and muted hover tone. Legacy multi-selection rechecks each entry immediately before mutation, continues with eligible siblings, removes only successfully archived entries from selection, keeps intentional eligibility skips selected, and reports those skips without treating them as failures.
+Blocked archive controls keep pointer targeting while presenting a not-allowed cursor and muted hover tone. Legacy confirmation clears when its row becomes blocked or loses lifecycle eligibility, without clearing another row's confirmation. Legacy multi-selection rechecks each entry immediately before mutation, continues with eligible siblings, removes successfully archived or missing entries from selection, keeps live eligibility skips selected, and reports those skips without treating them as failures.
 
 Header, row-menu, selection, and archive-all entry points share one process-wide archive coordinator, so overlapping callers observe the same reservations and completed outcomes. Disabled archive controls remain focusable and pointer-interactive for their styled explanation tooltip, expose `aria-disabled`, stop row or shelf propagation, and never dispatch the archive action while ineligible.
 
