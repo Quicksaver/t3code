@@ -880,6 +880,8 @@ export function MagiPanel(props: {
   isVisible: boolean;
   activeRun: ActiveMagiRunSummary | null;
   history: MagiListRunsResult | null;
+  historyLoading: boolean;
+  historyFailed: boolean;
   providers: ReadonlyArray<ServerProvider>;
   settings: UnifiedSettings;
   draftArm?: MagiRunConfig | null;
@@ -1192,6 +1194,11 @@ export function MagiPanel(props: {
     <div className="flex h-full min-h-0 flex-col" data-testid="magi-panel">
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         <div className="space-y-1">
+          {props.historyLoading || props.historyFailed ? (
+            <p role="status" className="px-2 py-3 text-sm text-muted-foreground">
+              {props.historyFailed ? "Could not load Magi runs." : "Loading Magi runs…"}
+            </p>
+          ) : null}
           {selectedView === "new" ? (
             <NewMagiRunListItem
               participantCount={config.participants.length}

@@ -1,4 +1,5 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { useHasActiveMagi } from "../state/magi";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -7,6 +8,7 @@ import {
   ChevronRightIcon,
   FolderPlusIcon,
   Globe2Icon,
+  Network,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -393,6 +395,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const hasActiveMagi = useHasActiveMagi(thread);
   const threadKey = scopedThreadKey(threadRef);
   const [isFileDragOver, setIsFileDragOver] = useState(false);
   const fileDropHandlers = useMemo(
@@ -813,6 +816,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {hasActiveMagi ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span role="img" aria-label="Magi active" className="text-muted-foreground" />
+                }
+              >
+                <Network aria-hidden className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {thread.activeMagiRun ? "Magi active" : "Magi active in subagents"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
           {discoveredPorts.length > 0 && (
             <Tooltip>
               <TooltipTrigger

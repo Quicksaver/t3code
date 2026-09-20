@@ -1,3 +1,4 @@
+import { useHasActiveMagi } from "../state/magi";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -390,8 +391,8 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
-function activeMagiRunLabel(thread: SidebarThreadSummary): string | null {
-  if (!thread.activeMagiRun) return null;
+function activeMagiRunLabel(thread: SidebarThreadSummary, hasActiveMagi: boolean): string | null {
+  if (!thread.activeMagiRun) return hasActiveMagi ? "Magi active in subagents" : null;
   return `Magi ${thread.activeMagiRun.state.replaceAll("-", " ")}`;
 }
 
@@ -429,7 +430,8 @@ function SidebarThreadTooltip({
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
-  const magiRunLabel = activeMagiRunLabel(thread);
+  const hasActiveMagi = useHasActiveMagi(thread);
+  const magiRunLabel = activeMagiRunLabel(thread, hasActiveMagi);
   return (
     <TooltipCardPopup
       side="right"
@@ -1144,6 +1146,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     variant,
     variantAction,
   } = props;
+  const hasActiveMagi = useHasActiveMagi(thread);
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
@@ -2045,20 +2048,24 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : null}
               {props.trailingDecoration}
               <span className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1">
-                {thread.activeMagiRun ? (
+                {hasActiveMagi ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
                         <span
                           role="img"
-                          aria-label={activeMagiRunLabel(thread) ?? "Magi run active"}
+                          aria-label={
+                            activeMagiRunLabel(thread, hasActiveMagi) ?? "Magi run active"
+                          }
                           className="pointer-events-auto inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
                         >
                           <Network aria-hidden className="size-3.5" />
                         </span>
                       }
                     />
-                    <TooltipPopup side="top">{activeMagiRunLabel(thread)}</TooltipPopup>
+                    <TooltipPopup side="top">
+                      {activeMagiRunLabel(thread, hasActiveMagi)}
+                    </TooltipPopup>
                   </Tooltip>
                 ) : null}
                 {isRemote ? (

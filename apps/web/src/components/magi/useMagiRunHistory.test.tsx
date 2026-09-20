@@ -7,7 +7,10 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { useMagiRunHistory } from "./useMagiRunHistory";
 
-const server = vi.hoisted(() => ({ runs: [] as MagiRunSummary[] }));
+const server = vi.hoisted(() => ({
+  runs: [] as MagiRunSummary[],
+  pending: null as Promise<void> | null,
+}));
 vi.mock("~/state/magi", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
   const atoms = new Map<string, ReturnType<typeof makeHistory>>();
@@ -17,12 +20,18 @@ vi.mock("~/state/magi", async () => {
     includeDescendants?: boolean;
   }) {
     return Atom.make(
-      Effect.sync(() => ({
-        runs: server.runs
-          .filter((run) => input.includeDescendants || run.rootThreadId === input.rootThreadId)
-          .slice(0, input.limit),
-        nextCursor: null,
-      })),
+      Effect.promise(() =>
+        input.includeDescendants && server.pending ? server.pending : Promise.resolve(),
+      ).pipe(
+        Effect.andThen(
+          Effect.sync(() => ({
+            runs: server.runs
+              .filter((run) => input.includeDescendants || run.rootThreadId === input.rootThreadId)
+              .slice(0, input.limit),
+            nextCursor: null,
+          })),
+        ),
+      ),
     );
   }
   return {
@@ -53,8 +62,35 @@ function Probe() {
 
 afterEach(async () => {
   await act(() => renderer?.unmount());
+  server.pending = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("shows loading while descendant history is pending even when owner history is empty", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", { setInterval, clearInterval });
+  server.runs = [];
+  let complete!: () => void;
+  server.pending = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  await act(async () => {
+    renderer = create(
+      <AppAtomRegistryProvider>
+        <Probe />
+      </AppAtomRegistryProvider>,
+    );
+  });
+  expect(latest.latestOwnedRun).toBeNull();
+  expect(latest.historyLoading).toBe(true);
+  expect(latest.historyFailed).toBe(false);
+  await act(async () => {
+    complete();
+    await server.pending;
+  });
+  expect(latest.historyLoading).toBe(false);
+  expect(latest.history?.runs).toEqual([]);
 });
 
 it("keeps the owner's timeline live while 100 newer children fill the open panel", async () => {

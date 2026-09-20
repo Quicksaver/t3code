@@ -2103,7 +2103,12 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     panelAnimationDurationMs,
   );
-  const { history: magiHistory, latestOwnedRun: latestOwnedMagiRun } = useMagiRunHistory({
+  const {
+    history: magiHistory,
+    latestOwnedRun: latestOwnedMagiRun,
+    historyLoading: magiHistoryLoading,
+    historyFailed: magiHistoryFailed,
+  } = useMagiRunHistory({
     threadRef: activeThreadRef ?? routeThreadRef,
     expanded: rightPanelOpen && activeRightPanelSurface?.kind === "magi",
   });
@@ -10024,6 +10029,8 @@ export default function ChatView(props: ChatViewProps) {
         isVisible={rightPanelOpen}
         activeRun={activeThreadShell?.activeMagiRun ?? null}
         history={magiHistory}
+        historyLoading={magiHistoryLoading}
+        historyFailed={magiHistoryFailed}
         providers={providerStatuses}
         settings={settings}
         {...(isLocalDraftThread

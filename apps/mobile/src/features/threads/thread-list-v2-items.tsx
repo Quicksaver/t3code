@@ -1,3 +1,4 @@
+import { useHasActiveMagi } from "../../state/magi";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
@@ -621,6 +622,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pinnedRow = props.pinned === true;
 
   const pr = useThreadPr(thread);
+  const hasActiveMagi = useHasActiveMagi(thread);
 
   const theme = useUniwindTheme();
   const sidebarPane = props.pane === "sidebar";
@@ -631,7 +633,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const isSubagent = thread.parentRelation?.kind === "subagent";
   const threadAccessibilityLabel = [
     thread.title,
-    thread.activeMagiRun ? "Magi active" : null,
+    hasActiveMagi ? "Magi active" : null,
     props.hasQueuedMessages ? "messages queued to send" : null,
   ]
     .filter(Boolean)
@@ -939,7 +941,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             workspaceRoot={props.project.workspaceRoot}
           />
         ) : null}
-        {thread.activeMagiRun ? (
+        {hasActiveMagi ? (
           <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
         ) : null}
         <Text
@@ -1255,7 +1257,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             </View>
           ) : null}
-          {thread.activeMagiRun ? (
+          {hasActiveMagi ? (
             <MagiConsensusIcon size={15} color={selected ? "#ffffff" : undefined} />
           ) : null}
           <View className="min-w-0 flex-1">

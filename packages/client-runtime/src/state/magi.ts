@@ -1,4 +1,7 @@
-import { MAGI_WS_METHODS } from "@t3tools/contracts";
+import { MAGI_WS_METHODS, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { scopedThreadKey } from "../environment/index.ts";
+import type { EnvironmentThreadShell } from "./shell.ts";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
@@ -77,4 +80,49 @@ export function createMagiEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
   };
+}
+
+// Native lineage is supplied by the separately integrated subagent-threading branch.
+const isNativeParent = Schema.is(
+  Schema.Struct({ kind: Schema.Literal("subagent"), parentThreadId: ThreadId }),
+);
+
+/** Mark owners and native ancestors without assigning a child's run to its parent. */
+export function activeMagiThreadKeys(
+  threads: ReadonlyArray<
+    Pick<EnvironmentThreadShell, "id" | "environmentId" | "activeMagiRun"> & {
+      readonly parentRelation?: unknown;
+    }
+  >,
+): ReadonlySet<string> {
+  const parents = new Map<string, string>();
+  const active = new Set<string>();
+  for (const thread of threads) {
+    const key = scopedThreadKey({ environmentId: thread.environmentId, threadId: thread.id });
+    if (thread.activeMagiRun) active.add(key);
+    const parent = thread.parentRelation;
+    if (isNativeParent(parent)) {
+      parents.set(
+        key,
+        scopedThreadKey({
+          environmentId: thread.environmentId,
+          threadId: parent.parentThreadId,
+        }),
+      );
+    }
+  }
+  // Set iteration visits newly added ancestors and terminates even for malformed cycles.
+  for (const key of active) {
+    const parent = parents.get(key);
+    if (parent !== undefined) active.add(parent);
+  }
+  return active;
+}
+
+export function createActiveMagiThreadAtom(
+  threads: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>,
+) {
+  const active = Atom.make((get) => activeMagiThreadKeys(get(threads)));
+  const family = Atom.family((key: string) => Atom.make((get) => get(active).has(key)));
+  return (ref: ScopedThreadRef) => family(scopedThreadKey(ref));
 }
