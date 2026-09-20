@@ -273,6 +273,12 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const threadLocksRef = yield* SynchronizedRef.make(new Map<string, ThreadLockEntry>());
   const activeRestoreRoots = new Set<string>();
+  const restoreClaims = new Map<ThreadId, { rootThreadId: string }>();
+
+  const claimRestore = (threadId: ThreadId, rootThreadId: ThreadId) => {
+    restoreClaims.set(threadId, { rootThreadId: String(rootThreadId) });
+    activeRestoreRoots.add(String(rootThreadId));
+  };
 
   yield* sql.unsafe(`ATTACH DATABASE ? AS ${ARCHIVE_SCHEMA}`, [config.archiveDbPath]);
   yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.auto_vacuum = INCREMENTAL`);
@@ -832,7 +838,7 @@ const make = Effect.gen(function* () {
       }),
     );
     const ownsRestore = reserved || restored || rows.some((row) => row.status === "restored");
-    if (ownsRestore) activeRestoreRoots.add(String(rootThreadId));
+    if (ownsRestore) claimRestore(threadId, rootThreadId);
     return ownsRestore;
   });
 
@@ -855,13 +861,7 @@ const make = Effect.gen(function* () {
           discard: true,
         },
       );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          activeRestoreRoots.delete(String(rootThreadId));
-        }),
-      ),
-    );
+    });
   });
 
   const finishRestoreTreeImpl = Effect.fn("finishRestoreArchiveTreeImpl")(function* (
@@ -879,13 +879,7 @@ const make = Effect.gen(function* () {
         yield* deleteRestoredBundle(String(row.thread_id));
       }
       yield* sql.unsafe(`PRAGMA ${ARCHIVE_SCHEMA}.incremental_vacuum(2048)`);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          activeRestoreRoots.delete(String(rootThreadId));
-        }),
-      ),
-    );
+    });
   });
 
   const deleteImpl = Effect.fn("deleteThreadPermanentlyImpl")(function* (threadId: ThreadId) {
@@ -1060,6 +1054,28 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => ThreadColdStorageError.normalize(operation, threadId, cause)),
     );
 
+  // Release the recorded claim even if root lookup fails before the tree lock
+  // is acquired. An older operation must not release a replacement claim.
+  const releaseRestoreClaim = <A, E>(threadId: ThreadId, effect: Effect.Effect<A, E>) =>
+    Effect.suspend(() => {
+      const claim = restoreClaims.get(threadId);
+      return effect.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!claim || restoreClaims.get(threadId) !== claim) return;
+            restoreClaims.delete(threadId);
+            if (
+              ![...restoreClaims.values()].some(
+                (other) => other.rootThreadId === claim.rootThreadId,
+              )
+            ) {
+              activeRestoreRoots.delete(claim.rootThreadId);
+            }
+          }),
+        ),
+      );
+    });
+
   return {
     archiveThread: <E>(threadId: ThreadId, quiesce: Effect.Effect<void, E> = Effect.void) => {
       const operation = "archive";
@@ -1079,9 +1095,15 @@ const make = Effect.gen(function* () {
     },
     restoreTree: (threadId) => wrap("restore", threadId, restoreTreeImpl(threadId)),
     rollbackRestoreTree: (threadId) =>
-      wrap("rollback-restore", threadId, rollbackRestoreTreeImpl(threadId)),
+      releaseRestoreClaim(
+        threadId,
+        wrap("rollback-restore", threadId, rollbackRestoreTreeImpl(threadId)),
+      ),
     finishRestoreTree: (threadId) =>
-      wrap("finish-restore", threadId, finishRestoreTreeImpl(threadId)),
+      releaseRestoreClaim(
+        threadId,
+        wrap("finish-restore", threadId, finishRestoreTreeImpl(threadId)),
+      ),
     deleteThread: (threadId) => wrap("delete", threadId, deleteImpl(threadId)),
     removeProviderLogs: (threadId) =>
       wrap("remove-provider-logs", threadId, removeProviderLogsImpl(threadId)),
