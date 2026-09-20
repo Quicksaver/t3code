@@ -301,7 +301,7 @@ describe("SourceControlPanelService", () => {
       yield* service.pushBranch({ cwd: "/repo", branchName: "feature", remoteName: "upstream" });
       assert.deepStrictEqual(
         calls.map((call) => call.args),
-        [["push", "-u", "upstream", "feature:refs/heads/feature"]],
+        [["push", "-u", "upstream", "refs/heads/feature:refs/heads/feature"]],
       );
     }).pipe(
       Effect.provide(
@@ -309,6 +309,32 @@ describe("SourceControlPanelService", () => {
           Effect.sync(() => {
             calls.push(input);
             return success();
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("pushes a plus-prefixed branch without forcing or selecting another source", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      yield* service.pushBranch({ cwd: "/repo", branchName: "+main", force: false });
+      assert.deepStrictEqual(
+        calls.map((call) => call.args),
+        [
+          ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "+main@{upstream}"],
+          ["push", "-u", "origin", "refs/heads/+main:refs/heads/+main"],
+        ],
+      );
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return input.operation === "vcs.panel.upstreamForRef"
+              ? failure("no upstream")
+              : success();
           }),
         ),
       ),
@@ -340,7 +366,7 @@ describe("SourceControlPanelService", () => {
             "--force-with-lease",
             "-u",
             "origin",
-            "feature/source-control:refs/heads/feature/source-control",
+            "refs/heads/feature/source-control:refs/heads/feature/source-control",
           ],
         ],
       );
@@ -388,7 +414,7 @@ describe("SourceControlPanelService", () => {
               "push",
               "-u",
               "origin",
-              "split/vscode-extension-work:refs/heads/split/vscode-extension-work",
+              "refs/heads/split/vscode-extension-work:refs/heads/split/vscode-extension-work",
             ],
           ],
         );
