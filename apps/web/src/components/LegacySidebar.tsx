@@ -509,8 +509,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
   }, [setConfirmingArchiveThreadKey, threadKey]);
   useEffect(() => {
-    if (!canUseLifecycleActions || isArchiveBlocked) clearConfirmingArchive();
-  }, [canUseLifecycleActions, clearConfirmingArchive, isArchiveBlocked]);
+    if (!canUseLifecycleActions || isThreadRunning) clearConfirmingArchive();
+  }, [canUseLifecycleActions, clearConfirmingArchive, isThreadRunning]);
   const handleMouseLeave = useCallback(() => {
     clearConfirmingArchive();
   }, [clearConfirmingArchive]);

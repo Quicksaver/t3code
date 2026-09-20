@@ -159,7 +159,7 @@ layer("ThreadColdStorage", (it) => {
               let rootLookups = 0;
               const spy = vi
                 .spyOn(sql, "unsafe")
-                .mockImplementation((query, params) =>
+                .mockImplementation((...[query, params]: Parameters<typeof unsafe>) =>
                   unsafe(
                     query.includes("SELECT COALESCE(") && ++rootLookups === failureAt
                       ? "SELECT * FROM missing_restore_lookup_fixture"

@@ -747,6 +747,7 @@ describe("EnvironmentThreads", () => {
         const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
           snapshot: undefined,
           owner: undefined,
+          persistenceLock: Semaphore.makeUnsafe(1),
         };
         const persisted = yield* Deferred.make<void>();
         const old = yield* makeHarness({
@@ -802,6 +803,7 @@ describe("EnvironmentThreads", () => {
         const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
           snapshot: undefined,
           owner: undefined,
+          persistenceLock: Semaphore.makeUnsafe(1),
         };
         const old = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
         yield* awaitThreadState(old.observed, (value) => value.status === "live");
@@ -1263,7 +1265,11 @@ describe("EnvironmentThreads", () => {
       const removed = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         cached: BASE_THREAD,
-        resumeCache: { snapshot: undefined, owner: undefined },
+        resumeCache: {
+          snapshot: undefined,
+          owner: undefined,
+          persistenceLock: Semaphore.makeUnsafe(1),
+        },
         removeThread: () =>
           Effect.suspend(() => {
             attempts += 1;
@@ -1848,6 +1854,7 @@ describe("EnvironmentThreads", () => {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
         snapshot: undefined,
         owner: undefined,
+        persistenceLock: Semaphore.makeUnsafe(1),
       };
       const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
       yield* awaitThreadState(harness.observed, (value) => value.status === "live");
@@ -1873,6 +1880,7 @@ describe("EnvironmentThreads", () => {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
         snapshot: undefined,
         owner: undefined,
+        persistenceLock: Semaphore.makeUnsafe(1),
       };
       const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
       yield* awaitThreadState(harness.observed, (value) => value.status === "live");
