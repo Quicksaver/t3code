@@ -19,6 +19,8 @@ Archived conversations use cold storage instead of retaining full hot projection
 - Unsent composer drafts remain local when their thread is archived. Their pending server-side attachment uploads are transient rather than conversation data: `apps/web/src/hooks/useThreadActions.ts` releases image and file uploads after a successful local archive acknowledgement, while `apps/web/src/composerDraftArchiveObserver.tsx` releases them when an authoritative live shell stops listing the thread, covering archives performed by another client. Reopening an unarchived draft starts fresh uploads from the retained local attachment data.
 - Production orchestration supplies the live `ThreadColdStorage` service. Isolated orchestration harnesses that do not exercise archive persistence supply `ThreadColdStorage.noOpLayer`; `apps/server/integration/orphanedProviderSessionStartup.integration.test.ts` uses that boundary while continuing to verify orphaned provider-session recovery.
 
+Restore reservations retain their claimed root independently of SQL lookup. Finalization and rollback release only the captured claim on every exit, including failure before tree-lock acquisition, so a transient lookup failure cannot suppress lifecycle recovery for the rest of the process.
+
 Primary files:
 
 - `apps/server/src/orchestration/ThreadColdStorage.ts`

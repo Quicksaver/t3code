@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -91,6 +92,66 @@ it.effect("reclaims an active thread's restored bundle after storage restarts", 
 );
 
 layer("ThreadColdStorage", (it) => {
+  for (const operation of ["finishRestoreTree", "rollbackRestoreTree"] as const) {
+    for (const failureAt of [1, 2]) {
+      for (const cold of [false, true]) {
+        it.effect(
+          `releases ${cold ? "cold" : "hot"} restore claim after ${operation} root lookup ${failureAt} fails`,
+          () =>
+            Effect.gen(function* () {
+              const sql = yield* SqlClient.SqlClient;
+              const storage = yield* ThreadColdStorage.ThreadColdStorage;
+              const suffix = `${operation}-${failureAt}-${cold}`;
+              const threadId = ThreadId.make(`thread-claim-${suffix}`);
+              const otherId = ThreadId.make(`thread-other-claim-${suffix}`);
+              yield* insertArchivedThread(threadId, "Failed claim release");
+              yield* insertArchivedThread(otherId, "Unrelated restore claim");
+              if (cold) yield* storage.archiveThread(threadId);
+              assert.isTrue(yield* storage.restoreTree(threadId));
+              assert.isTrue(yield* storage.restoreTree(otherId));
+              yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${otherId}`;
+              if (operation === "finishRestoreTree") {
+                yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+              }
+              const unsafe = sql.unsafe.bind(sql);
+              let rootLookups = 0;
+              const spy = vi
+                .spyOn(sql, "unsafe")
+                .mockImplementation((query, params) =>
+                  unsafe(
+                    query.includes("SELECT COALESCE(") && ++rootLookups === failureAt
+                      ? "SELECT * FROM missing_restore_lookup_fixture"
+                      : query,
+                    params,
+                  ),
+                );
+              yield* Effect.flip(storage[operation](threadId)).pipe(
+                Effect.ensuring(Effect.sync(() => spy.mockRestore())),
+              );
+              assert.strictEqual(rootLookups, failureAt);
+              assert.include(yield* storage.listPendingArchiveThreadIds, threadId);
+              yield* storage.archiveThread(
+                threadId,
+                operation === "finishRestoreTree"
+                  ? Effect.die("Must not quiesce active thread")
+                  : Effect.void,
+              );
+              assert.deepStrictEqual(
+                yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+                operation === "finishRestoreTree" ? [] : [{ status: "cold" }],
+              );
+              yield* storage.archiveThread(otherId, Effect.die("Must preserve unrelated claim"));
+              assert.deepStrictEqual(
+                yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${otherId}`,
+                [{ status: "restored" }],
+              );
+              yield* storage.finishRestoreTree(otherId);
+            }),
+        );
+      }
+    }
+  }
+
   it.effect("commits complete bundle metadata before deleting hot rows", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
