@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  EnvironmentMachineKind,
   LocalApi,
   ProjectId,
   ProjectScript,
@@ -45,6 +46,7 @@ export interface SourceControlEnvironmentCandidate {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly isPrimary: boolean;
+  readonly machine: EnvironmentMachineKind;
   readonly cwd: string;
   readonly connected: boolean;
   readonly project?: {

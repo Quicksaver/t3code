@@ -5,10 +5,10 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { MonitorIcon, ServerIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { EnvironmentMachineIcon } from "~/components/EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import ProjectScriptsControl, {
@@ -182,7 +182,6 @@ export function SourceControlPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
       {targets.map((target) => {
-        const EnvironmentIcon = target.isPrimary ? MonitorIcon : ServerIcon;
         const expanded = isFederatedSourceControlTargetExpanded(target, expandedEnvironmentIds);
         const panelKey = sourceControlPanelStateCacheKey({
           environmentId: target.environmentId,
@@ -193,7 +192,11 @@ export function SourceControlPanel({
         const environmentHeaderContents = (
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <div className="flex min-w-0 items-center gap-2.5">
-              <EnvironmentIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <EnvironmentMachineIcon
+                aria-hidden
+                kind={target.machine}
+                className="size-4 shrink-0 text-muted-foreground"
+              />
               <span className="min-w-0 truncate text-sm font-medium text-foreground">
                 {target.label}
               </span>
