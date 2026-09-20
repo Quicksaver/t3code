@@ -147,17 +147,11 @@ interface ActiveRemotePoller {
 
 interface ActiveLocalWatcher {
   readonly fiber: Fiber.Fiber<void, never>;
-  readonly subscriberCount: number;
+  readonly refreshCwds: ReadonlyMap<string, number>;
 }
 
 interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
-}
-
-const LOCAL_WATCHER_KEY_SEPARATOR = "\0";
-
-function localWatcherKey(watchCwd: string, refreshCwd: string): string {
-  return `${watchCwd}${LOCAL_WATCHER_KEY_SEPARATOR}${refreshCwd}`;
 }
 
 export function parseWorktreePaths(output: string): readonly string[] {
@@ -763,7 +757,7 @@ export const make = Effect.gen(function* () {
     return existingPaths.filter((worktreePath): worktreePath is string => worktreePath !== null);
   });
 
-  const makeLocalWatchLoop = (watchCwd: string, refreshCwd: string) =>
+  const makeLocalWatchLoop = (watchCwd: string) =>
     localWatchRefreshSignals(
       fs.watch(watchCwd).pipe(
         Stream.map((event) => watchEventPath(path, watchCwd, event.path)),
@@ -797,9 +791,19 @@ export const make = Effect.gen(function* () {
         }),
     ).pipe(
       Stream.runForEach(() =>
-        refreshLocalStatusCore(refreshCwd, { forcePublish: true }).pipe(
-          Effect.ignoreCause({ log: true }),
-        ),
+        Effect.gen(function* () {
+          const watchers = yield* SynchronizedRef.get(watchersRef);
+          const refreshCwds = watchers.get(watchCwd)?.refreshCwds;
+          if (!refreshCwds) return;
+          yield* Effect.forEach(
+            refreshCwds.keys(),
+            (refreshCwd) =>
+              refreshLocalStatusCore(refreshCwd, { forcePublish: true }).pipe(
+                Effect.ignoreCause({ log: true }),
+              ),
+            { concurrency: "unbounded", discard: true },
+          );
+        }),
       ),
       Effect.ignoreCause({ log: true }),
     );
@@ -808,40 +812,18 @@ export const make = Effect.gen(function* () {
     watchCwd: string,
     refreshCwd: string,
   ) {
-    const key = localWatcherKey(watchCwd, refreshCwd);
     yield* SynchronizedRef.modifyEffect(watchersRef, (activeWatchers) => {
-      const existing = activeWatchers.get(key);
-      if (existing) {
-        const exit = existing.fiber.pollUnsafe();
-        if (exit === undefined) {
-          const nextWatchers = new Map(activeWatchers);
-          nextWatchers.set(key, {
-            ...existing,
-            subscriberCount: existing.subscriberCount + 1,
-          });
-          return Effect.succeed([undefined, nextWatchers] as const);
-        }
-        return makeLocalWatchLoop(watchCwd, refreshCwd).pipe(
-          Effect.forkIn(broadcasterScope),
-          Effect.map((fiber) => {
-            const nextWatchers = new Map(activeWatchers);
-            nextWatchers.set(key, {
-              fiber,
-              subscriberCount: existing.subscriberCount + 1,
-            });
-            return [undefined, nextWatchers] as const;
-          }),
-        );
-      }
-
-      return makeLocalWatchLoop(watchCwd, refreshCwd).pipe(
-        Effect.forkIn(broadcasterScope),
+      const existing = activeWatchers.get(watchCwd);
+      const refreshCwds = new Map(existing?.refreshCwds);
+      refreshCwds.set(refreshCwd, (refreshCwds.get(refreshCwd) ?? 0) + 1);
+      const fiber =
+        existing && existing.fiber.pollUnsafe() === undefined
+          ? Effect.succeed(existing.fiber)
+          : makeLocalWatchLoop(watchCwd).pipe(Effect.forkIn(broadcasterScope));
+      return fiber.pipe(
         Effect.map((fiber) => {
           const nextWatchers = new Map(activeWatchers);
-          nextWatchers.set(key, {
-            fiber,
-            subscriberCount: 1,
-          });
+          nextWatchers.set(watchCwd, { fiber, refreshCwds });
           return [undefined, nextWatchers] as const;
         }),
       );
@@ -852,24 +834,19 @@ export const make = Effect.gen(function* () {
     watchCwd: string,
     refreshCwd: string,
   ) {
-    const key = localWatcherKey(watchCwd, refreshCwd);
     const watcherToInterrupt = yield* SynchronizedRef.modify(watchersRef, (activeWatchers) => {
-      const existing = activeWatchers.get(key);
-      if (!existing) {
-        return [null, activeWatchers] as const;
-      }
-
-      if (existing.subscriberCount > 1) {
-        const nextWatchers = new Map(activeWatchers);
-        nextWatchers.set(key, {
-          ...existing,
-          subscriberCount: existing.subscriberCount - 1,
-        });
+      const existing = activeWatchers.get(watchCwd);
+      if (!existing) return [null, activeWatchers] as const;
+      const refreshCwds = new Map(existing.refreshCwds);
+      const count = refreshCwds.get(refreshCwd) ?? 0;
+      if (count > 1) refreshCwds.set(refreshCwd, count - 1);
+      else refreshCwds.delete(refreshCwd);
+      const nextWatchers = new Map(activeWatchers);
+      if (refreshCwds.size > 0) {
+        nextWatchers.set(watchCwd, { ...existing, refreshCwds });
         return [null, nextWatchers] as const;
       }
-
-      const nextWatchers = new Map(activeWatchers);
-      nextWatchers.delete(key);
+      nextWatchers.delete(watchCwd);
       return [existing.fiber, nextWatchers] as const;
     });
 

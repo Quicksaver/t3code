@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -257,6 +258,103 @@ describe("VcsStatusBroadcaster", () => {
         assert.equal(status.behindCount, 0);
       }).pipe(Effect.provide(testLayer));
     },
+  );
+
+  it.effect("shares sibling watchers and releases each refresh destination independently", () =>
+    Effect.gen(function* () {
+      const root = "/repo";
+      const sibling = "/repo.worktrees/feature";
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const refreshed = yield* Queue.unbounded<string>();
+      const watches: string[] = [];
+      const closed: string[] = [];
+      let ignoreChecks = 0;
+      const fs = yield* FileSystem.FileSystem;
+      const testLayer = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(
+          Layer.succeed(FileSystem.FileSystem, {
+            ...fs,
+            exists: () => Effect.succeed(true),
+            realPath: (cwd) => Effect.succeed(cwd),
+            watch: (cwd) =>
+              Stream.unwrap(
+                Effect.sync(() => {
+                  watches.push(cwd);
+                  return (cwd === sibling ? Stream.fromQueue(events) : Stream.never).pipe(
+                    Stream.ensuring(
+                      Effect.sync(() => {
+                        closed.push(cwd);
+                      }),
+                    ),
+                  );
+                }),
+              ),
+          }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(makeBackgroundPolicyLayer(() => false)),
+        Layer.provide(
+          Layer.succeed(VcsProcess.VcsProcess, {
+            run: (input) =>
+              Effect.sync(() => {
+                if (input.operation !== "VcsStatusBroadcaster.worktrees") ignoreChecks++;
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(
+                    input.operation === "VcsStatusBroadcaster.worktrees" ? 0 : 1,
+                  ),
+                  stdout:
+                    input.operation === "VcsStatusBroadcaster.worktrees"
+                      ? `worktree ${root}\n\nworktree ${sibling}\n`
+                      : "",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () => Effect.succeed(baseLocalStatus),
+            remoteStatus: () => Effect.succeed(baseRemoteStatus),
+            invalidateLocalStatus: (cwd) => Queue.offer(refreshed, cwd).pipe(Effect.asVoid),
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+          }),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const start = Effect.fnUntraced(function* (cwd: string) {
+          const ready = yield* Deferred.make<void>();
+          const fiber = yield* broadcaster.streamStatus({ cwd }).pipe(
+            Stream.runForEach(() => Deferred.succeed(ready, undefined).pipe(Effect.ignore)),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(ready);
+          return fiber;
+        });
+        const rootStream = yield* start(root);
+        const siblingStream = yield* start(sibling);
+        assert.deepStrictEqual(watches.sort(), [root, sibling].sort());
+        yield* Queue.offer(events, { _tag: "Update", path: "file.ts" });
+        yield* TestClock.adjust("150 millis");
+        assert.deepStrictEqual(
+          [yield* Queue.take(refreshed), yield* Queue.take(refreshed)].sort(),
+          [root, sibling].sort(),
+        );
+        assert.equal(ignoreChecks, 1);
+        yield* Fiber.interrupt(rootStream);
+        assert.deepStrictEqual(closed, []);
+        yield* Queue.offer(events, { _tag: "Update", path: "file.ts" });
+        yield* TestClock.adjust("150 millis");
+        assert.equal(yield* Queue.take(refreshed), sibling);
+        assert.equal(yield* Queue.size(refreshed), 0);
+        assert.equal(ignoreChecks, 2);
+        yield* Fiber.interrupt(siblingStream);
+        assert.deepStrictEqual(closed.sort(), [root, sibling].sort());
+      }).pipe(Effect.provide(testLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live(

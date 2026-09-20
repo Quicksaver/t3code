@@ -203,6 +203,69 @@ const localStatus: VcsStatusLocalResult = {
 };
 
 describe("SourceControlPanelService", () => {
+  it.effect("rejects option-shaped revisions and remotes before launching Git", () => {
+    const calls: ExecuteGitInput[] = [];
+    return Effect.gen(function* () {
+      const service = yield* SourceControlPanelService;
+      const cwd = "/repo";
+      const invalid = "--output=unexpected.patch";
+      const operations = [
+        service.revertCommit({ cwd, sha: "--abort" }),
+        service.checkoutCommit({ cwd, sha: "--force" }),
+        service.undoLatestCommit({ cwd, sha: invalid }),
+        service.undoLatestCommit({ cwd, branchName: invalid }),
+        service.fetchRemote({ cwd, remoteName: "--upload-pack=unexpected" }),
+        service.applyStash({ cwd, stashRef: "--index" }),
+        service.popStash({ cwd, stashRef: "--index" }),
+        service.dropStash({ cwd, stashRef: invalid }),
+        service.compare({
+          cwd,
+          left: { kind: "branch", refName: invalid },
+          right: { kind: "working-tree" },
+        }),
+        service.compare({
+          cwd,
+          left: { kind: "branch", refName: "main" },
+          right: { kind: "stash", refName: invalid },
+        }),
+        service.readFileDiff({
+          cwd,
+          path: "file.ts",
+          source: { kind: "commit", sha: invalid },
+        }),
+        service.readFileDiff({
+          cwd,
+          path: "file.ts",
+          source: { kind: "stash", stashRef: invalid },
+        }),
+        service.readFileDiff({
+          cwd,
+          path: "file.ts",
+          source: { kind: "compare", baseRef: invalid, refName: "main" },
+        }),
+        service.readFileDiff({
+          cwd,
+          path: "file.ts",
+          source: { kind: "compare", baseRef: "main", refName: invalid },
+        }),
+      ];
+      for (const operation of operations) {
+        const error = yield* Effect.flip(operation);
+        assert.isTrue(isGitCommandError(error));
+      }
+      assert.deepStrictEqual(calls, []);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer((input) =>
+          Effect.sync(() => {
+            calls.push(input);
+            return success();
+          }),
+        ),
+      ),
+    );
+  });
+
   it.effect("passes rebase refs after a positional separator", () => {
     const calls: ExecuteGitInput[] = [];
     return Effect.gen(function* () {

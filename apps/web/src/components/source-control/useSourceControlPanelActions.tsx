@@ -109,7 +109,6 @@ export function useSourceControlPanelActions(
     peerSyncTargets,
     remoteName,
     resolvedTheme,
-    runningActions,
     selectedChangedFiles,
     selectedChangePathList,
     setAddRemoteOpen,
@@ -687,16 +686,11 @@ export function useSourceControlPanelActions(
     if (!api) return;
     if (sourceControlAllRemotesFetchIntervalMs <= 0) return;
     const interval = window.setInterval(() => {
-      if (runningActions.has("work-fetch")) return;
+      if (runningActionKeysRef.current.has("work-fetch")) return;
       void automaticallyFetchActionableBranches();
     }, sourceControlAllRemotesFetchIntervalMs);
     return () => window.clearInterval(interval);
-  }, [
-    api,
-    automaticallyFetchActionableBranches,
-    runningActions,
-    sourceControlAllRemotesFetchIntervalMs,
-  ]);
+  }, [api, automaticallyFetchActionableBranches, sourceControlAllRemotesFetchIntervalMs]);
 
   const runPanelCommit = useCallback(
     (message: string) => {
