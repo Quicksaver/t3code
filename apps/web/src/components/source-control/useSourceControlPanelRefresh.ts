@@ -3,7 +3,6 @@ import { useCallback, useEffect } from "react";
 
 import { drainPanelRefreshQueue, vcsPanelSnapshotFingerprint } from "./SourceControlPanel.logic";
 import { errorMessage } from "./SourceControlPanelModel";
-import { flushBackgroundActivityReport } from "~/lib/backgroundActivityReporter";
 import { isSourceControlPanelCommandInterrupted } from "~/state/sourceControlPanel";
 import type { SourceControlPanelState } from "./useSourceControlPanelState";
 
@@ -146,7 +145,6 @@ export function useSourceControlPanelRefresh(state: SourceControlPanelState) {
       }
       void (async () => {
         try {
-          await flushBackgroundActivityReport();
           await api.vcs.fetchAllRemotes({ cwd });
         } catch {
           // Focus refresh still reconciles the local repository snapshot when

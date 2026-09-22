@@ -17,6 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo } from "react";
+import { flushBackgroundActivityReport } from "../lib/backgroundActivityReporter";
 
 import { useAtomCommand } from "./use-atom-command";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
@@ -233,8 +234,11 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
           runPanelCommand<typeof input, void>(panelFetchBranch, input),
         fetchRemote: (input: Parameters<typeof panelFetchRemote>[0]["input"]) =>
           runPanelCommand<typeof input, void>(panelFetchRemote, input),
-        fetchAllRemotes: (input: Parameters<typeof panelFetchAllRemotes>[0]["input"]) =>
-          runPanelCommand<typeof input, boolean>(panelFetchAllRemotes, input),
+        fetchAllRemotes: async (input: Parameters<typeof panelFetchAllRemotes>[0]["input"]) => {
+          // Publish newly retained panel demand before the server checks its background policy.
+          if (input.force !== true) await flushBackgroundActivityReport();
+          return runPanelCommand<typeof input, boolean>(panelFetchAllRemotes, input);
+        },
         addRemote: (input: Parameters<typeof panelAddRemote>[0]["input"]) =>
           runPanelCommand<typeof input, void>(panelAddRemote, input),
         removeRemote: (input: Parameters<typeof panelRemoveRemote>[0]["input"]) =>

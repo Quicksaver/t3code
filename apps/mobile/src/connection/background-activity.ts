@@ -26,6 +26,11 @@ import {
 const REPORT_INTERVAL_MS = 25_000;
 const LEASE_TTL_MS = 45_000;
 const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
+let immediateReporter: (() => Promise<void>) | null = null;
+
+export async function flushMobileBackgroundActivityReport(): Promise<void> {
+  await immediateReporter?.();
+}
 
 function normalizeAppState(
   state: AppStateStatus,
@@ -83,9 +88,13 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("mobile.backgroundActivity.report"));
+    const runtimeContext = yield* Effect.context<never>();
+    const runPromise = Effect.runPromiseWith(runtimeContext);
+    const reportImmediately = () => runPromise(report);
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
+        immediateReporter = reportImmediately;
         const removeScopeListener = onRetainedMobileBackgroundScopesChange(requestReport);
         const subscription = AppState.addEventListener("change", (nextState) => {
           appState = nextState;
@@ -95,6 +104,7 @@ export const mobileBackgroundActivityReporterLayer = Layer.effectDiscard(
       }),
       ({ removeScopeListener, subscription }) =>
         Effect.sync(() => {
+          if (immediateReporter === reportImmediately) immediateReporter = null;
           removeScopeListener();
           subscription.remove();
         }),
