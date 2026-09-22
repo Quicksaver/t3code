@@ -14,6 +14,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useMemo } from "react";
+import { flushMobileBackgroundActivityReport } from "../../connection/background-activity";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -168,8 +169,10 @@ export function useVersionControlPanelApi(environmentId: EnvironmentId) {
         runPanelCommand<typeof input, void>(panelFetchBranch, input),
       fetchRemote: (input: Parameters<typeof panelFetchRemote>[0]["input"]) =>
         runPanelCommand<typeof input, void>(panelFetchRemote, input),
-      fetchAllRemotes: (input: Parameters<typeof panelFetchAllRemotes>[0]["input"]) =>
-        runPanelCommand<typeof input, boolean>(panelFetchAllRemotes, input),
+      fetchAllRemotes: async (input: Parameters<typeof panelFetchAllRemotes>[0]["input"]) => {
+        if (input.force !== true) await flushMobileBackgroundActivityReport();
+        return runPanelCommand<typeof input, boolean>(panelFetchAllRemotes, input);
+      },
       addRemote: (input: Parameters<typeof panelAddRemote>[0]["input"]) =>
         runPanelCommand<typeof input, void>(panelAddRemote, input),
       removeRemote: (input: Parameters<typeof panelRemoveRemote>[0]["input"]) =>
