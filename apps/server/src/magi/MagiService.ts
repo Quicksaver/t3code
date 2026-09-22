@@ -7,7 +7,6 @@ import {
   MAGI_MAX_WEIGHT,
   MAGI_MIN_PARTICIPANTS,
   MAGI_MIN_WEIGHT,
-  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   MagiActionBatchId,
   MagiActionRecordId,
   MagiArmId,
@@ -1025,29 +1024,6 @@ ${buildMagiArbitratorPreTurnInstructions(settings.arbitratorPrompt)}`;
             terminalProposals: input.terminalProposals,
             terminalProposalDigest: input.terminalProposalDigest,
           });
-          if (
-            prompt.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS &&
-            compressedPrompt.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
-          ) {
-            return {
-              participantId: input.member.participant.participantId,
-              participantThreadId: input.member.threadId,
-              participantTurnId: TurnId.make("unstarted"),
-              rawText: "",
-              parsed: null,
-              parseMode: "raw" as const,
-              state: "failed" as const,
-              durationMs: (yield* Clock.currentTimeMillis) - startedAt,
-              inputTokens: null,
-              outputTokens: null,
-              retryCount: 0,
-              providerAttempts: 0,
-              structuralRepairCount: 0,
-              reconstructed: false,
-              failureClass: "context-window-exceeded",
-              contextCompressed: true,
-            };
-          }
           const sessionInput = {
             threadId: input.member.threadId,
             providerInstanceId: input.member.participant.modelSelection.instanceId,
@@ -1120,14 +1096,10 @@ ${buildMagiArbitratorPreTurnInstructions(settings.arbitratorPrompt)}`;
             ).pipe(Effect.orElseSucceed(() => null)),
           });
           usage = capacity.usage;
-          if (
-            capacity.dispatchPrompt === "compressed" ||
-            prompt.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
-          ) {
+          if (capacity.dispatchPrompt === "compressed") {
             dispatchPrompt = compressedPrompt;
           }
-          const contextCompressed =
-            capacity.contextCompressed || dispatchPrompt === compressedPrompt;
+          const contextCompressed = capacity.contextCompressed || dispatchPrompt !== prompt;
           if (capacity.exceeded) {
             return {
               participantId: input.member.participant.participantId,
@@ -1167,11 +1139,16 @@ ${buildMagiArbitratorPreTurnInstructions(settings.arbitratorPrompt)}`;
               const turn = yield* providerService
                 .sendTurn({
                   threadId: input.member.threadId,
-                  input: attemptPrompt,
+                  input:
+                    "Assess the supplied Magi context and return the requested structured response.",
                   interactionMode: "default",
                   modelSelection: input.member.participant.modelSelection,
                   control: {
                     executionProfile: "magi-read-only",
+                    // Server-assembled panel context is not a user message. Keep it
+                    // outside the user-input character limit; native context capacity
+                    // and compaction above govern whether the participant can accept it.
+                    contextPreamble: attemptPrompt,
                     outputSchema: MAGI_PARTICIPANT_OUTPUT_SCHEMA,
                     idempotencyKey,
                   },
