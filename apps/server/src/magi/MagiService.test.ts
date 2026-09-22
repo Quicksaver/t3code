@@ -5,12 +5,16 @@ import {
   MagiParticipantId,
   MagiRunId,
   ProviderInstanceId,
+  ProviderDriverKind,
+  ProviderSendTurnInput,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ThreadId,
   TurnId,
   type MagiGetOptionsResult,
   type MagiRecoverRunContextResult,
   type MagiRunConfig,
   type OrchestrationThread,
+  type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -19,6 +23,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -57,6 +63,10 @@ import {
   shouldPersistMagiDeliberationContext,
 } from "./MagiService.ts";
 import { magiContextResultByteLength } from "./MagiContextAssembler.ts";
+import { normalizeMagiSendTurnInput } from "../provider/ProviderMagiProfile.ts";
+
+const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it("carries the last arbitrated weighted agreement into an awaiting-arbitration turn", () => {
   expect(
@@ -129,6 +139,7 @@ const makeAvailabilityService = (input: {
   readonly persistenceCount: Ref.Ref<number>;
   readonly dispatchCount: Ref.Ref<number>;
   readonly providerTurnCount: Ref.Ref<number>;
+  readonly providerOverrides?: Partial<ProviderService.ProviderServiceShape>;
 }) => {
   let persistedRun = input.persistedRun;
   const repository = {
@@ -170,6 +181,7 @@ const makeAvailabilityService = (input: {
         Effect.andThen(Effect.die("unexpected provider turn")),
       ),
     streamEvents: Stream.empty,
+    ...input.providerOverrides,
   } as never;
   const orchestration = {
     dispatch: () =>
@@ -540,6 +552,128 @@ describe("Magi lifecycle recovery", () => {
     ).toBe(false);
   });
 });
+
+it.effect(
+  "dispatches large panel context intact without marking unchanged evidence compressed",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+      const sent: ProviderSendTurnInput[] = [];
+      const participants = Array.from({ length: 9 }, (_, index) => ({
+        participantId: MagiParticipantId.make(`member-${index}`),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt" },
+        personalityId: null,
+        weight: 1,
+      }));
+      const response = {
+        recommendation: "Keep the candidate.",
+        rationale: ["The candidate satisfies the task."],
+        assumptions: [],
+        risks: [],
+        confidence: 90,
+        candidateFingerprint: null,
+        ballot: "abstain",
+        proposals: [],
+        proposalEvaluations: [],
+        exclusiveSetEvaluations: [],
+      };
+      const peerEvidence = participants.map((participant, index) => ({
+        participantId: participant.participantId,
+        rawText: "",
+        parsed: { ...response, recommendation: `Evidence ${index}: ${"x".repeat(15_000)}` },
+      }));
+      const persistedRun = {
+        ...unavailablePersistedRun,
+        initiatingInstruction: "Review the candidate.",
+        focusedObjective: null,
+        detail: {
+          ...unavailablePersistedRun.detail,
+          summary: { ...unavailablePersistedRun.detail.summary, source: "agent-tool" },
+          config: { participants, consensusThresholdPercent: 100, magiTurnLimit: 3 },
+          activity: {},
+          participants: [],
+          settlements: [],
+        },
+        protocol: {
+          members: participants.map((participant) => ({
+            participant,
+            personality: null,
+            threadId: ThreadId.make(`thread-${participant.participantId}`),
+            state: "settled",
+          })),
+          turns: [{ magiTurn: 1, settlements: peerEvidence, arbitration: null, activities: [] }],
+          proposals: [],
+          actions: [],
+          decisionSets: [],
+          terminalProposalDigest: [],
+          pendingContextArtifacts: [],
+        },
+      } as unknown as PersistedMagiRun;
+      const service = yield* makeAvailabilityService({
+        persistedRun,
+        persistenceCount: yield* Ref.make(0),
+        dispatchCount: yield* Ref.make(0),
+        providerTurnCount: yield* Ref.make(0),
+        providerOverrides: {
+          startSession: (threadId) =>
+            Effect.succeed({
+              provider: ProviderDriverKind.make("codex"),
+              threadId,
+              status: "ready",
+              runtimeMode: "full-access",
+              createdAt: "2026-09-22T00:00:00.000Z",
+              updatedAt: "2026-09-22T00:00:00.000Z",
+            }),
+          getContextUsage: () => Effect.succeed(null),
+          compactThread: () => Effect.die("No native compaction should be needed"),
+          subscribeEvents: PubSub.subscribe(events).pipe(
+            Effect.map((subscription) => Stream.fromEffectRepeat(PubSub.take(subscription))),
+          ),
+          sendTurn: (input) =>
+            Effect.gen(function* () {
+              const decoded = decodeProviderSendTurnInput(input);
+              sent.push(decoded);
+              const turnId = TurnId.make(`turn-${input.threadId}`);
+              for (const event of [
+                {
+                  type: "content.delta",
+                  payload: { streamKind: "assistant_text", delta: encodeJson(response) },
+                },
+                { type: "turn.completed", payload: { state: "completed" } },
+              ]) {
+                yield* PubSub.publish(events, {
+                  ...event,
+                  threadId: input.threadId,
+                  turnId,
+                } as ProviderRuntimeEvent);
+              }
+              return { threadId: input.threadId, turnId };
+            }),
+        },
+      });
+      const result = yield* service.deliberate(unavailableRootThreadId, {
+        runId: unavailableRunId,
+        contextActivityIds: [],
+      });
+      expect(sent).toHaveLength(9);
+      for (const input of sent) {
+        expect(input.control?.contextPreamble?.length).toBeGreaterThan(
+          PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+        );
+        const delivered = normalizeMagiSendTurnInput(input).input;
+        for (const peer of peerEvidence) expect(delivered).toContain(peer.parsed.recommendation);
+      }
+      expect(result.participants).toHaveLength(9);
+      for (const participant of result.participants) {
+        expect(participant).toMatchObject({
+          state: "settled",
+          failureClass: null,
+          providerAttempts: 1,
+          contextCompressed: false,
+        });
+      }
+    }),
+);
 
 describe("Magi post-compaction capacity", () => {
   it.effect("reads capacity only after native compaction completes", () =>
