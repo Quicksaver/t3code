@@ -1,3 +1,4 @@
+import { useHasActiveMagi } from "../state/magi";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -57,6 +58,7 @@ import {
   FolderIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
+  Network,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -315,6 +317,11 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+function activeMagiRunLabel(thread: SidebarThreadSummary, hasActiveMagi: boolean): string | null {
+  if (!thread.activeMagiRun) return hasActiveMagi ? "Magi active in subagents" : null;
+  return `Magi ${thread.activeMagiRun.state.replaceAll("-", " ")}`;
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -347,6 +354,8 @@ function SidebarThreadTooltip({
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
+  const hasActiveMagi = useHasActiveMagi(thread);
+  const magiRunLabel = activeMagiRunLabel(thread, hasActiveMagi);
   return (
     <TooltipPopup side="right" align="start" sideOffset={4} variant="glass">
       {/* The viewport's own inset (py-1 px-2) plus this one make the floating inset. */}
@@ -414,6 +423,12 @@ function SidebarThreadTooltip({
               <div className="min-w-0 truncate text-foreground/75">
                 {terminalProcessLabel(terminalProcessCount)}
               </div>
+            </div>
+          ) : null}
+          {magiRunLabel ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <Network aria-hidden className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">{magiRunLabel}</div>
             </div>
           ) : null}
           {thread.session?.lastError ? (
@@ -1039,6 +1054,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     variant,
     variantAction,
   } = props;
+  const hasActiveMagi = useHasActiveMagi(thread);
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
@@ -1941,10 +1957,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
                 </span>
               ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
+              <span className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1">
+                {hasActiveMagi ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="img"
+                          aria-label={
+                            activeMagiRunLabel(thread, hasActiveMagi) ?? "Magi run active"
+                          }
+                          className="pointer-events-auto inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                        >
+                          <Network aria-hidden className="size-3.5" />
+                        </span>
+                      }
+                    />
+                    <TooltipPopup side="top">
+                      {activeMagiRunLabel(thread, hasActiveMagi)}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : null}
                 {isRemote ? (
                   <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
@@ -1955,7 +1988,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center">
+                  <span aria-hidden className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={

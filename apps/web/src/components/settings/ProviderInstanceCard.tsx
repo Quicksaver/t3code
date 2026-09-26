@@ -48,6 +48,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SettingsListDetailRow } from "./SettingsListDetail";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -630,109 +631,91 @@ export function ProviderInstanceCard({
     );
   if (mode === "list") {
     return (
-      <div
-        data-slot="settings-row"
-        className={cn(
-          "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
-          selected ? "bg-muted/45" : "hover:bg-muted/25",
-        )}
-      >
-        <div
-          className={cn(
-            "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
-            !enabled && !selected && "opacity-60 group-hover:opacity-100",
-          )}
-        >
-          <button
-            type="button"
-            className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={onSelect}
-            aria-label={`Select ${displayName}`}
-            aria-pressed={selected}
-          />
-          {titleIconNode}
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
-              {String(instanceId) !== String(instance.driver) ? (
-                <code className="min-w-0 truncate rounded bg-muted/60 px-1 py-0.5 text-3xs text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
-              {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
-                  {versionLabel}
-                </code>
-              ) : null}
-              {versionAdvisory ? (
-                hasCompatibilityWarning ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <span
-                          tabIndex={0}
-                          role="img"
-                          aria-label={versionAdvisory.title}
-                          className="pointer-events-auto relative inline-flex shrink-0 text-warning"
-                        >
-                          <VersionAdvisoryIcon className="size-3.5" />
-                        </span>
-                      }
-                    />
-                    <TooltipPopup side="top">{versionAdvisory.detail}</TooltipPopup>
-                  </Tooltip>
-                ) : updateCommand ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          type="button"
-                          size="icon-micro"
-                          variant="ghost-muted"
-                          className="pointer-events-auto relative shrink-0"
-                          aria-label={`Copy ${displayName} update command`}
-                          onClick={() =>
-                            copyToClipboard(updateCommand, { providerName: displayName })
-                          }
-                        >
-                          <ArrowUpCircleIcon className="size-3.5" />
-                        </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Copy update command</TooltipPopup>
-                  </Tooltip>
-                ) : (
-                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                  </span>
-                )
-              ) : null}
-            </span>
-            <span className="mt-0.5 flex items-start gap-1.5 text-xs leading-normal text-muted-foreground/80">
-              {statusDotNode ? (
-                <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
-              ) : null}
-              <ProviderStatusDiagnostic detail={statusDiagnostic}>
-                <span
-                  tabIndex={statusDiagnostic ? 0 : undefined}
-                  className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
-                >
-                  {summary.headline}
-                  {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+      <SettingsListDetailRow
+        selectionLabel={`Select ${displayName}`}
+        selected={selected}
+        inactive={!enabled}
+        onSelect={onSelect ?? (() => undefined)}
+        leading={titleIconNode}
+        title={
+          <>
+            {displayName}
+            {versionLabel ? (
+              <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                {versionLabel}
+              </code>
+            ) : null}
+            {versionAdvisory ? (
+              hasCompatibilityWarning ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        tabIndex={0}
+                        role="img"
+                        aria-label={versionAdvisory.title}
+                        className="pointer-events-auto relative inline-flex shrink-0 text-warning"
+                      >
+                        <VersionAdvisoryIcon className="size-3.5" />
+                      </span>
+                    }
+                  />
+                  <TooltipPopup side="top">{versionAdvisory.detail}</TooltipPopup>
+                </Tooltip>
+              ) : updateCommand ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-micro"
+                        variant="ghost-muted"
+                        className="pointer-events-auto relative shrink-0"
+                        aria-label={`Copy ${displayName} update command`}
+                        onClick={() =>
+                          copyToClipboard(updateCommand, { providerName: displayName })
+                        }
+                      >
+                        <ArrowUpCircleIcon className="size-3.5" />
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top">Copy update command</TooltipPopup>
+                </Tooltip>
+              ) : (
+                <span role="img" aria-label="Update available" className="inline-flex shrink-0">
+                  <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
                 </span>
-              </ProviderStatusDiagnostic>
-            </span>
-          </span>
-        </div>
-        <span className="flex h-5 shrink-0 items-center">
+              )
+            ) : null}
+          </>
+        }
+        description={
+          <>
+            <ProviderStatusDiagnostic detail={statusDiagnostic}>
+              <span
+                tabIndex={statusDiagnostic ? 0 : undefined}
+                className="pointer-events-auto line-clamp-2 [overflow-wrap:anywhere]"
+              >
+                {summary.headline}
+                {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+              </span>
+            </ProviderStatusDiagnostic>
+          </>
+        }
+        descriptionIndicator={statusDotNode}
+        secondary={
+          String(instanceId) !== String(instance.driver) ? <code>{instanceId}</code> : undefined
+        }
+        control={
           <Switch
             checked={enabled}
             disabled={readOnly}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />
-        </span>
-      </div>
+        }
+      />
     );
   }
 

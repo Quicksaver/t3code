@@ -19,6 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { beforeEach, vi } from "vite-plus/test";
 import type {
   Event as OpenCodeEvent,
+  McpStatus,
   PermissionRequest,
   QuestionRequest,
   ToolPart,
@@ -26,6 +27,7 @@ import type {
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -33,6 +35,7 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -67,6 +70,7 @@ type MessageEntry = {
 
 const runtimeMock = {
   state: {
+    mcpStatuses: { "t3-code": { status: "connected" } } as Record<string, McpStatus>,
     startCalls: [] as string[],
     sessionCreateUrls: [] as string[],
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
@@ -140,6 +144,7 @@ const runtimeMock = {
     this.state.startCalls.length = 0;
     this.state.sessionCreateUrls.length = 0;
     this.state.sessionCreateInputs.length = 0;
+    this.state.mcpStatuses = { "t3-code": { status: "connected" } };
     this.state.createdSessionIds.length = 0;
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
@@ -242,6 +247,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
     ({
+      mcp: {
+        add: async () => ({ data: runtimeMock.state.mcpStatuses }),
+      },
       command: {
         list: async () => ({
           data: [{ name: "review", source: "command", hints: ["$ARGUMENTS"] }],
@@ -594,6 +602,9 @@ const openCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
   serverUrl: "http://127.0.0.1:9999",
   serverPassword: "secret-password",
 });
+const localOpenCodeAdapterTestSettings = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+});
 
 const OpenCodeAdapterTestLayer = Layer.effect(
   OpenCodeAdapter,
@@ -667,6 +678,53 @@ const questionRequest = (id: string, sessionID: string): QuestionRequest => ({
 });
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
+  it.effect("rejects failed T3 tool registration before creating an OpenCode session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* makeOpenCodeAdapter(localOpenCodeAdapterTestSettings);
+      const threadId = asThreadId("thread-opencode-mcp-registration");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("test"),
+        threadId,
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        providerSessionId: "test",
+        endpoint: "http://127.0.0.1:4321/mcp",
+        authorizationHeader: "Bearer test",
+        capabilities: new Set(["preview"]),
+      });
+      try {
+        const rejected: Array<McpStatus | undefined> = [
+          { status: "failed", error: "SSE error: Non-200 status code (503)" },
+          { status: "disabled" },
+          { status: "needs_auth" },
+          undefined,
+        ];
+        for (const status of rejected) {
+          runtimeMock.state.mcpStatuses = status ? { "t3-code": status } : {};
+          const result = yield* adapter
+            .startSession({
+              provider: ProviderDriverKind.make("opencode"),
+              threadId,
+              runtimeMode: "full-access",
+            })
+            .pipe(Effect.result);
+          NodeAssert.equal(result._tag, "Failure");
+          NodeAssert.deepEqual(runtimeMock.state.sessionCreateInputs, []);
+          NodeAssert.deepEqual(yield* adapter.listSessions(), []);
+        }
+        NodeAssert.equal(runtimeMock.state.closeCalls.length, rejected.length);
+        runtimeMock.state.mcpStatuses = { "t3-code": { status: "connected" } };
+        const session = yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        NodeAssert.equal(session.threadId, threadId);
+        NodeAssert.equal(runtimeMock.state.sessionCreateInputs.length, 1);
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
+    }),
+  );
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;

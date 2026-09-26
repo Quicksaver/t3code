@@ -215,6 +215,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
           Effect.andThen(Ref.get(snapshots)),
           Effect.map((snapshot) => snapshot.threads),
         ),
+      getThreadLineage: () => Effect.succeed([]),
       getShellSnapshot: () =>
         Ref.update(shellSnapshotReads, (count) => count + 1).pipe(
           Effect.andThen(Queue.offer(snapshotReads, undefined)),

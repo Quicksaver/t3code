@@ -54,6 +54,7 @@ import {
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setComposerDraftContext,
+  setComposerDraftMagiArm,
   setStickyComposerModelSelection,
   updateComposerDraftSettings,
   useComposerDraft,
@@ -927,6 +928,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
       setComposerDraftText(draftKey, message.text);
       setComposerDraftContext(draftKey, message.context);
+      setComposerDraftMagiArm(draftKey, message.magiArm ?? null);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
         modelSelection: message.modelSelection,
@@ -994,6 +996,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         text,
         attachments: draft.attachments,
         context: draft.context,
+        ...(draft.magiArm ? { magiArm: draft.magiArm } : {}),
         modelSelection: draftModelSelection,
         runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
         interactionMode: resolvePendingTaskInteractionMode({

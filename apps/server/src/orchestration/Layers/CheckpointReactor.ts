@@ -510,7 +510,10 @@ const make = Effect.gen(function* () {
 
   const refreshLocalGitStatusFromTurnCompletion = Effect.fn(
     "refreshLocalGitStatusFromTurnCompletion",
-  )(function* (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) {
+  )(function* (
+    event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>,
+    refreshPullRequest: boolean,
+  ) {
     const sessionRuntime = yield* resolveSessionRuntimeForThread(event.threadId);
     if (Option.isNone(sessionRuntime)) {
       return;
@@ -532,12 +535,14 @@ const make = Effect.gen(function* () {
         cwd: sessionRuntime.value.cwd,
         local,
       });
-      yield* refreshPullRequestAfterTurn({
-        threadId: event.threadId,
-        turnId: toTurnId(event.turnId),
-        cwd: sessionRuntime.value.cwd,
-        local,
-      });
+      if (refreshPullRequest) {
+        yield* refreshPullRequestAfterTurn({
+          threadId: event.threadId,
+          turnId: toTurnId(event.turnId),
+          cwd: sessionRuntime.value.cwd,
+          local,
+        });
+      }
     }
   });
 
@@ -640,13 +645,16 @@ const make = Effect.gen(function* () {
   // write lock. Run it on its own worker so file capture for this turn (and
   // checkpoints for other threads) never wait behind that network call.
   const statusRefreshWorker = yield* makeDrainableWorker(
-    (event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>) =>
-      refreshLocalGitStatusFromTurnCompletion(event).pipe(
+    (input: {
+      event: Extract<ProviderRuntimeEvent, { type: "turn.completed" }>;
+      refreshPullRequest: boolean;
+    }) =>
+      refreshLocalGitStatusFromTurnCompletion(input.event, input.refreshPullRequest).pipe(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           () =>
             Effect.logWarning("failed to refresh git status after turn completion", {
-              threadId: event.threadId,
+              threadId: input.event.threadId,
             }),
         ),
       ),
@@ -961,9 +969,13 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadDetail(event.threadId);
       const startedTurnId = startedTurns.get(event.threadId);
       const isTrackedTurn = sameId(startedTurnId, turnId);
+      const isMagiParticipant = thread?.parentRelation?.kind === "magi";
+      // Participants share the root checkout and cannot own its pull request.
+      // Keep local status and checkpoint handling, but let the root turn issue
+      // the one PR refresh for the completed Magi workflow.
       if (isTrackedTurn) startedTurns.delete(event.threadId);
       if (event.type === "turn.completed") {
-        yield* statusRefreshWorker.enqueue(event);
+        yield* statusRefreshWorker.enqueue({ event, refreshPullRequest: !isMagiParticipant });
       }
       if (
         turnId !== null &&
@@ -973,7 +985,9 @@ const make = Effect.gen(function* () {
           (startedTurnId === undefined && !thread.session?.activeTurnId))
       ) {
         pending.delete(event.threadId);
-        yield* pullRequests.refreshAfterTurn(thread.projectId);
+        if (!isMagiParticipant) {
+          yield* pullRequests.refreshAfterTurn(thread.projectId);
+        }
       }
       if (
         event.type === "turn.aborted" &&
@@ -1023,8 +1037,11 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const runtimeEvents = yield* providerService.subscribeEvents;
+
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      Stream.runForEach(domainEvents, (event) => {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
@@ -1037,7 +1054,7 @@ const make = Effect.gen(function* () {
     );
 
     yield* forkParked(
-      Stream.runForEach(providerService.streamEvents, (event) => {
+      Stream.runForEach(runtimeEvents, (event) => {
         if (
           event.type !== "turn.started" &&
           event.type !== "turn.completed" &&

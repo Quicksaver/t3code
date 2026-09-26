@@ -33,6 +33,102 @@ import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { readSweepSnapshot } from "../ThreadPullRequestReactor.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
+it.effect("reads active conversation lineage without touching project Git state", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.die("Conversation ownership must not depend on Git"),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('lineage-project', 'Project', '/unavailable-project', 'invalid-json',
+        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+    for (const [id, archivedAt, deletedAt] of [
+      ["active", null, null],
+      ["archived", "2026-09-02T00:00:00Z", null],
+      ["deleted", null, "2026-09-02T00:00:00Z"],
+    ] as const) {
+      yield* sql`INSERT INTO projection_threads
+        (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+         created_at, updated_at, archived_at, deleted_at)
+        VALUES (${id}, 'lineage-project', 'Thread', '{"instanceId":"codex","model":"gpt-5-codex"}',
+          'full-access', 'default', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z',
+          ${archivedAt}, ${deletedAt})`;
+    }
+    const counter = makeSqlStatementCounter();
+    const lineage = yield* query.getThreadLineage().pipe(Effect.withTracer(counter.tracer));
+    assert.deepEqual(
+      lineage.map(({ id, modelSelection }) => ({ id, modelSelection })),
+      [
+        {
+          id: ThreadId.make("active"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        },
+      ],
+    );
+    assert.equal(counter.count(), 1);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reads conversation content with linked PRs while Git lookup is interrupted", () => {
+  let interruptGit = true;
+  let gitReads = 0;
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => {
+          gitReads++;
+          return interruptGit ? Effect.interrupt : Effect.succeed(null);
+        },
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('evidence-project', 'Project', '/repo', '[]',
+        '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_threads
+      (thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at)
+      VALUES ('evidence-thread', 'evidence-project', 'Thread', '{"instanceId":"codex","model":"gpt-5"}',
+        'full-access', 'default', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')`;
+    yield* sql`INSERT INTO projection_thread_pull_requests
+      (thread_id, host, repository, number, url, source, linked_at)
+      VALUES ('evidence-thread', 'github.com', 'acme/web', 42,
+        'https://github.com/acme/web/pull/42', 'manual', '2026-09-01T00:00:00Z')`;
+    const threadId = ThreadId.make("evidence-thread");
+    const content = Option.getOrThrow(
+      yield* query.getThreadDetailById(threadId, {
+        activityKinds: [],
+        includePullRequests: false,
+      }),
+    );
+    assert.equal(content.id, threadId);
+    assert.deepEqual(content.pullRequests, []);
+    assert.equal(gitReads, 0);
+    const interrupted = yield* Effect.exit(query.getThreadDetailById(threadId));
+    assert.equal(interrupted._tag, "Failure");
+    assert.equal(gitReads, 1);
+    interruptGit = false;
+    const full = Option.getOrThrow(yield* query.getThreadDetailById(threadId));
+    assert.equal(full.pullRequests[0]?.number, 42);
+    assert.equal(gitReads, 2);
+  }).pipe(Effect.provide(layer));
+});
+
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -631,6 +727,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasActionableProposedPlan: false,
           backgroundLiveness: null,
           planProgress: null,
+          activeMagiRun: null,
         },
       ]);
 
@@ -921,6 +1018,72 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           assert.equal(context.value.hasOtherUserMessages, hasOtherUserMessages);
         }
       }
+    }),
+  );
+
+  it.effect("keeps Magi participant conversations out of the live shell snapshot", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'magi-shell-project', 'Magi shell project', '/tmp/magi-shell', NULL, '[]',
+          '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          branch, worktree_path, magi_root_thread_id, magi_parent_thread_id,
+          magi_provider_thread_id, magi_started_at, magi_status, magi_run_id,
+          magi_participant_id, created_at, updated_at, deleted_at
+        ) VALUES
+          (
+            'magi-shell-root', 'magi-shell-project', 'Root',
+            '{"instanceId":"codex","model":"gpt-5-codex"}', 'full-access', 'default',
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            '2026-08-21T00:00:00.000Z', '2026-08-21T00:00:00.000Z', NULL
+          ),
+          (
+            'magi-shell-participant', 'magi-shell-project', 'Participant',
+            '{"instanceId":"codex","model":"gpt-5-codex"}', 'approval-required', 'default',
+            NULL, NULL, 'magi-shell-root', 'magi-shell-root', 'provider-participant',
+            '2026-08-21T00:00:00.000Z', 'running',
+            'run-1', 'participant-1', '2026-08-21T00:00:00.000Z',
+            '2026-08-21T00:00:00.000Z', NULL
+          )
+      `;
+
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+      assert.deepEqual(
+        shellSnapshot.threads.map((thread) => thread.id),
+        [ThreadId.make("magi-shell-root")],
+      );
+
+      const participantDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.equal(Option.getOrNull(participantDetail)?.parentRelation?.kind, "magi");
+
+      const participantRuntime = yield* snapshotQuery.getThreadRuntimeContext(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.deepEqual(
+        Option.getOrNull(participantRuntime)?.parentRelation,
+        Option.getOrNull(participantDetail)?.parentRelation,
+      );
+
+      const participantShell = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("magi-shell-participant"),
+      );
+      assert.isTrue(Option.isNone(participantShell));
     }),
   );
 
