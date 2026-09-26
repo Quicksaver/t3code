@@ -1,0 +1,6 @@
+interface:
+  display_name: "Rebuild Main"
+  short_description: "Rebuild local main from active-worktree commits."
+
+policy:
+  allow_implicit_invocation: false
