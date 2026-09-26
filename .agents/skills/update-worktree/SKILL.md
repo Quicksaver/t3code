@@ -25,13 +25,12 @@ Keep every assessment and follow-up **relative to the branch's own customization
 
 ### 1. Squash, rebase, and assess
 
-Instruct the subagent to preserve a recovery ref, squash its current branch's combined changes against its current upstream merge base, then rebase that single commit onto the target while preserving upstream tracking. Treat incoming changes as intentional, preserve the branch's intended customizations around them, and run focused validation for touched areas. Record the rebased commit as the baseline for later adaptation review.
+Instruct the subagent to squash its current branch's combined changes against its current upstream merge base, then rebase that single commit onto the target while preserving upstream tracking. Treat incoming changes as intentional, preserve the branch's intended customizations around them, and run focused validation for touched areas. Record the rebased commit as the baseline for later adaptation review.
 
 The exact target is the `base/main` tip at the start of the update. Do not pursue newer commits in `upstream/main`.
 
 - If the branch started with exactly one commit directly above the target, skip validation, report that result, and stop. A branch already based there but carrying multiple commits still needs squashing.
-- If no customizations remain, leave the branch at the target and report that result.
-- If upstream makes a significant portion of the branch obsolete, irrelevant, redundant, or superseded, report the affected customizations and stop after the rebase.
+- If upstream makes a significant portion of the branch obsolete, irrelevant, redundant, or superseded, report this and what customizations would remain if any, and stop after the rebase.
 
 Otherwise, report only on technical debt or refactors worth addressing **relative to the branch's own customizations in light of the incoming upstream changes**. Do not include assessments of incoming upstream changes or branch customizations by themselves.
 
