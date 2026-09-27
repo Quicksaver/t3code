@@ -406,96 +406,6 @@ Primary files:
 
 Regression coverage lives in `apps/web/src/components/ChatView.localDispatch.test.ts`, `apps/web/src/components/ChatView.logic.test.ts`, `apps/server/src/provider/Layers/CodexInterruptResolution.test.ts`, and `apps/server/src/provider/Layers/CodexCollabRuntime.integration.test.ts`. Keep coverage for consecutive in-turn steers, exact-message acknowledgement across projected history, reconnect and turn/session fallback, background-intent preservation, timestamp-based live-turn selection, lazy timeout/failure and unexpected-defect fallback, successful empty reads that suppress stale interrupts, and bounded root interruption after best-effort child fan-out.
 
-## Conversation Tool Activity Rendering
-
-**Worktree branch:** `feat/file-command-activity-boxes`
-
-The custom behavior is focused on making tool activity easier to read in long-running Codex threads without changing agent execution semantics.
-
-## File Change And Command Activity Boxes
-
-Approval request kinds come from the shared client-runtime mapper, including permission approvals. Collab identity additionally reads parent-collab and nested item identifiers, so late child output folds into its original row without affecting unrelated command ordering.
-
-Shared client-runtime `presentation.ts` remains authoritative for compact tool labels, T3 MCP labels and icons, grouping categories and count summaries, superseded-marker filtering, and viewed-image discovery. `workLogActivity.ts` composes its rich command and file fields with provider-neutral browser, computer, icon, and source metadata.
-
-File-change and command activities are rendered as clickable, expandable rows in the conversation work log.
-
-Expected behavior:
-
-- A file-change row keeps the compact `Changed files - path/to/file` style preview while collapsed.
-- File-change-style tool rows that also carry command metadata or patch payloads still prefer the changed-file path preview while collapsed, so rows such as `apply_patch` stay oriented around the file being edited instead of the command label.
-- Clicking a file-change row expands it inline and renders any available patch with the same `FileDiff` diff viewer used by other conversation diff surfaces.
-- If a file-change event only has paths and no patch, the expanded row still lists the changed paths instead of opening the full turn diff panel.
-- Tool rows that merely mention changed files, such as file-read detail rows, stay in the generic detail panel unless they include a patch or are explicitly marked as a file-change request, so read-only tool output is not mislabeled as an editable file-change row.
-- A command row keeps the compact `Ran command - command` style preview while collapsed.
-- Clicking a command row expands it inline and shows the command, raw command when it differs, stdout, stderr, exit code, and duration.
-- Differing raw command text is rendered inline as a normal detail block in the expanded row, not hidden behind a second nested disclosure.
-- Stdout and stderr show only the last 40 lines by default when longer than 40 lines; clicking either output block toggles the full stream. Command text, output, and supplemental details grow to their contents; the timeline item owns scrolling, with no nested detail scrollbars.
-- Structured non-zero command exit codes produce the failure affordance, and an exact zero duration is rendered as `0ms`.
-- Cumulative file-change patch snapshots replace their shorter prefix instead of duplicating already-rendered hunks, and an oversized patch is skipped without preventing valid sibling diffs from rendering.
-- Inline activity diffs use their parser cache keys for React identity instead of only the resolved path, so successive snapshots of the same file cannot reuse stale component or parser state.
-- Command output extraction ignores blank-only completed stdout/stderr fallbacks so aggregated command output is still shown, but preserves whitespace-only incremental `tool.updated` chunks, including raw output `content`, so streamed output is not collapsed away.
-- Incremental command output chunks concatenate without injected separators, while shorter completed snapshots, newline-terminated shorter updated snapshots, and shorter single-line repeated-prefix snapshots do not overwrite a previously merged longer output snapshot.
-- MCP tool-data serialization preserves repeated references to the same argument object when they are not cyclic, while still redacting real ancestor-chain cycles as `[Circular]`, so expanded generic details stay informative without risking recursive rendering.
-- Settled adjacent tools collapse into the count-aware group summary. Only one row accepted by the rich command/file predicate bypasses that summary; generic-detail-only rows remain summarized, expanded groups emit each constituent as a work row, and metadata-only lifecycle markers or collab-agent rows never become rich disclosures. Live work remains one status row whose members expand individually.
-- Each expanded work row owns one disclosure. Inline `FileDiff` renders already expanded without nested per-file or collapse controls, viewed-image previews stay in that row, and non-rich tools retain their generic detail fallback.
-- Collapsed generic and MCP activity rows use the cheap shared expandability predicate and defer full detail derivation until expansion. The live timeline therefore reaches the hardened redaction, cycle handling, and long-string truncation path without eagerly serializing large or cyclic tool payloads during collapsed-row rendering.
-- Row-level keyboard expansion only handles Enter and Space when the event target is the row itself, so nested action controls do not also toggle the parent activity row.
-- Activity identity is scoped by turn plus a top-level-first, legacy-nested tool-call id. Collaboration rows also resolve parent-collaboration and item ids so late output joins the completed agent row. Cumulative merging uses the incoming `sourceActivityKind`; session replacement retains applied command lifecycle records and resumes after the latest applied sequence. A superseded `tool.updated` row may be pruned only when its completion contains every projected cumulative output, exit, duration, patch, and path contribution.
-- Server transport projection preserves the client-consumed command metadata, file-change details, and collab details while removing unrelated provider payload bulk. Command text, file paths, patches, nested provider patch containers, and dynamic command metadata are bounded independently so an oversized sibling cannot hide valid details. Collab projection keeps ordered streamed output chunks, prompt-bearing inputs, tool/item identity, `kind`, parent-collab metadata, and child references required by the work-log and subagent lifecycle views.
-- Projection normalizes activity kinds to strings, retains patches only for file-change-shaped activity, and exposes truncation at `data.rawOutput.truncated`. Identical self-contained patch snapshots share a cumulative slot, while path-dependent add/delete patches remain distinct.
-- Command stdout, stderr, aggregated output, and equivalent dynamic result strings stay server-side in persistence for negotiated web thread snapshots and live activity events. Compact command activities carry only an `output available` marker; expanding a collapsed lifecycle row loads each missing contributing thread-and-activity-scoped detail over HTTP with bounded concurrency, preserves successful chunks when another detail fails, shows a retryable loading/error state, and reuses fetched details while the row remains mounted. Detail output merges only into the row's output fields so completion identity and lifecycle state remain stable. Lazy output is capability-gated and explicitly requested by web; mobile and older clients retain embedded command output until their expand-time detail UI has parity.
-- Persist only validated workspace image paths. Summarize cumulative non-terminal `item.updated` command payloads before persistence to prevent quadratic growth, but retain terminal completions in full until client-bound projection. Transfer-budget coverage keeps roughly 30 percent headroom while rejecting transfer of fully retained MCP payloads.
-- On-demand activity detail projection recognizes command-shaped dynamic tools without an explicit kind, nested `item.result.result` fallbacks, and command output stored directly on the payload envelope. It applies one observable 200,000-character command-output budget to the requested activity. Snapshot projection retains at most four inline patches found through four nesting levels, each independently capped at 200,000 characters; unrelated and object-valued provider payloads remain pruned.
-- Generic activity detail is suppressed when it merely repeats the displayed command or raw command. For lifecycle rows without provider ids, the final collapse identity prefers detail, then command, then raw command, so distinct no-id commands remain distinct without unstable position-based keys.
-- Known shell wrappers are stripped only when their boundary quotes match. Otherwise the serialized wrapper text remains intact.
-- Expanded changed-file pills and inline diff headers use the shared styled tooltip instead of native `title` attributes, preserving readable full paths for pointer and keyboard users.
-- The standalone file-command-activity branch applies its disposable thread-detail cache eviction as web connection database v5 directly after `base/main` v4. Its v6 repair clears snapshots with missing deferred-output markers. On the integrated fork, Archive owns v5 and the original activity eviction owns v6. Version 7 clears thread snapshots that may contain live command rows whose deferred-output marker was lost. Connections and credentials remain intact. The live-event coalescer retains the subscriber's already-projected payload, preserving its negotiated output representation without projecting it again.
-
-Provider-specific command/file payload parsing, bounded patch extraction, changed-file discovery, and cumulative output/patch merging live in the directly tested `apps/web/src/lib/workLogActivity.ts` module. Diff matcher tests call the production matcher directly, and command-tail limits remain private to their module. `apps/web/src/session-logic.ts` retains timeline ordering, lifecycle collapse, subagent-row composition, and the public work-log API.
-
-The desktop identity regression fixture derives its legacy macOS user-data probe through the injected host path service. This keeps the unchanged identity behavior testable on both Windows and POSIX hosts instead of embedding a POSIX-only expected path.
-
-When reconciling `MessagesTimeline.tsx`, preserve both the expandable activity-row behavior and the `hideEmptyPlaceholder` handling used by the draft hero. Neither concern supersedes the other during upstream updates.
-
-Primary files:
-
-- `apps/server/src/orchestration/ActivityPayloadProjection.ts`
-- `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts`
-- `apps/server/integration/TransferBudgetReport.integration.ts`
-- `apps/server/src/orchestration/http.ts`
-- `apps/server/test/ActivityPayloadProjection.test.ts`
-- `packages/client-runtime/src/state/threadActivityHttp.ts`
-- `packages/client-runtime/src/work-log/presentation.ts`
-- `packages/shared/src/toolActivity.ts`
-- `apps/web/src/connection/storage.ts`
-- `apps/web/src/session-logic.ts`
-- `apps/web/src/lib/workLogActivity.ts`
-- `apps/web/src/lib/diffRendering.ts`
-- `apps/web/src/components/chat/MessagesTimeline.tsx`
-- `apps/web/src/components/chat/MessagesTimeline.logic.ts`
-- `apps/web/src/lib/workLogEntryDetails.ts`
-
-### Tests Covering The Custom Behavior
-
-Relevant tests live in:
-
-- `apps/web/src/components/chat/MessagesTimeline.test.tsx`
-- `apps/web/src/components/chat/MessagesTimeline.logic.test.ts`
-- `apps/web/src/session-logic.test.ts`
-- `apps/web/src/session-logic.command-output.test.ts`
-- `apps/web/src/lib/workLogActivity.test.ts`
-- `apps/web/src/lib/diffRendering.test.ts`
-- `apps/server/src/orchestration/ActivityPayloadProjection.test.ts`
-- `packages/client-runtime/src/state/threads-sync.test.ts`
-
-Useful focused commands:
-
-```sh
-(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/session-logic.test.ts)
-(cd apps/web && pnpm exec vp test run --passWithNoTests --project unit src/components/chat/MessagesTimeline.test.tsx)
-```
-
 ## Archive Settings UX
 
 **Worktree branch:** `feat/archive-settings-ux`
@@ -646,62 +556,6 @@ Primary files:
 - `apps/web/src/newThreadSubscriptionGate.test.ts`
 - `apps/web/src/state/entities.ts`
 - `apps/web/src/state/entities.test.ts`
-
-## Subagent Threading Work
-
-**Worktree branch:** `feat/subagent-threading-work`
-
-The Codex subagent-threading work is integrated on `main`; the active worktree remains its maintenance owner. Treat Codex subagent lineage, child-thread projection, the default Sidebar's running-descendant/live-task counter and Agents-panel navigation, Legacy Sidebar and mobile lineage rows, child-thread output isolation, child stop behavior, provider-control failure isolation, parent metadata ingestion, and related tests as part of the fork's customization set during upstream updates.
-
-Upstream's native observability and the fork's persisted child routing are complementary. Preserve `CodexAdapter`'s `collabAgent/*` to `task.*` mapping when reconciling upstream changes, then layer the fork's child-message routing and output isolation around it. `CodexSessionRuntime` must keep both outputs from registered child activity: the synthetic `collabAgent/*` event for the Agents roster and the original lifecycle event routed to the deterministic local child thread with `subagentChildren`/`parentCollab` metadata. Dropping either output breaks one of the two consumer surfaces. Focused adapter and runtime coverage must exercise both outputs so the Agents roster and persisted child navigation cannot regress independently.
-
-Thread archive/delete lifecycle behavior is enforced server-side in the orchestration decider and documented in `SUBAGENTS.md`. The sidebar treats those operations as root-thread lifecycle actions, hiding the row actions for subagent children and failing closed when a selected thread key no longer resolves before multi-select delete.
-
-The upstream default Sidebar integration keeps only a non-disclosing subagent indicator on root conversation rows. It contains the greater of the recursive count of persisted running descendants and the server-projected live provider-agent count, with no arrow; clicking it navigates to that root conversation when necessary and opens its Agents right-panel surface. The row tooltip repeats that running count in its own subagent status line. The live-task fallback covers provider-native agents before or without a separately navigable child shell. Bounded settled-task tombstones prevent late progress from reviving a settled count, while an explicit `running` or `waiting` update reopens an idle resumable agent without reopening a hard-terminal task. Default Sidebar rows never render descendants, including the exact terminal child currently open, so the Agents panel is the one roster and navigation surface. Root lifecycle actions continue to own the hidden descendant tree.
-
-Standalone subagent conversation visibility is default-off behind the `Subagent conversations` toggle in Settings → General → Behavior. Navigable Agents rows use global content-theme foreground and hover colors, sidebar spacing and rounded hover backgrounds, and medium-weight failed titles; enabling navigation does not change the panel background. While off, the Agents panel remains the upstream-compatible lifecycle roster but its rows are not conversation links; Default Sidebar search, the command palette, and Legacy Sidebar omit child navigation; and direct child routes return to the direct parent without subscribing to child detail. Enabling the toggle restores those web navigation surfaces. Lightweight child shells, lineage, recursive running counts, and root-owned archive/delete behavior remain active regardless of the preference, because those are required for agent observability and lifecycle correctness and may be shared with another client.
-
-When standalone visibility is enabled, Default Sidebar search traverses complete depth-first lineages from active, snoozed, and settled roots in lifecycle order after logical-project scoping, so matching nested or terminal descendants remain navigable even though the normal list renders root rows only.
-
-Web lineage traversal, recursive counts, search, and root classification live in `SidebarSubagents.logic.ts`, while `SidebarSubagentThreadRow` layers the fork's Agents indicator onto the upstream-shaped row model. Logical-project selection passes the memoized complete member-key set into `selectSidebarProjectLineageThreads(...)` before any lineage operation, and focused lineage coverage lives in `SidebarSubagents.logic.test.ts`.
-
-Keep pending tasks outside `buildVisibleThreadLineage(...)`; recent, fallback, and active-row lineage flows through `selectRecentThreadLineage(...)`. Grouped navigation scopes `threadsForGrouping`, not raw shells, so a detail-synthesized selected child survives. `getLatestThreadSortTimestamp(...)` supplies the shared member aggregation and malformed-timestamp behavior for web and mobile; web falls back to the project timestamp for an empty list. Pin ordering and reorder capability gating operate on filtered roots before descendants are flattened, and `SidebarSubagentThreadRow` remains a narrow running-count decoration rather than absorbing draft or project-settings row structure.
-
-Mobile Thread List v2 applies contextual visibility before active, settled, and snoozed partitioning, retains only the exact selected terminal shell without promoting it or restoring hidden terminal ancestors, keeps terminal descendants searchable as navigation-only rows, carries stored depth into rendering, and rebases filtered search rows. Settled and snoozed lineages remain atomic across pagination and shelves; collapsing Settled hides complete groups while the exact selected settled child remains navigable. Snoozing a root retains eligible running descendants, depth, counts, and expansion while only the root receives wake metadata. Independently snoozing a nested child shelves and rebases only its subtree. Snoozed counts, shelf membership, and wake metadata remain search-scoped. Each conversation with running descendants shows a recursive running total, nested generations start collapsed, and expanding one row reveals only eligible running children as compact status rows at stored lineage depth. Root lifecycle actions stay hidden from all subagent rows, and pin keys order complete root-lineage groups.
-
-Mobile ordering uses one representative per lifecycle group before filtering or disclosure: the root for active groups and the first pinned member for pinned groups. Root controls resolve that representative and move the complete lineage. Selected terminal rows do not alter ordering membership; settled roots remain anchors but cannot be moved. Pending order survives partial key updates and child changes that preserve membership. Dropping a lineage into Active clears each eligible member pin, stops on the first failure, and suppresses per-member haptics while preserving ordinary standalone unpin feedback.
-
-Logical project scopes include every grouped member project reference before lineage is classified or rendered. Parent and child shells associated with stale and canonical ids for the same physical project remain in one nested path on web and mobile, while unrelated logical groups remain excluded and new-thread targeting resolves back to the canonical project. Mobile home and thread-navigation rows resolve the logical group title across every member reference instead of displaying a stale member title.
-
-Ordinary provider events resolve lineage and child-synthesis context through the narrow `getThreadRuntimeContext(...)` query. Newly synthesized children use the local shell fallback until projection catches up.
-
-Child runtime events that arrive with parent-collab metadata may synthesize the missing child shell before their output/actions are ingested. `makeSyntheticSubagentThreadShell(...)` is the only constructor for these shells: it inherits parent project, model, runtime, interaction, branch, and worktree context; resets child-owned lifecycle, session, activity, pull-request metadata, manual order keys, and presentation state; and satisfies `Required<OrchestrationThreadShell>`. Title generation runs only while a child retains its seed or generic `Subagent` title, applies it through the versioned title-completion command so a concurrent manual rename or newer generation wins, and scopes agent-id lookup to the active environment and root lineage after opt-in. Child stop requests must target the selected child turn when known, and if no active child turn can be identified the server records a child interrupt failure and marks the child stopped instead of falling back to the root session's active turn. Provider-control diagnostics are best effort during projected-state cleanup: failed diagnostic appends are counted and logged without preventing child relation/session cleanup. Root session stop terminalizes only after provider success; a failed provider request records diagnostics and retains the projected session.
-
-Provider-native activity that does not represent Codex collaboration lineage, including Antigravity task batches, remains on its existing presentation path and does not become a persisted child conversation.
-
-Child conversation parent navigation is composed through `WorkspaceBreadcrumb`'s optional `trailingAction` slot. Keep that control outside the ordered breadcrumb list so the current thread retains `aria-current="page"`, while preserving the existing callback, accessible label, tooltip, and conditional visibility.
-
-`resolveRightPanelControlsOwner(...)` is the placement seam for title-bar controls: the root owns them while an inline panel is present, an open sheet owns them in sheet layout, and the chat header is the fallback. `apps/web/src/components/chat/SubagentControlBar.tsx` owns the standalone web child's status and stop action without duplicating that UI in the composer. The mobile control of the same name owns its reserved height, and `ThreadDetailScreen.tsx` selects it instead of the normal composer for child shells.
-
-The upstream Agents right-panel surface is retained with its stabilized fixed-height rows, while the fork indexes persisted child shells by provider-thread identity only after standalone conversation visibility is enabled. Direct-agent branches with running work sort above idle and finished branches; descendants render immediately below their parent with the same capped indentation rhythm previously used by the default Sidebar. With standalone visibility enabled, resolved agent rows use the child's persisted title and navigate directly to the environment-scoped child conversation; otherwise the provider rows remain visible but non-interactive. Root-only settle, snooze, archive, and delete actions are hidden for children and rejected again if a stale native menu returns one, while pinning, rename, title regeneration, mark-unread, copy, and branch actions remain available. Pinned lineages sort by their representative pin key before flattening so descendants never detach or promote themselves above their root.
-
-Integrated root unarchive restores archived native descendants in postorder. Cold-storage manifests use the persisted lineage root, and a mixed cold/hot restore reserves every archived member before releasing the project lock. Web archive/delete dispatch one root command so the server owns the cascade, while descendant draft/terminal cleanup and optimistic archive visibility remain intact. The standalone lineage migration is `054_ProjectionThreadParentRelation`; integrated main retains the published equivalent at 33 and the root backfill at 34.
-
-The opt-in Legacy Sidebar applies the same root-only archive/delete boundary. Single-row and bulk handlers re-read the latest shells after native menus and confirmation dialogs, reject changed or unresolved selections, clear stale confirmations, and retain process-local working/monitoring guards before archive dispatch.
-
-The activity transport projection is part of this ownership boundary. It must retain ordered collab output, prompt-bearing inputs, lifecycle identity, parent metadata, distinct resumed-child references, and the live provider-agent count while pruning unused provider payload fields. Those child references support persistence and routing only: the parent timeline must filter the fork-specific reference rows and render upstream's single `Ran x subagent(s)` activity box, including token usage and the Agents-panel action, as its sole subagent visualization. `SUBAGENTS.md` remains the detailed contract.
-
-Projection bootstrap replays the complete event backlog rather than stopping at the default read-page limit. `mapThreadSharedFields(...)` in `ProjectionSnapshotQuery.ts` is the single read and fold-back seam for full snapshots, command read models, shells, and detail; keep `parentRelation` non-optional. `mapThreadParentRelationFields(...)` in `ProjectionPipeline.ts` is the single write mapping used by both `thread.created` and `thread.meta-updated`. The narrow runtime-context query also selects and decodes Magi run and participant ids before using the shared parent mapper. Both preserve root, native-subagent, and Magi lineage fields; keep explicit SQL reads and upsert conflict guards aligned with them. The canonical migration ledger for these fields is documented under Conversation Data Savings and must not be replaced with the branch's obsolete pre-integration numbering.
-
-The standalone subagent branch adds one `054_ProjectionThreadParentRelation` migration directly after `base/main`. It contains the complete lineage columns, root backfill, and indexes. Only `main` retains the earlier 33 through 34 lineage history and its later convergence migration because those intermediate builds ran against the fork's development databases.
-
-Projected provider-agent activity is reconciled against persisted child-thread lifecycle state even when standalone subagent conversations are hidden. A persisted terminal child therefore settles a stale projected running row without requiring the child shell to appear in navigation.
-
-`SUBAGENTS.md` remains the complete implementation contract. This section records the integration seams needed during fork assembly; keep the subagent threading work unless `upstream/main` has gained an equivalent UI-aware subagent architecture, then reconcile against the detailed note.
-
-Primary reference:
-
-- `SUBAGENTS.md`
 
 ## Magi Consensus Orchestration
 
@@ -983,37 +837,29 @@ Primary file:
 
 When updating from upstream, keep these local behaviors unless upstream has an equivalent implementation:
 
-1. Command and file-change activities stay readable as compact expandable rows. Preserve count-aware settled grouping, one disclosure per expanded row, generic fallback, live-member expansion, and the exclusion of metadata-only and collab-agent markers from rich disclosures.
-2. Codex subagent threading work, including its sole synthetic-shell constructor, distinct read/write parent-relation mappers, complete projection replay, and authoritative child and root provider-control cleanup, remains preserved unless `upstream/main` has an equivalent UI-aware architecture; use `SUBAGENTS.md` as the source of truth.
-3. Version Control remains a singleton beside Agents, pull-request, File, and preview/browser state. Preserve its native route, federated panels, coordinated clean-peer fast-forward after push, cwd-correct File routing, context-keyed state, subscription-acknowledged metadata queue, request-scoped errors, retryable mobile fetches, process-shared caches, and transport-safe error wrapping unless `upstream/main` is equivalent; use `SOURCE_CONTROL.md` as the source of truth.
-4. Version Control idle-power safeguards retain native-first canonical path identity, exact 15-second, 30-second, or disabled Git status intervals, one-minute, five-minute, or disabled all-remotes intervals, shared lock and power/visibility/activity gating, ignored `.git` churn, batched ignored-path classification, batched snapshot-wide enrichment, and explicit Fetch.
-5. Expanded command activity rows show differing raw command text inline with the other command details.
-6. Command lifecycle identity stays scoped by turn and top-level-first tool id. Session replacement resumes after the latest applied sequence, snapshot pruning requires a complete cumulative completion, and output merging preserves meaningful streams across blank fallbacks, whitespace chunks, split chunks, and shorter snapshots.
-7. Version Control checked-out branch labels preserve worktree paths through porcelain-first parsing and old-Git fallbacks; sync and undo target the owning checkout, while checkout and deletion stay disabled for branches owned by any worktree.
-8. Thread source-control metadata update failures remain visible without clearing unrelated thread errors.
-9. Mobile EAS owner, project id, and OTA updates URL remain pointed at the same local Expo project used for installable preview builds unless deliberately changed.
-10. Mobile iOS development signing remains pointed at Apple team `6JGX8M7Z3L` unless deliberately changed.
-11. Activity row path previews remain preserved for file-change-style tools, and row-target-only Enter/Space handling applies to every expandable activity row.
-12. Source Control default branch detection honors the status-reported default branch before falling back to `main` or `master`.
-13. Mobile pending-task rows stay outside lineage traversal. Thread rows preserve active-path depth and the exact selected terminal child without restoring hidden terminal ancestors.
-14. Pending-task edit/submit helpers keep edited queued tasks from being resurrected after deletion/delivery, keep edit-session ownership from racing across reopen/exit, persist unsendable cleared edits instead of sending stale text after restart, and avoid reusing stale queued workspace metadata when a pending task is retargeted.
-15. Source-control metadata writes include the active thread branch as `expectedBranch` so stale Git-action results cannot overwrite newer branch/worktree metadata.
-16. Desktop and mobile verification retain host-local capacities and request-scoped cross-host racing. Web servers remain unconstrained, while integrated web UI automation uses one desktop slot on its browser host.
-17. Persisted generation-aware Git ref caching and mutation invalidation, interruption-safe preview listener acknowledgements, listener-specific projections, exact known-server polling cadence, incremental Version Control snapshots, and common-directory fetch deduplication retain their branch ownership unless upstream is equivalent.
-18. Project removal keeps archived conversation cleanup explicit: archived-only deletion requires the dedicated opt-in and must still reject any unseen live thread.
-19. Core projection migrations preserve published ids 33 through 62, ensure lineage before the id-34 root backfill, and normalize only exact divergent markers before canonical replay. All migrations use `effect_sql_migrations`; migration 60 removes the abandoned experimental Magi ledger after restoring any missing canonical Magi rows.
-20. Worktree-local dev state, single-origin browser proxying, Tailscale sharing, and browser-safe port selection remain integrated with the fork's IPv4 desktop/server paths, explicit desktop HMR URL handling, and desktop/mobile runtime coordination.
-21. Mobile verification uses the Device panel and exact AgentDevice target arguments, deep-link pairing, and host-local leases. Windows native-client builds retain the worktree wrapper's short-path and dependency-order safeguards.
-22. Activity persistence compacts cumulative non-terminal command updates, keeps terminal completion authoritative, and preserves transfer-budget headroom. Transport keeps bounded client-consumed metadata, patches, and collab fields while pruning unrelated bulk; command output stays server-side until expansion and the single-activity detail endpoint applies its bounded projection.
-23. Preview cleanup follows authoritative archive/delete/unarchive and generation-aware shell lifecycle signals, while background mini-player presentation remains independent from the singleton Source Control surface.
-24. Preview automation keeps serialized pairing, environment-scoped stable host discovery and non-disruptive explicit selection, sticky current-tab render scoping, runtime replacement, monotonic deadlines, exact-session timeout cleanup, and skipped-capture session safeguards together across renderer and desktop hosts.
-25. Mobile Thread List v2 preserves contextual lineage, navigation-only terminal descendants, atomic settled and snoozed shelves, root-subtree snooze behavior, whole-lineage pin ordering, and root-only lifecycle actions.
-26. Archive remains distinct from settle and root-only across the default Sidebar, chat header, and Legacy Sidebar. One process-wide coordinator enforces startup, active-turn, and background-work guards; `Archive all` covers the complete settled scope, including paged and pinned-settled rows, and holds reservations from confirmation through mutation. Waiters receive completed successes and eligibility skips while failed, cancelled, and unattempted work stays retryable.
-27. Mobile Git checkout failures remain visible and retryable, while interrupt-only outcomes stay silent.
-28. The documented finite working-indicator and deferred streaming Shiki safeguards are currently inactive; retain this summary for future evaluation.
-29. Repeated steering uses exact projected message-id acknowledgement with a guarded turn/session fallback and keeps message-dispatch state separate from new-thread busy state. Stop performs bounded best-effort child interruption before authoritative live-root-turn resolution and preserves timeout, failure, defect, and successful-empty fallback semantics.
-30. Thread-detail missing state preserves versioned and legacy capability negotiation, one HTTP/WS terminal classifier, serialized cache deletion and persistence, missing-snapshot termination before buffered live delivery, and one canonical draft/readiness classification that survives workspace-mode changes.
-31. Provider-neutral Magi remains reconciled against `MAGI.md`, including its canonical core-ledger migrations, provider subscription/upload/dispatch/compaction contracts, complete projection replay and lineage, root-owned checkpoint refresh, run-history query ownership, shared settings structure, and shared mobile icon.
+1. Version Control remains a singleton beside Agents, pull-request, File, and preview/browser state. Preserve its native route, federated panels, coordinated clean-peer fast-forward after push, cwd-correct File routing, context-keyed state, subscription-acknowledged metadata queue, request-scoped errors, retryable mobile fetches, process-shared caches, and transport-safe error wrapping unless `upstream/main` is equivalent; use `SOURCE_CONTROL.md` as the source of truth.
+2. Version Control idle-power safeguards retain native-first canonical path identity, exact 15-second, 30-second, or disabled Git status intervals, one-minute, five-minute, or disabled all-remotes intervals, shared lock and power/visibility/activity gating, ignored `.git` churn, batched ignored-path classification, batched snapshot-wide enrichment, and explicit Fetch.
+3. Version Control checked-out branch labels preserve worktree paths through porcelain-first parsing and old-Git fallbacks; sync and undo target the owning checkout, while checkout and deletion stay disabled for branches owned by any worktree.
+4. Thread source-control metadata update failures remain visible without clearing unrelated thread errors.
+5. Mobile EAS owner, project id, and OTA updates URL remain pointed at the same local Expo project used for installable preview builds unless deliberately changed.
+6. Mobile iOS development signing remains pointed at Apple team `6JGX8M7Z3L` unless deliberately changed.
+7. Source Control default branch detection honors the status-reported default branch before falling back to `main` or `master`.
+8. Pending-task edit/submit helpers keep edited queued tasks from being resurrected after deletion/delivery, keep edit-session ownership from racing across reopen/exit, persist unsendable cleared edits instead of sending stale text after restart, and avoid reusing stale queued workspace metadata when a pending task is retargeted.
+9. Source-control metadata writes include the active thread branch as `expectedBranch` so stale Git-action results cannot overwrite newer branch/worktree metadata.
+10. Desktop and mobile verification retain host-local capacities and request-scoped cross-host racing. Web servers remain unconstrained, while integrated web UI automation uses one desktop slot on its browser host.
+11. Persisted generation-aware Git ref caching and mutation invalidation, interruption-safe preview listener acknowledgements, listener-specific projections, exact known-server polling cadence, incremental Version Control snapshots, and common-directory fetch deduplication retain their branch ownership unless upstream is equivalent.
+12. Project removal keeps archived conversation cleanup explicit: archived-only deletion requires the dedicated opt-in and must still reject any unseen live thread.
+13. Core projection migrations preserve published ids 33 through 62, ensure lineage before the id-34 root backfill, and normalize only exact divergent markers before canonical replay. All migrations use `effect_sql_migrations`; migration 60 removes the abandoned experimental Magi ledger after restoring any missing canonical Magi rows.
+14. Worktree-local dev state, single-origin browser proxying, Tailscale sharing, and browser-safe port selection remain integrated with the fork's IPv4 desktop/server paths, explicit desktop HMR URL handling, and desktop/mobile runtime coordination.
+15. Mobile verification uses the Device panel and exact AgentDevice target arguments, deep-link pairing, and host-local leases. Windows native-client builds retain the worktree wrapper's short-path and dependency-order safeguards.
+16. Preview cleanup follows authoritative archive/delete/unarchive and generation-aware shell lifecycle signals, while background mini-player presentation remains independent from the singleton Source Control surface.
+17. Preview automation keeps serialized pairing, environment-scoped stable host discovery and non-disruptive explicit selection, sticky current-tab render scoping, runtime replacement, monotonic deadlines, exact-session timeout cleanup, and skipped-capture session safeguards together across renderer and desktop hosts.
+18. Archive remains distinct from settle and root-only across the default Sidebar, chat header, and Legacy Sidebar. One process-wide coordinator enforces startup, active-turn, and background-work guards; `Archive all` covers the complete settled scope, including paged and pinned-settled rows, and holds reservations from confirmation through mutation. Waiters receive completed successes and eligibility skips while failed, cancelled, and unattempted work stays retryable.
+19. Mobile Git checkout failures remain visible and retryable, while interrupt-only outcomes stay silent.
+20. The documented finite working-indicator and deferred streaming Shiki safeguards are currently inactive; retain this summary for future evaluation.
+21. Repeated steering uses exact projected message-id acknowledgement with a guarded turn/session fallback and keeps message-dispatch state separate from new-thread busy state. Stop performs bounded best-effort child interruption before authoritative live-root-turn resolution and preserves timeout, failure, defect, and successful-empty fallback semantics.
+22. Thread-detail missing state preserves versioned and legacy capability negotiation, one HTTP/WS terminal classifier, serialized cache deletion and persistence, missing-snapshot termination before buffered live delivery, and one canonical draft/readiness classification that survives workspace-mode changes.
+23. Provider-neutral Magi remains reconciled against `MAGI.md`, including its canonical core-ledger migrations, provider subscription/upload/dispatch/compaction contracts, complete projection replay and lineage, root-owned checkpoint refresh, run-history query ownership, shared settings structure, and shared mobile icon.
 
 ## Retirement Criteria
 
