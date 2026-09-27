@@ -15,6 +15,7 @@ export interface AndroidHeaderAction {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly menuOnly?: boolean;
 }
 
 export function AndroidHeaderIconButton(props: {
@@ -45,8 +46,10 @@ export function AndroidScreenHeader(props: {
   const [headerWidth, setHeaderWidth] = useState(0);
   const actions = props.actions ?? [];
   const directCount = actions.length > 2 ? (headerWidth >= 600 ? 3 : 1) : actions.length;
-  const visibleActions = actions.slice(0, directCount);
-  const overflowActions = actions.slice(directCount);
+  const firstMenuAction = actions.findIndex((action) => action.menuOnly);
+  const visibleCount = firstMenuAction < 0 ? directCount : Math.min(directCount, firstMenuAction);
+  const visibleActions = actions.slice(0, visibleCount);
+  const overflowActions = actions.slice(visibleCount);
 
   return (
     <View

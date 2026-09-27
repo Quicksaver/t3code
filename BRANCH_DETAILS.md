@@ -78,12 +78,12 @@ when an occupied port forces a shift.
   cannot crowd the owner out of timeline updates. The timeline consumes `MagiRunSummary` metadata and must not create its own
   history/detail query or fabricate an unresolved thread id.
 - `apps/mobile/src/components/MagiConsensusIcon.tsx` is the shared mobile Magi glyph for conversation
-  rows, composers, and the run sheet. It follows the mobile theme layer's custom-SVG seam with
+  rows and the run sheet. It follows the mobile theme layer's custom-SVG seam with
   `withUniwind(Svg)`, `currentColor`, and the semantic `accent-icon` default while retaining explicit
   `color` and `colorClassName` overrides. It is not a reviewed `useUniwindTheme` escape hatch and must
   remain absent from `no-mobile-uniwind-theme-escape-hatches.ts`'s interop allowlist.
 
-- Mobile new-task drafts use upstream's durable draft identity, project metadata, and inline attachment context. Magi's `magiArm` stays on that draft. The draft composer supplies its Magi glyph through the shared control's `renderIcon` callback so appearance sizing applies to it.
+- Mobile new-task drafts use upstream's durable draft identity, project metadata, and inline attachment context. Magi's `magiArm` stays on that draft. Mobile opens Magi only through `Open magi` in the header menu, after `Open terminal` and `Open git controls` for existing conversations. New-task drafts expose the same menu action. There are no floating or composer Magi launchers.
 
 ## Dev-server testing
 

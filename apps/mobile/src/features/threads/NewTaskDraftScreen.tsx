@@ -54,7 +54,6 @@ import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
-import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
@@ -1710,17 +1709,6 @@ export function NewTaskDraftScreen(props: {
                         onPress={settingsSheetPresentation.open}
                       />
                     </View>
-                    {selectedEnvironmentServerConfig?.environment.capabilities.magi === true ? (
-                      <ComposerInlineControl
-                        accessibilityLabel={composerDraft.magiArm ? "Magi armed" : "Configure Magi"}
-                        disabled={isComposerInteractionLocked}
-                        emphasized={composerDraft.magiArm !== undefined}
-                        renderIcon={(size) => <MagiConsensusIcon size={size} />}
-                        label={composerDraft.magiArm ? "Magi armed" : "Magi"}
-                        onPress={() => setMagiVisible(true)}
-                        showChevron={false}
-                      />
-                    ) : null}
                     {flow.planModeEnabled ? (
                       <ComposerInlineControl
                         accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
@@ -1806,7 +1794,24 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
+        <AndroidScreenHeader
+          title="New thread"
+          hideBottomBorder
+          onBack={closeNewTask}
+          actions={
+            magiSheet
+              ? [
+                  {
+                    accessibilityLabel: "Open magi",
+                    icon: "brain",
+                    menuOnly: true,
+                    disabled: isComposerInteractionLocked,
+                    onPress: () => setMagiVisible(true),
+                  },
+                ]
+              : undefined
+          }
+        />
         <MaterialScreenContent>
           {magiSheet}
           {heroViewport}
@@ -1839,6 +1844,18 @@ export function NewTaskDraftScreen(props: {
         />
       </NativeHeaderToolbar>
 
+      {magiSheet ? (
+        <NativeHeaderToolbar placement="right">
+          <NativeHeaderToolbar.Menu accessibilityLabel="More actions" icon="ellipsis">
+            <NativeHeaderToolbar.MenuAction
+              disabled={isComposerInteractionLocked}
+              onPress={() => setMagiVisible(true)}
+            >
+              Open magi
+            </NativeHeaderToolbar.MenuAction>
+          </NativeHeaderToolbar.Menu>
+        </NativeHeaderToolbar>
+      ) : null}
       {magiSheet}
 
       {heroViewport}

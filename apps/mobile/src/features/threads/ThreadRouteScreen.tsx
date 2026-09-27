@@ -1,5 +1,3 @@
-import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
-import { ControlPill } from "../../components/ControlPill";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -49,8 +47,6 @@ import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vc
 import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
-import { MagiConsensusIcon } from "../../components/MagiConsensusIcon";
-import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
@@ -59,7 +55,6 @@ import {
   useRemoteConnectionStatus,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
-import { magiEnvironment } from "../../state/magi";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -134,15 +129,25 @@ function ThreadHeader(
     if (props.hasWorkspaceRoot) {
       actions.push({
         accessibilityLabel: "Open terminal",
+        menuOnly: Boolean(props.onOpenMagi),
         icon: "terminal",
         onPress: () => onOpenTerminal(null),
       });
     }
     actions.push({
       accessibilityLabel: "Open git controls",
+      menuOnly: Boolean(props.onOpenMagi),
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: props.onOpenGitInspector,
     });
+    if (props.onOpenMagi) {
+      actions.push({
+        accessibilityLabel: "Open magi",
+        icon: "brain",
+        menuOnly: true,
+        onPress: props.onOpenMagi,
+      });
+    }
     return actions;
   }, [
     props.inspectorMode,
@@ -150,6 +155,7 @@ function ThreadHeader(
     props.onOpenFilesInspector,
     onOpenTerminal,
     props.onOpenGitInspector,
+    props.onOpenMagi,
     toggleAuxiliaryPane,
     props.onReturnToThread,
     props.hasThreadCwd,
@@ -328,7 +334,6 @@ function ThreadRouteContent(
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
   },
 ) {
-  const { mediumIconSize } = useAndroidControlSizing();
   const { themeVariables } = useAppearancePreferences();
   const headerColor = themeVariables["--color-header"];
   const { fileInspector, layout, panes, showAuxiliaryPane, toggleAuxiliaryPane } =
@@ -432,30 +437,6 @@ function ThreadRouteContent(
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const magiSupported = serverConfig?.environment.capabilities.magi === true;
-  const hasActiveMagiRun = selectedThread?.activeMagiRun != null;
-  const activeMagiRunId = selectedThread?.activeMagiRun?.runId ?? null;
-  const magiHistoryQuery = useEnvironmentQuery(
-    magiSupported && selectedThread !== null
-      ? magiEnvironment.history({
-          environmentId: selectedThread.environmentId,
-          input: { rootThreadId: selectedThread.id, limit: 1, includeDescendants: true },
-        })
-      : null,
-  );
-  const previousActiveMagiRunIdRef = useRef(activeMagiRunId);
-  useEffect(() => {
-    // The shell drops its active summary when a run becomes terminal. Refresh
-    // the cached history then so the same button remains available afterward.
-    const previousActiveMagiRunId = previousActiveMagiRunIdRef.current;
-    previousActiveMagiRunIdRef.current = activeMagiRunId;
-    if (previousActiveMagiRunId !== null && activeMagiRunId === null) {
-      magiHistoryQuery.refresh();
-    }
-  }, [activeMagiRunId, magiHistoryQuery.refresh]);
-  const showMagiButton =
-    magiSupported && (hasActiveMagiRun || (magiHistoryQuery.data?.runs.length ?? 0) > 0);
-  const threadIsRunning =
-    selectedThread?.session?.status === "running" || selectedThread?.session?.status === "starting";
   const handleOpenMagi = useCallback(() => setMagiVisible(true), []);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
@@ -1063,36 +1044,12 @@ function ThreadRouteContent(
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}
           onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
-          onOpenMagi={
-            magiSupported && !hasActiveMagiRun && !threadIsRunning ? handleOpenMagi : undefined
-          }
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
           onDismissUserInput={requests.onDismissUserInput}
         />
-        {showMagiButton ? (
-          <View
-            pointerEvents="box-none"
-            className="absolute right-3 z-20"
-            style={{
-              top:
-                Platform.OS === "ios" && usesNativeHeaderGlass
-                  ? safeAreaInsets.top + IOS_NAV_BAR_HEIGHT + 12
-                  : 12,
-            }}
-          >
-            <ControlPill
-              accessibilityLabel={
-                hasActiveMagiRun ? "Open active Magi run" : "Open Magi run history"
-              }
-              className="border border-border bg-card shadow-md shadow-black/10"
-              iconNode={<MagiConsensusIcon size={mediumIconSize} />}
-              onPress={handleOpenMagi}
-            />
-          </View>
-        ) : null}
       </View>
     </>
   );
@@ -1114,6 +1071,7 @@ function ThreadRouteContent(
         onOpenGitInspector={handleOpenGitInspector}
         onOpenFilesInspector={handleOpenFilesInspector}
         onReturnToThread={props.onReturnToThread}
+        onOpenMagi={magiSupported ? handleOpenMagi : undefined}
       />
 
       {renderThreadRouteBody()}

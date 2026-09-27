@@ -690,7 +690,7 @@ nested Magi member, change the configured denominator, or satisfy consensus.
 
 `ChatView.tsx` passes the selected history to `MagiPanel.tsx` and the owner's latest summary from the independent latest-summary query to `MessagesTimeline.tsx`. The timeline renders participant and token metadata from `MagiRunSummary`; it does not issue a detail request or invent a placeholder thread id.
 
-Mobile new-task composers keep `magiArm` on upstream's durable draft identity, together with its project metadata. Ordinary send, restoration, and share-import paths use that durable draft state. The shared composer control supplies the Magi icon's size through its `renderIcon` callback.
+Mobile new-task composers keep `magiArm` on upstream's durable draft identity, together with its project metadata. Ordinary send, restoration, and share-import paths use that durable draft state. The header menu exposes `Open magi` for configuring and arming that draft.
 
 `apps/mobile/src/components/MagiConsensusIcon.tsx` is the shared mobile Magi glyph. It binds semantic
 theme classes through `withUniwind(Svg)` and renders its paths with `currentColor`, defaulting to
@@ -920,7 +920,7 @@ Participant turns have no product deadline. They may run until the provider fini
 
 ### Mobile Magi experience
 
-Mobile has full per-run parity. Add a native Magi route or sheet reachable from the active conversation header and from the Magi activity box. The route is available at any time, just like the web panel. It shows `New Magi run` and conversation-scoped run history, with the active run selected when one exists.
+Mobile has full per-run parity. Open the native Magi sheet only through `Open magi` in the header menu. For existing conversations, place it after `Open terminal` and `Open git controls`; new-task drafts expose the same action in their header menu. Do not show floating or composer Magi launchers. The route is available at any time, just like the web panel. It shows `New Magi run` and conversation-scoped run history, with the active run selected when one exists.
 
 The mobile new-run flow supports the complete `MagiRunConfig`: add, duplicate, remove, and reorder participants within the shared nine-slot limit; choose provider, model, reasoning or effort traits, an existing personality or default, and voting weight; set the consensus threshold and turn limit; inspect the required-weight calculation and exact-duplicate warnings; arm or disarm the next turn, including on a first-message draft. Use native full-screen selection pages for model, traits, and personality instead of squeezing desktop popovers into a sheet. Reordering can use drag handles or explicit move controls, but it must be accessible without drag.
 
@@ -983,7 +983,7 @@ The server remains authoritative across clients after a thread exists. An existi
 - Web `Sidebar.tsx` and both mobile thread-list implementations render the standard Magi icon only for a nonterminal `activeMagiRun`, preserve other status indicators, and include `Magi running` in the accessible row name.
 - Multi-window updates and reconnect hydration.
 - Screen-reader announcements, keyboard flow, focus retention, zoom, and narrow layouts.
-- Mobile full-run configuration, model/trait/personality selection, participant editing and accessible reordering, nine-participant and duplicate indications, threshold validation, first-message and existing-thread arm/disarm, prompt-only warnings, history, nested run details, ordinary composer behavior during active runs, main-approval presentation, read-only run lifecycle, and read-only system settings.
+- Mobile menu-only access for existing conversations and first-message drafts, including active runs and history, followed by full-run configuration, model/trait/personality selection, participant editing and accessible reordering, nine-participant and duplicate indications, threshold validation, first-message and existing-thread arm/disarm, prompt-only warnings, history, nested run details, ordinary composer behavior during active runs, main-approval presentation, read-only run lifecycle, and read-only system settings.
 
 ### Integrated verification
 
