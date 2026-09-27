@@ -7,9 +7,10 @@ disable-model-invocation: true
 Follow these steps sequentially:
 
 - use `$update-worktrees`. On blockers, report and do not proceed;
-- use `$rebuild-main`. If unsuccessful, report and do not proceed;
 - push all tracked branches to origin;
-- sync main branch on the other devices; project is tracked on windows desktop and macbook pro
+- use `$babysit-worktrees`. Contrarily to that skill's final instructions, do not cherrypick any new commits onto `main` yet as we will be entirely rebuilding in the next step;
+- use `$rebuild-main`. If unsuccessful, report and do not proceed;
+- push `main` branch and sync it on the other devices; project is tracked on windows desktop and macbook pro
 - cleanup all temporary and leftover branches and stashes created during this process
 - build the windows dist on the windows desktop via `pnpm run dist:desktop:win:x64`
 - build the macos dist on the macbook pro via `pnpm run dist:desktop:dmg:arm64`
