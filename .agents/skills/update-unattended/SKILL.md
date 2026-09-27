@@ -7,7 +7,7 @@ disable-model-invocation: true
 Follow these steps sequentially:
 
 - use `$update-worktrees`. On blockers, report and do not proceed;
-- push all tracked branches to origin;
+- push all tracked branches to origin, wait ten minutes before starting the next step;
 - use `$babysit-worktrees`. Contrarily to that skill's final instructions, do not cherrypick any new commits onto `main` yet as we will be entirely rebuilding in the next step;
 - use `$rebuild-main`. If unsuccessful, report and do not proceed;
 - push `main` branch and sync it on the other devices; project is tracked on windows desktop and macbook pro
