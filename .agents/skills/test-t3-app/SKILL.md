@@ -22,6 +22,8 @@ inspecting or seeding SQLite. Stop the test server before direct fixture writes.
 
 ## Use the Browser panel
 
+Follow the host selection in `$worktrees` before the first control call. Native subagent callers have independent preview contexts while their tabs remain visible in the main conversation. Keep returned tab IDs for this test; an explicit `tabId` deliberately shares a target, so use only owned tabs during verification. Providers that omit native caller metadata share their credential's default context.
+
 Call `preview_status`, then `preview_open` if the Browser panel is
 closed. Navigate to the complete startup pairing URL once with
 `preview_navigate`, then use `preview_snapshot` and T3's interaction tools.
