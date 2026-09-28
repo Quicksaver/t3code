@@ -128,6 +128,52 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
+// node-pty's Windows PID is assigned asynchronously, before this legacy socket
+// event fires. Waiting for output instead would hang shells with a silent prompt.
+type WindowsPty = import("node-pty").IPty & {
+  on(event: "ready_datapipe", listener: () => void): void;
+  removeListener(event: "ready_datapipe", listener: () => void): void;
+};
+
+const awaitWindowsPtyReady = (process: WindowsPty, shell: string) =>
+  Effect.callback<void, PtyAdapter.PtySpawnError>((resume) => {
+    const onReady = () => {
+      cleanup();
+      resume(
+        process.pid > 0
+          ? Effect.void
+          : Effect.fail(
+              new PtyAdapter.PtySpawnError({
+                adapter: "node-pty",
+                shell,
+                cause: new Error("ConPTY connected without a process ID."),
+              }),
+            ),
+      );
+    };
+    const exitListener = process.onExit((event) => {
+      cleanup();
+      resume(
+        Effect.fail(
+          new PtyAdapter.PtySpawnError({
+            adapter: "node-pty",
+            shell,
+            cause: new Error(`ConPTY exited before startup (exit code ${event.exitCode}).`),
+          }),
+        ),
+      );
+    });
+    const cleanup = () => {
+      process.removeListener("ready_datapipe", onReady);
+      exitListener.dispose();
+    };
+    process.on("ready_datapipe", onReady);
+    return Effect.sync(() => {
+      cleanup();
+      process.kill();
+    });
+  });
+
 export const make = Effect.fn("NodePtyAdapter.make")(function* () {
   const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
   const fs = yield* FileSystem.FileSystem;
@@ -181,6 +227,9 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* () {
             cause,
           }),
       });
+      if (platform === "win32" && ptyProcess.pid === 0) {
+        yield* awaitWindowsPtyReady(ptyProcess as WindowsPty, input.shell);
+      }
       return new NodePtyProcess(ptyProcess, platform);
     }),
   });
