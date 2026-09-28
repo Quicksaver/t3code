@@ -16,7 +16,9 @@ import * as PtyAdapter from "./PtyAdapter.ts";
 
 const makeNativeProcess = () => {
   const events = new NodeEvents.EventEmitter();
+  const agent = { kill: vi.fn() };
   return {
+    _agent: agent,
     pid: 42,
     events,
     write: vi.fn(),
@@ -117,7 +119,30 @@ it.effect("reports Windows exit before readiness as a spawn failure", () =>
 it.effect("cleans up a Windows spawn interrupted before readiness", () =>
   Effect.gen(function* () {
     const { nativeProcess, fiber } = yield* startPendingSpawn;
+    nativeProcess.kill.mockImplementation(() => {
+      nativeProcess.events.once("data", () => nativeProcess._agent.kill());
+    });
     yield* Fiber.interrupt(fiber);
+    assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
+    assert.equal(nativeProcess.kill.mock.calls.length, 0);
+    assert.equal(nativeProcess.events.listenerCount("ready_datapipe"), 0);
+    assert.equal(nativeProcess.events.listenerCount("exit"), 0);
+    nativeProcess.events.emit("data", "late output");
+    assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("requests termination when Windows readiness has no process ID", () =>
+  Effect.gen(function* () {
+    const { nativeProcess, fiber } = yield* startPendingSpawn;
+    nativeProcess.events.emit("ready_datapipe");
+    const exit = yield* Fiber.await(fiber);
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      const error = Cause.squash(exit.cause);
+      assert.instanceOf(error, PtyAdapter.PtySpawnError);
+      assert.match(String(error.cause), /process ID/);
+    }
     assert.equal(nativeProcess.kill.mock.calls.length, 1);
     assert.equal(nativeProcess.events.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);

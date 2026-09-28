@@ -131,6 +131,7 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
 // node-pty's Windows PID is assigned asynchronously, before this legacy socket
 // event fires. Waiting for output instead would hang shells with a silent prompt.
 type WindowsPty = import("node-pty").IPty & {
+  _agent: { kill(): void };
   on(event: "ready_datapipe", listener: () => void): void;
   removeListener(event: "ready_datapipe", listener: () => void): void;
 };
@@ -139,6 +140,7 @@ const awaitWindowsPtyReady = (process: WindowsPty, shell: string) =>
   Effect.callback<void, PtyAdapter.PtySpawnError>((resume) => {
     const onReady = () => {
       cleanup();
+      if (process.pid <= 0) process.kill();
       resume(
         process.pid > 0
           ? Effect.void
@@ -170,7 +172,9 @@ const awaitWindowsPtyReady = (process: WindowsPty, shell: string) =>
     process.on("ready_datapipe", onReady);
     return Effect.sync(() => {
       cleanup();
-      process.kill();
+      // Public kill waits for the first output byte. The agent can cancel the
+      // pending connection before it launches a child, even without output.
+      process._agent.kill();
     });
   });
 
