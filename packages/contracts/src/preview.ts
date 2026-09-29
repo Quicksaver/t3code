@@ -318,6 +318,7 @@ export type DiscoveredLocalServer = typeof DiscoveredLocalServer.Type;
 
 export const DiscoveredLocalServerList = Schema.Struct({
   servers: Schema.Array(DiscoveredLocalServer),
+  /** Server emission time, which may postdate the discovery scan behind a replayed snapshot. */
   scannedAt: Schema.String,
   configuredUrlProbing: Schema.optional(Schema.Literal(true)),
 });
