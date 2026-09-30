@@ -26,6 +26,8 @@ export interface McpInvocationScope {
   readonly issuedAt: number;
   /** Native caller identity from request metadata, still bounded by the bearer owner. */
   readonly nativeThreadId?: unknown;
+  /** Caller namespace within this credential; never used to select a T3 thread. */
+  readonly previewContextId?: string;
 }
 
 export class McpInvocationContext extends Context.Service<

@@ -29,6 +29,7 @@ import {
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
+  previewScreenshotUnavailableText,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
@@ -119,19 +120,29 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
       }
       const call =
         request.method === "POST"
-          ? yield* request.json.pipe(
-              Effect.map(decodeMagiCallerRequest),
-              Effect.orElseSucceed(() => Option.none()),
-            )
-          : Option.none();
-      const nativeThreadId =
-        Option.isSome(call) && call.value.params.name.startsWith("magi_")
-          ? call.value.params._meta?.threadId
+          ? yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
           : undefined;
+      const magiCall = decodeMagiCallerRequest(call);
+      const nativeThreadId =
+        Option.isSome(magiCall) && magiCall.value.params.name.startsWith("magi_")
+          ? magiCall.value.params._meta?.threadId
+          : undefined;
+      const caller = previewCallerContext(call);
+      if (caller === null) {
+        return HttpServerResponse.jsonUnsafe(
+          {
+            error: "invalid_preview_caller",
+            message:
+              "Preview caller identity must be a non-empty string of at most 128 characters.",
+          },
+          { status: 400 },
+        );
+      }
       return yield* httpEffect.pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, {
           ...invocation,
           ...(nativeThreadId !== undefined ? { nativeThreadId } : {}),
+          ...(caller === undefined ? {} : { previewContextId: caller }),
         }),
         Effect.map(normalizeMcpHttpResponse),
       );
@@ -139,6 +150,30 @@ const makeMcpAuthMiddleware = McpSessionRegistry.McpSessionRegistry.pipe(
   ),
   Effect.withSpan("McpHttpServer.makeAuthMiddleware"),
 );
+
+/** Native child metadata partitions control, but cannot redirect the bearer-owned conversation. */
+export function previewCallerContext(call: unknown): string | null | undefined {
+  if (typeof call !== "object" || call === null || !("params" in call)) return undefined;
+  const params = call.params;
+  if (
+    typeof params !== "object" ||
+    params === null ||
+    !("name" in params) ||
+    typeof params.name !== "string" ||
+    !params.name.startsWith("preview_") ||
+    !("_meta" in params)
+  )
+    return undefined;
+  const meta = params._meta;
+  if (typeof meta !== "object" || meta === null || !("threadId" in meta)) return undefined;
+  const id = meta.threadId;
+  return typeof id === "string" &&
+    id.trim().length > 0 &&
+    id.length <= 128 &&
+    !id.includes("\u0000")
+    ? id
+    : null;
+}
 
 const McpAuthMiddlewareLive = HttpRouter.middleware<{
   provides: McpInvocationContext.McpInvocationContext;
@@ -439,17 +474,22 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
             Effect.gen(function* () {
               const snapshot = encodedResult as SnapshotMetadata & {
                 readonly url: string;
-                readonly screenshot: {
+                readonly screenshot: null | {
                   readonly mimeType: "image/png";
                   readonly data: string;
                   readonly width: number;
                   readonly height: number;
                 };
+                readonly screenshotUnavailable?: Parameters<
+                  typeof previewScreenshotUnavailableText
+                >[0];
               };
               const { screenshot, ...page } = snapshot;
-              const png = new Uint8Array(Buffer.from(screenshot.data, "base64"));
+              const png = new Uint8Array(Buffer.from(screenshot?.data ?? "", "base64"));
               const screenshotPath =
-                payload?.save === true ? yield* saveScreenshot(snapshot.url, png) : undefined;
+                payload?.save === true && screenshot !== null
+                  ? yield* saveScreenshot(snapshot.url, png)
+                  : undefined;
               if (screenshotPath !== undefined && payload?.includeImage === false) {
                 // The agent only wants a file to show the user. The url keeps the site icon on the tool row.
                 const saved = {
@@ -464,11 +504,14 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
               }
               const metadata = {
                 ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
+                screenshot:
+                  screenshot === null
+                    ? null
+                    : {
+                        mimeType: screenshot.mimeType,
+                        width: screenshot.width,
+                        height: screenshot.height,
+                      },
                 ...(screenshotPath === undefined ? {} : { screenshotPath }),
               };
               const bounded = boundSnapshotMetadata(metadata);
@@ -495,9 +538,17 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                           text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                         },
                       ]),
-                  ...(payload?.includeImage === false
-                    ? []
-                    : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
+                  // Say why the image is missing so the agent does not retry blindly.
+                  ...(screenshot === null
+                    ? [
+                        {
+                          type: "text" as const,
+                          text: previewScreenshotUnavailableText(snapshot.screenshotUnavailable),
+                        },
+                      ]
+                    : payload?.includeImage === false
+                      ? []
+                      : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
                 ],
               });
             }),
