@@ -281,6 +281,8 @@ Expected behavior:
 
 Current limitations:
 
+- Electron guests start with `transparent=false`, supplying an opaque system-scheme canvas before lazy CDP initialization. Recording timeout cleanup targets its captured native generation under the lifecycle lock, display-wake blocker acquisition is atomic, and validated responses to sibling requests keep the exact responsive host connection registered without accepting a late tab result.
+
 - The Windows Electron 44.4.2 dev-shell reproduction distinguishes a paused host compositor from page or backend failure: hiding the owned window caused native capture to return `UnknownVizError` and CDP clicks to acknowledge success without dispatching page input. Scoped host unthrottling plus a committed host frame corrects that state without activating the window. Physical display sleep and GPU/device suspension have not been revalidated; if no frame arrives, input fails within its operation deadline and snapshots retain their semantic fallback. A previously interrupted native capture still blocks later native captures until its exact promise settles. Probe host liveness without attaching a debugger to the host window, since that can change its painting behavior.
 - The isolated Windows Electron pass covers background snapshots and browser control. Full Electron recording transfer was not rerun for the caller-context and transport changes.
 
