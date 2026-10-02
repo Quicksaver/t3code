@@ -1029,6 +1029,7 @@ const buildAppUnderTest = (options?: {
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
           getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+          getThreadLineage: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 0,
@@ -9390,6 +9391,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* buildAppUnderTest({
         layers: {
           projectionSnapshotQuery: {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () => Effect.fail(projectionError),
           },
         },
@@ -9603,6 +9605,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             streamDomainEvents: Stream.fromPubSub(liveEvents),
           },
           projectionSnapshotQuery: {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.gen(function* () {
                 yield* PubSub.publish(liveEvents, deletedEvent);
@@ -10254,6 +10257,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             },
           },
           projectionSnapshotQuery: {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.sync(() => {
                 snapshotCalls += 1;
@@ -10675,6 +10679,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 100_000,
@@ -10744,6 +10749,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 return { eventCount: 5, payloadBytes: 8 * 1024 * 1024 + 1 };
               }),
             getThreadDetailSnapshot: () => Effect.succeedSome({ snapshotSequence: 5, thread }),
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 5,
@@ -10798,6 +10804,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
           },
           projectionSnapshotQuery: {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 5,

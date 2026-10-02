@@ -187,6 +187,7 @@ export interface CodexSessionRuntimeOptions {
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexSessionRuntimeSendTurnInput {
@@ -199,6 +200,8 @@ export interface CodexSessionRuntimeSendTurnInput {
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort | undefined;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
 }
 
 export interface CodexThreadTurnSnapshot {
@@ -220,6 +223,12 @@ export interface CodexSessionRuntimeShape {
   readonly compactThread: Effect.Effect<void, CodexSessionRuntimeError>;
   readonly interruptTurn: (turnId?: TurnId) => Effect.Effect<void, CodexSessionRuntimeError>;
   readonly readThread: Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
+  readonly verifyNativeThread: (
+    nativeThreadId: string,
+  ) => Effect.Effect<void, CodexSessionRuntimeError>;
+  readonly readNativeThread: (
+    nativeThreadId: string,
+  ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
   readonly rollbackThread: (
     numTurns: number,
   ) => Effect.Effect<CodexThreadSnapshot, CodexSessionRuntimeError>;
@@ -548,11 +557,12 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
-function buildThreadStartParams(input: {
+export function buildThreadStartParams(input: {
   readonly cwd: string;
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly magiParticipant?: boolean;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
   return {
@@ -562,6 +572,15 @@ function buildThreadStartParams(input: {
     approvalsReviewer: config.approvalsReviewer,
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
+    ...(input.magiParticipant
+      ? {
+          config: {
+            multi_agent_mode: {
+              custom: "Participant subagents are unavailable in this Magi session.",
+            },
+          },
+        }
+      : {}),
   };
 }
 
@@ -632,6 +651,8 @@ export function buildTurnStartParams(input: {
   readonly serviceTier?: CodexServiceTier;
   readonly effort?: EffectCodexSchema.V2TurnStartParams__ReasoningEffort;
   readonly interactionMode?: ProviderInteractionMode;
+  readonly outputSchema?: unknown;
+  readonly magiParticipant?: boolean;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean | T3CodeToolAvailability;
 }): Effect.Effect<
@@ -650,13 +671,15 @@ export function buildTurnStartParams(input: {
   }
 
   const config = runtimeModeToThreadConfig(input.runtimeMode);
-  const turnInstructions = buildCodexTurnInstructions({
-    ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.modelName ? { modelName: input.modelName } : {}),
-    ...(input.effort ? { effort: input.effort } : {}),
-    browserToolsAvailable: input.browserToolsAvailable ?? true,
-  });
+  const turnInstructions = input.magiParticipant
+    ? {}
+    : buildCodexTurnInstructions({
+        ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.modelName ? { modelName: input.modelName } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
+        browserToolsAvailable: input.browserToolsAvailable ?? true,
+      });
 
   return decodeCodexTurnStartParamsWithCollaborationMode({
     threadId: input.threadId,
@@ -668,6 +691,7 @@ export function buildTurnStartParams(input: {
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...turnInstructions,
+    ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
   }).pipe(
     Effect.mapError((cause) =>
       CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
@@ -740,6 +764,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly magiParticipant?: boolean;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -747,6 +772,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    ...(input.magiParticipant !== undefined ? { magiParticipant: input.magiParticipant } : {}),
   });
 
   if (resumeThreadId === undefined) {
@@ -1235,6 +1261,32 @@ const readCodexHistoryMode = Effect.fn("readCodexHistoryMode")(function* (
     ),
   );
   return metadata.thread.historyMode;
+});
+
+export const verifyCodexNativeDescendant = Effect.fn("verifyCodexNativeDescendant")(function* (
+  client: Pick<CodexHistoryClient, "request">,
+  rootId: string,
+  nativeThreadId: string,
+) {
+  const visited = new Set<string>();
+  let current = nativeThreadId;
+  while (current !== rootId && visited.size < 64 && !visited.has(current)) {
+    visited.add(current);
+    const response = yield* client.request("thread/read", {
+      threadId: current,
+      includeTurns: false,
+    });
+    const parent = readThreadSpawnSource(response.thread)?.parentThreadId;
+    if (!parent) break;
+    current = parent;
+  }
+  if (current !== rootId || nativeThreadId === rootId) {
+    return yield* CodexErrors.CodexAppServerRequestError.internalError(
+      "The native caller is not a descendant of this provider session.",
+      undefined,
+      { method: "thread/read", operation: "handle-request" },
+    );
+  }
 });
 
 export const readCodexThread = Effect.fn("readCodexThread")(function* (
@@ -2493,6 +2545,9 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(options.magiParticipant !== undefined
+          ? { magiParticipant: options.magiParticipant }
+          : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2574,6 +2629,10 @@ export const makeCodexSessionRuntime = (
             ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
+            ...(input.outputSchema !== undefined ? { outputSchema: input.outputSchema } : {}),
+            ...(options.magiParticipant !== undefined
+              ? { magiParticipant: options.magiParticipant }
+              : {}),
             // Derived from the session's own credential rather than the
             // setting, so the prompt describes the tools this turn actually
             // has even if the setting changed after the session started.
@@ -2653,6 +2712,16 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
             turnId: effectiveTurnId,
           });
+        }),
+      verifyNativeThread: (nativeThreadId) =>
+        readProviderThreadId.pipe(
+          Effect.flatMap((rootId) => verifyCodexNativeDescendant(client, rootId, nativeThreadId)),
+        ),
+      readNativeThread: (nativeThreadId) =>
+        Effect.gen(function* () {
+          const rootId = yield* readProviderThreadId;
+          yield* verifyCodexNativeDescendant(client, rootId, nativeThreadId);
+          return yield* readCodexThread(client, nativeThreadId);
         }),
       readThread: Effect.gen(function* () {
         const providerThreadId = yield* readProviderThreadId;

@@ -14,8 +14,11 @@ import {
 } from "./timelineMinimapItems";
 import {
   COMPOSER_CONTEXT_KINDS,
+  isMagiRunTerminal,
+  type ActiveMagiRunSummary,
   type AssistantCitation,
   type EnvironmentId,
+  type MagiRunSummary,
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -122,6 +125,7 @@ import {
   MessageCircleIcon,
   Minimize2Icon,
   MousePointerClickIcon,
+  Network,
   PaintbrushIcon,
   SearchIcon,
   SmartphoneIcon,
@@ -192,6 +196,7 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
+  resolveMagiActivityPlacement,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
@@ -302,6 +307,9 @@ interface TimelineRowSharedState {
   onSteerQueuedMessage: (id: string) => void;
   steerQueuedMessageShortcutLabel: string | null;
   onRemoveQueuedMessage: (id: string) => void;
+  latestMagiRun: ActiveMagiRunSummary | MagiRunSummary | null;
+  magiActivityPlacement: ReturnType<typeof resolveMagiActivityPlacement>;
+  onOpenMagi: () => void;
 }
 
 interface TimelineRowActivityState {
@@ -362,6 +370,66 @@ function TimelineLoadEarlierHeader({
     </div>
   );
 }
+function MagiActivityBox(props: {
+  readonly run: ActiveMagiRunSummary | MagiRunSummary;
+  readonly onOpen: () => void;
+}) {
+  const participantCount =
+    "rootThreadId" in props.run ? (props.run.participantCount ?? null) : null;
+  const totalTokens = "rootThreadId" in props.run ? (props.run.tokenCount ?? 0) : 0;
+  const title =
+    props.run.state === "succeeded"
+      ? "Magi reached consensus"
+      : props.run.state === "turn-limit-reached"
+        ? "Magi failed to reach consensus"
+        : props.run.state === "failed"
+          ? "Magi failed"
+          : props.run.state === "cancelled"
+            ? "Magi stopped"
+            : "Magi deliberating";
+  return (
+    <div className="w-full px-1 pb-2">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-sm transition hover:bg-accent/50"
+        onClick={props.onOpen}
+      >
+        <Network className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs text-muted-foreground">
+          {participantCount !== null ? (
+            <span>
+              {participantCount} participant{participantCount === 1 ? "" : "s"}
+            </span>
+          ) : null}
+          {totalTokens > 0 ? <span>Σ {totalTokens.toLocaleString()}</span> : null}
+          <span>
+            {props.run.completedMagiTurns} turn{props.run.completedMagiTurns === 1 ? "" : "s"}
+          </span>
+          <span className="text-info-foreground">
+            {isMagiRunTerminal(props.run.state) ? "View ▸" : "Open Magi ▸"}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function MagiTimelineActivitySlot(props: {
+  readonly rowId: string;
+  readonly position: "before" | "after";
+}) {
+  const ctx = use(TimelineRowCtx);
+  if (
+    ctx.latestMagiRun === null ||
+    ctx.magiActivityPlacement?.rowId !== props.rowId ||
+    ctx.magiActivityPlacement.position !== props.position
+  ) {
+    return null;
+  }
+  return <MagiActivityBox run={ctx.latestMagiRun} onOpen={ctx.onOpenMagi} />;
+}
+
 function TimelineListFooter({ composerInset }: { readonly composerInset: number }) {
   return (
     <div aria-hidden>
@@ -396,6 +464,8 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // ---------------------------------------------------------------------------
 
 interface MessagesTimelineProps {
+  latestMagiRun?: ActiveMagiRunSummary | MagiRunSummary | null;
+  onOpenMagi?: () => void;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -475,6 +545,8 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  latestMagiRun = null,
+  onOpenMagi = NOOP_OPEN_AGENTS,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -811,6 +883,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     queuedMessages,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
+  const magiActivityPlacement = useMemo(
+    () =>
+      latestMagiRun
+        ? resolveMagiActivityPlacement(
+            rows,
+            "startedAt" in latestMagiRun && typeof latestMagiRun.startedAt === "string"
+              ? latestMagiRun.startedAt
+              : null,
+          )
+        : null,
+    [latestMagiRun, rows],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -1176,6 +1260,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      latestMagiRun,
+      magiActivityPlacement,
+      onOpenMagi,
     }),
     [
       readyCitationRequest,
@@ -1212,6 +1299,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      latestMagiRun,
+      magiActivityPlacement,
+      onOpenMagi,
     ],
   );
   const backgroundWorktreeSetup =
@@ -1256,13 +1346,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         className="mx-auto w-full min-w-0 max-w-(--chat-max-width) overflow-x-clip"
         data-timeline-root="true"
       >
+        <MagiTimelineActivitySlot rowId={item.id} position="before" />
         <TimelineRowContent row={item} />
+        <MagiTimelineActivitySlot rowId={item.id} position="after" />
       </div>
     ),
     [],
   );
 
-  if (rows.length === 0 && !isWorking) {
+  if (rows.length === 0 && !isWorking && latestMagiRun === null) {
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
       // punch a hole through to the window chrome (white in light mode).

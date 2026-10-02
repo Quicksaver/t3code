@@ -21,6 +21,9 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  ProviderContextUsage,
+  ProviderMagiCapabilities,
+  OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -47,6 +50,7 @@ export interface ProviderAdapterCapabilities {
    * Declares whether changing the model on an existing session is supported.
    */
   readonly sessionModelSwitch: ProviderSessionModelSwitchMode;
+  readonly magi?: ProviderMagiCapabilities;
   /** Starts a resumed turn with no synthetic user prompt. Omitted means the
       adapter needs an explicit continuation instruction. */
   readonly promptlessTurnContinuation?: boolean;
@@ -64,7 +68,24 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+export interface ProviderNativeThreadContext {
+  readonly nativeThreadId: string;
+  readonly turnId: TurnId | null;
+  readonly instruction: string | null;
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+}
+
 export interface ProviderAdapterShape<TError> {
+  /** Verify native ancestry without loading conversation history. */
+  readonly verifyNativeThread?: (
+    threadId: ThreadId,
+    nativeThreadId: string,
+  ) => Effect.Effect<void, TError>;
+  /** Read a native descendant only after verifying its ancestry within this session. */
+  readonly readNativeThread?: (
+    threadId: ThreadId,
+    nativeThreadId: string,
+  ) => Effect.Effect<ProviderNativeThreadContext, TError>;
   /**
    * Provider kind implemented by this adapter.
    */
@@ -138,6 +159,11 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /** Current provider-native context usage for one logical session. */
+  readonly getContextUsage?: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ProviderContextUsage | null, TError>;
 
   /**
    * Upload a thread to the provider when the adapter supports feedback.

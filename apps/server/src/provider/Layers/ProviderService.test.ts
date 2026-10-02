@@ -20,6 +20,7 @@ import {
   EventId,
   MessageId,
   OrchestrationThreadShell,
+  OrchestrationThreadParentRelation,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
@@ -37,8 +38,8 @@ import { it, assert, describe, vi } from "@effect/vitest";
 import { afterAll } from "vite-plus/test";
 
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,7 @@ import {
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
@@ -301,8 +303,13 @@ function makeFakeCodexAdapter(
     },
   };
 
+  const emitEffect = (event: LegacyProviderRuntimeEvent) =>
+    PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent).pipe(
+      Effect.asVoid,
+    );
+
   const emit = (event: LegacyProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
+    Effect.runSync(emitEffect(event));
   };
 
   const updateSession = (
@@ -319,6 +326,7 @@ function makeFakeCodexAdapter(
   return {
     adapter,
     emit,
+    emitEffect,
     updateSession,
     startSession,
     sendTurn,
@@ -425,6 +433,15 @@ function makeProviderServiceLayer(
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
   const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
   const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+  const canonicalEventReceipts = new Map<EventId, Deferred.Deferred<void>>();
+  const registerCanonicalEventReceipt = (eventId: EventId) =>
+    Deferred.make<void>().pipe(
+      Effect.tap((receipt) =>
+        Effect.sync(() => {
+          canonicalEventReceipts.set(eventId, receipt);
+        }),
+      ),
+    );
   const registry =
     input.registry ??
     makeAdapterRegistryMock({
@@ -447,7 +464,20 @@ function makeProviderServiceLayer(
 
   const layer = it.layer(
     Layer.mergeAll(
-      makeProviderServiceLive().pipe(
+      makeProviderServiceLive({
+        canonicalEventLogger: {
+          filePath: "memory://provider-canonical-events",
+          write: (event) =>
+            Effect.gen(function* () {
+              const runtimeEvent = event as ProviderRuntimeEvent;
+              const receipt = canonicalEventReceipts.get(runtimeEvent.eventId);
+              if (receipt === undefined) return;
+              canonicalEventReceipts.delete(runtimeEvent.eventId);
+              yield* Deferred.succeed(receipt, undefined);
+            }),
+          close: () => Effect.void,
+        },
+      }).pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
@@ -472,6 +502,7 @@ function makeProviderServiceLayer(
     codex,
     claude,
     cursor,
+    registerCanonicalEventReceipt,
     layer,
   };
 }
@@ -1831,6 +1862,69 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("keeps Magi native compaction in the participant session until its completion", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("magi-compact-participant");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+        control: { executionProfile: "magi-read-only" },
+      });
+      const starts = routing.codex.startSession.mock.calls.length;
+      const turns = routing.codex.sendTurn.mock.calls.length;
+      const started = yield* Deferred.make<void>();
+      routing.codex.compactThread.mockImplementationOnce(() =>
+        Deferred.succeed(started, undefined).pipe(Effect.asVoid),
+      );
+      const compacting = yield* provider.compactThread(threadId).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      assert.equal(compacting.pollUnsafe(), undefined);
+
+      const events = yield* provider.subscribeEvents;
+      const foreignFiber = yield* events.pipe(Stream.runHead, Effect.forkChild);
+      routing.codex.emit({
+        type: "thread.state.changed",
+        eventId: asEventId("magi-foreign-compacted"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: asThreadId("magi-other-participant"),
+        payload: { state: "compacted" },
+      });
+      yield* Fiber.join(foreignFiber);
+      yield* Effect.yieldNow;
+      assert.equal(compacting.pollUnsafe(), undefined);
+      const ordinaryCompletionFiber = yield* events.pipe(Stream.runHead, Effect.forkChild);
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("magi-ordinary-turn-completed"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        turnId: asTurnId("magi-previous-turn"),
+        payload: { state: "completed" },
+      });
+      yield* Fiber.join(ordinaryCompletionFiber);
+      yield* Effect.yieldNow;
+      assert.equal(compacting.pollUnsafe(), undefined);
+      routing.codex.emit({
+        type: "thread.state.changed",
+        eventId: asEventId("magi-participant-compacted"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        payload: { state: "compacted" },
+      });
+      yield* Fiber.join(compacting);
+      assert.equal(routing.codex.startSession.mock.calls.length, starts);
+      assert.equal(routing.codex.sendTurn.mock.calls.length, turns);
+      assert.equal(routing.codex.compactThread.mock.calls.at(-1)?.[0], threadId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
   it.effect("preserves background turn boundaries when stopping before rollback recovery", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2687,6 +2781,41 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("clears the MCP session even when adapter shutdown fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-stop-failure"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-stop-failure"),
+        runtimeMode: "full-access",
+      });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: "environment" as never,
+        threadId: session.threadId,
+        providerSessionId: "provider-session",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1/mcp",
+        authorizationHeader: "Bearer test",
+        capabilities: new Set(["preview"]),
+      });
+      routing.codex.stopSession.mockImplementationOnce(() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: ProviderDriverKind.make("codex"),
+            method: "stopSession",
+            detail: "stop failed",
+          }),
+        ),
+      );
+
+      const exit = yield* Effect.exit(provider.stopSession({ threadId: session.threadId }));
+
+      assert.equal(Exit.isFailure(exit), true);
+      assert.equal(McpProviderSession.readMcpProviderSession(session.threadId), undefined);
+    }),
+  );
+
   it.effect("recovers stale persisted sessions for rollback by resuming thread identity", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -3001,12 +3130,70 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("persists runtime status transitions in provider_session_runtime", () =>
+  it.effect("does not resurrect a turn that completes before sendTurn returns", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
-      const threadId = asThreadId("thread-runtime-status");
+      const threadId = asThreadId("thread-synchronous-terminal");
+      const terminalEventId = asEventId("evt-synchronous-turn-completed");
+      const terminalEventReceipt = yield* routing.registerCanonicalEventReceipt(terminalEventId);
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* advanceTestClock(50);
+
+      routing.codex.sendTurn.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          yield* routing.codex.emitEffect({
+            type: "turn.completed",
+            eventId: terminalEventId,
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:01.000Z",
+            threadId: input.threadId,
+            turnId: asTurnId(`turn-${String(input.threadId)}`),
+            payload: { state: "completed" },
+          });
+          yield* Deferred.await(terminalEventReceipt);
+          return {
+            threadId: input.threadId,
+            turnId: asTurnId(`turn-${String(input.threadId)}`),
+          };
+        }),
+      );
+
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const completedRuntime = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(completedRuntime), true);
+      if (Option.isSome(completedRuntime)) {
+        const payload = completedRuntime.value.runtimePayload as {
+          readonly activeTurnId?: unknown;
+          readonly lastRuntimeEvent?: unknown;
+          readonly lastRuntimeEventAt?: unknown;
+        };
+        assert.equal(payload.activeTurnId, null);
+        assert.equal(payload.lastRuntimeEvent, "turn.completed");
+        assert.equal(payload.lastRuntimeEventAt, "2026-01-01T00:00:01.000Z");
+      }
+    }),
+  );
+
+  it.effect("clears the persisted active turn when a matching completion arrives later", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+
+      const threadId = asThreadId("thread-matching-terminal");
       const session = yield* provider.startSession(threadId, {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
@@ -3019,29 +3206,74 @@ routing.layer("ProviderServiceLive routing", (it) => {
         attachments: [],
       });
 
-      const runningRuntime = yield* runtimeRepository.getByThreadId({
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-current-turn-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId(`turn-${String(session.threadId)}`),
+        payload: { state: "completed" },
+      });
+      yield* advanceTestClock(50);
+
+      const completedRuntime = yield* runtimeRepository.getByThreadId({
         threadId: session.threadId,
       });
-      assert.equal(Option.isSome(runningRuntime), true);
-      if (Option.isSome(runningRuntime)) {
-        assert.equal(runningRuntime.value.status, "running");
-        assert.deepEqual(runningRuntime.value.resumeCursor, session.resumeCursor);
-        const payload = runningRuntime.value.runtimePayload;
-        assert.equal(payload !== null && typeof payload === "object", true);
-        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
-          const runtimePayload = payload as {
-            cwd: string;
-            model: string | null;
-            activeTurnId: string | null;
-            lastError: string | null;
-            lastRuntimeEvent: string | null;
-          };
-          assert.equal(runtimePayload.cwd, session.cwd);
-          assert.equal(runtimePayload.model, null);
-          assert.equal(runtimePayload.activeTurnId, `turn-${String(session.threadId)}`);
-          assert.equal(runtimePayload.lastError, null);
-          assert.equal(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
-        }
+      assert.equal(Option.isSome(completedRuntime), true);
+      if (Option.isSome(completedRuntime)) {
+        const payload = completedRuntime.value.runtimePayload as {
+          readonly activeTurnId?: unknown;
+          readonly lastRuntimeEvent?: unknown;
+          readonly lastRuntimeEventAt?: unknown;
+        };
+        assert.equal(payload.activeTurnId, null);
+        assert.equal(payload.lastRuntimeEvent, "turn.completed");
+        assert.equal(payload.lastRuntimeEventAt, "2026-01-01T00:00:02.000Z");
+      }
+    }),
+  );
+
+  it.effect("keeps the active turn when a stale completion arrives", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+
+      const threadId = asThreadId("thread-stale-terminal");
+      const session = yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* provider.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      routing.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-stale-turn-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId("turn-from-an-older-request"),
+        payload: { state: "completed" },
+      });
+      yield* advanceTestClock(50);
+
+      const afterStaleCompletion = yield* runtimeRepository.getByThreadId({
+        threadId: session.threadId,
+      });
+      assert.equal(Option.isSome(afterStaleCompletion), true);
+      if (Option.isSome(afterStaleCompletion)) {
+        const payload = afterStaleCompletion.value.runtimePayload as {
+          readonly activeTurnId?: unknown;
+          readonly lastRuntimeEvent?: unknown;
+        };
+        assert.equal(payload.activeTurnId, `turn-${String(session.threadId)}`);
+        assert.equal(payload.lastRuntimeEvent, "provider.sendTurn");
       }
     }),
   );
@@ -3368,6 +3600,34 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
     }),
   );
 
+  it.effect("retains events after explicit subscription acquisition and before consumption", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const session = yield* provider.startSession(asThreadId("thread-ready"), {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId: asThreadId("thread-ready"),
+        runtimeMode: "full-access",
+      });
+      const subscribedEvents = yield* provider.subscribeEvents;
+
+      fanout.codex.emit({
+        type: "turn.completed",
+        eventId: asEventId("evt-ready"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: session.threadId,
+        turnId: asTurnId("turn-ready"),
+        payload: { state: "completed" },
+      });
+      yield* advanceTestClock(50);
+
+      const event = yield* Stream.runHead(subscribedEvents);
+      assert.equal(Option.getOrThrow(event).type, "turn.completed");
+      assert.equal(Option.getOrThrow(event).turnId, asTurnId("turn-ready"));
+    }),
+  );
+
   it.effect("fans out canonical runtime events in emission order", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -3386,24 +3646,22 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       yield* advanceTestClock(50);
 
       fanout.codex.emit({
-        type: "tool.started",
+        type: "item.started",
         eventId: asEventId("evt-seq-1"),
         provider: ProviderDriverKind.make("codex"),
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        toolKind: "command",
-        title: "Ran command",
+        payload: { itemType: "command_execution", title: "Ran command" },
       });
       fanout.codex.emit({
-        type: "tool.completed",
+        type: "item.completed",
         eventId: asEventId("evt-seq-2"),
         provider: ProviderDriverKind.make("codex"),
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
-        toolKind: "command",
-        title: "Ran command",
+        payload: { itemType: "command_execution", title: "Ran command" },
       });
       fanout.codex.emit({
         type: "turn.completed",
@@ -3452,24 +3710,22 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
 
       const events: ReadonlyArray<LegacyProviderRuntimeEvent> = [
         {
-          type: "tool.completed",
+          type: "item.completed",
           eventId: asEventId("evt-ordered-1"),
           provider: ProviderDriverKind.make("codex"),
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          toolKind: "command",
-          title: "Ran command",
-          detail: "echo one",
+          payload: { itemType: "command_execution", title: "Ran command", detail: "echo one" },
         },
         {
-          type: "message.delta",
+          type: "content.delta",
           eventId: asEventId("evt-ordered-2"),
           provider: ProviderDriverKind.make("codex"),
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
-          delta: "hello",
+          payload: { streamKind: "assistant_text", delta: "hello" },
         },
         {
           type: "turn.completed",
@@ -5059,6 +5315,7 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
 });
 
 const decodeBrowserAccessThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeParticipantRelation = Schema.decodeUnknownEffect(OrchestrationThreadParentRelation);
 
 describe("agent browser access", () => {
   const projectId = ProjectId.make("project-browser-access");
@@ -5067,7 +5324,9 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: { readonly withoutOrchestration?: boolean; readonly recover?: boolean },
+    control?: ProviderSessionStartInput["control"],
+    onIssue?: (capabilities: ReadonlySet<string>) => void,
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5091,6 +5350,7 @@ describe("agent browser access", () => {
         listActivitiesByKind: () => Effect.die("unused"),
         getCommandReadModel: () => Effect.die("unused"),
         getSnapshot: () => Effect.die("unused"),
+        getThreadLineage: () => Effect.succeed([]),
         getShellSnapshot: () => Effect.die("unused"),
         getDeletedWorktreeThreads: () => Effect.die("unused"),
         listThreadsWithPullRequests: () => Effect.die("unused"),
@@ -5104,7 +5364,37 @@ describe("agent browser access", () => {
         getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
         getThreadCheckpointContext: () => Effect.die("unused"),
         getFullThreadDiffContext: () => Effect.die("unused"),
-        getThreadRuntimeContext: () => Effect.die("unused"),
+        getThreadRuntimeContext: (requestedThreadId) =>
+          Effect.gen(function* () {
+            assert.equal(requestedThreadId, threadId);
+            const parentRelation =
+              control?.executionProfile === "magi-read-only"
+                ? yield* decodeParticipantRelation({
+                    kind: "magi",
+                    rootThreadId: "magi-root",
+                    parentThreadId: "magi-root",
+                    runId: "magi-run",
+                    participantId: "reviewer",
+                    providerThreadId: "native-reviewer",
+                    depth: 1,
+                    startedAt: "2026-01-01T00:00:00.000Z",
+                    completedAt: null,
+                    status: "running",
+                  })
+                : undefined;
+            return Option.some({
+              id: threadId,
+              projectId,
+              title: "Recovery test",
+              modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+              branch: null,
+              worktreePath: null,
+              session: null,
+              parentRelation,
+            });
+          }).pipe(Effect.orDie),
         getThreadShellById: (requestedThreadId) =>
           Effect.gen(function* () {
             assert.equal(requestedThreadId, threadId);
@@ -5139,6 +5429,7 @@ describe("agent browser access", () => {
               threadId: request.threadId,
               capabilities: [...request.capabilities].toSorted(),
             });
+            onIssue?.(request.capabilities);
             return undefined;
           }),
       }).pipe(
@@ -5178,12 +5469,23 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
+          control,
         });
+        if (options?.recover) {
+          yield* codex.stopAll();
+          codex.startSession.mockClear();
+          yield* provider.sendTurn({ threadId, input: "Continue the review", attachments: [] });
+          assert.equal(codex.startSession.mock.calls.length, 1);
+          assert.equal(
+            codex.startSession.mock.calls[0]?.[0].control?.executionProfile,
+            control?.executionProfile,
+          );
+        }
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
@@ -5198,7 +5500,7 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith(false, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, [{ threadId, capabilities: ["magi-control", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5209,7 +5511,7 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith(true, threadId);
 
       assert.deepEqual(issued, [
-        { threadId, capabilities: ["device", "preview", "pull-requests"] },
+        { threadId, capabilities: ["device", "magi-control", "preview", "pull-requests"] },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
@@ -5220,7 +5522,9 @@ describe("agent browser access", () => {
 
       const issued = yield* startSessionWith({ browser: false, device: true }, threadId);
 
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "magi-control", "pull-requests"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5228,7 +5532,7 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off");
       const issued = yield* startSessionWith({ browser: true, device: false }, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["pull-requests"] }]);
+      assert.deepEqual(issued, [{ threadId, capabilities: ["magi-control", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5236,7 +5540,9 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-off-device-on");
       const issued = yield* startSessionWith(true, threadId, false);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "magi-control", "pull-requests"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5244,7 +5550,9 @@ describe("agent browser access", () => {
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, true);
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["magi-control", "preview", "pull-requests"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5254,7 +5562,9 @@ describe("agent browser access", () => {
       const issued = yield* startSessionWith({ browser: false, device: false }, threadId, {
         device: true,
       });
-      assert.deepEqual(issued, [{ threadId, capabilities: ["device", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "magi-control", "pull-requests"] },
+      ]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -5269,7 +5579,71 @@ describe("agent browser access", () => {
         { device: false },
         { withoutOrchestration: true },
       );
-      assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["magi-control", "preview", "pull-requests"] },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("gives Magi participants only the context artifact capability", () =>
+    Effect.gen(function* () {
+      const capabilities: Array<ReadonlySet<string>> = [];
+      yield* startSessionWith(
+        false,
+        asThreadId("thread-magi-participant"),
+        undefined,
+        undefined,
+        { executionProfile: "magi-read-only" },
+        (issued) => capabilities.push(issued),
+      );
+
+      assert.deepEqual([...capabilities[0]!], ["magi-context"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("restores the participant profile and context tools after its adapter stops", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-magi-recovery");
+      const issued = yield* startSessionWith(
+        true,
+        threadId,
+        undefined,
+        { recover: true },
+        {
+          executionProfile: "magi-read-only",
+        },
+      );
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["magi-context"] },
+        { threadId, capabilities: ["magi-context"] },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps ordinary agent capabilities when recovering an ordinary conversation", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-ordinary-recovery");
+      const issued = yield* startSessionWith(true, threadId, undefined, { recover: true });
+      assert.deepEqual(issued, [
+        { threadId, capabilities: ["device", "magi-control", "preview", "pull-requests"] },
+        { threadId, capabilities: ["device", "magi-control", "preview", "pull-requests"] },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("issues root Magi control only when the turn enables it", () =>
+    Effect.gen(function* () {
+      const capabilities: Array<ReadonlySet<string>> = [];
+      yield* startSessionWith(
+        false,
+        asThreadId("thread-magi-root"),
+        undefined,
+        undefined,
+        { magiControlEnabled: true },
+        (issued) => capabilities.push(issued),
+      );
+
+      assert.deepEqual([...capabilities[0]!].toSorted(), ["magi-control", "pull-requests"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

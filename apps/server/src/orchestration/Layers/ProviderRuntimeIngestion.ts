@@ -2729,6 +2729,7 @@ const make = Effect.gen(function* () {
     start,
     // The diff worker feeds the lifecycle worker, so drain it first.
     drain: diffWorker.drain.pipe(Effect.andThen(worker.drain)),
+    settle: worker.settle,
   } satisfies ProviderRuntimeIngestionShape;
 });
 

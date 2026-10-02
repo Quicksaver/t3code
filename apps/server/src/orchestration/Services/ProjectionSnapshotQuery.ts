@@ -71,6 +71,8 @@ export type ProjectionThreadPullRequests = Pick<
 >;
 
 export interface ProjectionThreadDetailQuery {
+  /** Skip pull-request enrichment and its Git identity lookup for content-only consumers. */
+  readonly includePullRequests?: boolean;
   /**
    * Limit activities before SQLite returns and decodes their payloads.
    * Any explicit filter omits pinned-request reads. An empty list also skips
@@ -83,6 +85,11 @@ export interface ProjectionThreadDetailQuery {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /** Read conversation ownership without resolving projects or hydrating sidebar state. */
+  readonly getThreadLineage: () => Effect.Effect<
+    ReadonlyArray<Pick<OrchestrationThread, "id" | "modelSelection" | "parentRelation">>,
+    ProjectionRepositoryError
+  >;
   /** Read the latest request or resolution without loading the thread history. */
   readonly getUserInputActivity: (input: {
     readonly threadId: ThreadId;
@@ -256,7 +263,10 @@ export interface ProjectionSnapshotQueryShape {
     threadId: ThreadId,
   ) => Effect.Effect<
     Option.Option<
-      Pick<OrchestrationThreadShell, "id" | "projectId" | "title" | "titleState" | "session">
+      Pick<
+        OrchestrationThread,
+        "id" | "projectId" | "title" | "titleState" | "session" | "parentRelation"
+      >
     >,
     ProjectionRepositoryError
   >;

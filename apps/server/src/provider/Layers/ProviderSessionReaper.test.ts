@@ -214,6 +214,7 @@ describe("ProviderSessionReaper", () => {
         });
       },
       rollbackConversation: () => unsupported(),
+      subscribeEvents: Effect.succeed(Stream.empty),
       uploadFeedback: () => unsupported(),
       streamEvents: Stream.empty,
     };
@@ -237,6 +238,7 @@ describe("ProviderSessionReaper", () => {
           listActivitiesByKind: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.die("unused"),
           getSnapshot: () => Effect.die("unused"),
+          getThreadLineage: () => Effect.succeed([]),
           getShellSnapshot: () => Effect.die("unused"),
           getDeletedWorktreeThreads: () => Effect.die("unused"),
           listThreadsWithPullRequests: () => Effect.die("unused"),

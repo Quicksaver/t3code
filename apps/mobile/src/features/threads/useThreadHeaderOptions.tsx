@@ -18,11 +18,13 @@ export function useThreadHeaderOptions(props: {
   readonly usesNativeHeaderGlass: boolean;
   readonly gitControls: Parameters<typeof ThreadGitControls>[0];
   readonly onReturnToThread?: () => void;
+  readonly onOpenMagi?: () => void;
 }) {
   const navigation = useNavigation();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
-  const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
-  const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
+  const gitControls = { ...props.gitControls, onOpenMagi: props.onOpenMagi };
+  const threadCenterHeaderItems = useThreadGitCenterHeaderItems(gitControls);
+  const compactRightHeaderItems = useThreadGitRightHeaderItems(gitControls);
   const splitLeftHeaderItems = useMemo<NativeHeaderItems>(
     () => [
       {
@@ -113,7 +115,7 @@ export function useThreadHeaderOptions(props: {
     sidebar: false,
     fallback:
       !layout.usesSplitView && !props.usesNativeHeaderGlass ? (
-        <ThreadGitControls {...props.gitControls} showActionControls />
+        <ThreadGitControls {...gitControls} showActionControls />
       ) : null,
   };
 }

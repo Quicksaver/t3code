@@ -623,7 +623,11 @@ const program = Effect.gen(function* () {
       promptCount += 1;
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
-        request.prompt.some((part) => part.type === "text" && part.text === "crash now")
+        request.prompt.some(
+          (part) =>
+            part.type === "text" &&
+            part.text === (process.env.T3_ACP_CRASH_PROMPT_TEXT ?? "crash now"),
+        )
       ) {
         return yield* Effect.sync(() => process.exit(23));
       }

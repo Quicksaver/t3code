@@ -75,6 +75,22 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface MagiRunTitleGenerationInput {
+  cwd: string;
+  initiatingInstruction: string;
+  objective: string | null;
+  modelSelection: ModelSelection;
+}
+
+export interface TextGenerationService {
+  generateCommitMessage(
+    input: CommitMessageGenerationInput,
+  ): Promise<CommitMessageGenerationResult>;
+  generatePrContent(input: PrContentGenerationInput): Promise<PrContentGenerationResult>;
+  generateBranchName(input: BranchNameGenerationInput): Promise<BranchNameGenerationResult>;
+  generateThreadTitle(input: ThreadTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+  generateMagiRunTitle(input: MagiRunTitleGenerationInput): Promise<ThreadTitleGenerationResult>;
+}
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -105,6 +121,9 @@ export class TextGeneration extends Context.Service<
     /** Generate a concise thread title from a first message or thread history. */
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
+    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+    readonly generateMagiRunTitle?: (
+      input: MagiRunTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
@@ -163,6 +182,16 @@ export const make = Effect.gen(function* () {
                 ),
               ));
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
+          }),
+        ),
+      ),
+    generateMagiRunTitle: (input) =>
+      resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateThreadTitle({
+            cwd: input.cwd,
+            modelSelection: input.modelSelection,
+            message: `Write only a short, specific noun phrase naming this run's subject. Base it on the initiating instruction and focused objective. Exclude Magi, models, participants, consensus mechanics, tools, and completion status.\n\nInitiating instruction:\n${input.initiatingInstruction}\n\nFocused objective:\n${input.objective ?? "Not separately specified."}`,
           }),
         ),
       ),
