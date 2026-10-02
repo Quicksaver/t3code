@@ -199,10 +199,9 @@ it.effect("adds safe request context while bounding GitHub CLI causes", () =>
 
 it.effect("lists change request history through the batched head lookup", () =>
   Effect.gen(function* () {
-    let lookup: Parameters<GitHubCli.GitHubCli["Service"]["listPullRequestsByHead"]>[0] | null =
-      null;
+    let lookup: Parameters<GitHubCli.GitHubCli["Service"]["listPullRequests"]>[0] | null = null;
     const provider = yield* makeProvider({
-      listPullRequestsByHead: (input) => {
+      listPullRequests: (input) => {
         lookup = input;
         return Effect.succeed([
           {
@@ -248,26 +247,23 @@ it.effect("lists change request history through the batched head lookup", () =>
   }),
 );
 
-it.effect("lists repository-wide history without passing an empty head selector", () =>
+it.effect("routes repository-wide history through the CLI history reader", () =>
   Effect.gen(function* () {
-    let command: Parameters<GitHubCli.GitHubCli["Service"]["execute"]>[0] | undefined;
+    let lookup: Parameters<GitHubCli.GitHubCli["Service"]["listPullRequests"]>[0] | undefined;
     const provider = yield* makeProvider({
-      execute: (input) => {
-        command = input;
-        return Effect.succeed(
-          processResult(
-            JSON.stringify([
-              {
-                number: 8,
-                title: "Merged work",
-                url: "https://enterprise.test/acme/web/pull/8",
-                baseRefName: "main",
-                headRefName: "feature/merged",
-                state: "MERGED",
-              },
-            ]),
-          ),
-        );
+      listPullRequests: (input) => {
+        lookup = input;
+        return Effect.succeed([
+          {
+            number: 8,
+            title: "Merged work",
+            url: "https://enterprise.test/acme/web/pull/8",
+            baseRefName: "main",
+            headRefName: "feature/merged",
+            state: "merged",
+            updatedAt: Option.none(),
+          },
+        ]);
       },
     });
     const requests = yield* provider.listChangeRequests({
@@ -279,14 +275,13 @@ it.effect("lists repository-wide history without passing an empty head selector"
       },
       state: "all",
     });
-    assert.strictEqual(command?.rateLimitHost, "enterprise.test:8443");
-    assert.deepStrictEqual(command?.args.slice(0, 4), [
-      "pr",
-      "list",
-      "--repo",
-      "enterprise.test:8443/acme/web",
-    ]);
-    assert.strictEqual(command?.args.includes("--head"), false);
+    assert.deepStrictEqual(lookup, {
+      cwd: "/repo",
+      repository: "enterprise.test:8443/acme/web",
+      state: "all",
+      limit: 20,
+      rateLimitHost: "enterprise.test:8443",
+    });
     assert.strictEqual(requests[0]?.state, "merged");
   }),
 );

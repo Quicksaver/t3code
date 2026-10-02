@@ -3,13 +3,11 @@ import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import type { ChangeRequest } from "@t3tools/contracts";
 
 import * as GitHubCli from "./GitHubCli.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 import { findAuthenticatedGitHubAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
-import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import {
   combinedAuthOutput,
@@ -188,68 +186,40 @@ export const make = Effect.gen(function* () {
                 "github",
               ),
             };
-      const lookup = input.headSelector
-        ? github.listPullRequestsByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? 20,
-            ...rateLimitHost,
-          })
-        : github
-            .execute({
-              cwd: input.cwd,
-              ...rateLimitHost,
-              args: [
-                "pr",
-                "list",
-                ...(repository ? ["--repo", repository] : []),
-                "--state",
-                input.state,
-                "--limit",
-                String(input.limit ?? 20),
-                "--json",
-                "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-              ],
-            })
-            .pipe(
-              Effect.flatMap((result) => {
-                const raw = result.stdout.trim();
-                if (raw.length === 0) return Effect.succeed([]);
-                const decoded = decodeGitHubPullRequestListJson(raw);
-                return Result.isSuccess(decoded)
-                  ? Effect.succeed(decoded.success)
-                  : Effect.fail(
-                      new GitHubCli.GitHubChangeRequestListDecodeError({
-                        command: "gh",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    );
+      return github
+        .listPullRequests({
+          cwd: input.cwd,
+          ...(input.headSelector
+            ? { headSelector: input.headSelector }
+            : repository
+              ? { repository }
+              : {}),
+          state: input.state,
+          limit: input.limit ?? 20,
+          ...rateLimitHost,
+        })
+        .pipe(
+          Effect.map((items) =>
+            items.map(({ updatedAt, ...summary }) => ({
+              ...toChangeRequest({
+                ...summary,
+                ...(Option.isSome(updatedAt)
+                  ? { updatedAt: DateTime.formatIso(updatedAt.value) }
+                  : {}),
               }),
-            );
-      return lookup.pipe(
-        Effect.map((items) =>
-          items.map(({ updatedAt, ...summary }) => ({
-            ...toChangeRequest({
-              ...summary,
-              ...(Option.isSome(updatedAt)
-                ? { updatedAt: DateTime.formatIso(updatedAt.value) }
-                : {}),
+              updatedAt,
+            })),
+          ),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: "github",
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              ...(input.headSelector ? { reference: input.headSelector } : {}),
+              error,
             }),
-            updatedAt,
-          })),
-        ),
-        Effect.mapError((error) =>
-          SourceControlProvider.sourceControlProviderError({
-            provider: "github",
-            operation: "listChangeRequests",
-            cwd: input.cwd,
-            ...(input.headSelector ? { reference: input.headSelector } : {}),
-            error,
-          }),
-        ),
-      );
+          ),
+        );
     };
 
   const readLinkSubject = Effect.fn("GitHubSourceControlProvider.readLinkSubject")(function* (
