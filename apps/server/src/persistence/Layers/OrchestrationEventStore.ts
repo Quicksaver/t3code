@@ -63,6 +63,19 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   metadata: EventMetadataFromJsonString,
 });
 
+const hasRetiredSubagentParent = Schema.is(
+  Schema.Struct({ parentRelation: Schema.Struct({ kind: Schema.Literal("subagent") }) }),
+);
+
+const decodePersistedEvent = (row: typeof OrchestrationEventPersistedRowSchema.Type) =>
+  decodeEvent(
+    // Retired subagent threads remain readable as ordinary conversations. Keep
+    // their original lineage in storage without admitting it in new commands.
+    row.type === "thread.created" && hasRetiredSubagentParent(row.payload)
+      ? { ...row, payload: { ...row.payload, parentRelation: undefined } }
+      : row,
+  );
+
 const HasEventAfterRequestSchema = Schema.Struct({
   aggregateKind: Schema.String,
   aggregateId: Schema.String,
@@ -307,7 +320,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodePersistedEvent(row).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
                 ),
@@ -376,7 +389,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodePersistedEvent(row).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readAggregateRange:rowToEvent"),
                 ),

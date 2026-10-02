@@ -20,6 +20,7 @@ import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts"
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
 const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 function messageEvent(threadId: ThreadId, id: string): Omit<OrchestrationEvent, "sequence"> {
   const now = "2026-01-01T00:00:00.000Z";
@@ -51,6 +52,77 @@ const layer = it.layer(
 );
 
 layer("OrchestrationEventStore", (it) => {
+  it.effect("replays stored subagent lineage without reviving retired threading", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const parentRelation = {
+        kind: "subagent",
+        rootThreadId: "root-thread",
+        parentThreadId: "root-thread",
+        providerThreadId: "provider-child",
+        depth: 1,
+        startedAt: now,
+        completedAt: null,
+        status: "running",
+        parentTurnId: "parent-turn",
+        parentItemId: "spawn-tool",
+      };
+      const payload = {
+        threadId: "historical-child",
+        projectId: "historical-project",
+        title: "Historical conversation",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        branch: null,
+        worktreePath: null,
+        parentRelation,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const payloadJson = yield* encodeUnknownJson(payload);
+      const rows = yield* sql<{ readonly sequence: number }>`
+          INSERT INTO orchestration_events (
+            event_id, aggregate_kind, stream_id, stream_version, event_type,
+            occurred_at, actor_kind, payload_json, metadata_json
+          ) VALUES (
+            'historical-create', 'thread', 'historical-child', 0, 'thread.created',
+            ${now}, 'provider', ${payloadJson}, '{}'
+          ) RETURNING sequence
+        `;
+      const sequence = rows[0]!.sequence;
+      const readers = [
+        store.readFromSequence(0, 10),
+        store.readAggregateRange({
+          aggregateKind: "thread",
+          aggregateId: "historical-child",
+          fromSequenceExclusive: 0,
+          toSequenceInclusive: sequence,
+        }),
+      ];
+      for (const reader of readers) {
+        const result = yield* reader.pipe(Stream.runCollect, Effect.result);
+        assert.equal(result._tag, "Success");
+        if (result._tag !== "Success") continue;
+        assert.equal(result.success.length, 1);
+        const event = result.success[0]!;
+        assert.equal(event.type, "thread.created");
+        assert.equal(event.sequence, sequence);
+        if (event.type !== "thread.created") continue;
+        assert.equal(event.payload.title, payload.title);
+        assert.equal(Reflect.get(event.payload, "parentRelation"), undefined);
+      }
+      const stored = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_events WHERE sequence = ${sequence}
+        `;
+      assert.equal(stored[0]!.payload_json, payloadJson);
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(OrchestrationEventStoreLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))),
+      ),
+    ),
+  );
+
   it.effect("stores json columns as strings and replays CLI-origin events", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;

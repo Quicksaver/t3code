@@ -9,7 +9,7 @@ import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
 
-import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+import { DEV_PROXIED_PATH_PREFIXES, resolveDevProxyTarget } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -85,41 +85,11 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
-function resolveDevProxyTarget(
-  backendPort: string | undefined,
-  wsUrl: string | undefined,
-): string | undefined {
-  // Browser dev is single-origin: the backend port is proxied through this
-  // server so the app works from any origin (localhost, tailnet, LAN, phone).
-  // T3CODE_PORT is set by scripts/dev-runner.ts for every non-desktop mode.
-  const port = Number(backendPort?.trim());
-  if (Number.isInteger(port) && port > 0) {
-    return `http://localhost:${port}/`;
-  }
-
-  // dev:desktop still points the renderer straight at the backend, so fall
-  // back to deriving the target from the explicit websocket URL.
-  if (!wsUrl) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(wsUrl);
-    if (url.protocol === "ws:") {
-      url.protocol = "http:";
-    } else if (url.protocol === "wss:") {
-      url.protocol = "https:";
-    }
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
+const devProxyTarget = resolveDevProxyTarget(
+  process.env.T3CODE_PORT,
+  configuredWsUrl,
+  process.env.T3CODE_HOST,
+);
 
 // Vite's dev server sends JS uncompressed. On localhost that is free; over a
 // shared origin (tailnet, LAN) it is the whole cold-start: bundled dev serves

@@ -9,7 +9,7 @@
  * could not remove.
  *
  * Because browser dev is single-origin (Vite proxies the backend — see
- * `resolveDevProxyTarget` in apps/web/vite.config.ts), one proxy rule covering
+ * `resolveDevProxyTarget` in packages/shared/src/devProxy.ts), one proxy rule covering
  * the web port is enough; the backend needs no mapping of its own.
  */
 
@@ -192,16 +192,10 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     });
   }
 
-  // Proxy to the hostname Vite binds rather than the package default of
-  // 127.0.0.1. Vite listens on `localhost`, which Node 17+ resolves to `::1`
-  // first, so it only binds the IPv6 loopback and a 127.0.0.1 target has
-  // nothing behind it (tailscale answers 502). Passing `localhost` lets the
-  // tailscale proxy resolve it the same way Node did. Not a literal `[::1]`:
-  // tailscale rejects that form.
   yield* ensureTailscaleServe({
+    localHost: "localhost",
     localPort: input.webPort,
     servePort: input.webPort,
-    localHost: "localhost",
   }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);
