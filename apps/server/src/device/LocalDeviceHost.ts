@@ -46,6 +46,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { deviceHubWindowsImport } from "./deviceHubWindows.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -363,6 +364,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         ChildProcess.make(
           nodePath,
           [
+            ...(hostPlatform === "win32" ? ["--import", deviceHubWindowsImport] : []),
             hubTool.entryPath,
             "--port",
             String(port),

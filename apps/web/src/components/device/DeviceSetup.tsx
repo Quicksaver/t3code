@@ -19,6 +19,10 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+// Ready hosts retain usable devices while detail reports incomplete discovery.
+export const isDiscoveryLimited = (state: DeviceServiceState) =>
+  Object.values(state.hostStatuses).some((host) => host.status === "ready" && Boolean(host.detail));
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
   const availability = state.hosts
     .flatMap((host) => host.platforms)
@@ -33,6 +37,13 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
     state.hostStatus === "ready" &&
     !state.devices.some((device) => device.platform === platform)
   ) {
+    if (platform === "android" && isDiscoveryLimited(state)) {
+      return {
+        ready: false,
+        message:
+          "The Android device list may be incomplete. See the device host diagnostics, then check again.",
+      };
+    }
     return {
       ready: false,
       message:

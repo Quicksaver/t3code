@@ -20,7 +20,7 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup } from "./DeviceSetup";
+import { DeviceSetup, isDiscoveryLimited } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -139,6 +139,7 @@ export function DevicePanel(props: {
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
+  const discoveryLimited = isDiscoveryLimited(state);
   const hostBusy =
     !hostReady &&
     Object.values(state.hostStatuses).some(
@@ -167,14 +168,19 @@ export function DevicePanel(props: {
 
   return (
     <PreviewPanelShell mode={props.mode}>
-      {hostReady && !activeDevice && state.hostStatusDetail ? (
-        <div
-          role="status"
-          className="whitespace-pre-line border-b px-3 py-2 text-xs text-muted-foreground"
-        >
-          {state.hostStatusDetail}
-        </div>
-      ) : null}
+      {!activeDevice &&
+        state.hosts.map((host) => {
+          const status = state.hostStatuses[host.id];
+          return status?.status === "ready" && status.detail ? (
+            <div
+              key={host.id}
+              role="status"
+              className="whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
+            >
+              {host.label}: {status.detail}
+            </div>
+          ) : null;
+        })}
       <DeviceHostUpdates state={state} environmentId={environmentId} />
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
@@ -206,7 +212,7 @@ export function DevicePanel(props: {
             hostLabel={
               state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
             }
-            hostDiagnostics={state.hostStatusDetail}
+            hostDiagnostics={state.hostStatuses[activeDevice.hostId]?.detail}
             visible={props.visible}
             onFloat={floatActive}
             onClose={() => closeActive(false)}
@@ -245,7 +251,9 @@ export function DevicePanel(props: {
                   <p className="max-w-sm">
                     {state.hostStatus === "failed"
                       ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                      : "No simulators or emulators were found on this environment."}
+                      : discoveryLimited
+                        ? "Device discovery is incomplete. See the host diagnostics above."
+                        : "No simulators or emulators were found on this environment."}
                   </p>
                 </>
               ) : null}
@@ -288,6 +296,7 @@ export function DevicePanel(props: {
                 </div>
               ) : null}
               {hostReady &&
+              !discoveryLimited &&
               !state.devices.some((device) => device.platform === "android") &&
               !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                 <p className="max-w-sm text-xs">
