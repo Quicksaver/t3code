@@ -139,7 +139,11 @@ describe("worktree-baseline", () => {
       expect(reclamationChecks).not.toContain(true);
     } finally {
       gate.open();
-      await Promise.all(pending);
+      try {
+        await Promise.all(pending);
+      } finally {
+        await Promise.allSettled(pending);
+      }
     }
   });
 
