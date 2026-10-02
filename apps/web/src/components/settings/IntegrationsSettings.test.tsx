@@ -132,6 +132,46 @@ const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceService
 });
 
 describe("device setup guidance", () => {
+  it.each(["local", "remote"])(
+    "keeps Android availability uncertain after a discovery warning on %s",
+    (hostId) => {
+      const state = deviceState({
+        hostStatuses: {
+          local: { status: "ready" },
+          [hostId]: { status: "ready", detail: "A device inventory could not be inspected." },
+        },
+      });
+      const android = platformSetupStatus(state, "android");
+      expect(android.ready).toBe(false);
+      expect(android.message).toContain("may be incomplete");
+      expect(android.message).not.toContain("Device Manager");
+      expect(platformSetupStatus(state, "ios").message).toContain("Xcode Settings");
+
+      const recovered = deviceState({
+        hostStatuses: { local: { status: "ready" }, [hostId]: { status: "ready" } },
+      });
+      expect(platformSetupStatus(recovered, "android").message).toContain("Device Manager");
+    },
+  );
+
+  it("keeps discovered Android devices available while discovery is limited", () => {
+    const state = deviceState({
+      hostStatuses: { local: { status: "ready", detail: "Stopped devices could not be listed." } },
+      devices: [
+        {
+          hostId: "local",
+          id: "phone-1",
+          name: "Pixel",
+          platform: "android",
+          version: "36",
+          booted: true,
+          physical: true,
+        },
+      ],
+    });
+    expect(platformSetupStatus(state, "android").ready).toBe(true);
+  });
+
   it("directs users to install an iOS runtime and create an Android virtual device", () => {
     expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
     expect(platformSetupStatus(deviceState(), "android").message).toContain("Device Manager");
