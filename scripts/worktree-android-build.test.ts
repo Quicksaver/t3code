@@ -13,6 +13,7 @@ import {
   executeAndroidBuild,
   isNinjaDirtyManifestFailure,
   removeScopedAndroidCmakeState,
+  resolveExpoCliFromMobile,
 } from "./worktree-android-build.ts";
 
 const result = (exitCode: number, ninjaManifestDirty = false) => ({
@@ -50,6 +51,29 @@ const operations = (
 };
 
 describe("worktree-android-build", () => {
+  it("resolves Expo again after dependencies move from mobile to the hoisted root", async () => {
+    const worktree = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-expo-layout-"));
+    const mobile = NodePath.join(worktree, "apps", "mobile");
+    const original = NodePath.join(mobile, "node_modules", "expo");
+    const hoisted = NodePath.join(worktree, "node_modules", "expo");
+    try {
+      await NodeFSP.mkdir(NodePath.join(original, "bin"), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(mobile, "package.json"), "{}");
+      await NodeFSP.writeFile(NodePath.join(original, "package.json"), '{"name":"expo"}');
+      await NodeFSP.writeFile(NodePath.join(original, "bin", "cli"), "// Expo CLI fixture");
+      expect(await resolveExpoCliFromMobile(worktree)).toBe(
+        await NodeFSP.realpath(NodePath.join(original, "bin", "cli")),
+      );
+      await NodeFSP.mkdir(NodePath.dirname(hoisted), { recursive: true });
+      await NodeFSP.rename(original, hoisted);
+      expect(await resolveExpoCliFromMobile(worktree)).toBe(
+        await NodeFSP.realpath(NodePath.join(hoisted, "bin", "cli")),
+      );
+    } finally {
+      await NodeFSP.rm(worktree, { recursive: true, force: true });
+    }
+  });
+
   it("refreshes the shared ABI policy without duplicating Gradle setup or editing source files", async () => {
     const worktree = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-android-abi-"));
     const android = NodePath.join(worktree, "apps", "mobile", "android");

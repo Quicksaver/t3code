@@ -14,6 +14,30 @@ import {
 } from "./worktree-android-dependencies.ts";
 
 describe("worktree-android-dependencies", () => {
+  it("rediscovers Expo autolinking after the dependency layout changes", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-autolinking-layout-"));
+    const mobile = NodePath.join(root, "apps", "mobile");
+    const original = NodePath.join(mobile, "node_modules", "expo");
+    const hoisted = NodePath.join(root, "node_modules", "expo");
+    const autolinking = NodePath.join(original, "node_modules", "expo-modules-autolinking");
+    try {
+      await NodeFSP.mkdir(NodePath.join(autolinking, "bin"), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(mobile, "package.json"), "{}");
+      await NodeFSP.writeFile(NodePath.join(original, "package.json"), '{"name":"expo"}');
+      await NodeFSP.writeFile(NodePath.join(autolinking, "package.json"), "{}");
+      await NodeFSP.writeFile(
+        NodePath.join(autolinking, "bin", "expo-modules-autolinking.js"),
+        'console.log(JSON.stringify(process.argv[2] === "resolve" ? { modules: [] } : { dependencies: {} }));',
+      );
+      await expect(androidNativeSourceDirectories(root)).resolves.toEqual([]);
+      await NodeFSP.mkdir(NodePath.dirname(hoisted), { recursive: true });
+      await NodeFSP.rename(original, hoisted);
+      await expect(androidNativeSourceDirectories(root)).resolves.toEqual([]);
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prepares an isolated layout once and reuses it on subsequent ensures", async () => {
     let layout = "isolated";
     let installs = 0;

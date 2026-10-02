@@ -2,7 +2,6 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
@@ -13,6 +12,7 @@ import {
   prepareAndroidDependencies,
   ANDROID_INSTALL_ENV,
   androidNativeSourceDirectories,
+  resolveExpoPackage,
 } from "./worktree-android-dependencies.ts";
 
 const OUTPUT_TAIL_LIMIT = 64 * 1024;
@@ -75,10 +75,7 @@ const pnpmInvocation = (args: readonly string[]): { command: string; args: reado
 });
 
 export const resolveExpoCliFromMobile = async (worktree: string): Promise<string> => {
-  const mobileRequire = NodeModule.createRequire(
-    NodePath.join(worktree, "apps", "mobile", "package.json"),
-  );
-  const expoRoot = NodePath.dirname(mobileRequire.resolve("expo/package.json"));
+  const expoRoot = NodePath.dirname(resolveExpoPackage(worktree, "expo/package.json"));
   return NodeFSP.realpath(NodePath.join(expoRoot, "bin", "cli"));
 };
 

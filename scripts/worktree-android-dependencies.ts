@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - This standalone host utility prepares dependencies before Android verification starts.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
@@ -138,15 +137,34 @@ export const assertShortAndroidNativePaths = async (
   }
 };
 
+/** Resolve against the current layout after installs invalidate Node's cached package paths. */
+export const resolveExpoPackage = (worktree: string, packageName: string): string => {
+  const mobile = NodePath.join(worktree, "apps", "mobile");
+  const result = NodeChildProcess.spawnSync(
+    NodeProcess.execPath,
+    [
+      "--eval",
+      `const { createRequire } = require("node:module");
+const mobileRequire = createRequire(process.argv[1]);
+const expoRequire = createRequire(mobileRequire.resolve("expo/package.json"));
+console.log(expoRequire.resolve(process.argv[2]));`,
+      NodePath.join(mobile, "package.json"),
+      packageName,
+    ],
+    { cwd: mobile, encoding: "utf8", windowsHide: true },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Expo package resolution failed: ${result.stderr}`);
+  return result.stdout.trim();
+};
+
 /** Read the native source directories selected by the target checkout's own Expo autolinker. */
 export const androidNativeSourceDirectories = async (
   worktree: string,
   readConfig: (command: "react-native-config" | "resolve") => string = (command) => {
     const mobile = NodePath.join(worktree, "apps", "mobile");
-    const mobileRequire = NodeModule.createRequire(NodePath.join(mobile, "package.json"));
-    const expoRequire = NodeModule.createRequire(mobileRequire.resolve("expo/package.json"));
     const autolinking = NodePath.join(
-      NodePath.dirname(expoRequire.resolve("expo-modules-autolinking/package.json")),
+      NodePath.dirname(resolveExpoPackage(worktree, "expo-modules-autolinking/package.json")),
       "bin",
       "expo-modules-autolinking.js",
     );
