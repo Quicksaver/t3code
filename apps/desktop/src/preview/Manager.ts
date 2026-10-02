@@ -447,6 +447,7 @@ interface ManagedListeners {
 type FrameCaptureConsumer = "picture-in-picture" | "recording";
 
 interface FrameCaptureSession {
+  readonly recordingGeneration?: symbol;
   readonly recordingInputOptions?: RecordingInputOptions;
   readonly scope: Scope.Closeable | null;
   readonly consumers: ReadonlySet<FrameCaptureConsumer>;
@@ -1736,15 +1737,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     displayWake.lastActivityAt = yield* currentMillis;
     if (tabId !== null) displayWake.automationTabIds.add(tabId);
-    if (displayWake.blockerId !== null) return;
-    const started = yield* Effect.try(() => powerSaveBlocker.start("prevent-display-sleep")).pipe(
+    const started = yield* Effect.try(() => {
+      if (displayWake.blockerId !== null) return null;
+      return (displayWake.blockerId = powerSaveBlocker.start("prevent-display-sleep"));
+    }).pipe(
       Effect.tapError((cause) =>
         Effect.logWarning("Preview automation could not start the display-sleep block.", { cause }),
       ),
       Effect.option,
     );
-    if (Option.isNone(started)) return;
-    displayWake.blockerId = started.value;
+    if (Option.isNone(started) || started.value === null) return;
     yield* Effect.logDebug("Preview automation started the display-sleep block.", {
       blockerId: started.value,
       reason,
@@ -4041,6 +4043,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const startRecordingOperation = Effect.fn("PreviewManager.startRecordingOperation")(function* (
     tabId: string,
+    recordingGeneration: symbol,
     options: RecordingInputOptions = DEFAULT_RECORDING_INPUT_OPTIONS,
   ) {
     if ((yield* Ref.get(closingTabIdsRef)).has(tabId)) {
@@ -4053,7 +4056,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) =>
           replaceMap(sessions, (copy) => {
             const current = copy.get(tabId);
-            if (current) copy.set(tabId, { ...current, recordingInputOptions: options });
+            if (current)
+              copy.set(tabId, { ...current, recordingGeneration, recordingInputOptions: options });
           }),
         );
         const wc = yield* requireWebContents(tabId);
@@ -4115,8 +4119,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     timeoutMs?: number,
   ) {
     yield* noteAutomationActivity(tabId, "recordingStart");
-    if (timeoutMs === undefined) return yield* startRecordingOperation(tabId, options);
-    const startFiber = yield* Effect.forkIn(startRecordingOperation(tabId, options), parentScope);
+    const recordingGeneration = Symbol();
+    const start = startRecordingOperation(tabId, recordingGeneration, options);
+    if (timeoutMs === undefined) return yield* start;
+    const startFiber = yield* Effect.forkIn(start, parentScope);
     const result = yield* Fiber.await(startFiber).pipe(
       Effect.timeoutOption(automationExecutionBudget(timeoutMs)),
     );
@@ -4129,9 +4135,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Effect.andThen(
           withTabLifecycleLock(
             tabId,
-            Effect.suspend(() => {
+            Effect.gen(function* () {
+              // A retry may acquire this lock while interruption finishes. Only
+              // the capture owned by the expired start can be cleaned up here.
+              const current = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+              if (current?.recordingGeneration !== recordingGeneration) return;
               clearPendingRecording(tabId);
-              return stopFrameCapture(tabId, "recording");
+              yield* stopFrameCapture(tabId, "recording");
             }),
           ),
         ),

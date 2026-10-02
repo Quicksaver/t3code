@@ -2076,6 +2076,59 @@ it.effect("keeps a host whose typed timeout lands after the broker deadline", ()
   ),
 );
 
+it.effect("keeps a host when a sibling response arrives during eviction grace", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<string>();
+      const received = yield* Deferred.make<RoutedRequest>();
+      const requests: RoutedRequest[] = [];
+      yield* Stream.runForEach(yield* broker.connect(makeHost()), (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, event.connectionId);
+        const request = { ...event.request, connectionId: event.connectionId };
+        requests.push(request);
+        if (request.operation === "open") return Deferred.succeed(received, request);
+        return broker.respond({
+          clientId: "client-1",
+          connectionId: event.connectionId,
+          requestId: request.requestId,
+          ok: true,
+          result: "responsive",
+        });
+      }).pipe(Effect.forkScoped);
+      const connectionId = yield* Deferred.await(connected);
+      const timedOut = yield* broker
+        .invoke<void>({ scope, operation: "open", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      const slowRequest = yield* Deferred.await(received);
+      yield* TestClock.adjust(1_000);
+      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+
+      yield* TestClock.adjust(1_000);
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+      yield* TestClock.adjust(PreviewAutomationBroker.PREVIEW_AUTOMATION_EVICTION_GRACE_MS);
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+
+      yield* broker.respond({
+        clientId: "client-1",
+        connectionId,
+        requestId: slowRequest.requestId,
+        ok: true,
+        result: { tabId: PreviewTabId.make("late-tab") },
+      });
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toBe("responsive");
+      expect(requests.map((request) => request.operation)).toEqual([
+        "open",
+        "status",
+        "status",
+        "status",
+      ]);
+      expect(requests.every((request) => request.connectionId === connectionId)).toBe(true);
+      expect(requests.at(-1)?.tabId).toBeUndefined();
+    }),
+  ),
+);
+
 it.effect("discards a late answer without replaying it or adopting its tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
