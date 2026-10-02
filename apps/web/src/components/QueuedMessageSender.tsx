@@ -13,7 +13,10 @@ import {
 import { derivePhase } from "../session-logic";
 import { useServerConfigs, useThread, useThreadStatus } from "../state/entities";
 import { useEnvironment } from "../state/environments";
-import { hasServerAcknowledgedLocalDispatch, latestTurnStartFailureId } from "./ChatView.logic";
+import {
+  hasServerAcknowledgedLocalDispatch,
+  latestDispatchSettlementId,
+} from "./ChatView.localDispatch";
 import { sendQueuedMessage } from "./chat/sendQueuedMessage";
 
 /**
@@ -58,18 +61,23 @@ function ThreadQueueSender({ threadKey }: { threadKey: string }) {
   const lastDispatch = useQueuedMessageStore(
     (state) => state.lastDispatchByThreadKey[threadKey]?.thread ?? null,
   );
-  const latestUserMessageId = thread?.messages.findLast((m) => m.role === "user")?.id ?? null;
   const waitingForServer =
     lastDispatch !== null &&
     !hasServerAcknowledgedLocalDispatch({
       localDispatch: lastDispatch,
       phase,
       latestTurn: thread?.latestTurn ?? null,
-      latestUserMessageId,
+      // An idle queue waits for provider pickup before sending another turn.
+      // A projected user message alone only acknowledges an in-turn steer.
+      projectedMessages:
+        phase === "running" || phase === "connecting" ? (thread?.messages ?? []) : [],
       session: thread?.session ?? null,
       hasPendingApproval: pendingRequests.approvals.length > 0,
       hasPendingUserInput: pendingRequests.userInputs.length > 0,
-      latestTurnStartFailureId: latestTurnStartFailureId(thread ?? undefined, latestUserMessageId),
+      latestDispatchSettlementId: latestDispatchSettlementId(
+        thread ?? undefined,
+        lastDispatch.expectedUserMessageId,
+      ),
       threadError: null,
     });
 

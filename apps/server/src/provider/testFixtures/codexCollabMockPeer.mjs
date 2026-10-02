@@ -18,6 +18,8 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
+let rootInterruptCount = 0;
+const interruptedTurns = new Set();
 // Server->client requests the runtime must answer (approval prompts), keyed
 // by the numeric JSON-RPC id this peer allocated for them.
 const openServerRequests = new Map();
@@ -106,6 +108,33 @@ rl.on("line", (line) => {
     write({ id, result: fixture.responses.threadStart });
     return;
   }
+  if (method === "thread/read" || method === "thread/turns/list") {
+    if (script.recordHistoryRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    if (script.failHistoryAfterInterrupt && rootInterruptCount > 0) {
+      write({ id, error: { code: -32000, message: "history unavailable" } });
+      return;
+    }
+    const turns = script.historyTurns ?? (activeTurn ? [activeTurn] : []);
+    write({
+      id,
+      result:
+        method === "thread/turns/list"
+          ? { data: turns, nextCursor: null }
+          : {
+              thread: {
+                ...fixture.responses.threadStart.thread,
+                historyMode: script.historyMode ?? "legacy",
+                turns: message.params?.includeTurns ? turns : [],
+              },
+            },
+    });
+    return;
+  }
   if (method === "thread/inject_items" && script.recordRequests) {
     NodeFS.appendFileSync(
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
@@ -167,11 +196,11 @@ rl.on("line", (line) => {
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
       : fixture.responses.turnStart.turn;
-    activeTurn = turn;
     turnStartCount += 1;
     write({ id, result: { ...fixture.responses.turnStart, turn } });
     const rootThreadId = script.rootThreadId;
     if (script.onlyFirstTurnStarts !== true || turnStartCount === 1) {
+      activeTurn = turn;
       write({
         jsonrpc: "2.0",
         method: "turn/started",
@@ -201,6 +230,7 @@ rl.on("line", (line) => {
       write({ jsonrpc: "2.0", id: requestId, method: request.method, params });
     }
     if (script.holdTurnOpen !== true) {
+      activeTurn = { ...turn, status: "completed" };
       write({
         jsonrpc: "2.0",
         method: "turn/completed",
@@ -221,6 +251,24 @@ rl.on("line", (line) => {
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.interrupts`,
       `${JSON.stringify({ threadId: target, turnId: message.params?.turnId })}\n`,
     );
+    if (target === script.rootThreadId) {
+      rootInterruptCount += 1;
+      if (script.failFirstRootInterrupt && rootInterruptCount === 1) {
+        write({ id, error: { code: -32000, message: "interrupt failed" } });
+        return;
+      }
+      if (script.completeBeforeInterrupt) {
+        activeTurn = { ...activeTurn, status: "completed" };
+        write({ id, error: { code: -32600, message: "no active turn to interrupt" } });
+        return;
+      }
+      // Codex #36926: an already-aborted turn can accept another interrupt
+      // without a later terminal event to answer it. Delay its notification
+      // to exercise the session fallback independently of provider history.
+      if (script.trackRootInterrupts && interruptedTurns.has(message.params?.turnId)) {
+        return;
+      }
+    }
     if (
       script.expectedActiveTurnId &&
       message.params?.threadId === script.rootThreadId &&
@@ -243,6 +291,10 @@ rl.on("line", (line) => {
       // Never respond: simulates a wedged child whose RPC neither resolves
       // nor rejects. The runtime's bounded deadline must move on.
       return;
+    }
+    if (script.trackRootInterrupts && target === script.rootThreadId) {
+      interruptedTurns.add(message.params?.turnId);
+      activeTurn = { ...activeTurn, status: "interrupted" };
     }
     write({ id, result: {} });
     return;

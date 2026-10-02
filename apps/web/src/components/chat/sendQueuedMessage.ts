@@ -23,12 +23,12 @@ import { readThread, readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import {
-  createLocalDispatchSnapshot,
   deriveComposerSendState,
   readFileAsDataUrl,
   resolveThreadMetadataUpdateForNextTurn,
   revokeBlobPreviewUrl,
 } from "../ChatView.logic";
+import { createLocalDispatchSnapshot } from "../ChatView.localDispatch";
 import { toastManager } from "../ui/toast";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerPromptHistory";
@@ -163,7 +163,15 @@ export async function sendQueuedMessage(
     // Stop hands a preparing message back to the composer. Past this point
     // the send can no longer be taken back.
     const thread = readThread(threadRef) ?? undefined;
-    if (!queue.markDispatching(threadKey, message.id, createLocalDispatchSnapshot(thread))) return;
+    const outboundMessageId = newMessageId();
+    if (
+      !queue.markDispatching(
+        threadKey,
+        message.id,
+        createLocalDispatchSnapshot(thread, outboundMessageId),
+      )
+    )
+      return;
     const context = buildMessageContext({
       terminalContexts: sendableTerminalContexts,
       reviewComments: message.reviewComments,
@@ -181,7 +189,7 @@ export async function sendQueuedMessage(
       input: {
         threadId,
         message: {
-          messageId: newMessageId(),
+          messageId: outboundMessageId,
           role: "user",
           text:
             context !== undefined && !inlineContext

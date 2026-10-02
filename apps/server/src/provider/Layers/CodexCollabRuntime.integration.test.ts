@@ -165,6 +165,139 @@ const peerPath = NodePath.join(
   `../testFixtures/codexCollabMockPeer.${HostProcessPlatform.defaultValue() === "win32" ? "cmd" : "sh"}`,
 );
 
+const startInterruptRuntime = Effect.fn("startInterruptRuntime")(function* (
+  script: Record<string, unknown>,
+) {
+  NodeFS.writeFileSync(
+    scriptPath,
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    JSON.stringify({
+      rootThreadId: ROOT,
+      holdTurnOpen: true,
+      notifications: [],
+      ...script,
+    }),
+    "utf8",
+  );
+  const artifacts = [scriptPath, `${scriptPath}.interrupts`, `${scriptPath}.requests`];
+  for (const path of artifacts.slice(1)) NodeFS.rmSync(path, { force: true });
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const path of artifacts) NodeFS.rmSync(path, { force: true });
+    }),
+  );
+  const runtime = yield* makeCodexSessionRuntime({
+    threadId: ThreadId.make("thread-interrupt-regression"),
+    binaryPath: peerPath,
+    cwd: NodeOS.tmpdir(),
+    runtimeMode: "full-access",
+    environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+  });
+  yield* runtime.start();
+  yield* runtime.sendTurn({ input: "keep working" });
+  return runtime;
+});
+
+function readRootInterrupts() {
+  const path = `${scriptPath}.interrupts`;
+  if (!NodeFS.existsSync(path)) return [];
+  return NodeFS.readFileSync(path, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { threadId: string; turnId: string })
+    .filter((entry) => entry.threadId === ROOT);
+}
+
+describe("CodexSessionRuntime root interruption", () => {
+  for (const historyMode of ["legacy", "paginated"] as const) {
+    it.live(`uses ${historyMode} provider history instead of the cached turn`, () =>
+      Effect.gen(function* () {
+        const runtime = yield* startInterruptRuntime({
+          historyMode,
+          recordHistoryRequests: true,
+          historyTurns: [{ id: "live-provider-turn", status: "inProgress", items: [] }],
+          expectedActiveTurnId: "live-provider-turn",
+        });
+        yield* runtime.interruptTurn();
+        assert.deepEqual(readRootInterrupts(), [{ threadId: ROOT, turnId: "live-provider-turn" }]);
+        if (historyMode === "paginated") {
+          const page = readRecordedRequests().find(
+            (request) => request.method === "thread/turns/list",
+          );
+          assert.equal(page?.params.itemsView, "notLoaded");
+        }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  it.live("suppresses Stop when provider history has no active turn", () =>
+    Effect.gen(function* () {
+      const runtime = yield* startInterruptRuntime({ historyTurns: [] });
+      yield* runtime.interruptTurn();
+      assert.deepEqual(readRootInterrupts(), []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("skips a repeated interrupted turn after lookup failure and stops the next turn", () =>
+    Effect.gen(function* () {
+      const runtime = yield* startInterruptRuntime({
+        turnIds: ["first-turn", "next-turn"],
+        trackRootInterrupts: true,
+        failHistoryAfterInterrupt: true,
+      });
+      yield* runtime.interruptTurn();
+      yield* runtime.interruptTurn();
+      assert.deepEqual(
+        readRootInterrupts().map((entry) => entry.turnId),
+        ["first-turn"],
+      );
+      const nextStarted = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "turn/started" && event.turnId === "next-turn"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.sendTurn({ input: "continue working" });
+      yield* Fiber.join(nextStarted);
+      yield* runtime.interruptTurn();
+      assert.deepEqual(
+        readRootInterrupts().map((entry) => entry.turnId),
+        ["first-turn", "next-turn"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("allows retry after a rejected root interrupt", () =>
+    Effect.gen(function* () {
+      const runtime = yield* startInterruptRuntime({ failFirstRootInterrupt: true });
+      const first = yield* runtime.interruptTurn().pipe(Effect.flip);
+      assert.match(first.message, /interrupt failed/);
+      yield* runtime.interruptTurn();
+      assert.equal(readRootInterrupts().length, 2);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("returns a late interrupt rejection and suppresses another Stop after completion", () =>
+    Effect.gen(function* () {
+      const runtime = yield* startInterruptRuntime({ completeBeforeInterrupt: true });
+      const failure = yield* runtime.interruptTurn().pipe(Effect.flip);
+      assert.match(failure.message, /no active turn to interrupt/);
+      yield* runtime.interruptTurn();
+      assert.equal(readRootInterrupts().length, 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("returns a typed failure when the root interrupt never answers", () =>
+    Effect.gen(function* () {
+      const runtime = yield* startInterruptRuntime({ hangInterruptFor: ROOT });
+      const failure = yield* runtime.interruptTurn().pipe(Effect.flip);
+      assert.equal(failure._tag, "CodexAppServerRequestError");
+      assert.match(failure.message, /root turn interruption timed out/);
+      assert.equal(readRootInterrupts().length, 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("CodexSessionRuntime collab integration", () => {
   it.effect("looks up child model metadata once after activity registration", () =>
     Effect.gen(function* () {

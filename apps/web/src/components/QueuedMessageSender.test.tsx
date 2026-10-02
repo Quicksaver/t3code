@@ -151,15 +151,137 @@ describe("QueuedMessageSender", () => {
     await render();
     await render();
     expect(commandsRun()).toEqual(["start"]);
+    const firstMessageId: string = io.run.mock.calls[0]?.[2].input.message.messageId;
 
-    // The first message started a turn; the second waits for its next tool call.
-    io.thread = thread("running", { userMessageIds: ["first"] });
+    io.thread = thread("ready", { userMessageIds: [firstMessageId] });
     await render();
     expect(commandsRun()).toEqual(["start"]);
-    io.thread = thread("running", { userMessageIds: ["first"], toolActivityIds: ["tool-1"] });
+
+    const refreshed = thread("ready", { userMessageIds: [firstMessageId] });
+    io.thread = {
+      ...refreshed,
+      session: { ...refreshed.session, updatedAt: "unrelated-ready-update" },
+    };
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+
+    // The first message started a turn; the second waits for its next tool call.
+    io.thread = thread("running", { userMessageIds: [firstMessageId] });
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+    io.thread = thread("running", {
+      userMessageIds: [firstMessageId],
+      toolActivityIds: ["tool-1"],
+    });
     await render();
     expect(commandsRun()).toEqual(["start", "start"]);
   });
+
+  it("releases a queued compaction only on its matching completion without observing connecting", async () => {
+    enqueue({ prompt: "/compact" });
+    enqueue({ prompt: "after compaction" });
+    io.thread = thread("ready");
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+    const compactMessageId: string = io.run.mock.calls[0]?.[2].input.message.messageId;
+
+    const completedCompaction = (payload: Record<string, unknown>) => {
+      const snapshot = thread("ready", { userMessageIds: [compactMessageId] });
+      return {
+        ...snapshot,
+        session: { ...snapshot.session, updatedAt: "compaction-finished" },
+        activities: [{ id: "compacted", kind: "context-compaction", payload }],
+      };
+    };
+    for (const payload of [{}, { requestId: "another-client" }]) {
+      io.thread = completedCompaction(payload);
+      await render();
+      expect(commandsRun()).toEqual(["start"]);
+    }
+
+    io.thread = completedCompaction({ requestId: compactMessageId });
+    await render();
+    expect(commandsRun()).toEqual(["start", "start"]);
+    expect(io.run.mock.calls[1]?.[2]).toMatchObject({
+      input: { message: { text: "after compaction" } },
+    });
+  });
+
+  it("releases consecutive steers only after their exact messages project", async () => {
+    enqueue({ prompt: "first" });
+    enqueue({ prompt: "second" });
+    enqueue({ prompt: "third" });
+    io.thread = thread("running", { toolActivityIds: ["tool-1"] });
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+    const firstMessageId: string = io.run.mock.calls[0]?.[2].input.message.messageId;
+
+    io.thread = thread("running", {
+      userMessageIds: ["another-client"],
+      toolActivityIds: ["tool-1", "tool-2"],
+    });
+    await render();
+    expect(commandsRun()).toEqual(["start"]);
+
+    io.thread = thread("running", {
+      userMessageIds: [firstMessageId, "another-client"],
+      toolActivityIds: ["tool-1", "tool-2"],
+    });
+    await render();
+    expect(commandsRun()).toEqual(["start", "start"]);
+    const secondMessageId: string = io.run.mock.calls[1]?.[2].input.message.messageId;
+    expect(secondMessageId).not.toBe(firstMessageId);
+
+    io.thread = thread("running", {
+      userMessageIds: [firstMessageId, "another-client"],
+      toolActivityIds: ["tool-1", "tool-2", "tool-3"],
+    });
+    await render();
+    expect(commandsRun()).toEqual(["start", "start"]);
+
+    io.thread = thread("running", {
+      userMessageIds: [firstMessageId, secondMessageId, "another-client"],
+      toolActivityIds: ["tool-1", "tool-2", "tool-3"],
+    });
+    await render();
+    expect(commandsRun()).toEqual(["start", "start", "start"]);
+  });
+
+  it.each(["ready", "running"])(
+    "releases a %s queue only for the dispatched message's turn-start failure",
+    async (status) => {
+      enqueue({ prompt: "first" });
+      enqueue({ prompt: "second" });
+      io.thread = thread(status, { toolActivityIds: ["tool-1"] });
+      await render();
+      expect(commandsRun()).toEqual(["start"]);
+      const firstMessageId: string = io.run.mock.calls[0]?.[2].input.message.messageId;
+
+      const failedThread = (requestId: string, toolActivityIds: string[]) => {
+        const snapshot = thread(status, { userMessageIds: ["another-client"], toolActivityIds });
+        return {
+          ...snapshot,
+          activities: [
+            ...snapshot.activities,
+            {
+              id: `failure-${requestId}`,
+              kind: "provider.turn.start.failed",
+              sequence: snapshot.activities.length,
+              createdAt: "2026-09-25T00:00:02Z",
+              payload: { requestId },
+            },
+          ],
+        };
+      };
+      io.thread = failedThread("another-client", ["tool-1", "tool-2"]);
+      await render();
+      expect(commandsRun()).toEqual(["start"]);
+
+      io.thread = failedThread(firstMessageId, ["tool-1", "tool-2"]);
+      await render();
+      expect(commandsRun()).toEqual(["start", "start"]);
+    },
+  );
 
   it("moves on to the next message after a failed one is cancelled", async () => {
     io.run.mockResolvedValueOnce({ _tag: "Failure", cause: Cause.fail(new Error("offline")) });
