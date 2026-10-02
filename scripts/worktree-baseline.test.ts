@@ -113,31 +113,33 @@ describe("worktree-baseline", () => {
         return { result: "baseline" };
       },
     });
-    await waitFor(() => producerStarted);
-    const waiter = ensureSingleFlightCache({
-      cacheFilePath,
-      isCachedValue: isPayload,
-      pollIntervalMs: 2,
-      processExists: () => {
-        reclamationChecks.push(NodeFS.existsSync(reclaimPath));
-        return true;
-      },
-      logger: {
-        log: () => {
-          waiterStarted = true;
-        },
-      },
-      create: async () => {
-        throw new Error("The live producer still owns the cache.");
-      },
-    });
+    const pending = [producer];
     try {
+      await waitFor(() => producerStarted);
+      const waiter = ensureSingleFlightCache({
+        cacheFilePath,
+        isCachedValue: isPayload,
+        pollIntervalMs: 2,
+        processExists: () => {
+          reclamationChecks.push(NodeFS.existsSync(reclaimPath));
+          return true;
+        },
+        logger: {
+          log: () => {
+            waiterStarted = true;
+          },
+        },
+        create: async () => {
+          throw new Error("The live producer still owns the cache.");
+        },
+      });
+      pending.push(waiter);
       await waitFor(() => waiterStarted);
       expect(reclamationChecks.length).toBeGreaterThan(0);
       expect(reclamationChecks).not.toContain(true);
     } finally {
       gate.open();
-      await Promise.all([producer, waiter]);
+      await Promise.all(pending);
     }
   });
 
