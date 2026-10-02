@@ -237,12 +237,20 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   }, [environmentId, props.onOpenGitInspector, navigation, threadId]);
 
+  const openVersionControl = useCallback(() => {
+    navigation.navigate("VersionControl", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+    });
+  }, [environmentId, navigation, threadId]);
+
   return {
     currentBranchLabel,
     isRepo,
     openFiles,
     openGitInspector,
     openReview,
+    openVersionControl,
     quickAction,
     quickActionHint,
     quickActionIcon,
@@ -379,6 +387,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action",
             },
             {
+              description: "Actionable branches, stashes, and remotes",
+              disabled: !model.isRepo,
+              icon: {
+                name: "point.topleft.down.curvedto.point.bottomright.up",
+                type: "sfSymbol",
+              },
+              label: "Version Control",
+              onPress: model.openVersionControl,
+              type: "action",
+            },
+            {
               description: "Turn diffs and worktree changes",
               disabled: !model.isRepo,
               icon: { name: "text.bubble", type: "sfSymbol" },
@@ -407,6 +426,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       model.openFiles,
       model.openGitInspector,
       model.openReview,
+      model.openVersionControl,
       model.quickAction.disabled,
       model.quickAction.label,
       model.quickActionHint,
@@ -599,6 +619,14 @@ function threadGitMenuDefinition(
         onPress: () => {
           void model.runQuickAction();
         },
+      },
+      {
+        id: "git-version-control",
+        title: "Version Control",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        disabled: !model.isRepo,
+        subtitle: "Actionable branches, stashes, and remotes",
+        onPress: model.openVersionControl,
       },
       {
         id: "git-review",
