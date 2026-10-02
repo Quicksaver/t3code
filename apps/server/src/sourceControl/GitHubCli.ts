@@ -308,13 +308,14 @@ export class GitHubCli extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
     /**
-     * Pull requests whose head is `headSelector`, in the repository `gh pr list` would read in
-     * `cwd`. Lookups on one repository that arrive together share one GraphQL document; a
-     * checkout whose repository gh could pick another way is asked through `gh pr list`.
+     * Pull request history, optionally filtered by head. Head lookups in the repository
+     * `gh pr list` would read in `cwd` share one GraphQL document. Repository-wide reads,
+     * explicit repositories, and ambiguous checkout targets use `gh pr list`.
      */
-    readonly listPullRequestsByHead: (input: {
+    readonly listPullRequests: (input: {
       readonly cwd: string;
-      readonly headSelector: string;
+      readonly headSelector?: string;
+      readonly repository?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit: number;
       /** The checkout's GitHub host. Without it the lookup is not batched. */
@@ -741,7 +742,8 @@ export const make = Effect.gen(function* () {
 
   const listPullRequestsWithCli = (input: {
     readonly cwd: string;
-    readonly headSelector: string;
+    readonly headSelector?: string;
+    readonly repository?: string;
     readonly state: PullRequestListState;
     readonly limit: number;
     readonly rateLimitHost?: string | undefined;
@@ -752,8 +754,8 @@ export const make = Effect.gen(function* () {
       args: [
         "pr",
         "list",
-        "--head",
-        input.headSelector,
+        ...(input.repository ? ["--repo", input.repository] : []),
+        ...(input.headSelector ? ["--head", input.headSelector] : []),
         "--state",
         input.state,
         "--limit",
@@ -887,9 +889,12 @@ export const make = Effect.gen(function* () {
     RequestResolver.batchN(HEAD_LOOKUPS_PER_DOCUMENT),
   );
 
-  const listPullRequestsByHead: GitHubCli["Service"]["listPullRequestsByHead"] = Effect.fn(
-    "GitHubCli.listPullRequestsByHead",
+  const listPullRequests: GitHubCli["Service"]["listPullRequests"] = Effect.fn(
+    "GitHubCli.listPullRequests",
   )(function* (input) {
+    if (!input.headSelector || input.repository) {
+      return yield* listPullRequestsWithCli(input);
+    }
     const host = input.rateLimitHost?.toLowerCase();
     const credential = yield* PinnedGitHubCredential;
     // `owner:branch` selectors and other hosts keep gh's own handling.
@@ -918,7 +923,7 @@ export const make = Effect.gen(function* () {
 
   return GitHubCli.of({
     execute,
-    listPullRequestsByHead,
+    listPullRequests,
     listOpenPullRequests: (input) =>
       execute({
         cwd: input.cwd,

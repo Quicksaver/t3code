@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -223,7 +224,7 @@ describe("selectGitHubBaseRepository", () => {
   });
 });
 
-describe("GitHubCli.listPullRequestsByHead", () => {
+describe("GitHubCli.listPullRequests", () => {
   const remoteOutput =
     "origin\tgit@github.com:acme/web.git (fetch)\norigin\tgit@github.com:acme/web.git (push)\n";
   const node = (number: number, headRefName: string) => ({
@@ -252,6 +253,60 @@ describe("GitHubCli.listPullRequestsByHead", () => {
       ? processOutput(remoteOutput)
       : { ...processOutput(""), exitCode: ChildProcessSpawner.ExitCode(1) };
 
+  it.effect("reads repository-wide history without a head filter or repository discovery", () =>
+    Effect.gen(function* () {
+      const commands: VcsProcess.VcsProcessInput[] = [];
+      mockRun.mockImplementation((input) => {
+        commands.push(input);
+        return Effect.succeed(jsonOutput([node(8, "feature/a")]));
+      });
+      const gh = yield* GitHubCli.GitHubCli;
+      const pullRequests = yield* gh.listPullRequests({
+        cwd: "/repo",
+        repository: "enterprise.test:8443/acme/web",
+        state: "all",
+        limit: 20,
+        rateLimitHost: "enterprise.test:8443",
+      });
+      assert.deepStrictEqual(
+        commands.map(({ command, args }) => [command, ...args]),
+        [
+          [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            "enterprise.test:8443/acme/web",
+            "--state",
+            "all",
+            "--limit",
+            "20",
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
+        ],
+      );
+      assert.strictEqual(commands[0]?.cwd, "/repo");
+      assert.strictEqual(pullRequests[0]?.state, "merged");
+      assert.deepStrictEqual(
+        pullRequests[0]?.updatedAt,
+        Option.some(DateTime.makeUnsafe("2026-01-02T00:00:00Z")),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps repository-wide empty and invalid responses in the history reader", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("not JSON")));
+      const gh = yield* GitHubCli.GitHubCli;
+      const input = { cwd: "/repo", state: "closed" as const, limit: 20 };
+      assert.deepStrictEqual(yield* gh.listPullRequests(input), []);
+      const error = yield* gh.listPullRequests(input).pipe(Effect.flip);
+      assert.strictEqual(error._tag, "GitHubChangeRequestListDecodeError");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads heads on one repository in one GraphQL document", () =>
     Effect.gen(function* () {
       const documents: Array<{ query: string; variables: Record<string, unknown> }> = [];
@@ -270,7 +325,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
       const gh = yield* GitHubCli.GitHubCli;
       const lookups = yield* Effect.all(
         ["feature/a", "feature/b"].map((headSelector) =>
-          gh.listPullRequestsByHead({
+          gh.listPullRequests({
             cwd: "/repo",
             headSelector,
             state: "all",
@@ -319,7 +374,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         }),
       );
       const gh = yield* GitHubCli.GitHubCli;
-      const pullRequests = yield* gh.listPullRequestsByHead({
+      const pullRequests = yield* gh.listPullRequests({
         cwd: "/repo",
         headSelector: "feature/a",
         state: "all",
@@ -343,7 +398,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
         "--json",
         "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
       ]);
-      const empty = yield* gh.listPullRequestsByHead({
+      const empty = yield* gh.listPullRequests({
         cwd: "/repo",
         headSelector: "feature/empty",
         state: "all",
@@ -377,7 +432,7 @@ describe("GitHubCli.listPullRequestsByHead", () => {
       const lookups = yield* Effect.all(
         ["feature/a", "feature/b"].map((headSelector) =>
           gh
-            .listPullRequestsByHead({
+            .listPullRequests({
               cwd: "/repo",
               headSelector,
               state: "all",

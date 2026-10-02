@@ -516,14 +516,14 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     service: {
       execute,
       // The fake answers the CLI shape, so batched lookups read it the way the fallback does.
-      listPullRequestsByHead: (input) =>
+      listPullRequests: (input) =>
         execute({
           cwd: input.cwd,
           args: [
             "pr",
             "list",
-            "--head",
-            input.headSelector,
+            ...(input.repository ? ["--repo", input.repository] : []),
+            ...(input.headSelector ? ["--head", input.headSelector] : []),
             "--state",
             input.state,
             "--limit",
