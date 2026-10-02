@@ -97,6 +97,50 @@ describe("worktree-baseline", () => {
     });
   });
 
+  it("waits for a live producer without creating a reclamation lock", async () => {
+    const cacheFilePath = makeCachePath();
+    const gate = makeGate();
+    const reclaimPath = `${cacheFilePath}.lock.reclaim`;
+    const reclamationChecks: boolean[] = [];
+    let producerStarted = false;
+    let waiterStarted = false;
+    const producer = ensureSingleFlightCache({
+      cacheFilePath,
+      isCachedValue: isPayload,
+      create: async () => {
+        producerStarted = true;
+        await gate.promise;
+        return { result: "baseline" };
+      },
+    });
+    await waitFor(() => producerStarted);
+    const waiter = ensureSingleFlightCache({
+      cacheFilePath,
+      isCachedValue: isPayload,
+      pollIntervalMs: 2,
+      processExists: () => {
+        reclamationChecks.push(NodeFS.existsSync(reclaimPath));
+        return true;
+      },
+      logger: {
+        log: () => {
+          waiterStarted = true;
+        },
+      },
+      create: async () => {
+        throw new Error("The live producer still owns the cache.");
+      },
+    });
+    try {
+      await waitFor(() => waiterStarted);
+      expect(reclamationChecks.length).toBeGreaterThan(0);
+      expect(reclamationChecks).not.toContain(true);
+    } finally {
+      gate.open();
+      await Promise.all([producer, waiter]);
+    }
+  });
+
   it("runs a selected test in its owning package and rejects paths outside the checkout", async () => {
     const root = NodePath.dirname(makeCachePath());
     const packageDirectory = NodePath.join(root, "scripts");

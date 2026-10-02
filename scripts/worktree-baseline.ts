@@ -151,6 +151,9 @@ const tryReclaimLock = async (
   lockPath: string,
   processExists: (pid: number) => boolean,
 ): Promise<void> => {
+  const currentOwner = await readLockOwner(lockPath);
+  if (currentOwner !== undefined && processExists(currentOwner.pid)) return;
+
   const reclaimPath = `${lockPath}${LOCK_RECLAIM_SUFFIX}`;
   try {
     await NodeFSP.mkdir(reclaimPath);
