@@ -267,6 +267,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
 
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
+      getThreadLineage: () => Effect.succeed([]),
       getShellSnapshot: (readOptions) =>
         Ref.update(snapshotReadCount, (count) => count + 1).pipe(
           Effect.andThen(Queue.offer(snapshotReads, null)),
@@ -1750,6 +1751,7 @@ describe("storage cleanup", () => {
                         : [],
                     ),
                   getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 2 }),
+                  getThreadLineage: () => Effect.succeed([]),
                   getShellSnapshot: () =>
                     Deferred.succeed(snapshotRead, undefined).pipe(
                       Effect.andThen(

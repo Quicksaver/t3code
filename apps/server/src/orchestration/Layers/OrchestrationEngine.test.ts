@@ -217,11 +217,14 @@ describe("OrchestrationEngine", () => {
 
       // Drive cleanup explicitly so unarchive reaches the real engine while deletion is pending.
       expect(yield* storage.listPendingDeleteThreadIds).toContain(threadId);
-      yield* engine.dispatch({
-        type: "thread.unarchive",
-        commandId: CommandId.make("deleted-archive-unarchive"),
-        threadId,
-      });
+      const rejected = yield* Effect.flip(
+        engine.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("deleted-archive-unarchive"),
+          threadId,
+        }),
+      );
+      expect(rejected._tag).toBe("OrchestrationCommandInvariantError");
       expect(yield* fs.exists(attachmentPath)).toBe(false);
       expect(
         yield* sql`SELECT message_id FROM projection_thread_messages WHERE thread_id = ${threadId}`,
@@ -635,6 +638,7 @@ describe("OrchestrationEngine", () => {
               fullSnapshotReadCount += 1;
               return projectionSnapshot;
             }),
+          getThreadLineage: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,

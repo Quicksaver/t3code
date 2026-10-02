@@ -32,6 +32,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     listActivitiesByKind: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
+    getThreadLineage: () => Effect.succeed([]),
     getShellSnapshot: () => Effect.die("unused"),
     getDeletedWorktreeThreads: () => Effect.die("unused"),
     listThreadsWithPullRequests: () => Effect.die("unused"),

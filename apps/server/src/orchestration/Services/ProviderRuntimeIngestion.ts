@@ -30,6 +30,14 @@ export interface ProviderRuntimeIngestionShape {
    * Intended for test use to replace timing-sensitive sleeps.
    */
   readonly drain: Effect.Effect<void>;
+
+  /**
+   * Resolves once every provider runtime event received before this call has
+   * been processed. Later events are not awaited, so readers that need the
+   * projection to reflect what the server already holds can wait for exactly
+   * that without blocking on a busy stream. Diff placeholders are not awaited.
+   */
+  readonly settle: Effect.Effect<void>;
 }
 
 /**

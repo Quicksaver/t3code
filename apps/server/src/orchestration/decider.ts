@@ -55,6 +55,42 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+type ThreadDeleteCommand = Extract<OrchestrationCommand, { type: "thread.delete" }>;
+type ThreadArchiveCommand = Extract<OrchestrationCommand, { type: "thread.archive" }>;
+type ThreadUnarchiveCommand = Extract<OrchestrationCommand, { type: "thread.unarchive" }>;
+
+const validateMagiParentRelation = Effect.fn("validateMagiParentRelation")(function* (input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: OrchestrationThread["id"];
+  readonly parentRelation: OrchestrationThread["parentRelation"] | undefined;
+}) {
+  if (input.parentRelation === undefined) return;
+  if (input.parentRelation.parentThreadId !== input.parentRelation.rootThreadId) {
+    return yield* new OrchestrationCommandInvariantError({
+      commandType: input.command.type,
+      detail: `Magi participant '${input.threadId}' must be a direct child of its root thread.`,
+    });
+  }
+  yield* requireThread({
+    readModel: input.readModel,
+    command: input.command,
+    threadId: input.parentRelation.rootThreadId,
+  });
+});
+
+function listMagiParticipantDescendants(
+  readModel: OrchestrationReadModel,
+  parentThreadId: OrchestrationThread["id"],
+): readonly OrchestrationThread[] {
+  return readModel.threads
+    .filter(
+      (thread) =>
+        thread.deletedAt === null && thread.parentRelation?.parentThreadId === parentThreadId,
+    )
+    .toSorted((left, right) => left.id.localeCompare(right.id));
+}
+
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
  * approval or user-input request with no later resolution for the same
@@ -343,10 +379,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       if (undeletedThreads.length > 0) {
+        const lifecycleRootThreads = undeletedThreads.filter(
+          (thread) => thread.parentRelation === undefined,
+        );
         return yield* decideCommandSequence({
           readModel,
           commands: [
-            ...undeletedThreads.map(
+            ...(lifecycleRootThreads.length > 0 ? lifecycleRootThreads : undeletedThreads).map(
               (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
                 type: "thread.delete",
                 commandId: command.commandId,
@@ -389,6 +428,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* validateMagiParentRelation({
+        readModel,
+        command,
+        threadId: command.threadId,
+        parentRelation: command.parentRelation,
+      });
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -407,6 +452,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          ...(command.parentRelation !== undefined
+            ? { parentRelation: command.parentRelation }
+            : {}),
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -419,6 +467,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantDeleteCommands = listMagiParticipantDescendants(
+        readModel,
+        command.threadId,
+      ).map((thread): ThreadDeleteCommand => ({
+        type: "thread.delete",
+        commandId: command.commandId,
+        threadId: thread.id,
+      }));
+      if (descendantDeleteCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantDeleteCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -441,6 +503,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const descendantArchiveCommands = listMagiParticipantDescendants(readModel, command.threadId)
+        .filter((thread) => thread.archivedAt === null)
+        .map((thread): ThreadArchiveCommand => ({
+          type: "thread.archive",
+          commandId: command.commandId,
+          threadId: thread.id,
+        }));
+      if (descendantArchiveCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantArchiveCommands, command],
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -468,6 +543,22 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: `thread ${command.threadId} was deleted before restoration`,
+        });
+      }
+      const descendantUnarchiveCommands = listMagiParticipantDescendants(
+        readModel,
+        command.threadId,
+      )
+        .filter((thread) => thread.archivedAt !== null)
+        .map((thread): ThreadUnarchiveCommand => ({
+          type: "thread.unarchive",
+          commandId: command.commandId,
+          threadId: thread.id,
+        }));
+      if (descendantUnarchiveCommands.length > 0) {
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [...descendantUnarchiveCommands, command],
         });
       }
       const occurredAt = yield* nowIso;

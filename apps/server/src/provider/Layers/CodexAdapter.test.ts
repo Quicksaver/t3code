@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -34,13 +35,23 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
+import type * as CodexRpc from "effect-codex-app-server/rpc";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  resolveMagiInvocation,
+  magiInvocationCaller,
+  magiCallerKey,
+} from "../../magi/MagiInvocation.ts";
+import { MAGI_PARTICIPANT_PRE_PROMPT } from "../ProviderMagiProfile.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
+  openCodexThread,
+  verifyCodexNativeDescendant,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
@@ -60,6 +71,8 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
+  readonly readNativeThread = () => Effect.die("unexpected native read");
+  readonly verifyNativeThread = vi.fn((_nativeThreadId: string) => Effect.void);
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
   private readonly now = "2026-01-01T00:00:00.000Z";
 
@@ -319,6 +332,46 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect("allows long-running T3 MCP tools to finish", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("sess-t3-mcp-timeout");
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId,
+        providerSessionId: "provider-session-1",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        endpoint: "http://127.0.0.1:13773/mcp/all",
+        authorizationHeader: "Bearer test-token",
+        capabilities: new Set(["preview", "magi-control"]),
+      });
+
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepStrictEqual(runtime.options.appServerArgs, [
+        "-c",
+        "mcp_servers.t3-code.url=http://127.0.0.1:13773/mcp/all",
+        "-c",
+        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+        "-c",
+        "mcp_servers.t3-code.tool_timeout_sec=86400",
+      ]);
+      NodeAssert.equal(runtime.options.environment?.T3_MCP_BEARER_TOKEN, "test-token");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() =>
+          McpProviderSession.clearMcpProviderSession(asThreadId("sess-t3-mcp-timeout")),
+        ),
+      ),
+    ),
+  );
+
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -495,6 +548,33 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       }
     }),
   );
+
+  it.effect("verifies a native caller without reading its history", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({}), { makeRuntime: runtimeFactory.factory }),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("native-verification");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.verifyNativeThread!(threadId, "native-child");
+      const runtime = runtimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.deepEqual(runtime.verifyNativeThread.mock.calls, [["native-child"]]);
+      NodeAssert.equal(runtime.readThreadImpl.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("passes configured launch args into the session runtime", () => {
     const runtimeFactory = makeRuntimeFactory();
@@ -3141,6 +3221,284 @@ it.effect("managed runtime rotation restarts app-server and resumes the same nat
     NodeAssert.equal(runtimes[1]?.options.binaryPath, "/t3/tools/codex/0.155.1/bin/codex");
   }).pipe(Effect.provide(layer));
 });
+
+function managedMagiRecoveryLayer(options: NonNullable<Parameters<typeof makeCodexAdapter>[1]>) {
+  return Layer.effect(CodexAdapter, makeCodexAdapter(decodeCodexSettings({}), options)).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+}
+
+for (const { runtimeMode, sandbox, approvalPolicy } of [
+  { runtimeMode: "approval-required", sandbox: "read-only", approvalPolicy: "untrusted" },
+  { runtimeMode: "full-access", sandbox: "danger-full-access", approvalPolicy: "never" },
+] as const) {
+  it.effect(
+    `managed rotation resumes a Magi participant with ${runtimeMode} and delegation restrictions`,
+    () => {
+      let revision = "first";
+      const runtimes: FakeCodexRuntime[] = [];
+      const opens: Array<{
+        method: string;
+        params: CodexRpc.ClientRequestParamsByMethod["thread/start"];
+      }> = [];
+      const layer = managedMagiRecoveryLayer({
+        resolveRuntime: Effect.sync(() => ({
+          config: decodeCodexSettings({}),
+          environment: {},
+          revision,
+        })),
+        makeRuntime: (options) => {
+          const runtime = new FakeCodexRuntime(options);
+          runtimes.push(runtime);
+          const session = {
+            provider: ProviderDriverKind.make("codex"),
+            threadId: options.threadId,
+            status: "ready",
+            runtimeMode: options.runtimeMode,
+            cwd: options.cwd,
+            model: options.model,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            resumeCursor: { threadId: "native-magi-participant" },
+          } satisfies ProviderSession;
+          const response = {
+            cwd: options.cwd,
+            model: options.model,
+            thread: { id: "native-magi-participant" },
+          } as unknown as CodexRpc.ClientRequestResponsesByMethod["thread/start"];
+          const client: Parameters<typeof openCodexThread>[0]["client"] = {
+            request: (method, params) => {
+              opens.push({ method, params });
+              return Effect.succeed(response);
+            },
+            raw: {
+              request: (method, params) => {
+                opens.push({ method, params });
+                return Effect.succeed(response);
+              },
+            },
+          };
+          return Effect.succeed(
+            Object.assign(runtime, {
+              start: () =>
+                openCodexThread({
+                  client,
+                  threadId: options.threadId,
+                  runtimeMode: options.runtimeMode,
+                  cwd: options.cwd,
+                  requestedModel: options.model,
+                  serviceTier: options.serviceTier,
+                  resumeThreadId: options.resumeCursor?.threadId,
+                  ...(options.magiParticipant ? { magiParticipant: true } : {}),
+                }).pipe(Effect.as(session)),
+              getSession: Effect.succeed(session),
+            }),
+          );
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const threadId = asThreadId("managed-magi-participant");
+        const modelSelection = createModelSelection(
+          ProviderInstanceId.make("codex"),
+          "gpt-6.1-sol",
+        );
+        const control = { executionProfile: "magi-read-only" as const };
+        yield* adapter.startSession({
+          threadId,
+          runtimeMode,
+          modelSelection,
+          control,
+        });
+        yield* adapter.sendTurn({ threadId, input: "Assess the change", modelSelection, control });
+        revision = "rotated";
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Assess the revision",
+          modelSelection,
+          control,
+        });
+
+        NodeAssert.deepEqual(
+          opens.map((open) => open.method),
+          ["thread/start", "thread/resume"],
+        );
+        for (const { params } of opens) {
+          NodeAssert.equal(params.model, "gpt-6.1-sol");
+          NodeAssert.equal(params.sandbox, sandbox);
+          NodeAssert.equal(params.approvalPolicy, approvalPolicy);
+          NodeAssert.equal(params.approvalsReviewer, "user");
+          NodeAssert.deepEqual(params.config, {
+            multi_agent_mode: {
+              custom: "Participant subagents are unavailable in this Magi session.",
+            },
+          });
+        }
+        const resume = opens[1]?.params;
+        NodeAssert.equal(
+          resume && "threadId" in resume ? resume.threadId : null,
+          "native-magi-participant",
+        );
+        NodeAssert.equal(runtimes.length, 2);
+        for (const runtime of runtimes) {
+          NodeAssert.ok(
+            runtime.sendTurnImpl.mock.calls[0]?.[0].input?.startsWith(MAGI_PARTICIPANT_PRE_PROMPT),
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+}
+
+it.effect(
+  "native Magi ownership and evidence survive managed rotation without accepting foreign callers",
+  () => {
+    let revision = "first";
+    const rootThreadId = asThreadId("managed-native-magi-owner");
+    const instanceId = ProviderInstanceId.make("codex-account");
+    const nativeRoot = "native-managed-owner";
+    const nativeChild = "native-managed-child";
+    const layer = managedMagiRecoveryLayer({
+      instanceId,
+      resolveRuntime: Effect.sync(() => ({
+        config: decodeCodexSettings({}),
+        environment: {},
+        revision,
+      })),
+      makeRuntime: (options) => {
+        const runtime = new FakeCodexRuntime(options);
+        const runtimeRevision = revision;
+        let closed = false;
+        const session = {
+          provider: ProviderDriverKind.make("codex"),
+          threadId: options.threadId,
+          status: "ready",
+          runtimeMode: options.runtimeMode,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          resumeCursor: { threadId: nativeRoot },
+        } satisfies ProviderSession;
+        runtime.closeImpl.mockImplementation(() => {
+          closed = true;
+          return Promise.resolve(undefined);
+        });
+        const client: Parameters<typeof verifyCodexNativeDescendant>[0] = {
+          request: ((_method: string, params: { threadId: string }) =>
+            Effect.suspend(() =>
+              closed
+                ? Effect.die("Retired runtime cannot authenticate callers")
+                : Effect.succeed({
+                    thread: {
+                      id: params.threadId,
+                      source: {
+                        subAgent: {
+                          thread_spawn: {
+                            parent_thread_id:
+                              params.threadId === nativeChild ? nativeRoot : "foreign-owner",
+                          },
+                        },
+                      },
+                    },
+                  }),
+            )) as Parameters<typeof verifyCodexNativeDescendant>[0]["request"],
+        };
+        const verify = (id: string) => verifyCodexNativeDescendant(client, nativeRoot, id);
+        return Effect.succeed(
+          Object.assign(runtime, {
+            start: () => Effect.succeed(session),
+            getSession: Effect.succeed(session),
+            verifyNativeThread: verify,
+            readNativeThread: (id: string) =>
+              verify(id).pipe(
+                Effect.as({
+                  threadId: id,
+                  turns: [
+                    {
+                      id: asTurnId("child-turn"),
+                      items: [
+                        {
+                          type: "userMessage" as const,
+                          id: "child-instruction",
+                          content: [
+                            { type: "text" as const, text: `${runtimeRevision} child instruction` },
+                          ],
+                        },
+                        {
+                          type: "webSearch" as const,
+                          id: "child-evidence",
+                          query: "regression evidence",
+                          results: [
+                            { url: "https://example.com", text: `${runtimeRevision} evidence` },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              ),
+          }),
+        );
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({ threadId: rootThreadId, runtimeMode: "full-access" });
+      const scope = {
+        environmentId: EnvironmentId.make("environment"),
+        threadId: rootThreadId,
+        providerInstanceId: instanceId,
+        providerSessionId: "inherited-credential",
+        nativeThreadId: nativeChild,
+        issuedAt: 1,
+        capabilities: new Set(["magi-control" as const]),
+      };
+      const dependencies = {
+        getBinding: () =>
+          Effect.succeedSome({
+            threadId: rootThreadId,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: instanceId,
+            resumeCursor: { threadId: nativeRoot },
+          }),
+        verifyNativeCaller: adapter.verifyNativeThread!,
+      };
+      const first = yield* resolveMagiInvocation(scope, dependencies);
+      const firstContext = yield* adapter.readNativeThread!(rootThreadId, nativeChild);
+      NodeAssert.equal(firstContext.instruction, "first child instruction");
+      revision = "rotated";
+      yield* adapter.sendTurn({ threadId: rootThreadId, input: "Continue the owner turn" });
+      const resumed = yield* resolveMagiInvocation(scope, dependencies);
+      NodeAssert.equal(
+        magiCallerKey(magiInvocationCaller(first)),
+        magiCallerKey(magiInvocationCaller(resumed)),
+      );
+      NodeAssert.deepEqual(magiInvocationCaller(resumed), {
+        threadId: rootThreadId,
+        nativeOwner: { providerInstanceId: instanceId, nativeThreadId: nativeChild },
+      });
+      const resumedContext = yield* adapter.readNativeThread!(rootThreadId, nativeChild);
+      NodeAssert.equal(resumedContext.instruction, "rotated child instruction");
+      NodeAssert.equal(resumedContext.activities[0]?.id, firstContext.activities[0]?.id);
+      NodeAssert.deepEqual(resumedContext.activities[0]?.payload, {
+        nativeThreadId: nativeChild,
+        item: {
+          type: "webSearch",
+          id: "child-evidence",
+          query: "regression evidence",
+          results: [{ url: "https://example.com", text: "rotated evidence" }],
+        },
+      });
+      const foreign = yield* resolveMagiInvocation(
+        { ...scope, nativeThreadId: "foreign-child" },
+        dependencies,
+      ).pipe(Effect.flip);
+      NodeAssert.equal(foreign._tag, "MagiValidationError");
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("managed turn failures preserve the sharing-limit code for client notices", () => {
   const factory = makeRuntimeFactory();

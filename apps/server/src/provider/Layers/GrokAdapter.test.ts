@@ -28,6 +28,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { MAGI_PARTICIPANT_PRE_PROMPT } from "../ProviderMagiProfile.ts";
 import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
@@ -421,6 +422,89 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         mcpServers: [],
       });
     }),
+  );
+
+  it.effect(
+    "resumes a crashed Magi participant with its prompt restrictions and owner permissions",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("grok-magi-crash-recovery");
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-magi-crash-recovery-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const wrapper = yield* Effect.promise(() =>
+          makeMockGrokWrapper({
+            T3_ACP_CRASH_PROMPT: "1",
+            T3_ACP_CRASH_PROMPT_TEXT: `${MAGI_PARTICIPANT_PRE_PROMPT}\n\ncrash now`,
+            T3_ACP_EMIT_TOOL_CALLS: "1",
+            T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          }),
+        );
+        const adapter = yield* makeTestAdapter(wrapper);
+        const exited =
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "session.exited" }>>();
+        const approval =
+          yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "request.opened" }>>();
+        const events = yield* Stream.runForEach(adapter.streamEvents, (event) => {
+          if (event.type === "session.exited") return Deferred.succeed(exited, event);
+          if (event.type === "request.opened") return Deferred.succeed(approval, event);
+          return Effect.void;
+        }).pipe(Effect.forkChild);
+        const control = { executionProfile: "magi-read-only" as const };
+        const input = {
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required" as const,
+          modelSelection: { instanceId: ProviderInstanceId.make("grok"), model: "grok-mock-alt" },
+          control,
+        };
+        const session = yield* adapter.startSession(input);
+        yield* adapter.sendTurn({ threadId, input: "crash now", control }).pipe(Effect.flip);
+        assert.equal((yield* Deferred.await(exited)).payload.exitKind, "error");
+        assert.isFalse(yield* adapter.hasSession(threadId));
+
+        const resumed = yield* adapter.startSession({
+          ...input,
+          resumeCursor: session.resumeCursor,
+        });
+        assert.deepStrictEqual(resumed.resumeCursor, session.resumeCursor);
+        assert.equal(resumed.model, "grok-mock-alt");
+        assert.equal(resumed.runtimeMode, "approval-required");
+        const retry = yield* adapter
+          .sendTurn({ threadId, input: "retry now", control })
+          .pipe(Effect.forkChild);
+        const request = yield* Deferred.await(approval);
+        yield* adapter.respondToRequest(
+          threadId,
+          ApprovalRequestId.make(String(request.requestId)),
+          "accept",
+        );
+        assert.equal((yield* Fiber.join(retry)).threadId, threadId);
+        yield* adapter.stopSession(threadId);
+        yield* Fiber.interrupt(events);
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        assert.equal(requests.filter((request) => request.method === "session/new").length, 1);
+        assert.equal(requests.filter((request) => request.method === "session/load").length, 1);
+        const prompts = requests
+          .filter((request) => request.method === "session/prompt")
+          .map(
+            (request) =>
+              request.params as {
+                sessionId: string;
+                prompt: Array<{ type: string; text: string }>;
+              },
+          );
+        assert.equal(prompts.length, 2);
+        for (const prompt of prompts) {
+          assert.equal(prompt.sessionId, "mock-session-1");
+          assert.isTrue(prompt.prompt[0]?.text.startsWith(MAGI_PARTICIPANT_PRE_PROMPT));
+          assert.include(prompt.prompt[0]?.text, "read-only");
+          assert.include(prompt.prompt[0]?.text, "Participant subagents are unavailable");
+        }
+        assert.include(prompts[1]?.prompt[0]?.text, "retry now");
+      }),
   );
 
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
@@ -2408,6 +2492,69 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it",
       ]);
       yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("inherits full-access ACP permissions for Magi participants", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-magi-read-only-deny");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_EMIT_TOOL_CALLS: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          runtimeEvents.push(event);
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        control: { executionProfile: "magi-read-only" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "attempt a mutating tool call",
+        attachments: [],
+        control: { executionProfile: "magi-read-only" },
+      });
+      yield* Fiber.interrupt(eventsFiber);
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.isTrue(
+        requests.some(
+          (entry) =>
+            !("method" in entry) &&
+            typeof entry.result === "object" &&
+            entry.result !== null &&
+            "outcome" in entry.result &&
+            typeof entry.result.outcome === "object" &&
+            entry.result.outcome !== null &&
+            "outcome" in entry.result.outcome &&
+            entry.result.outcome.outcome === "selected" &&
+            "optionId" in entry.result.outcome &&
+            entry.result.outcome.optionId === "allow-always",
+        ),
+      );
+      assert.notInclude(
+        runtimeEvents
+          .filter((event) => String(event.threadId) === String(threadId))
+          .map((event) => event.type),
+        "request.opened",
+      );
+
       yield* adapter.stopSession(threadId);
     }),
   );

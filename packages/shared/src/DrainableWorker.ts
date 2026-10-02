@@ -1,5 +1,5 @@
 /**
- * DrainableWorker - A queue-based worker that exposes a `drain()` effect.
+ * DrainableWorker - A queue-based worker that exposes `drain()` and `settle()`.
  *
  * Wraps the common `Queue.unbounded` + `Effect.forever` pattern and adds
  * a signal that resolves when the queue is empty **and** the current item
@@ -26,6 +26,13 @@ export interface DrainableWorker<A> {
    * Resolves when the queue is empty and the worker is idle (not processing).
    */
   readonly drain: Effect.Effect<void>;
+
+  /**
+   * Resolves once every item enqueued before this call has finished
+   * processing. Items enqueued later are not awaited, so a reader can wait
+   * for the work it knows about while producers keep the queue busy.
+   */
+  readonly settle: Effect.Effect<void>;
 }
 
 /**
@@ -42,29 +49,43 @@ export const makeDrainableWorker = <A, E, R>(
 ): Effect.Effect<DrainableWorker<A>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const queue = yield* Effect.acquireRelease(TxQueue.unbounded<A>(), TxQueue.shutdown);
-    const outstanding = yield* TxRef.make(0);
+    const enqueued = yield* TxRef.make(0);
+    const processed = yield* TxRef.make(0);
 
     yield* TxQueue.take(queue).pipe(
       Effect.tap((a) =>
         Effect.ensuring(
           process(a),
-          TxRef.update(outstanding, (n) => n - 1),
+          TxRef.update(processed, (n) => n + 1),
         ),
       ),
       Effect.forever,
       Effect.forkScoped,
     );
 
-    const drain: DrainableWorker<A>["drain"] = TxRef.get(outstanding).pipe(
-      Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),
+    const awaitProcessed = (target: number) =>
+      TxRef.get(processed).pipe(
+        Effect.tap((n) => (n < target ? Effect.txRetry : Effect.void)),
+        Effect.tx,
+      );
+
+    const drain: DrainableWorker<A>["drain"] = TxRef.get(enqueued).pipe(
+      Effect.flatMap((target) =>
+        TxRef.get(processed).pipe(Effect.tap((n) => (n < target ? Effect.txRetry : Effect.void))),
+      ),
       Effect.tx,
+    );
+
+    const settle: DrainableWorker<A>["settle"] = TxRef.get(enqueued).pipe(
+      Effect.tx,
+      Effect.flatMap(awaitProcessed),
     );
 
     const enqueue = (element: A): Effect.Effect<boolean, never, never> =>
       TxQueue.offer(queue, element).pipe(
-        Effect.tap(() => TxRef.update(outstanding, (n) => n + 1)),
+        Effect.tap(() => TxRef.update(enqueued, (n) => n + 1)),
         Effect.tx,
       );
 
-    return { enqueue, drain } satisfies DrainableWorker<A>;
+    return { enqueue, drain, settle } satisfies DrainableWorker<A>;
   });

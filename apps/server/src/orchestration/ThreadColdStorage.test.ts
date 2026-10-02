@@ -250,6 +250,51 @@ layer("ThreadColdStorage", (it) => {
       }),
   );
 
+  it.effect("restores cold children and reserves hot descendants with their root", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const root = ThreadId.make("cold-lineage-root");
+      const child = ThreadId.make("cold-lineage-child");
+      const hotChild = ThreadId.make("hot-lineage-child");
+      const magiChild = ThreadId.make("magi-lineage-child");
+      for (const id of [root, child, hotChild]) {
+        yield* insertArchivedThread(id, id);
+        yield* sql`UPDATE projection_threads SET root_thread_id = ${root} WHERE thread_id = ${id}`;
+      }
+      yield* insertArchivedThread(magiChild, "Magi participant of a native child");
+      yield* sql`UPDATE projection_threads SET magi_parent_thread_id = ${child},
+        magi_root_thread_id = ${child} WHERE thread_id = ${magiChild}`;
+      yield* storage.archiveThread(magiChild);
+      yield* sql`INSERT INTO projection_thread_messages
+        (message_id, thread_id, role, text, is_streaming, created_at, updated_at)
+        VALUES ('cold-child-message', ${child}, 'assistant', 'Retained child output', 0,
+          '2026-07-02T00:00:00.000Z', '2026-07-02T00:00:00.000Z')`;
+      yield* storage.archiveThread(child);
+      yield* storage.archiveThread(root);
+      assert.isTrue(yield* storage.restoreTree(root));
+      const messages =
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${child}`;
+      assert.deepStrictEqual(messages, [{ text: "Retained child output" }]);
+      const manifests = yield* sql`SELECT thread_id, status FROM thread_archive_manifests
+        WHERE root_thread_id = ${root} ORDER BY thread_id`;
+      assert.deepStrictEqual(manifests, [
+        { thread_id: child, status: "restored" },
+        { thread_id: root, status: "restored" },
+        { thread_id: hotChild, status: "restored" },
+        { thread_id: magiChild, status: "restored" },
+      ]);
+      yield* storage.archiveThread(hotChild);
+      const reserved =
+        yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${hotChild}`;
+      assert.deepStrictEqual(reserved, [{ status: "restored" }]);
+      yield* storage.finishRestoreTree(root);
+      for (const id of [magiChild, child, hotChild, root]) {
+        yield* sql`UPDATE projection_threads SET deleted_at = '2026-07-03T00:00:00.000Z' WHERE thread_id = ${id}`;
+        yield* storage.deleteThread(id);
+      }
+    }),
+  );
   for (const operation of ["finishRestoreTree", "rollbackRestoreTree"] as const) {
     for (const failureAt of [1, 2]) {
       for (const cold of [false, true]) {
@@ -275,7 +320,7 @@ layer("ThreadColdStorage", (it) => {
               let rootLookups = 0;
               const spy = vi
                 .spyOn(sql, "unsafe")
-                .mockImplementation((query, params) =>
+                .mockImplementation((...[query, params]: Parameters<typeof sql.unsafe>) =>
                   unsafe(
                     query.includes("SELECT COALESCE(") && ++rootLookups === failureAt
                       ? "SELECT * FROM missing_restore_lookup_fixture"

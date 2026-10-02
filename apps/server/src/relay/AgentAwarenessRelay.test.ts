@@ -562,6 +562,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
         } satisfies OrchestrationEngineShape;
 
         const snapshotQuery = {
+          getThreadLineage: () => Effect.succeed([]),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 1,
@@ -787,6 +788,7 @@ describe("signRelayAgentActivityPublishProof", { concurrent: false }, () => {
             latestSequence: Effect.succeed(0),
           } satisfies OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.succeed({
                 snapshotSequence: 1,
@@ -1005,6 +1007,7 @@ describe("startup catch-up", { concurrent: false }, () => {
             streamDomainEvents: Stream.never,
           } as unknown as OrchestrationEngineShape),
           Layer.succeed(ProjectionSnapshotQuery, {
+            getThreadLineage: () => Effect.succeed([]),
             getShellSnapshot: () =>
               Effect.sync(() => {
                 counts.catchUpPublishes += 1;

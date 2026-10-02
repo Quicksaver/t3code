@@ -9,6 +9,7 @@ export interface ScreenHeaderAction {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly menuOnly?: boolean;
   readonly tintColor?: ColorValue;
 }
 

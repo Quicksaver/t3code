@@ -497,7 +497,11 @@ const make = Effect.gen(function* () {
       [threadId],
     )) as ReadonlyArray<SqlRow>;
     const threadRows = (yield* sql.unsafe(
-      `SELECT thread_id AS root_thread_id, archived_at
+      `SELECT CASE WHEN parent_kind = 'magi' OR magi_parent_thread_id IS NOT NULL THEN
+          COALESCE((SELECT NULLIF(parent.root_thread_id, '') FROM projection_threads AS parent
+                    WHERE parent.thread_id = COALESCE(projection_threads.magi_parent_thread_id, projection_threads.parent_thread_id)),
+                   magi_parent_thread_id, parent_thread_id, thread_id)
+          ELSE COALESCE(NULLIF(root_thread_id, ''), thread_id) END AS root_thread_id, archived_at
        FROM projection_threads
        WHERE thread_id = ? AND deleted_at IS NULL AND archived_at IS NOT NULL`,
       [threadId],
@@ -787,7 +791,11 @@ const make = Effect.gen(function* () {
     const rows = (yield* sql.unsafe(
       `SELECT COALESCE(
           (SELECT root_thread_id FROM thread_archive_manifests WHERE thread_id = ?),
-          (SELECT thread_id FROM projection_threads WHERE thread_id = ?),
+          (SELECT CASE WHEN parent_kind = 'magi' OR magi_parent_thread_id IS NOT NULL THEN
+          COALESCE((SELECT NULLIF(parent.root_thread_id, '') FROM projection_threads AS parent
+                    WHERE parent.thread_id = COALESCE(projection_threads.magi_parent_thread_id, projection_threads.parent_thread_id)),
+                   magi_parent_thread_id, parent_thread_id, thread_id)
+          ELSE COALESCE(NULLIF(root_thread_id, ''), thread_id) END FROM projection_threads WHERE thread_id = ?),
           ?
         ) AS root_thread_id`,
       [threadId, threadId, threadId],
@@ -809,13 +817,6 @@ const make = Effect.gen(function* () {
       if (row.status === "restored") continue;
       restored = (yield* restoreThread(ThreadId.make(String(row.thread_id)))) || restored;
     }
-    if (restored || rows.some((row) => row.status === "restored")) {
-      claimRestore(threadId, rootThreadId);
-      return true;
-    }
-    if (rows.length > 0) {
-      return false;
-    }
 
     // The lifecycle worker may not have started archiving this shell yet. Mark
     // its still-hot rows as owned by the unarchive command before releasing the
@@ -824,18 +825,19 @@ const make = Effect.gen(function* () {
     // a successful command removes it through finishRestoreTreeImpl.
     const reserved = yield* sql.withTransaction(
       Effect.gen(function* () {
-        const archivedShell = (yield* sql.unsafe(
-          `SELECT archived_at
-           FROM projection_threads
-           WHERE thread_id = ? AND deleted_at IS NULL AND archived_at IS NOT NULL
-           LIMIT 1`,
-          [threadId],
+        const archivedShells = (yield* sql.unsafe(
+          `SELECT thread_id, archived_at FROM projection_threads
+           WHERE CASE WHEN parent_kind = 'magi' OR magi_parent_thread_id IS NOT NULL THEN
+          COALESCE((SELECT NULLIF(parent.root_thread_id, '') FROM projection_threads AS parent
+                    WHERE parent.thread_id = COALESCE(projection_threads.magi_parent_thread_id, projection_threads.parent_thread_id)),
+                   magi_parent_thread_id, parent_thread_id, thread_id)
+          ELSE COALESCE(NULLIF(root_thread_id, ''), thread_id) END = ?
+             AND deleted_at IS NULL AND archived_at IS NOT NULL`,
+          [rootThreadId],
         )) as ReadonlyArray<SqlRow>;
-        const source = archivedShell[0];
-        if (!source) return false;
-
-        yield* sql.unsafe(
-          `INSERT INTO thread_archive_manifests
+        for (const source of archivedShells) {
+          yield* sql.unsafe(
+            `INSERT INTO thread_archive_manifests
             (thread_id, root_thread_id, status, archive_version, archived_at, updated_at, error)
            VALUES (?, ?, 'restored', ?, ?, CURRENT_TIMESTAMP, NULL)
            ON CONFLICT(thread_id) DO UPDATE SET
@@ -846,15 +848,15 @@ const make = Effect.gen(function* () {
              updated_at = CURRENT_TIMESTAMP,
              error = NULL
            WHERE thread_archive_manifests.status IN ('pending', 'archiving')`,
-          [threadId, rootThreadId, ARCHIVE_VERSION, String(source.archived_at)],
-        );
-        return true;
+            [String(source.thread_id), rootThreadId, ARCHIVE_VERSION, String(source.archived_at)],
+          );
+        }
+        return archivedShells.length > 0;
       }),
     );
-    if (reserved) {
-      claimRestore(threadId, rootThreadId);
-    }
-    return reserved;
+    const ownsRestore = reserved || restored || rows.some((row) => row.status === "restored");
+    if (ownsRestore) claimRestore(threadId, rootThreadId);
+    return ownsRestore;
   });
 
   const rollbackRestoreTreeImpl = Effect.fn("rollbackRestoreArchiveTreeImpl")(function* (

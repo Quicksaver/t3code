@@ -164,6 +164,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   let uuid = 0;
   const dependencies = Layer.mergeAll(
     Layer.mock(ProjectionSnapshotQuery)({
+      getThreadLineage: () => Effect.succeed([]),
       getShellSnapshot: (readOptions) =>
         (options.getShellSnapshot?.(readOptions) ?? Ref.get(snapshots)).pipe(
           Effect.tap(() => Queue.offer(reads, null)),

@@ -547,13 +547,17 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   allowPromptInjectedEffort = true,
   planModeEnabled,
+  disabled = false,
   triggerClassName,
+  triggerAriaLabel,
   isComposerOwned,
   size = "sm",
   hidden = false,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
+    disabled?: boolean;
+    triggerAriaLabel?: string;
     size?: ComposerControlSize;
     hidden?: boolean;
   }) {
@@ -613,9 +617,9 @@ export const TraitsPicker = memo(function TraitsPicker({
 
   return (
     <Menu
-      open={isMenuOpen}
+      open={disabled ? false : isMenuOpen}
       onOpenChange={(open) => {
-        setIsMenuOpen(open);
+        setIsMenuOpen(disabled ? false : open);
       }}
     >
       <Tooltip>
@@ -624,7 +628,8 @@ export const TraitsPicker = memo(function TraitsPicker({
             <MenuTrigger
               render={
                 <ComposerControl
-                  aria-label={accessibleLabel}
+                  disabled={disabled}
+                  aria-label={triggerAriaLabel ?? accessibleLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
                   size={size}
                   className={cn(

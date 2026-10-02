@@ -14,6 +14,7 @@ import {
   type CodexSettings,
   ProviderDriverKind,
   type ProviderEvent,
+  type ProviderContextUsage,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
@@ -33,6 +34,7 @@ import {
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
@@ -57,7 +59,13 @@ import {
   ProviderAdapterValidationError,
   type ProviderAdapterError,
 } from "../Errors.ts";
+import type { ProviderNativeThreadContext } from "../Services/ProviderAdapter.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import {
+  CODEX_MAGI_CAPABILITIES,
+  normalizeMagiSendTurnInput,
+  normalizeMagiSessionStartInput,
+} from "../ProviderMagiProfile.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -68,6 +76,7 @@ import {
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
+  type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -86,6 +95,9 @@ const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 import { classifyCodexManagedError } from "../CodexManagedErrors.ts";
 const PROVIDER = ProviderDriverKind.make("codex");
+// Magi tools wait for complete participant evidence. Keep Codex's MCP call
+// alive while a slow panel finishes; explicit Magi cancellation remains the stop path.
+const T3_CODE_MCP_TOOL_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -117,6 +129,7 @@ interface CodexAdapterSessionContext {
   readonly turnTokenUsage: CodexTurnTokenUsageState;
   readonly startInput: Parameters<CodexAdapterShape["startSession"]>[0];
   readonly runtimeRevision?: string;
+  lastContextUsage: ProviderContextUsage | null;
   stopped: boolean;
 }
 
@@ -1045,6 +1058,53 @@ function mapItemLifecycle(
       ...toolPresentation,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
+  };
+}
+
+/** Preserve complete native evidence without projecting child conversations. */
+export function codexNativeThreadContext(
+  threadId: ThreadId,
+  instanceId: ProviderInstanceId,
+  snapshot: CodexThreadSnapshot,
+): ProviderNativeThreadContext {
+  const turn = snapshot.turns.at(-1);
+  const userItem = turn?.items.findLast((item) => item.type === "userMessage");
+  const instruction =
+    userItem?.type === "userMessage"
+      ? userItem.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n") ||
+        null
+      : null;
+  return {
+    nativeThreadId: snapshot.threadId,
+    turnId: turn?.id ?? null,
+    instruction,
+    activities: (turn?.items ?? []).flatMap((item) => {
+      const completed =
+        item.type === "webSearch"
+          ? item.results != null || item.action != null
+          : "status" in item && ["completed", "failed", "declined"].includes(String(item.status));
+      if (!completed) return [];
+      if (
+        !["commandExecution", "mcpToolCall", "dynamicToolCall", "fileChange", "webSearch"].includes(
+          item.type,
+        )
+      )
+        return [];
+      const id = NodeCrypto.createHash("sha256")
+        .update(JSON.stringify([threadId, instanceId, snapshot.threadId, turn!.id, item.id]))
+        .digest("hex");
+      return [
+        {
+          id: EventId.make(`native-tool:${id}`),
+          turnId: turn!.id,
+          tone: "info" as const,
+          kind: "tool.completed",
+          summary: itemTitle(toCanonicalItemType(item.type), item) ?? item.type,
+          payload: { nativeThreadId: snapshot.threadId, item },
+          createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
+        },
+      ];
+    }),
   };
 }
 
@@ -2265,6 +2325,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
       Effect.gen(function* () {
+        input = normalizeMagiSessionStartInput(input);
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -2334,8 +2395,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
                   "-c",
                   'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  "-c",
+                  `mcp_servers.t3-code.tool_timeout_sec=${T3_CODE_MCP_TOOL_TIMEOUT_SECONDS}`,
                 ],
                 mcpCapabilities: mcpSession.capabilities,
+              }
+            : {}),
+          ...(input.control?.executionProfile === "magi-read-only"
+            ? {
+                magiParticipant: true,
               }
             : {}),
         };
@@ -2380,6 +2448,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
                 event.payload,
               );
+              const usage = payload ? normalizeCodexTokenUsage(payload.tokenUsage) : undefined;
+              const context = sessions.get(input.threadId);
+              if (usage && context) {
+                context.lastContextUsage = {
+                  usedTokens: usage.usedTokens,
+                  limitTokens: usage.maxTokens ?? null,
+                  measuredAt: event.createdAt,
+                };
+              }
               if (payload) {
                 accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
               }
@@ -2545,6 +2622,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           turnTokenUsage,
           startInput: input,
           ...(resolved ? { runtimeRevision: resolved.revision } : {}),
+          lastContextUsage: null,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -2575,6 +2653,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    input = normalizeMagiSendTurnInput(input);
     // Codex ingests images only. Anything else would be inlined as an image
     // and rejected or misread; generic files reach the agent through the path
     // line ProviderService puts in the prompt. Images are passed by path
@@ -2629,6 +2708,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           : {}),
         ...(serviceTier ? { serviceTier } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.control?.outputSchema !== undefined
+          ? { outputSchema: input.control.outputSchema }
+          : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));
@@ -2676,6 +2758,39 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
 
+  const verifyNativeThread: NonNullable<CodexAdapterShape["verifyNativeThread"]> = (
+    threadId,
+    nativeThreadId,
+  ) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.verifyNativeThread(nativeThreadId)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/read", cause),
+      ),
+    );
+
+  const readNativeThread: NonNullable<CodexAdapterShape["readNativeThread"]> = (
+    threadId,
+    nativeThreadId,
+  ) =>
+    requireSession(threadId).pipe(
+      Effect.flatMap((session) => session.runtime.readNativeThread(nativeThreadId)),
+      Effect.mapError((cause) =>
+        cause._tag === "ProviderAdapterSessionNotFoundError"
+          ? cause
+          : mapCodexRuntimeError(threadId, "thread/read", cause),
+      ),
+      Effect.map((snapshot) =>
+        codexNativeThreadContext(
+          threadId,
+          options?.instanceId ?? ProviderInstanceId.make("codex"),
+          snapshot,
+        ),
+      ),
+    );
+
   const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
     if (!Number.isInteger(numTurns) || numTurns < 1) {
       return Effect.fail(
@@ -2710,6 +2825,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       })),
     );
   };
+
+  const getContextUsage: NonNullable<CodexAdapterShape["getContextUsage"]> = (threadId) =>
+    requireSession(threadId).pipe(Effect.map((session) => session.lastContextUsage));
 
   const uploadFeedback: CodexAdapterShape["uploadFeedback"] = (input) =>
     requireSession(input.threadId).pipe(
@@ -2803,6 +2921,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      magi: CODEX_MAGI_CAPABILITIES,
       promptlessTurnContinuation: true,
     },
     startSession,
@@ -2810,7 +2929,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     compaction: { type: "native", start: compactThread },
     interruptTurn,
     readThread,
+    verifyNativeThread,
+    readNativeThread,
     rollbackThread,
+    getContextUsage,
     uploadFeedback,
     respondToRequest,
     respondToUserInput,

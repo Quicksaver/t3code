@@ -70,6 +70,7 @@ import {
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
+  setComposerDraftMagiArm,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import { useAtomCommand } from "./use-atom-command";
@@ -402,6 +403,7 @@ export async function recoverEditedCreationAfterDelivery(
     );
     // Only settings the queued message actually carries: spreading explicit
     // undefined would clear choices the user already made on the draft.
+    if (queuedMessage.magiArm) setComposerDraftMagiArm(draftKey, queuedMessage.magiArm);
     updateComposerDraftSettings(draftKey, {
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
       ...(kept.runtimeMode !== undefined ? { runtimeMode: kept.runtimeMode } : {}),
@@ -494,6 +496,7 @@ export async function restoreRejectedQueuedMessage(
       await undoComposerDraftMerge(draftKey, originalDraft, mergedDraft);
       return "deferred";
     }
+    if (queuedMessage.magiArm) setComposerDraftMagiArm(draftKey, queuedMessage.magiArm);
     updateComposerDraftSettings(draftKey, {
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
@@ -1039,6 +1042,7 @@ export function useThreadOutboxDrain(): void {
           worktreePath: creation.worktreePath,
           startFromOrigin: creation.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          ...(queuedMessage.magiArm ? { magiArm: queuedMessage.magiArm } : {}),
         }),
       });
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
