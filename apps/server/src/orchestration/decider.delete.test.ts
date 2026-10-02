@@ -137,6 +137,42 @@ function normalizeDeleteEvent(event: PlannedEvent | ReadonlyArray<PlannedEvent>)
 }
 
 it.layer(NodeServices.layer)("decider deletion flows", (it) => {
+  it.effect("rejects restoring an archived thread after deletion", () =>
+    Effect.gen(function* () {
+      let readModel = yield* seedReadModel;
+      const threadId = asThreadId("thread-delete-1");
+      for (const type of ["thread.archive", "thread.delete"] as const) {
+        const decided = yield* decideOrchestrationCommand({
+          command: { type, commandId: asCommandId(`cmd-${type}`), threadId },
+          readModel,
+        });
+        for (const event of Array.isArray(decided) ? decided : [decided]) {
+          readModel = yield* projectEvent(readModel, {
+            ...event,
+            sequence: readModel.snapshotSequence + 1,
+          });
+        }
+      }
+
+      const thread = readModel.threads.find((candidate) => candidate.id === threadId);
+      expect(thread?.archivedAt).toEqual(expect.any(String));
+      expect(thread?.deletedAt).toEqual(expect.any(String));
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.unarchive",
+            commandId: asCommandId("cmd-restore-deleted"),
+            threadId,
+          },
+          readModel,
+        }),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("was deleted before restoration");
+    }),
+  );
+
   it.effect("rejects deleting a non-empty project without force", () =>
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
@@ -150,6 +186,66 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
           readModel,
         }),
       );
+      expect(error.message).toContain("cannot be deleted without force=true");
+    }),
+  );
+
+  it.effect("rejects deleting a project whose only threads are archived without force", () =>
+    Effect.gen(function* () {
+      const readModel = yield* seedReadModel;
+      const archivedAt = "2026-01-02T00:00:00.000Z";
+      const withFirstThreadArchived = yield* projectEvent(readModel, {
+        sequence: 4,
+        eventId: asEventId("evt-thread-archive-1"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-1"),
+        type: "thread.archived",
+        occurredAt: archivedAt,
+        commandId: asCommandId("cmd-thread-archive-1"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-1"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-1"),
+          archivedAt,
+          updatedAt: archivedAt,
+        },
+      });
+      const withOnlyArchivedThreads = yield* projectEvent(withFirstThreadArchived, {
+        sequence: 5,
+        eventId: asEventId("evt-thread-archive-2"),
+        aggregateKind: "thread",
+        aggregateId: asThreadId("thread-delete-2"),
+        type: "thread.archived",
+        occurredAt: archivedAt,
+        commandId: asCommandId("cmd-thread-archive-2"),
+        causationEventId: null,
+        correlationId: asCommandId("cmd-thread-archive-2"),
+        metadata: {},
+        payload: {
+          threadId: asThreadId("thread-delete-2"),
+          archivedAt,
+          updatedAt: archivedAt,
+        },
+      });
+
+      expect(withOnlyArchivedThreads.threads).toHaveLength(2);
+      expect(withOnlyArchivedThreads.threads.every((thread) => thread.archivedAt !== null)).toBe(
+        true,
+      );
+
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.delete",
+            commandId: asCommandId("cmd-project-delete-archived-no-force"),
+            projectId: asProjectId("project-delete"),
+          },
+          readModel: withOnlyArchivedThreads,
+        }),
+      );
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
       expect(error.message).toContain("cannot be deleted without force=true");
     }),
   );

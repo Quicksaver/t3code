@@ -761,6 +761,88 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it.each(["delete-first", "restore-first"] as const)(
+    "preserves deletion when archive actions arrive %s",
+    async (order) => {
+      const system = await createOrchestrationSystem();
+      const { engine } = system;
+      const projectId = asProjectId("archive-race-project");
+      const threadId = ThreadId.make("archive-race-thread");
+      try {
+        await system.run(
+          engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("archive-race-project"),
+            projectId,
+            title: "Archive race",
+            workspaceRoot: "/tmp/archive-race",
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("archive-race-thread"),
+            threadId,
+            projectId,
+            title: "Archive race",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        const archived = await system.run(
+          engine.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make("archive-race-archive"),
+            threadId,
+          }),
+        );
+        const restore = {
+          type: "thread.unarchive",
+          commandId: CommandId.make("archive-race-restore"),
+          threadId,
+        } as const;
+        const remove = {
+          type: "thread.delete",
+          commandId: CommandId.make("archive-race-delete"),
+          threadId,
+        } as const;
+
+        if (order === "delete-first") {
+          await system.run(engine.dispatch(remove));
+          await expect(system.run(engine.dispatch(restore))).rejects.toMatchObject({
+            _tag: "OrchestrationCommandInvariantError",
+            detail: `thread ${threadId} was deleted before restoration`,
+          });
+        } else {
+          const restored = await system.run(engine.dispatch(restore));
+          expect(
+            (await system.readModel()).threads.find((thread) => thread.id === threadId),
+          ).toMatchObject({ archivedAt: null, deletedAt: null });
+          await system.run(engine.dispatch(remove));
+          expect(await system.run(engine.dispatch(restore))).toEqual(restored);
+        }
+
+        const events = await system.run(Stream.runCollect(engine.readEvents(archived.sequence)));
+        expect(Array.from(events, (event) => event.type)).toEqual(
+          order === "delete-first" ? ["thread.deleted"] : ["thread.unarchived", "thread.deleted"],
+        );
+        expect(
+          (await system.readModel()).threads.find((thread) => thread.id === threadId),
+        ).toMatchObject({
+          deletedAt: expect.any(String),
+          archivedAt: order === "delete-first" ? expect.any(String) : null,
+        });
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
+
   it("archives and unarchives threads through orchestration commands", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
