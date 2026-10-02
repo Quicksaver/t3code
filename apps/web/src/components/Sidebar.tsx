@@ -1,3 +1,4 @@
+import { WorkingIndicator } from "./WorkingIndicator";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -51,7 +52,6 @@ import {
   ChevronDownIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
   ClockIcon,
   EyeIcon,
   FolderIcon,
@@ -242,8 +242,14 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
+import {
+  Tooltip,
+  TooltipCardPopup,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import {
   composerDraftHasUserContent,
   DraftId,
@@ -384,8 +390,12 @@ function SidebarThreadTooltip({
   const driverKind = providerEntry?.driverKind ?? null;
   const supportsMultiplePullRequests = useSupportsMultiplePullRequests(thread.environmentId);
   return (
-    <TooltipPopup side="right" align="start" sideOffset={4} variant="glass">
-      {/* The viewport's own inset (py-1 px-2) plus this one make the floating inset. */}
+    <TooltipCardPopup
+      side="right"
+      align="start"
+      sideOffset={4}
+      className="max-w-80 text-left whitespace-normal"
+    >
       <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
         <div className="min-w-0 truncate text-xs leading-tight font-medium text-foreground">
           {thread.title}
@@ -465,7 +475,7 @@ function SidebarThreadTooltip({
           </div>
         ) : null}
       </div>
-    </TooltipPopup>
+    </TooltipCardPopup>
   );
 }
 
@@ -1185,7 +1195,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           icon: "working" as const,
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
-          className: "text-sky-600 dark:text-sky-400",
+          className: "text-working-foreground",
         }
       : status === "monitoring"
         ? {
@@ -1893,7 +1903,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           )}
                         >
                           {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                            <WorkingIndicator label={topStatus.label} />
                           ) : topStatus.icon === "input" ? (
                             <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "approval" ? (
@@ -1908,7 +1918,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
+                          {topStatus.icon !== "working" ? (
+                            <span role="status">{topStatus.label}</span>
+                          ) : null}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />

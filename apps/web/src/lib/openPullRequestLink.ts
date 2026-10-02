@@ -230,16 +230,14 @@ export function useOpenChangeRequestLink(
       const reads = (environmentId: string) =>
         serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
         true;
-      // Beside a thread the panel reads on that thread's environment, so a project from another
-      // one could not be read there whatever its remote says: two environments can hold the same
-      // repository, and handing the panel the wrong one's id opens a surface that never loads.
-      //
-      // The page has no such tie — it lists every server at once — so the link is resolved
-      // against all of them, the primary first where two hold the same repository.
-      const projects = resolvedThreadRef
-        ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-        : targetEnvironmentId
-          ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+      // Federated repository links name the server that owns the checkout. Ordinary thread
+      // links use the thread's environment; standalone links can use any connected server.
+      const projects = targetEnvironmentId
+        ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+        : resolvedThreadRef
+          ? allProjects.filter(
+              (project) => project.environmentId === resolvedThreadRef.environmentId,
+            )
           : allProjects
               .filter((project) => reads(project.environmentId))
               .toSorted(
@@ -322,7 +320,7 @@ export function useOpenChangeRequestLink(
   );
 }
 
-export function useOpenPrLink(threadRef?: ScopedThreadRef) {
+export function useOpenPrLink(threadRef?: ScopedThreadRef, targetEnvironmentId?: EnvironmentId) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   const openLink = useOpenLink(threadRef);
   return useCallback(
@@ -337,7 +335,8 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       if (openInBrowser && isAnchor) return false;
 
       event.preventDefault();
-      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
+      if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef, targetEnvironmentId))
+        return true;
 
       // No project to show it in, so it is an ordinary link and follows the
       // "Open links in" setting; the modifier still forces the system browser.
@@ -353,6 +352,6 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
       });
       return false;
     },
-    [openChangeRequest, openLink],
+    [openChangeRequest, openLink, targetEnvironmentId],
   );
 }

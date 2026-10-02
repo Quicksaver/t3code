@@ -44,7 +44,10 @@ import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
 } from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -542,8 +545,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           args: [
             "pr",
             "list",
-            "--head",
-            input.headSelector,
+            ...(input.headSelector ? ["--head", input.headSelector] : []),
             "--state",
             "open",
             "--limit",
@@ -603,6 +605,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      getCommitAvatarUrl: () => Effect.succeed(null),
       createRepository: (input) =>
         Effect.fail(
           new GitHubCli.GitHubCliCommandError({
@@ -659,6 +662,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -707,7 +711,21 @@ function makeManager(input?: {
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+          resolve: () =>
+            Effect.succeed(
+              input?.sourceControlContext
+                ? {
+                    ...provider,
+                    listChangeRequests: (request) =>
+                      provider.listChangeRequests({
+                        ...request,
+                        ...(input.sourceControlContext
+                          ? { context: input.sourceControlContext }
+                          : {}),
+                      }),
+                  }
+                : provider,
+            ),
           discover: Effect.succeed([]),
         }),
       ),
@@ -787,6 +805,48 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         isDraft: true,
         updatedAt: null,
       });
+    }),
+  );
+
+  it.effect("status can omit provider-backed PR lookup while retaining remote sync state", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/panel-status"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/panel-status"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                number: 19,
+                title: "Panel PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/19",
+                baseRefName: "main",
+                headRefName: "feature/panel-status",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir }, { includePullRequest: false });
+
+      expect(status.hasUpstream).toBe(true);
+      expect(status.aheadCount).toBe(0);
+      expect(status.behindCount).toBe(0);
+      expect(status.pr).toBeNull();
+      expect(ghCalls).toHaveLength(0);
     }),
   );
 
@@ -1246,6 +1306,58 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         updatedAt: "2026-04-08T15:00:00.000Z",
       });
     }),
+  );
+
+  it.effect(
+    "automatic branch PR discovery lets gh select the target instead of forcing origin",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/upstream-pr"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/upstream-pr"]);
+        const { manager, ghCalls } = yield* makeManager({
+          sourceControlContext: {
+            provider: { kind: "github", name: "GitHub", baseUrl: "https://github.com" },
+            remoteName: "origin",
+            remoteUrl: "https://github.com/my-fork/t3code.git",
+          },
+          ghScenario: {
+            prListSequence: [
+              encodeCliJson([
+                {
+                  number: 12712,
+                  title: "PR in the upstream repository",
+                  url: "https://github.com/pingdotgg/t3code/pull/12712",
+                  baseRefName: "main",
+                  headRefName: "feature/upstream-pr",
+                  state: "OPEN",
+                  updatedAt: "2026-09-28T12:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+        const first = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/upstream-pr",
+        });
+        const second = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/upstream-pr",
+        });
+        expect(first).toMatchObject({
+          number: 12712,
+          repositoryKey: "github.com/pingdotgg/t3code",
+        });
+        expect(second).toEqual(first);
+        const lookups = ghCalls.filter((call) => call.startsWith("pr list "));
+        expect(lookups).toHaveLength(1);
+        expect(lookups[0]).toContain("--head feature/upstream-pr");
+        expect(lookups[0]).not.toContain("--repo");
+      }),
   );
 
   it.effect("branch PR lookup uses the saved name after the local branch is deleted", () =>
