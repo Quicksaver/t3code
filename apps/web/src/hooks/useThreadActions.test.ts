@@ -53,7 +53,8 @@ vi.mock("@tanstack/react-router", () => ({
   }),
 }));
 
-vi.mock("../components/Sidebar.logic", () => ({
+vi.mock("../components/Sidebar.logic", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../components/Sidebar.logic")>()),
   getFallbackThreadIdAfterDelete: vi.fn(() => null),
   pinOrderKeyBetween: vi.fn(() => null),
 }));
@@ -181,7 +182,7 @@ describe("ThreadArchiveBlockedError", () => {
       environmentId: "environment-1",
       threadId: "thread-1",
     });
-    expect(error.message).toBe("Cannot archive a running thread.");
+    expect(error.message).toBe("Cannot archive a thread while work is still active.");
   });
 });
 
