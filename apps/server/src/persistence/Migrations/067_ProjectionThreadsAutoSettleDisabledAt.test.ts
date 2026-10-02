@@ -4,15 +4,16 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "../Migrations.ts";
-import migrateAutoSettleDisabledAt from "./054_ProjectionThreadsAutoSettleDisabledAt.ts";
+import migrateAutoSettleDisabledAt from "./067_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
-  "054_ProjectionThreadsAutoSettleDisabledAt",
+  "067_ProjectionThreadsAutoSettleDisabledAt",
   (it) => {
     it.effect("adds the column with auto-settle left on for existing threads", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 53 });
+        yield* runMigrations({ toMigrationInclusive: 66 });
+        const published = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
         const now = "2026-01-01T00:00:00.000Z";
         yield* sql`
         INSERT INTO projection_threads (
@@ -23,7 +24,11 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', ${now}, ${now}
         )
       `;
-        yield* runMigrations({ toMigrationInclusive: 54 });
+        yield* runMigrations({ toMigrationInclusive: 67 });
+        assert.deepEqual(
+          yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 66 ORDER BY migration_id`,
+          published,
+        );
         const migrated = yield* sql<{ readonly autoSettleDisabledAt: string | null }>`
         SELECT auto_settle_disabled_at AS "autoSettleDisabledAt" FROM projection_threads WHERE thread_id = 'thread-1'
       `;

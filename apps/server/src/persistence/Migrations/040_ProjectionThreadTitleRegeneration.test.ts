@@ -8,18 +8,20 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("042_ProjectionThreadLinkedPullRequest", (it) => {
-  it.effect("adds the linked pull request column", () =>
+layer("040_ProjectionThreadTitleRegeneration", (it) => {
+  it.effect("adds pending title regeneration columns", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 41 });
-      yield* runMigrations({ toMigrationInclusive: 42 });
+      yield* runMigrations({ toMigrationInclusive: 39 });
+      yield* runMigrations({ toMigrationInclusive: 40 });
 
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(projection_threads)
       `;
-      assert.ok(columns.some((column) => column.name === "linked_pull_request_json"));
+      const names = new Set(columns.map((column) => column.name));
+      assert.ok(names.has("title_regeneration_request_id"));
+      assert.ok(names.has("title_regeneration_started_at"));
     }),
   );
 });

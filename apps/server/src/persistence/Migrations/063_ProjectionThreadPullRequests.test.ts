@@ -23,12 +23,12 @@ interface PullRequestRow {
   readonly stackJson: string | null;
 }
 
-layer("050_ProjectionThreadPullRequests", (it) => {
+layer("063_ProjectionThreadPullRequests", (it) => {
   it.effect("creates the link table and backfills legacy single links", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 49 });
+      yield* runMigrations({ toMigrationInclusive: 62 });
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -100,7 +100,7 @@ layer("050_ProjectionThreadPullRequests", (it) => {
           )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 50 });
+      yield* runMigrations({ toMigrationInclusive: 63 });
 
       const rows = yield* sql<PullRequestRow>`
         SELECT
@@ -162,7 +162,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
     it.effect("keeps legacy Azure repositories distinct across organizations", () =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 49 });
+        yield* runMigrations({ toMigrationInclusive: 62 });
         for (const organization of ["org-a", "org-b"]) {
           yield* sql`
           INSERT INTO projection_threads (thread_id, project_id, title, model_selection_json, linked_pull_request_json, created_at, updated_at)
@@ -171,7 +171,7 @@ it.layer(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))(
             '2026-03-01T00:00:00.000Z', '2026-03-01T00:00:00.000Z')
         `;
         }
-        yield* runMigrations({ toMigrationInclusive: 50 });
+        yield* runMigrations({ toMigrationInclusive: 63 });
         const rows =
           yield* sql`SELECT host, repository, number FROM projection_thread_pull_requests ORDER BY repository`;
         assert.deepStrictEqual(rows, [

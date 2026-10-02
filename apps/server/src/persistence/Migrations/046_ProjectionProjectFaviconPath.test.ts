@@ -8,21 +8,21 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("047_ProjectionProjectIcon", (it) => {
-  it.effect("adds the nullable project icon JSON to project projections", () =>
+layer("046_ProjectionProjectFaviconPath", (it) => {
+  it.effect("adds the nullable favicon path to project projections", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
+      yield* runMigrations({ toMigrationInclusive: 45 });
       yield* runMigrations({ toMigrationInclusive: 46 });
-      yield* runMigrations({ toMigrationInclusive: 47 });
 
       const columns = yield* sql<{ readonly name: string; readonly notnull: number }>`
         PRAGMA table_info(projection_projects)
       `;
-      const projectIcon = columns.find((column) => column.name === "project_icon_json");
+      const faviconPath = columns.find((column) => column.name === "favicon_path");
 
-      assert.equal(projectIcon?.name, "project_icon_json");
-      assert.equal(projectIcon?.notnull, 0);
+      assert.equal(faviconPath?.name, "favicon_path");
+      assert.equal(faviconPath?.notnull, 0);
     }),
   );
 });
