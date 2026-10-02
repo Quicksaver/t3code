@@ -35,6 +35,8 @@ maintainers' test train: its builds can be broken and are never offered as
 updates, so the installer and `t3 update` ask for confirmation before
 installing one.
 
+Versions without compressed archive storage cannot read archived conversations once a newer version has compressed them, including conversations archived before you updated. Unarchive any conversations you need before downgrading; changing the version alone does not restore archived history.
+
 `t3 uninstall` removes the background service, the `t3` launcher, and the
 downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.t3/userdata` are kept. Pass `--yes` from a

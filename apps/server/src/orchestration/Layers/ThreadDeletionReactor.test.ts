@@ -1,35 +1,195 @@
 import {
   CommandId,
   CorrelationId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
-  type OrchestrationEvent,
+  PreviewSessionLookupError,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ThreadId,
+  type OrchestrationEvent,
 } from "@t3tools/contracts";
-import { it as effectIt } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { assert, it as effectIt } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
 
+import * as ServerConfig from "../../config.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
-  ProviderService,
-  type ProviderServiceShape,
-} from "../../provider/Services/ProviderService.ts";
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "../../provider/Layers/ProviderEventLoggers.ts";
+import { ProviderValidationError } from "../../provider/Errors.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
+import { ProjectionThreadSessionRepository } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { PreviewManager } from "../../preview/Manager.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../Services/OrchestrationEngine.ts";
+import { ServerActivation } from "../../serverActivation.ts";
+import { decideOrchestrationCommand } from "../decider.ts";
+import { createEmptyReadModel, projectEvent } from "../projector.ts";
+import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import { makeTestOrchestrationEngine } from "../testUtils/orchestrationEngine.ts";
 import {
+  enqueueLifecycleJobOnce,
   logCleanupCauseUnlessInterrupted,
+  THREAD_LIFECYCLE_RETRY_DELAY,
   ThreadDeletionReactorLive,
 } from "./ThreadDeletionReactor.ts";
+
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+const archivedEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 1,
+  eventId: EventId.make(`event-archive-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.archived",
+  occurredAt: "2026-07-20T00:00:00.000Z",
+  commandId: CommandId.make(`command-archive-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`command-archive-${threadId}`),
+  metadata: {},
+  payload: {
+    threadId,
+    archivedAt: "2026-07-20T00:00:00.000Z",
+    updatedAt: "2026-07-20T00:00:00.000Z",
+  },
+});
+
+const deletedEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 1,
+  eventId: EventId.make(`event-delete-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.deleted",
+  occurredAt: "2026-07-20T00:00:00.000Z",
+  commandId: CommandId.make(`command-delete-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`command-delete-${threadId}`),
+  metadata: {},
+  payload: {
+    threadId,
+    deletedAt: "2026-07-20T00:00:00.000Z",
+  },
+});
+
+const unarchivedEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 2,
+  eventId: EventId.make(`event-unarchive-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.unarchived",
+  occurredAt: "2026-07-20T00:00:01.000Z",
+  commandId: CommandId.make(`command-unarchive-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`command-unarchive-${threadId}`),
+  metadata: {},
+  payload: {
+    threadId,
+    updatedAt: "2026-07-20T00:00:01.000Z",
+  },
+});
+
+function testReactorLayer(input: {
+  readonly eventStream: Stream.Stream<OrchestrationEvent>;
+  readonly stopSession: ProviderService["Service"]["stopSession"];
+  readonly getBinding: ProviderSessionDirectory["Service"]["getBinding"];
+  readonly getProjectedSession: ProjectionThreadSessionRepository["Service"]["getByThreadId"];
+  readonly archiveThread: ThreadColdStorage.ThreadColdStorage["Service"]["archiveThread"];
+  readonly deleteThread?: ThreadColdStorage.ThreadColdStorage["Service"]["deleteThread"];
+  readonly closePreview?: PreviewManager["Service"]["close"];
+  readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
+  readonly pendingArchives?: ReadonlyArray<ThreadId>;
+  readonly runArchiveQuiesce?: boolean;
+  readonly backgroundLiveness?: ThreadBackgroundLiveness.ThreadBackgroundLivenessService["Service"];
+  readonly latestSequence?: Effect.Effect<number>;
+}) {
+  return ThreadDeletionReactorLive.pipe(
+    Layer.provide(
+      Layer.succeed(
+        OrchestrationEngineService,
+        makeTestOrchestrationEngine({
+          streamDomainEvents: input.eventStream,
+          latestSequence: input.latestSequence ?? Effect.succeed(0),
+        }),
+      ),
+    ),
+    Layer.provide(Layer.mock(ProviderService)({ stopSession: input.stopSession })),
+    Layer.provide(
+      Layer.mock(ProviderSessionDirectory)({
+        getBinding: input.getBinding,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProjectionThreadSessionRepository)({
+        getByThreadId: input.getProjectedSession,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(TerminalManager.TerminalManager)({
+        close: input.closeTerminal ?? (() => Effect.void),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(PreviewManager)({
+        close: input.closePreview ?? (() => Effect.void),
+      }),
+    ),
+    Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+    Layer.provide(
+      Layer.succeed(
+        ThreadBackgroundLiveness.ThreadBackgroundLivenessService,
+        input.backgroundLiveness ?? ThreadBackgroundLiveness.make(),
+      ),
+    ),
+    Layer.provide(
+      Layer.mock(ThreadColdStorage.ThreadColdStorage)({
+        archiveThread: (threadId, quiesce) =>
+          (input.runArchiveQuiesce === false ? Effect.void : (quiesce ?? Effect.void)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ThreadColdStorage.ThreadColdStorageError({
+                  operation: "archive",
+                  threadId,
+                  cause,
+                }),
+            ),
+            Effect.andThen(input.archiveThread(threadId)),
+          ),
+        deleteThread: (threadId, quiesce = Effect.void) =>
+          quiesce.pipe(
+            Effect.mapError((cause) =>
+              ThreadColdStorage.ThreadColdStorageError.normalize("delete", threadId, cause),
+            ),
+            Effect.andThen(input.deleteThread?.(threadId) ?? Effect.void),
+          ),
+        compactLegacyStorage: Effect.void,
+        listPendingArchiveThreadIds: Effect.succeed(input.pendingArchives ?? []),
+        listPendingDeleteThreadIds: Effect.succeed([]),
+      }),
+    ),
+  );
+}
 
 describe("logCleanupCauseUnlessInterrupted", () => {
   const threadId = ThreadId.make("thread-deletion-reactor-test");
@@ -62,6 +222,793 @@ describe("logCleanupCauseUnlessInterrupted", () => {
   });
 });
 
+effectIt.effect("does not delete while provider quiescence is failing", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-delete-provider-still-active");
+    const stopAttempted = yield* Deferred.make<void>();
+    const deleteCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () =>
+        Deferred.succeed(stopAttempted, undefined).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderValidationError({
+                operation: "ProviderService.stopSession",
+                issue: "provider is still active",
+              }),
+            ),
+          ),
+        ),
+      getBinding: () =>
+        Effect.succeed(
+          Option.some({
+            threadId,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }),
+        ),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Effect.void,
+      deleteThread: () => Ref.update(deleteCalls, (count) => count + 1),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, deletedEvent(threadId));
+      yield* Deferred.await(stopAttempted);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(deleteCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("deletes a settled thread when its provider binding is already absent", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-delete-missing-binding");
+    const deleted = yield* Deferred.make<void>();
+    const stopCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Ref.update(stopCalls, (count) => count + 1),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Effect.void,
+      deleteThread: () => Deferred.succeed(deleted, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, deletedEvent(threadId));
+      yield* Deferred.await(deleted);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(stopCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("releases a lifecycle job reservation when enqueueing is interrupted", () =>
+  Effect.gen(function* () {
+    const scheduledJobs = new Set<string>();
+    const enqueueCalls = yield* Ref.make(0);
+
+    const interrupted = yield* Effect.exit(
+      enqueueLifecycleJobOnce(scheduledJobs, "archive:thread-interrupted", Effect.interrupt),
+    );
+    expect(Exit.isFailure(interrupted)).toBe(true);
+    expect(scheduledJobs.has("archive:thread-interrupted")).toBe(false);
+
+    yield* enqueueLifecycleJobOnce(
+      scheduledJobs,
+      "archive:thread-interrupted",
+      Ref.update(enqueueCalls, (count) => count + 1),
+    );
+    expect(yield* Ref.get(enqueueCalls)).toBe(1);
+  }),
+);
+
+effectIt.effect("archives a settled thread when its provider binding is already absent", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-archive-missing-binding");
+    const archived = yield* Deferred.make<void>();
+    const stopCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Ref.update(stopCalls, (count) => count + 1),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(stopCalls)).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("clears background liveness after archive provider quiescence", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-archive-background-liveness");
+    const archived = yield* Deferred.make<void>();
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId: "task-background-liveness",
+      taskType: "spawn_agent",
+      status: "running",
+      kind: "started",
+    });
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+      backgroundLiveness,
+    });
+
+    expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drainThrough(1);
+    }).pipe(Effect.provide(layer));
+
+    expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBeNull();
+  }),
+);
+
+effectIt.effect("closes previews when observing an archive event", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-archive-preview");
+    const archived = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closePreview: ({ threadId: closedThreadId }) =>
+        Ref.update(previewCloseCalls, (calls) => [...calls, closedThreadId]).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new PreviewSessionLookupError({
+                threadId: closedThreadId,
+                tabId: "missing-preview",
+              }),
+            ),
+          ),
+        ),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("leaves stale archive cleanup to cold-storage eligibility", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-stale-archive-cleanup");
+    const archived = yield* Deferred.make<void>();
+    const stopCalls = yield* Ref.make(0);
+    const terminalCloseCalls = yield* Ref.make(0);
+    const backgroundLiveness = ThreadBackgroundLiveness.make();
+    backgroundLiveness.recordTaskLiveness({
+      threadId,
+      taskId: "task-restored-background-liveness",
+      taskType: "spawn_agent",
+      status: "running",
+      kind: "started",
+    });
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Ref.update(stopCalls, (count) => count + 1),
+      getBinding: () =>
+        Effect.succeed(
+          Option.some({
+            threadId,
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }),
+        ),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closeTerminal: () => Ref.update(terminalCloseCalls, (count) => count + 1),
+      archiveThread: () => Deferred.succeed(archived, undefined).pipe(Effect.asVoid),
+      runArchiveQuiesce: false,
+      backgroundLiveness,
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(archived);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(stopCalls)).toBe(0);
+      expect(yield* Ref.get(terminalCloseCalls)).toBe(0);
+      expect(backgroundLiveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("closes a restored preview at unarchive instead of from a stale archive job", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const threadId = ThreadId.make("thread-restored-before-archive-job");
+    const staleArchiveChecked = yield* Deferred.make<void>();
+    const restoredPreviewClosed = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closePreview: () =>
+        Ref.update(previewCloseCalls, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(restoredPreviewClosed, undefined)),
+          Effect.asVoid,
+        ),
+      archiveThread: () => Deferred.succeed(staleArchiveChecked, undefined).pipe(Effect.asVoid),
+      // Models cold storage rejecting a queued archive after its locked
+      // eligibility recheck because the thread has already been restored.
+      runArchiveQuiesce: false,
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* PubSub.publish(events, archivedEvent(threadId));
+      yield* Deferred.await(staleArchiveChecked);
+      yield* reactor.drainThrough(1);
+
+      expect(yield* Ref.get(previewCloseCalls)).toBe(0);
+
+      yield* PubSub.publish(events, unarchivedEvent(threadId));
+      yield* Deferred.await(restoredPreviewClosed);
+      expect(yield* Ref.get(previewCloseCalls)).toBe(1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect(
+  "keeps archive cleanup fail-closed without a binding for an active projection",
+  () =>
+    Effect.gen(function* () {
+      const events = yield* PubSub.unbounded<OrchestrationEvent>();
+      const subscription = yield* PubSub.subscribe(events);
+      const threadId = ThreadId.make("thread-archive-active-missing-binding");
+      const stopAttempted = yield* Deferred.make<void>();
+      const archiveCalls = yield* Ref.make(0);
+      const layer = testReactorLayer({
+        eventStream: Stream.fromSubscription(subscription),
+        stopSession: () =>
+          Deferred.succeed(stopAttempted, undefined).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderValidationError({
+                  operation: "ProviderService.stopSession",
+                  issue: "missing provider binding",
+                }),
+              ),
+            ),
+          ),
+        getBinding: () => Effect.succeed(Option.none()),
+        getProjectedSession: () =>
+          Effect.succeed(
+            Option.some({
+              threadId,
+              status: "running",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: "2026-07-20T00:00:00.000Z",
+            }),
+          ),
+        archiveThread: () => Ref.update(archiveCalls, (count) => count + 1),
+      });
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadDeletionReactor;
+        yield* reactor.start();
+        yield* PubSub.publish(events, archivedEvent(threadId));
+        yield* Deferred.await(stopAttempted);
+        yield* reactor.drainThrough(1);
+
+        expect(yield* Ref.get(archiveCalls)).toBe(0);
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+effectIt.effect("retries a failed durable archive job after a delay", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-archive-retry");
+    const firstAttempt = yield* Deferred.make<void>();
+    const secondAttempt = yield* Deferred.make<void>();
+    const archiveAttempts = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.empty,
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      pendingArchives: [threadId],
+      archiveThread: () =>
+        Ref.updateAndGet(archiveAttempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) =>
+            attempt === 1
+              ? Deferred.succeed(firstAttempt, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new ThreadColdStorage.ThreadColdStorageError({
+                        operation: "archive",
+                        threadId,
+                        cause: new Error("temporary archive failure"),
+                      }),
+                    ),
+                  ),
+                )
+              : Deferred.succeed(secondAttempt, undefined).pipe(Effect.asVoid),
+          ),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* Deferred.await(firstAttempt);
+      yield* reactor.drainThrough(0);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(THREAD_LIFECYCLE_RETRY_DELAY);
+      yield* Deferred.await(secondAttempt);
+      yield* reactor.drainThrough(0);
+
+      expect(yield* Ref.get(archiveAttempts)).toBe(2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("coalesces concurrent lifecycle failures into one delayed rescan", () =>
+  Effect.gen(function* () {
+    const firstThreadId = ThreadId.make("thread-archive-retry-first");
+    const secondThreadId = ThreadId.make("thread-archive-retry-second");
+    const retryCompleted = yield* Deferred.make<void>();
+    const archiveAttempts = yield* Ref.make(0);
+    const layer = testReactorLayer({
+      eventStream: Stream.empty,
+      stopSession: () => Effect.void,
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      pendingArchives: [firstThreadId, secondThreadId],
+      archiveThread: (threadId) =>
+        Ref.updateAndGet(archiveAttempts, (count) => count + 1).pipe(
+          Effect.flatMap((attempt) => {
+            if (attempt <= 2) {
+              return Effect.fail(
+                new ThreadColdStorage.ThreadColdStorageError({
+                  operation: "archive",
+                  threadId,
+                  cause: new Error("temporary archive failure"),
+                }),
+              );
+            }
+            return attempt === 4
+              ? Deferred.succeed(retryCompleted, undefined).pipe(Effect.asVoid)
+              : Effect.void;
+          }),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* reactor.drainThrough(0);
+      expect(yield* Ref.get(archiveAttempts)).toBe(2);
+
+      yield* TestClock.adjust(THREAD_LIFECYCLE_RETRY_DELAY);
+      yield* Deferred.await(retryCompleted);
+      yield* reactor.drainThrough(0);
+      expect(yield* Ref.get(archiveAttempts)).toBe(4);
+
+      yield* TestClock.adjust(THREAD_LIFECYCLE_RETRY_DELAY);
+      yield* Effect.yieldNow;
+      yield* reactor.drainThrough(0);
+      expect(yield* Ref.get(archiveAttempts)).toBe(4);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+effectIt.effect("unarchive events reclaim bundles left by failed finalization", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const subscription = yield* PubSub.subscribe(events);
+    const sql = yield* SqlClient.SqlClient;
+    const storage = yield* ThreadColdStorage.ThreadColdStorage;
+    const threadId = ThreadId.make("thread-unarchive-finalize-retry");
+    const reactorLayer = testReactorLayer({
+      eventStream: Stream.fromSubscription(subscription),
+      stopSession: () => Effect.die("Finalization must not stop the provider"),
+      getBinding: () => Effect.succeed(Option.none()),
+      getProjectedSession: () => Effect.succeed(Option.none()),
+      closeTerminal: () => Effect.die("Finalization must not close the terminal"),
+      runArchiveQuiesce: false,
+      archiveThread: (id) =>
+        storage.archiveThread(id, Effect.die("Active-shell cleanup must not quiesce")),
+    });
+
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at, archived_at
+        ) VALUES (
+          ${threadId}, 'project-finalize', 'Finalize after unarchive',
+          '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
+          'full-access', 'default', '2026-07-20T00:00:00.000Z',
+          '2026-07-20T00:00:00.000Z', '2026-07-20T00:00:00.000Z'
+        )
+      `;
+      yield* storage.archiveThread(threadId);
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      yield* sql`UPDATE projection_threads SET archived_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql.unsafe(`
+        CREATE TEMP TRIGGER fail_finalization BEFORE DELETE ON thread_archive_manifests
+        BEGIN SELECT RAISE(ABORT, 'temporary finalization failure'); END
+      `);
+      yield* Effect.flip(storage.finishRestoreTree(threadId)).pipe(
+        Effect.ensuring(sql.unsafe("DROP TRIGGER temp.fail_finalization").pipe(Effect.orDie)),
+      );
+      yield* PubSub.publish(events, unarchivedEvent(threadId));
+      yield* reactor.drainThrough(2);
+      assert.deepStrictEqual(
+        yield* sql`SELECT archived_at FROM projection_threads WHERE thread_id = ${threadId}`,
+        [{ archived_at: null }],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+    }).pipe(Effect.provide(reactorLayer));
+  }).pipe(
+    Effect.provide(
+      ThreadColdStorage.layer.pipe(
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-finalize-retry-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+effectIt.effect("keeps startup archive data intact until server activation", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const storage = yield* ThreadColdStorage.ThreadColdStorage;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = yield* ServerConfig.ServerConfig;
+    const activation = yield* Deferred.make<void>();
+    const cleanupStarted = yield* Deferred.make<void>();
+    const threadId = ThreadId.make("archive-awaiting-activation");
+    const attachmentId = `${threadId}-00000000-0000-4000-8000-000000000001`;
+    const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
+    yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+    yield* fs.writeFileString(attachmentPath, "attachment retained across a failed trial");
+    yield* sql`INSERT INTO projection_threads (
+      thread_id, project_id, title, model_selection_json, runtime_mode,
+      interaction_mode, created_at, updated_at, archived_at
+    ) VALUES (${threadId}, 'project-activation', 'Pending archive',
+      '{"instanceId":"codex","model":"gpt-5.5","options":[]}', 'full-access', 'default',
+      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+    yield* sql`INSERT INTO projection_thread_messages (
+      message_id, thread_id, role, text, attachments_json, is_streaming, created_at, updated_at
+    ) VALUES ('activation-message', ${threadId}, 'user', 'hot history',
+      ${encodeUnknownJsonString([{ id: attachmentId }])}, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`;
+
+    const reactorLayer = ThreadDeletionReactorLive.pipe(
+      Layer.provide(
+        Layer.succeed(
+          OrchestrationEngineService,
+          makeTestOrchestrationEngine({
+            streamDomainEvents: Stream.never,
+          }),
+        ),
+      ),
+      Layer.provide(Layer.mock(ProviderService)({ stopSession: () => Effect.void })),
+      Layer.provide(Layer.mock(ProviderSessionDirectory)({ getBinding: () => Effect.succeedNone })),
+      Layer.provide(
+        Layer.mock(ProjectionThreadSessionRepository)({ getByThreadId: () => Effect.succeedNone }),
+      ),
+      Layer.provide(Layer.mock(PreviewManager)({ close: () => Effect.void })),
+      Layer.provide(
+        Layer.mock(TerminalManager.TerminalManager)({
+          close: () => Deferred.succeed(cleanupStarted, undefined).pipe(Effect.asVoid),
+        }),
+      ),
+      Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provide(Layer.succeed(ThreadColdStorage.ThreadColdStorage, storage)),
+    );
+    yield* Effect.gen(function* () {
+      const reactor = yield* ThreadDeletionReactor;
+      yield* reactor.start();
+      yield* reactor.drainThrough(0);
+      assert.deepStrictEqual(
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+        [{ text: "hot history" }],
+      );
+      assert.strictEqual(
+        yield* fs.readFileString(attachmentPath),
+        "attachment retained across a failed trial",
+      );
+      assert.deepStrictEqual(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+        [],
+      );
+
+      yield* Deferred.succeed(activation, undefined);
+      yield* Deferred.await(cleanupStarted);
+      yield* reactor.drainThrough(0);
+      assert.deepStrictEqual(
+        yield* sql`SELECT text FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+        [],
+      );
+      assert.isFalse(yield* fs.exists(attachmentPath));
+      assert.deepStrictEqual(
+        yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+        [{ status: "cold" }],
+      );
+      assert.isTrue(yield* storage.restoreTree(threadId));
+      assert.strictEqual(
+        yield* fs.readFileString(attachmentPath),
+        "attachment retained across a failed trial",
+      );
+    }).pipe(
+      Effect.provide(reactorLayer),
+      Effect.provideService(ServerActivation, Deferred.await(activation)),
+    );
+  }).pipe(
+    Effect.provide(
+      ThreadColdStorage.layer.pipe(
+        Layer.provideMerge(SqlitePersistenceMemory),
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-archive-activation-" }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+effectIt.effect("force-deleting a project removes an already-cold archived thread", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const eventSubscription = yield* PubSub.subscribe(events);
+    const now = "2026-07-20T00:00:00.000Z";
+    const projectId = ProjectId.make("project-force-delete-cold");
+    const threadId = ThreadId.make("thread-force-delete-cold");
+    const commandId = CommandId.make("command-force-delete-cold");
+    const terminalCloseStarted = yield* Deferred.make<void>();
+    const previewCloseCalls = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
+
+    const orchestrationEngineLayer = Layer.succeed(
+      OrchestrationEngineService,
+      makeTestOrchestrationEngine({
+        streamDomainEvents: Stream.fromSubscription(eventSubscription),
+      }),
+    );
+    const providerLayer = Layer.mock(ProviderService)({
+      stopSession: () => Effect.void,
+    });
+    const terminalLayer = Layer.mock(TerminalManager.TerminalManager)({
+      close: () => Deferred.succeed(terminalCloseStarted, undefined).pipe(Effect.asVoid),
+    });
+    const previewLayer = Layer.mock(PreviewManager)({
+      close: ({ threadId: closedThreadId }) =>
+        Ref.update(previewCloseCalls, (calls) => [...calls, closedThreadId]),
+    });
+    const loggerLayer = Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers);
+    const coldStorageLayer = ThreadColdStorage.layer.pipe(
+      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-force-delete-cold-" }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    const runtimeLayer = ThreadDeletionReactorLive.pipe(
+      Layer.provide(orchestrationEngineLayer),
+      Layer.provide(providerLayer),
+      Layer.provide(
+        Layer.mock(ProviderSessionDirectory)({
+          getBinding: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProjectionThreadSessionRepository)({
+          getByThreadId: () => Effect.succeed(Option.none()),
+        }),
+      ),
+      Layer.provide(terminalLayer),
+      Layer.provide(previewLayer),
+      Layer.provide(loggerLayer),
+      Layer.provide(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(coldStorageLayer),
+    );
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const reactor = yield* ThreadDeletionReactor;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode,
+          interaction_mode, created_at, updated_at, archived_at
+        ) VALUES (
+          ${threadId}, ${projectId}, 'Cold forced-delete thread',
+          '{"instanceId":"codex","model":"gpt-5.5","options":[]}',
+          'full-access', 'default', ${now}, ${now}, ${now}
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, attachments_json,
+          is_streaming, created_at, updated_at
+        ) VALUES (
+          'message-force-delete-cold', ${threadId}, NULL, 'user',
+          'delete this cold content', '[]', 0, ${now}, ${now}
+        )
+      `;
+      yield* storage.archiveThread(threadId);
+      const coldShells = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM projection_threads WHERE thread_id = ${threadId}
+      `;
+      const coldManifests = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
+      `;
+      const coldChunks = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(coldShells, [{ count: 1 }]);
+      assert.deepStrictEqual(coldManifests, [{ count: 1 }]);
+      assert.isAbove(coldChunks[0]?.count ?? 0, 0);
+
+      let readModel = createEmptyReadModel(now);
+      readModel = yield* projectEvent(readModel, {
+        sequence: 1,
+        eventId: EventId.make("event-force-delete-project-created"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("command-force-delete-project-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-force-delete-project-created"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Force Delete Cold",
+          workspaceRoot: "/tmp/project-force-delete-cold",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      readModel = yield* projectEvent(readModel, {
+        sequence: 2,
+        eventId: EventId.make("event-force-delete-thread-created"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: now,
+        commandId: CommandId.make("command-force-delete-thread-created"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-force-delete-thread-created"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId,
+          title: "Cold forced-delete thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.5",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      readModel = yield* projectEvent(readModel, {
+        sequence: 3,
+        eventId: EventId.make("event-force-delete-thread-archived"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.archived",
+        occurredAt: now,
+        commandId: CommandId.make("command-force-delete-thread-archived"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-force-delete-thread-archived"),
+        metadata: {},
+        payload: { threadId, archivedAt: now, updatedAt: now },
+      });
+
+      const planned = yield* decideOrchestrationCommand({
+        command: { type: "project.delete", commandId, projectId, force: true },
+        readModel,
+      });
+      const plannedEvents = Array.isArray(planned) ? planned : [planned];
+      const deletedEvent = plannedEvents.find(
+        (event): event is Extract<(typeof plannedEvents)[number], { type: "thread.deleted" }> =>
+          event.type === "thread.deleted" && event.payload.threadId === threadId,
+      );
+      assert.isDefined(deletedEvent);
+
+      yield* sql`UPDATE projection_threads SET deleted_at = ${now} WHERE thread_id = ${threadId}`;
+      yield* reactor.start();
+      yield* PubSub.publish(events, { ...deletedEvent, sequence: 4 });
+      yield* Deferred.await(terminalCloseStarted);
+      yield* reactor.drainThrough(4);
+      expect(yield* Ref.get(previewCloseCalls)).toEqual([threadId]);
+
+      const hotRows = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM projection_threads WHERE thread_id = ${threadId}
+      `;
+      const manifests = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM thread_archive_manifests WHERE thread_id = ${threadId}
+      `;
+      const chunks = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM cold_archive.archive_thread_chunks WHERE thread_id = ${threadId}
+      `;
+      assert.deepStrictEqual(hotRows, [{ count: 0 }]);
+      assert.deepStrictEqual(manifests, [{ count: 0 }]);
+      assert.deepStrictEqual(chunks, [{ count: 0 }]);
+    }).pipe(Effect.provide(runtimeLayer));
+  }),
+);
 describe("ThreadDeletionReactor drain", () => {
   const now = "2026-01-01T00:00:00.000Z";
   const threadId = ThreadId.make("thread-deletion-reactor-drain");
@@ -79,6 +1026,94 @@ describe("ThreadDeletionReactor drain", () => {
     payload: { threadId, deletedAt: now },
   });
 
+  effectIt.effect("does not block new threads behind a bulk archive backlog", () =>
+    Effect.gen(function* () {
+      const archiveStarted = yield* Deferred.make<void>();
+      const releaseArchive = yield* Deferred.make<void>();
+      const archivedThreadIds = Array.from({ length: 650 }, (_, index) =>
+        ThreadId.make(`bulk-archive-${index}`),
+      );
+      const completed: Array<ThreadId> = [];
+      const layer = testReactorLayer({
+        eventStream: Stream.never,
+        stopSession: () => Effect.void,
+        getBinding: () => Effect.succeed(Option.none()),
+        getProjectedSession: () => Effect.succeed(Option.none()),
+        pendingArchives: archivedThreadIds,
+        archiveThread: (id) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(archiveStarted, undefined);
+            yield* Deferred.await(releaseArchive);
+            completed.push(id);
+          }),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reactor = yield* ThreadDeletionReactor;
+          yield* reactor.start();
+          yield* Deferred.await(archiveStarted);
+          yield* reactor.drainThrough(0, ThreadId.make("unrelated-new-thread"));
+          expect(completed).toEqual([]);
+          yield* Deferred.succeed(releaseArchive, undefined);
+          yield* reactor.drainThrough(0);
+          expect(completed).toEqual(archivedThreadIds);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  effectIt.effect("waits for the reused thread's cleanup without draining later archives", () =>
+    Effect.gen(function* () {
+      const archiveStarted = yield* Deferred.make<void>();
+      const releaseArchive = yield* Deferred.make<void>();
+      const unrelatedArchiveStarted = yield* Deferred.make<void>();
+      const releaseUnrelatedArchive = yield* Deferred.make<void>();
+      const unrelatedThreadId = ThreadId.make("unrelated-archive");
+      const completed: Array<ThreadId> = [];
+      const layer = testReactorLayer({
+        eventStream: Stream.never,
+        stopSession: () => Effect.void,
+        getBinding: () => Effect.succeed(Option.none()),
+        getProjectedSession: () => Effect.succeed(Option.none()),
+        pendingArchives: [threadId, unrelatedThreadId],
+        archiveThread: (id) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(
+              id === threadId ? archiveStarted : unrelatedArchiveStarted,
+              undefined,
+            );
+            yield* Deferred.await(id === threadId ? releaseArchive : releaseUnrelatedArchive);
+            completed.push(id);
+          }),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reactor = yield* ThreadDeletionReactor;
+          yield* reactor.start();
+          yield* Deferred.await(archiveStarted);
+          const drained = yield* reactor.drainThrough(0, threadId).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                expect(completed).toContain(threadId);
+              }),
+            ),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* Deferred.succeed(releaseArchive, undefined);
+          yield* Deferred.await(unrelatedArchiveStarted);
+          yield* Fiber.join(drained);
+          expect(completed).toEqual([threadId]);
+          yield* Deferred.succeed(releaseUnrelatedArchive, undefined);
+          yield* reactor.drainThrough(0);
+          expect(completed).toEqual([threadId, unrelatedThreadId]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
   effectIt.effect("waits for a published deletion the subscriber has not consumed yet", () =>
     Effect.gen(function* () {
       const stops: Array<number> = [];
@@ -87,16 +1122,15 @@ describe("ThreadDeletionReactor drain", () => {
       // subscriber has not received it yet: the stream releases it on demand.
       const releaseSecondEvent = yield* Deferred.make<void>();
       const latestSequence = yield* Ref.make(0);
-      const engine = {
-        latestSequence: Ref.get(latestSequence),
-        streamDomainEvents: Stream.concat(
-          Stream.make(deletedEvent(1)),
-          Stream.fromEffect(Deferred.await(releaseSecondEvent)).pipe(
-            Stream.map(() => deletedEvent(2)),
-          ),
+      const eventStream = Stream.concat(
+        Stream.make(deletedEvent(1)),
+        Stream.fromEffect(Deferred.await(releaseSecondEvent)).pipe(
+          Stream.map(() => deletedEvent(2)),
         ),
-      } as unknown as OrchestrationEngineShape;
-      const providerService = {
+      );
+      const layer = testReactorLayer({
+        eventStream,
+        latestSequence: Ref.get(latestSequence),
         stopSession: () =>
           Effect.gen(function* () {
             stops.push(stops.length + 1);
@@ -104,15 +1138,18 @@ describe("ThreadDeletionReactor drain", () => {
               yield* Deferred.succeed(firstCleanupDone, undefined);
             }
           }),
-      } as unknown as ProviderServiceShape;
-      const terminalManager = {
-        close: () => Effect.void,
-      } as unknown as TerminalManager.TerminalManager["Service"];
-      const layer = ThreadDeletionReactorLive.pipe(
-        Layer.provide(Layer.succeed(ProviderService, providerService)),
-        Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
-        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
-      );
+        getBinding: () =>
+          Effect.succeed(
+            Option.some({
+              threadId,
+              provider: ProviderDriverKind.make("codex"),
+              providerInstanceId: ProviderInstanceId.make("codex"),
+            }),
+          ),
+        getProjectedSession: () => Effect.succeed(Option.none()),
+        archiveThread: () => Effect.void,
+        deleteThread: () => Effect.void,
+      });
 
       yield* Effect.scoped(
         Effect.gen(function* () {
@@ -123,7 +1160,7 @@ describe("ThreadDeletionReactor drain", () => {
           // Sequence 1 is fully cleaned and the worker queue is idle. Sequence
           // 2 is committed and published but still in flight to the subscriber.
           yield* Ref.set(latestSequence, 2);
-          const drained = yield* Effect.forkChild(reactor.drainThrough(2));
+          const drained = yield* Effect.forkChild(reactor.drainThrough(2, threadId));
           yield* Effect.yieldNow;
           yield* Effect.yieldNow;
           expect(stops).toEqual([1]);

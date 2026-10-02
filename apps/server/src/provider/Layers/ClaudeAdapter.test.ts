@@ -3401,6 +3401,121 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "stopSession settles the first Claude turn before its archived cursor is resumed",
+    () => {
+      const harness = makeHarness();
+      const resumedHarness = makeHarness();
+      let persistedSessionId: string | undefined;
+      let persistedPrompt: string | undefined;
+      let closeCallsAtInterrupt: number | undefined;
+      let promptReadError: unknown;
+      return Effect.gen(function* () {
+        const archivedCursor = yield* Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          const session = yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+          });
+          yield* adapter.sendTurn({ threadId: THREAD_ID, input: "first prompt", attachments: [] });
+          // ProviderService saves this cursor before archive stops the session.
+          const cursor = (yield* adapter.listSessions())[0]?.resumeCursor;
+          assert.ok(cursor);
+          const input = harness.getLastCreateQueryInput();
+          harness.query.interrupt = async () => {
+            closeCallsAtInterrupt = harness.query.closeCalls;
+            persistedSessionId = input?.options.sessionId;
+            try {
+              persistedPrompt = await readFirstPromptText(input);
+            } catch (error) {
+              promptReadError = error;
+            }
+            harness.query.emit({
+              type: "result",
+              subtype: "error_during_execution",
+              is_error: false,
+              errors: ["Error: Request was aborted."],
+              session_id: persistedSessionId,
+              uuid: "result-archive-interrupted",
+            } as unknown as SDKMessage);
+          };
+          const completed = yield* adapter.streamEvents.pipe(
+            Stream.filter((event) => event.type === "turn.completed"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+
+          yield* adapter.stopSession(session.threadId);
+
+          assert.equal(closeCallsAtInterrupt, 0);
+          assert.equal(promptReadError, undefined);
+          assert.equal(persistedPrompt, "first prompt");
+          assert.equal(harness.query.closeCalls, 1);
+          const [event] = yield* Fiber.join(completed);
+          assert.equal(event?.type, "turn.completed");
+          if (event?.type === "turn.completed") {
+            assert.equal(event.payload.state, "interrupted");
+            // The SDK result, rather than synthetic shutdown, completed the turn.
+            assert.notEqual(event.payload.errorMessage, "Session stopped.");
+          }
+          assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+          return cursor;
+        }).pipe(Effect.provide(harness.layer));
+
+        yield* Effect.gen(function* () {
+          const adapter = yield* ClaudeAdapter;
+          yield* adapter.startSession({
+            threadId: THREAD_ID,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            runtimeMode: "full-access",
+            resumeCursor: archivedCursor,
+          });
+          yield* adapter.sendTurn({
+            threadId: THREAD_ID,
+            input: "after unarchive",
+            attachments: [],
+          });
+          const input = resumedHarness.getLastCreateQueryInput();
+          assert.ok(persistedSessionId);
+          assert.equal(input?.options.resume, persistedSessionId);
+          assert.equal(yield* Effect.promise(() => readFirstPromptText(input)), "after unarchive");
+        }).pipe(Effect.provide(resumedHarness.layer));
+      }).pipe(Effect.provideService(Random.Random, makeDeterministicRandomService()));
+    },
+  );
+
+  it.effect("stopSession bounds archive shutdown when Claude never aborts the turn", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "first prompt", attachments: [] });
+      const interrupted = Promise.withResolvers<void>();
+      harness.query.interrupt = () => {
+        interrupted.resolve();
+        return new Promise(() => {});
+      };
+
+      const stop = yield* adapter.stopSession(THREAD_ID).pipe(Effect.forkChild);
+      yield* Effect.promise(() => interrupted.promise);
+      assert.equal(harness.query.closeCalls, 0);
+      yield* TestClock.adjust("3 seconds");
+      yield* Fiber.join(stop);
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the session available when process close fails", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

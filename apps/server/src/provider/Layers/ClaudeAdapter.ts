@@ -5617,6 +5617,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const stopSession: ClaudeAdapterShape["stopSession"] = Effect.fn("stopSession")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
+      // Cold archive retains the resume cursor, so let Claude save the active
+      // prompt before closing just as an explicit turn interrupt does.
+      yield* settleInterruptedTurn(context);
       yield* stopSessionInternal(context, {
         emitExitEvent: true,
       });

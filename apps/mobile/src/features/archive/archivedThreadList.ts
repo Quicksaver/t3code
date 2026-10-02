@@ -2,13 +2,11 @@ import {
   archivedThreadActionKey as sharedArchivedThreadActionKey,
   tryAcquireArchivedThreadActionLock as acquireSharedArchivedThreadActionLock,
   archivedThreadSearchScore,
-  archivedThreadSortTimestamp,
-  compareArchivedThreads,
+  type ArchivedThreadSortField,
   type ArchivedThreadSearchInput,
   type ArchivedThreadSortState,
 } from "@t3tools/client-runtime/state/archivedThreadList";
 export {
-  archivedThreadTimestampValue,
   nextArchivedThreadSortState,
   parseArchivedThreadSearchInput,
   releaseArchivedThreadActionLock,
@@ -24,6 +22,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { parseTimestamp as parseZonedTimestamp } from "@t3tools/shared/dateTime";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -136,8 +135,36 @@ function archivedProjectGroupKey(environmentId: EnvironmentId, projectId: string
   return JSON.stringify([environmentId, projectId]);
 }
 
+export function archivedThreadTimestampValue(
+  thread: { readonly archivedAt: string | null; readonly createdAt: string },
+  field: ArchivedThreadSortField,
+): string {
+  return thread[field] ?? "";
+}
+
+function archivedThreadSortTimestamp(
+  thread: EnvironmentThreadShell,
+  sort: ArchivedThreadSortState,
+): number {
+  const value = parseZonedTimestamp(archivedThreadTimestampValue(thread, sort.field));
+  return Number.isNaN(value) ? (sort.direction === "asc" ? Infinity : -Infinity) : value;
+}
+
+function compareArchivedThreads(
+  left: EnvironmentThreadShell,
+  right: EnvironmentThreadShell,
+  sort: ArchivedThreadSortState,
+): number {
+  const leftValue = archivedThreadSortTimestamp(left, sort);
+  const rightValue = archivedThreadSortTimestamp(right, sort);
+  return (
+    (sort.direction === "asc" ? leftValue - rightValue : rightValue - leftValue) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 export function formatArchivedThreadRelativeTime(input: string): string | null {
-  return Number.isNaN(Date.parse(input)) ? null : relativeTime(input);
+  return Number.isNaN(parseZonedTimestamp(input)) ? null : relativeTime(input);
 }
 
 export function buildArchivedThreadGroups(input: {
@@ -209,9 +236,9 @@ export function buildArchivedThreadGroups(input: {
         key: Order.String,
       }),
       (group: ArchivedThreadGroup) => {
-        let timestamp = archivedThreadSortTimestamp(group.threads[0]!, input.sort.field);
+        let timestamp = archivedThreadSortTimestamp(group.threads[0]!, input.sort);
         for (let index = 1; index < group.threads.length; index += 1) {
-          const candidate = archivedThreadSortTimestamp(group.threads[index]!, input.sort.field);
+          const candidate = archivedThreadSortTimestamp(group.threads[index]!, input.sort);
           timestamp =
             input.sort.direction === "asc"
               ? Math.min(timestamp, candidate)

@@ -11,7 +11,8 @@ const isZonedIsoDateTime = Schema.is(
   ),
 );
 
-function parseTimestamp(value: string): number {
+/** Parse a zoned ISO timestamp, rejecting malformed or impossible calendar dates. */
+export function parseTimestamp(value: string): number {
   if (!isZonedIsoDateTime(value)) return Number.NaN;
 
   // Engines can normalize invalid calendar dates instead of rejecting them.

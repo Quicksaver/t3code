@@ -183,10 +183,10 @@ describe("buildArchivedThreadGroups", () => {
     ]);
   });
 
-  it("falls back to created time when an archived timestamp is invalid", () => {
+  it.each(["asc", "desc"] as const)("sorts invalid archive dates last in %s order", (direction) => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const invalidArchivedAt = makeThread({
-      archivedAt: "not-a-timestamp",
+      archivedAt: "2026-02-30T00:00:00.000Z",
       createdAt: "2026-06-05T00:00:00.000Z",
       id: ThreadId.make("thread-invalid-archive"),
       projectId: project.id,
@@ -202,14 +202,15 @@ describe("buildArchivedThreadGroups", () => {
 
     const result = buildGroups({
       snapshots: [makeSnapshot([project], [validArchivedAt, invalidArchivedAt])],
+      sort: { field: "archivedAt", direction },
     });
 
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual([
-      "thread-invalid-archive",
       "thread-valid-archive",
+      "thread-invalid-archive",
     ]);
     expect(archivedThreadTimestampValue(invalidArchivedAt, "archivedAt")).toBe(
-      invalidArchivedAt.createdAt,
+      invalidArchivedAt.archivedAt,
     );
   });
 
@@ -487,5 +488,6 @@ describe("archived thread action locks", () => {
 describe("formatArchivedThreadRelativeTime", () => {
   it("omits invalid archive timestamps instead of presenting them as recent", () => {
     expect(formatArchivedThreadRelativeTime("not-a-timestamp")).toBeNull();
+    expect(formatArchivedThreadRelativeTime("2026-02-30T00:00:00.000Z")).toBeNull();
   });
 });

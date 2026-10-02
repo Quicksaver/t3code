@@ -177,6 +177,7 @@ import {
 } from "../threadSelectionStore";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
+  filterVisibleSidebarThreads,
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   deleteSelectedThreadEntries,
@@ -1342,7 +1343,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     };
     const visibleProjectThreads = sortThreads(
-      projectThreads.filter((thread) => thread.archivedAt === null),
+      filterVisibleSidebarThreads(projectThreads),
       threadSortOrder,
     );
     const projectStatus = resolveProjectStatusIndicator(
@@ -3409,7 +3410,7 @@ export default function LegacySidebar() {
   }, []);
 
   const visibleThreads = useMemo(
-    () => sidebarThreads.filter((thread) => thread.archivedAt === null),
+    () => filterVisibleSidebarThreads(sidebarThreads),
     [sidebarThreads],
   );
   const sortedProjects = useMemo(() => {
@@ -3448,9 +3449,7 @@ export default function LegacySidebar() {
     () =>
       sortedProjects.flatMap((project) => {
         const projectThreads = sortThreads(
-          (threadsByProjectKey.get(project.projectKey) ?? []).filter(
-            (thread) => thread.archivedAt === null,
-          ),
+          filterVisibleSidebarThreads(threadsByProjectKey.get(project.projectKey) ?? []),
           sidebarThreadSortOrder,
         );
         const projectExpanded = resolveProjectExpanded(
