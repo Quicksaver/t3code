@@ -20,12 +20,16 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -54,15 +58,21 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
+const OrchestrationEngineNoColdStorageLive = OrchestrationEngineLive.pipe(
+  Layer.provide(ThreadColdStorage.noOpLayer),
+);
+
 function makeOrchestrationLayer(
   databasePath?: string,
   repositoryIdentityResolver?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+  useColdStorage = false,
 ) {
   const persistence = databasePath
     ? makeSqlitePersistenceLive(databasePath)
@@ -72,6 +82,7 @@ function makeOrchestrationLayer(
   });
   return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
+      Layer.provideMerge(useColdStorage ? ThreadColdStorage.layer : ThreadColdStorage.noOpLayer),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
@@ -89,7 +100,7 @@ function makeOrchestrationLayer(
           )
         : RepositoryIdentityResolver.layer,
     ),
-    Layer.provide(persistence),
+    Layer.provideMerge(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -130,6 +141,203 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  effectIt.effect("leaves deleted archives cold when unarchive precedes permanent cleanup", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const storage = yield* ThreadColdStorage.ThreadColdStorage;
+      const sql = yield* SqlClient.SqlClient;
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig;
+      const threadId = ThreadId.make("deleted-archive-restore");
+      const projectId = ProjectId.make("deleted-archive-project");
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      };
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("deleted-archive-project"),
+        projectId,
+        title: "Archive deletion",
+        workspaceRoot: "/tmp/deleted-archive-project",
+        defaultModelSelection: modelSelection,
+        createdAt: now(),
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("deleted-archive-create"),
+        threadId,
+        projectId,
+        title: "Deleted archive",
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      });
+      const attachmentId = `${threadId}-00000000-0000-4000-8000-000000000001`;
+      const attachmentPath = NodePath.join(config.attachmentsDir, `${attachmentId}.png`);
+      yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fs.writeFileString(attachmentPath, "deleted attachment");
+      yield* engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("deleted-archive-message"),
+        threadId,
+        message: {
+          messageId: MessageId.make("deleted-archive-message"),
+          role: "user",
+          text: "Deleted history",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "image.png",
+              mimeType: "image/png",
+              sizeBytes: 18,
+            },
+          ],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        createdAt: now(),
+      });
+      yield* engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("deleted-archive-archive"),
+        threadId,
+      });
+      yield* storage.archiveThread(threadId);
+      expect(yield* fs.exists(attachmentPath)).toBe(false);
+      yield* engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("deleted-archive-delete"),
+        threadId,
+      });
+
+      // Drive cleanup explicitly so unarchive reaches the real engine while deletion is pending.
+      expect(yield* storage.listPendingDeleteThreadIds).toContain(threadId);
+      yield* engine.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("deleted-archive-unarchive"),
+        threadId,
+      });
+      expect(yield* fs.exists(attachmentPath)).toBe(false);
+      expect(
+        yield* sql`SELECT message_id FROM projection_thread_messages WHERE thread_id = ${threadId}`,
+      ).toEqual([]);
+      expect(
+        yield* sql`SELECT status FROM thread_archive_manifests WHERE thread_id = ${threadId}`,
+      ).toEqual([{ status: "cold" }]);
+      expect(yield* storage.listPendingDeleteThreadIds).toContain(threadId);
+      yield* storage.deleteThread(threadId);
+      expect(
+        yield* sql`SELECT thread_id FROM cold_archive.archive_threads WHERE thread_id = ${threadId}`,
+      ).toEqual([]);
+      expect(yield* storage.listPendingDeleteThreadIds).not.toContain(threadId);
+    }).pipe(Effect.provide(makeOrchestrationLayer(undefined, undefined, true))),
+  );
+
+  effectIt.effect(
+    "keeps recreation unpublished and retryable until deletion cleanup completes",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const storage = yield* ThreadColdStorage.ThreadColdStorage;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("cleanup-recreation");
+        const projectId = ProjectId.make("cleanup-recreation-project");
+        const create = {
+          type: "thread.create",
+          commandId: CommandId.make("cleanup-first-create"),
+          threadId,
+          projectId,
+          title: "Recreated thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        } as const;
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cleanup-project-create"),
+          projectId,
+          title: "Cleanup project",
+          workspaceRoot: "/tmp/cleanup-project",
+          defaultModelSelection: create.modelSelection,
+          createdAt: now(),
+        });
+        yield* engine.dispatch(create);
+        yield* engine.dispatch({
+          type: "thread.delete",
+          commandId: CommandId.make("cleanup-delete"),
+          threadId,
+        });
+        const recreate = { ...create, commandId: CommandId.make("cleanup-recreate") };
+        const sequenceBefore = yield* engine.latestSequence;
+        const assertRetryable = Effect.gen(function* () {
+          const error = yield* Effect.flip(engine.dispatch(recreate));
+          expect(error.message).toContain("still being cleaned up; retry shortly");
+          expect(yield* engine.latestSequence).toBe(sequenceBefore);
+          expect(
+            yield* sql`SELECT 1 FROM orchestration_command_receipts WHERE command_id = ${recreate.commandId}`,
+          ).toEqual([]);
+        });
+
+        // The soft-deleted shell protects the interval before a worker inserts its marker.
+        yield* assertRetryable;
+        const quiescing = yield* Deferred.make<void>();
+        const finishQuiescing = yield* Deferred.make<void>();
+        const replacementObserved = yield* Deferred.make<void>();
+        let replacementResources = false;
+        let quiesceCalls = 0;
+        const subscription = yield* engine.subscribeDomainEvents;
+        yield* subscription.pipe(
+          Stream.runForEach((event) =>
+            event.type === "thread.created" && event.commandId === recreate.commandId
+              ? Effect.sync(() => {
+                  replacementResources = true;
+                }).pipe(Effect.andThen(Deferred.succeed(replacementObserved, undefined)))
+              : Effect.void,
+          ),
+          Effect.forkChild,
+        );
+        const quiesce = Effect.gen(function* () {
+          quiesceCalls += 1;
+          yield* Deferred.succeed(quiescing, undefined);
+          yield* Deferred.await(finishQuiescing);
+          replacementResources = false;
+        });
+        const deleting = yield* Effect.forkChild(storage.deleteThread(threadId, quiesce));
+        yield* Deferred.await(quiescing);
+        yield* assertRetryable;
+        expect(replacementResources).toBe(false);
+        yield* Deferred.succeed(finishQuiescing, undefined);
+        yield* Fiber.join(deleting);
+
+        // A failed cleanup after shell removal still blocks reuse through its durable marker.
+        yield* sql`INSERT INTO thread_cleanup_queue (thread_id, reason, created_at) VALUES (${threadId}, 'deleted', CURRENT_TIMESTAMP)`;
+        const failure = yield* Effect.flip(
+          storage.deleteThread(threadId, Effect.fail("writer close failed")),
+        );
+        expect(failure.operation).toBe("delete");
+        yield* assertRetryable;
+        yield* storage.deleteThread(threadId);
+        yield* engine.dispatch(recreate);
+        yield* Deferred.await(replacementObserved);
+        expect(replacementResources).toBe(true);
+        // Another client reacted to publication; an obsolete job must not stop its resources.
+        yield* storage.deleteThread(threadId, quiesce);
+        expect(replacementResources).toBe(true);
+        expect(quiesceCalls).toBe(1);
+        expect(
+          yield* sql`SELECT deleted_at FROM projection_threads WHERE thread_id = ${threadId}`,
+        ).toEqual([{ deleted_at: null }]);
+      }).pipe(Effect.provide(makeOrchestrationLayer(undefined, undefined, true))),
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {
@@ -416,7 +624,7 @@ describe("OrchestrationEngine", () => {
     };
     let fullSnapshotReadCount = 0;
 
-    const layer = OrchestrationEngineLive.pipe(
+    const layer = OrchestrationEngineNoColdStorageLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
@@ -1511,7 +1719,7 @@ describe("OrchestrationEngine", () => {
     });
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1595,6 +1803,237 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
+  effectIt.effect(
+    "records invalid unarchive rejections while keeping restore failures retryable",
+    () => {
+      type StoredEvent =
+        ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
+          ? A
+          : never;
+      const events: StoredEvent[] = [];
+      const rolledBackThreadIds: ThreadId[] = [];
+      const finishedThreadIds: ThreadId[] = [];
+      const restoreThreadIds: ThreadId[] = [];
+      let nextSequence = 1;
+      let restoreOnUnarchive = false;
+      let failNextRestore = false;
+      let failNextFinish = false;
+      let partialRestoreActive = false;
+
+      const flakyStore: OrchestrationEventStoreShape = {
+        append(event) {
+          if (event.commandId === CommandId.make("cmd-cold-unarchive-fail")) {
+            return Effect.fail(
+              new PersistenceSqlError({
+                operation: "test.append",
+                detail: "unarchive append failed",
+              }),
+            );
+          }
+          const savedEvent = { ...event, sequence: nextSequence } as StoredEvent;
+          nextSequence += 1;
+          events.push(savedEvent);
+          return Effect.succeed(savedEvent);
+        },
+        readFromSequence(sequenceExclusive) {
+          return Stream.fromIterable(events.filter((event) => event.sequence > sequenceExclusive));
+        },
+        readAll() {
+          return Stream.fromIterable(events);
+        },
+        hasEventAfter: () => Effect.succeed(false),
+        readAggregateRange: () => Stream.die("unused aggregate replay"),
+        getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
+      };
+      const coldStorage: ThreadColdStorage.ThreadColdStorage["Service"] = {
+        archiveThread: () => Effect.void,
+        restoreTree: (threadId) => {
+          restoreThreadIds.push(threadId);
+          if (failNextRestore) {
+            failNextRestore = false;
+            partialRestoreActive = true;
+            return Effect.fail(
+              new ThreadColdStorage.ThreadColdStorageError({
+                operation: "restore",
+                threadId,
+                cause: new Error("temporary restore failure"),
+              }),
+            );
+          }
+          return Effect.succeed(restoreOnUnarchive);
+        },
+        rollbackRestoreTree: (threadId) =>
+          Effect.sync(() => {
+            partialRestoreActive = false;
+            rolledBackThreadIds.push(threadId);
+          }),
+        finishRestoreTree: (threadId) =>
+          Effect.gen(function* () {
+            yield* Effect.sync(() => {
+              finishedThreadIds.push(threadId);
+            });
+            if (failNextFinish) {
+              failNextFinish = false;
+              return yield* Effect.die("finish restore failed");
+            }
+          }),
+        deleteThread: () => Effect.void,
+        removeProviderLogs: () => Effect.void,
+        compactLegacyStorage: Effect.void,
+        listPendingArchiveThreadIds: Effect.succeed([]),
+        listPendingDeleteThreadIds: Effect.succeed([]),
+      };
+      const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+        prefix: "t3-orchestration-engine-test-",
+      });
+      const testLayer = OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(ThreadBackgroundLiveness.layer),
+        Layer.provide(ThreadPlanProgress.layer),
+        Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
+        Layer.provide(Layer.succeed(ThreadColdStorage.ThreadColdStorage, coldStorage)),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(RepositoryIdentityResolver.layer),
+        Layer.provide(SqlitePersistenceMemory),
+        Layer.provideMerge(ServerConfigLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      return Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const createdAt = now();
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-cold-project-create"),
+          projectId: asProjectId("project-cold-rollback"),
+          title: "Cold rollback project",
+          workspaceRoot: "/tmp/project-cold-rollback",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        });
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-cold-thread-create"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+          projectId: asProjectId("project-cold-rollback"),
+          title: "Cold rollback thread",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        for (const [threadId, expectedMessage] of [
+          ["thread-cold-rollback", "is not archived"],
+          ["thread-cold-absent", "does not exist"],
+        ] as const) {
+          const command = {
+            type: "thread.unarchive",
+            commandId: CommandId.make(`cmd-invalid-unarchive-${threadId}`),
+            threadId: ThreadId.make(threadId),
+          } as const;
+          const rejection = yield* Effect.flip(engine.dispatch(command));
+          expect(rejection.message).toContain(expectedMessage);
+          const retry = yield* Effect.flip(engine.dispatch(command));
+          expect(retry._tag).toBe("OrchestrationCommandPreviouslyRejectedError");
+        }
+        expect(restoreThreadIds).toEqual([]);
+        expect(rolledBackThreadIds).toEqual([]);
+        expect(finishedThreadIds).toEqual([]);
+
+        yield* engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-cold-thread-archive"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        });
+        const rejectedBeforeArchive = yield* Effect.flip(
+          engine.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make("cmd-invalid-unarchive-thread-cold-rollback"),
+            threadId: ThreadId.make("thread-cold-rollback"),
+          }),
+        );
+        expect(rejectedBeforeArchive._tag).toBe("OrchestrationCommandPreviouslyRejectedError");
+        expect(restoreThreadIds).toEqual([]);
+
+        const missingArchiveFailure = yield* Effect.flip(
+          engine.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make("cmd-cold-unarchive-missing"),
+            threadId: ThreadId.make("thread-cold-rollback"),
+          }),
+        );
+        expect(missingArchiveFailure.message).toContain(
+          "Failed to restore the archived conversation",
+        );
+        expect(events.at(-1)?.type).toBe("thread.archived");
+        expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+        rolledBackThreadIds.length = 0;
+
+        restoreOnUnarchive = true;
+        failNextRestore = true;
+        const retryableRestoreCommand = {
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-cold-unarchive-retryable-restore"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        } as const;
+        const retryableRestoreFailure = yield* Effect.flip(
+          engine.dispatch(retryableRestoreCommand),
+        );
+        expect(retryableRestoreFailure.message).toContain(
+          "Failed to restore the archived conversation",
+        );
+        expect(partialRestoreActive).toBe(false);
+        expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+        rolledBackThreadIds.length = 0;
+        const retriedRestoreResult = yield* engine.dispatch(retryableRestoreCommand);
+        expect(retriedRestoreResult.sequence).toBeGreaterThan(0);
+        expect(events.at(-1)?.type).toBe("thread.unarchived");
+        yield* engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-cold-thread-rearchive-after-restore-retry"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        });
+
+        const unarchiveFailure = yield* Effect.flip(
+          engine.dispatch({
+            type: "thread.unarchive",
+            commandId: CommandId.make("cmd-cold-unarchive-fail"),
+            threadId: ThreadId.make("thread-cold-rollback"),
+          }),
+        );
+        expect(unarchiveFailure.message).toContain("unarchive append failed");
+        expect(rolledBackThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+        expect(finishedThreadIds).toEqual([ThreadId.make("thread-cold-rollback")]);
+
+        failNextFinish = true;
+        const acceptedCommand = {
+          type: "thread.unarchive",
+          commandId: CommandId.make("cmd-cold-unarchive-accepted"),
+          threadId: ThreadId.make("thread-cold-rollback"),
+        } as const;
+        const acceptedResult = yield* engine.dispatch(acceptedCommand);
+        const retriedResult = yield* engine.dispatch(acceptedCommand);
+
+        expect(retriedResult).toEqual(acceptedResult);
+        expect(finishedThreadIds).toEqual([
+          ThreadId.make("thread-cold-rollback"),
+          ThreadId.make("thread-cold-rollback"),
+          ThreadId.make("thread-cold-rollback"),
+        ]);
+        expect(events.filter((event) => event.type === "thread.unarchived")).toHaveLength(2);
+      }).pipe(Effect.provide(testLayer));
+    },
+  );
+
   it("rolls back all events for a multi-event command when projection fails mid-dispatch", async () => {
     let shouldFailRequestedProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
@@ -1619,7 +2058,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1768,7 +2207,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const runtime = ManagedRuntime.make(
-      OrchestrationEngineLive.pipe(
+      OrchestrationEngineNoColdStorageLive.pipe(
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),

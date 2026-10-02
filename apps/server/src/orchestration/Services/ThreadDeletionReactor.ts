@@ -1,12 +1,13 @@
 /**
  * ThreadDeletionReactor - Thread deletion cleanup reactor service interface.
  *
- * Owns background workers that react to thread deletion domain events and
- * perform best-effort runtime cleanup for provider sessions and terminals.
+ * Owns background workers that react to thread archive/delete domain events
+ * and perform runtime cleanup plus durable cold-storage lifecycle work.
  *
  * @module ThreadDeletionReactor
  */
 import * as Context from "effect/Context";
+import type { ThreadId } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
@@ -15,7 +16,7 @@ import type * as Scope from "effect/Scope";
  */
 export interface ThreadDeletionReactorShape {
   /**
-   * Start reacting to thread.deleted orchestration domain events.
+   * Start reacting to thread lifecycle orchestration domain events.
    *
    * The returned effect must be run in a scope so all worker fibers can be
    * finalized on shutdown.
@@ -23,12 +24,12 @@ export interface ThreadDeletionReactorShape {
   readonly start: () => Effect.Effect<void, never, Scope.Scope>;
 
   /**
-   * Resolves once every thread.deleted at or before the supplied event
-   * sequence has been handed to the worker and the worker is empty and idle.
-   * A successful thread.create sequence is the fence callers use before the
-   * new incarnation can own runtime resources.
+   * Waits until the subscriber reaches the supplied event sequence, then
+   * waits for pending cleanup for the supplied thread, or all cleanup when
+   * no thread is supplied. Creation fences only the reused thread id so
+   * unrelated archives cannot delay its new runtime resources.
    */
-  readonly drainThrough: (sequence: number) => Effect.Effect<void>;
+  readonly drainThrough: (sequence: number, threadId?: ThreadId) => Effect.Effect<void>;
 }
 
 /**

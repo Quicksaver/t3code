@@ -1425,7 +1425,11 @@ const makeWsRpcLayer = (
             }
 
             if (bootstrap?.createThread) {
-              const created = yield* dispatchFromClient({
+              yield* threadDeletionReactor.drainThrough(
+                yield* orchestrationEngine.latestSequence,
+                command.threadId,
+              );
+              yield* dispatchFromClient({
                 type: "thread.create",
                 commandId: yield* serverCommandId("bootstrap-thread-create"),
                 threadId: command.threadId,
@@ -1438,12 +1442,7 @@ const makeWsRpcLayer = (
                 worktreePath: bootstrap.createThread.worktreePath,
                 createdAt: bootstrap.createThread.createdAt,
               });
-              // The successful create is a fence in the engine command queue:
-              // every delete for the prior incarnation committed before it.
-              // Drain through that event before setup or turn start can own
-              // terminals and provider sessions under the reused thread id.
               createdThread = true;
-              yield* threadDeletionReactor.drainThrough(created.sequence);
               // Persist the send now rather than with the turn: the thread is
               // real from here on, so any client (or a reload) sees the message
               // while the worktree is still being prepared. The turn start
@@ -1920,15 +1919,17 @@ const makeWsRpcLayer = (
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
-            : dispatchFromClient(normalizedCommand).pipe(
-                Effect.tap(({ sequence }) =>
-                  // Returning from thread.create is the handoff point at which
-                  // clients may start resources for the new incarnation. Use
-                  // its event sequence as the exact deletion-cleanup fence.
-                  normalizedCommand.type === "thread.create"
-                    ? threadDeletionReactor.drainThrough(sequence)
-                    : Effect.void,
-                ),
+            : Effect.gen(function* () {
+                if (normalizedCommand.type === "thread.create") {
+                  // Wait outside the command worker; durable cleanup failures
+                  // still reach the engine's retryable creation gate.
+                  yield* threadDeletionReactor.drainThrough(
+                    yield* orchestrationEngine.latestSequence,
+                    normalizedCommand.threadId,
+                  );
+                }
+                return yield* dispatchFromClient(normalizedCommand);
+              }).pipe(
                 Effect.mapError((cause) =>
                   toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
                 ),

@@ -9632,6 +9632,65 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
+  it.effect("buffers archived shell removals published while replay catches up", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const archivedEvent = {
+        sequence: 2,
+        eventId: EventId.make("event-archived"),
+        aggregateKind: "thread",
+        aggregateId: defaultThreadId,
+        occurredAt: "2026-01-01T00:00:01.000Z",
+        commandId: CommandId.make("command-archive"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-archive"),
+        metadata: {},
+        type: "thread.archived",
+        payload: {
+          threadId: defaultThreadId,
+          archivedAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.archived" }>;
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+            latestSequence: Effect.succeed(2),
+            readEvents: () =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  yield* Effect.sleep("25 millis");
+                  yield* PubSub.publish(liveEvents, archivedEvent);
+                  return Stream.empty;
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const items = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+            // Represents the authoritative shell snapshot already loaded over HTTP.
+            afterSequence: 1,
+            requestCompletionMarker: true,
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+
+      const item = items[0];
+      if (item?.kind !== "thread-removed") {
+        assert.fail(`Expected thread-removed, received ${item?.kind ?? "no item"}`);
+      }
+      assert.equal(item.sequence, 2);
+      assert.equal(item.threadId, defaultThreadId);
+      assert.deepEqual(items[1], { kind: "synchronized" });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
   it.effect("buffers thread events published while the initial snapshot loads", () =>
     Effect.gen(function* () {
       const thread = makeDefaultOrchestrationReadModel().threads[0]!;
@@ -12902,26 +12961,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("drains deletion cleanup through the re-created thread event", () =>
+  it.effect("waits for same-id deletion before direct and bootstrap creation dispatch", () =>
     Effect.gen(function* () {
       // A draft retry reuses the thread id its failed bootstrap deleted. The
       // deletion reactor stops sessions and closes terminals by that id, so
-      // both thread.create paths use the created event as a fence, then drain
-      // cleanup before handing the new incarnation to resource-owning work.
+      // both paths must wait before a replacement can publish its creation.
       const trace: Array<string> = [];
-      const drainRequested = yield* Deferred.make<void>();
-      const cleanupDone = yield* Deferred.make<void>();
+      let drainRequested = yield* Deferred.make<void>();
+      let cleanupDone = yield* Deferred.make<void>();
       yield* buildAppUnderTest({
         layers: {
           threadDeletionReactor: {
-            drainThrough: (sequence) =>
+            drainThrough: (sequence, cleanupThreadId) =>
               Effect.gen(function* () {
+                assert.strictEqual(cleanupThreadId, ThreadId.make("thread-retry-after-delete"));
                 trace.push(`drain:${sequence}`);
                 yield* Deferred.succeed(drainRequested, undefined);
                 yield* Deferred.await(cleanupDone);
               }),
           },
           orchestrationEngine: {
+            latestSequence: Effect.succeed(41),
             dispatch: (command) =>
               Effect.sync(() => {
                 trace.push(command.type);
@@ -12955,17 +13015,18 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }),
             );
             yield* Deferred.await(drainRequested);
-            assert.deepEqual(trace, ["thread.create", "drain:1"]);
+            assert.deepEqual(trace, ["drain:41"]);
             yield* Deferred.succeed(cleanupDone, undefined);
             yield* Fiber.join(directCreate);
           }),
         ),
       );
-      assert.deepEqual(trace, ["thread.create", "drain:1"]);
+      assert.deepEqual(trace, ["drain:41", "thread.create"]);
 
-      // Cleanup is already released; the bootstrap path must still drain
-      // between creating the thread and starting its turn.
+      // A second connection's bootstrap retry waits on its own unfinished cleanup.
       trace.length = 0;
+      drainRequested = yield* Deferred.make<void>();
+      cleanupDone = yield* Deferred.make<void>();
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
@@ -12999,13 +13060,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 createdAt,
               }),
             );
+            yield* Deferred.await(drainRequested);
+            assert.deepEqual(trace, ["drain:41"]);
+            yield* Deferred.succeed(cleanupDone, undefined);
             yield* Fiber.join(bootstrapCreate);
           }),
         ),
       );
       assert.deepEqual(trace, [
+        "drain:41",
         "thread.create",
-        "drain:1",
         "thread.message.user.append",
         "thread.turn.start",
       ]);
