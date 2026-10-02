@@ -1,4 +1,6 @@
 import {
+  type EnvironmentResourceNotFoundError,
+  ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY,
   ORCHESTRATION_WS_METHODS,
   type EnvironmentId as EnvironmentIdType,
   type OrchestrationThread,
@@ -22,6 +24,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
+import { hasTerminalThreadNotFoundFailure } from "../errors/orchestration.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
@@ -324,6 +327,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   }) {
     if (resumeCache !== undefined && (resumeCache.owner !== owner || resumeCache.invalidated))
       return;
+    if ((yield* SubscriptionRef.get(state)).status === "deleted") return;
     const snapshot = pending.snapshot;
     if (
       committed.persisted &&
@@ -465,7 +469,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
   });
 
-  const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
+  const setDeletedLocked = Effect.fn("EnvironmentThreadState.setDeletedLocked")(function* () {
     yield* Ref.set(awaitingCompletion, false);
     yield* Ref.update(historyEpoch, (epoch) => epoch + 1);
     yield* SubscriptionRef.set(state, {
@@ -479,12 +483,38 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // bodies, but the current owner's terminal, body-free state is safe to keep.
     yield* removeCachedThread();
     if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
-  });
+  }, Effect.uninterruptible);
+  const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {
+    yield* applyLock.withPermits(1)(setDeletedLocked());
+  }, Effect.uninterruptible);
+  const handleHttpThreadNotFound = Effect.fn("EnvironmentThreadState.handleHttpThreadNotFound")(
+    function* (error: EnvironmentResourceNotFoundError) {
+      yield* Effect.logDebug(
+        "Thread snapshot was not found over HTTP; terminating the subscription.",
+      ).pipe(
+        Effect.annotateLogs({
+          environmentId,
+          threadId,
+          reason: error.reason,
+          traceId: error.traceId,
+        }),
+      );
+      yield* setDeleted();
+      return yield* Effect.interrupt;
+    },
+  );
+  const handleStreamError = (cause: Cause.Cause<unknown>) =>
+    hasTerminalThreadNotFoundFailure(cause)
+      ? setDeleted()
+      : setStreamError(formatThreadError(cause));
 
   // Body of applyItem, running under applyLock.
   const applyItemLocked = Effect.fn("EnvironmentThreadState.applyItemLocked")(function* (
     item: OrchestrationThreadStreamItem,
   ) {
+    if ((yield* SubscriptionRef.get(state)).status === "deleted") {
+      return;
+    }
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
       yield* SubscriptionRef.update(state, (current) =>
@@ -523,7 +553,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     const current = yield* SubscriptionRef.get(state);
     if (Option.isNone(current.data)) {
       if (item.event.type === "thread.deleted") {
-        yield* setDeleted();
+        yield* setDeletedLocked();
       }
       return;
     }
@@ -546,7 +576,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* removeCachedThread();
       }
     } else if (result.kind === "deleted") {
-      yield* setDeleted();
+      yield* setDeletedLocked();
     }
     // The event may have advanced the live state past a parked page's
     // watermark; merge it as soon as that happens.
@@ -727,12 +757,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       turnLimit: OLDER_THREAD_PAGE_USER_TURN_LIMIT,
       beforeCursor: page.beforeCursor,
     };
-    const response = yield* snapshotLoader.load(
-      prepared,
-      threadId,
-      window,
-      yield* Ref.get(reasoningMessagesSupported),
-    );
+    const response = yield* snapshotLoader
+      .load(prepared, threadId, window, yield* Ref.get(reasoningMessagesSupported))
+      .pipe(
+        Effect.catchTags({
+          EnvironmentResourceNotFoundError: handleHttpThreadNotFound,
+        }),
+      );
     // Staleness check and merge run under the same lock as stream-item
     // application, so a revert/snapshot cannot land between them (TOCTOU
     // review finding) — anything that rewrites history bumps the epoch
@@ -818,6 +849,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     subscribeDynamic(
       ORCHESTRATION_WS_METHODS.subscribeThread,
       Effect.fn("EnvironmentThreadState.makeSubscribeInput")(function* (session) {
+        let current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") {
+          return yield* Effect.interrupt;
+        }
+
         const config = yield* session.initialConfig.pipe(
           Effect.orElseSucceed(
             () =>
@@ -840,7 +876,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        let current = yield* SubscriptionRef.get(state);
+        current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") {
+          return yield* Effect.interrupt;
+        }
         // A windowed cache resuming against a server without pagination is a
         // trap: afterSequence resume keeps only the window, and the missing
         // older turns can never be loaded (the server has no cursor reads).
@@ -862,7 +901,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           );
           current = yield* SubscriptionRef.get(state);
         }
-        if (Option.isNone(current.data) && current.status !== "deleted") {
+        if (current.status === "deleted") {
+          return yield* Effect.interrupt;
+        }
+        if (Option.isNone(current.data)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -877,12 +919,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               }),
             ),
           );
-          const httpSnapshot = yield* snapshotLoader.load(
-            prepared,
-            threadId,
-            supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : undefined,
-            supportsReasoningMessages,
-          );
+          const httpSnapshot = yield* snapshotLoader
+            .load(
+              prepared,
+              threadId,
+              supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : undefined,
+              supportsReasoningMessages,
+            )
+            .pipe(
+              Effect.catchTags({
+                EnvironmentResourceNotFoundError: handleHttpThreadNotFound,
+              }),
+            );
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
             current = yield* SubscriptionRef.get(state);
@@ -901,6 +949,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
         return {
           threadId,
+          // Pre-feature servers drop both fields. Boolean-era servers use the
+          // legacy opt-in, while current servers use the versioned capability.
+          capabilities: [ORCHESTRATION_THREAD_NOT_FOUND_ERROR_CAPABILITY],
+          threadNotFoundError: true as const,
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           ...(supportsReasoningMessages ? { reasoningMessages: true as const } : {}),
@@ -912,12 +964,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }),
       {
         onDefect: () => setStreamError("Could not synchronize the thread."),
-        onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
+        onExpectedFailure: handleStreamError,
+        retryExpectedFailureAfter: "250 millis",
         // A retained route can stay mounted while another surface unarchives
         // the thread. Keep retrying after cold storage makes the detail
         // temporarily unavailable so this subscription can observe the later
         // unarchive without requiring a wakeup or a replacement session.
-        retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(
