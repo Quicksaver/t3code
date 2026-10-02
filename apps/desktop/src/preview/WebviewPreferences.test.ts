@@ -43,9 +43,9 @@ function parseWebPreferences(input: string): Record<string, unknown> {
 describe("PREVIEW_WEBVIEW_PREFERENCES", () => {
   const parsed = parseWebPreferences(PREVIEW_WEBVIEW_PREFERENCES);
 
-  it("contains exactly the three security-critical keys", () => {
+  it("contains the security and opaque guest preferences", () => {
     expect(Object.keys(parsed).toSorted()).toEqual(
-      ["contextIsolation", "nodeIntegration", "sandbox"].toSorted(),
+      ["contextIsolation", "nodeIntegration", "sandbox", "transparent"].toSorted(),
     );
   });
 

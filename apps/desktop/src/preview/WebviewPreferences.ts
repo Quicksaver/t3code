@@ -21,6 +21,9 @@
  *   the preload's `import { ipcRenderer }` line, but no Node globals leak.
  * - `nodeIntegration=false`: pinned for clarity (the page itself never gets
  *   Node access).
+ * - `transparent=false`: lets Chromium paint the root color scheme's opaque
+ *   canvas before lazy automation attaches CDP. Otherwise dark plain-text
+ *   pages paint white text over the webview's white backing until that attach.
  *
  * Format notes (locked down by `WebviewPreferences.test.ts`):
  * - Whitespace-free. Electron's webpreferences parser splits on `,` and
@@ -39,4 +42,4 @@
  * security-critical flags can't regress on preview tabs.
  */
 export const PREVIEW_WEBVIEW_PREFERENCES =
-  "contextIsolation=false,sandbox=true,nodeIntegration=false";
+  "contextIsolation=false,sandbox=true,nodeIntegration=false,transparent=false";
