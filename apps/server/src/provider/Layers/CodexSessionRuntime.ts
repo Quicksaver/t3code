@@ -38,6 +38,7 @@ import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
+import { resolveCodexInterruptTurnId } from "./CodexInterruptResolution.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
@@ -58,6 +59,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_ROOT_INTERRUPT_TIMEOUT = "15 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -1222,9 +1224,7 @@ function updateSession(
   });
 }
 
-function parseThreadSnapshot(
-  response: EffectCodexSchema.V2ThreadReadResponse,
-): CodexThreadSnapshot {
+function parseThreadSnapshot(response: CodexThreadWithTurns): CodexThreadSnapshot {
   return {
     threadId: response.thread.id,
     turns: response.thread.turns.map((turn) => ({
@@ -1289,16 +1289,21 @@ export const verifyCodexNativeDescendant = Effect.fn("verifyCodexNativeDescendan
   }
 });
 
-export const readCodexThread = Effect.fn("readCodexThread")(function* (
+type CodexThreadWithTurns = {
+  readonly thread: Pick<EffectCodexSchema.V2ThreadReadResponse["thread"], "id" | "turns">;
+};
+
+// Keep provider turn metadata until callers choose their own projection. Interrupt
+// resolution needs status and startedAt, while conversation history needs items.
+export const readCodexThreadWithTurns = Effect.fn("readCodexThreadWithTurns")(function* (
   client: CodexHistoryClient,
   threadId: string,
-): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+  itemsView: "full" | "notLoaded" = "full",
+): Effect.fn.Return<CodexThreadWithTurns, CodexErrors.CodexAppServerError> {
   if ((yield* readCodexHistoryMode(client, threadId)) !== "paginated") {
-    return parseThreadSnapshot(
-      yield* client.request("thread/read", { threadId, includeTurns: true }),
-    );
+    return yield* client.request("thread/read", { threadId, includeTurns: true });
   }
-  const turns: Array<CodexThreadTurnSnapshot> = [];
+  const turns: Array<EffectCodexSchema.V2ThreadReadResponse__Turn> = [];
   const requestedCursors = new Set<string | null>();
   let cursor: string | null = null;
   do {
@@ -1315,7 +1320,7 @@ export const readCodexThread = Effect.fn("readCodexThread")(function* (
       cursor,
       limit: 100,
       sortDirection: "asc",
-      itemsView: "full",
+      itemsView,
     });
     const page = yield* decodeCodexTurnsPage(response).pipe(
       Effect.mapError((error) =>
@@ -1326,10 +1331,17 @@ export const readCodexThread = Effect.fn("readCodexThread")(function* (
         ),
       ),
     );
-    turns.push(...page.data.map((turn) => ({ id: TurnId.make(turn.id), items: turn.items })));
+    turns.push(...page.data);
     cursor = page.nextCursor;
   } while (cursor !== null);
-  return { threadId, turns };
+  return { thread: { id: threadId, turns } };
+});
+
+export const readCodexThread = Effect.fn("readCodexThread")(function* (
+  client: CodexHistoryClient,
+  threadId: string,
+): Effect.fn.Return<CodexThreadSnapshot, CodexErrors.CodexAppServerError> {
+  return parseThreadSnapshot(yield* readCodexThreadWithTurns(client, threadId));
 });
 
 export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
@@ -1443,6 +1455,7 @@ export const makeCodexSessionRuntime = (
       updatedAt: sessionCreatedAt,
     } satisfies ProviderSession;
     const sessionRef = yield* Ref.make<ProviderSession>(initialSession);
+    const submittedRootInterruptRef = yield* Ref.make<TurnId | undefined>(undefined);
     const offerEvent = (event: ProviderEvent) => Queue.offer(events, event).pipe(Effect.asVoid);
 
     const emitEvent = (event: Omit<ProviderEvent, "id" | "provider" | "createdAt">) =>
@@ -2110,10 +2123,16 @@ export const makeCodexSessionRuntime = (
           if (providerThreadId && payload.threadId !== providerThreadId) {
             return Effect.void;
           }
-          return updateSession(sessionRef, {
-            status: "running",
-            activeTurnId: TurnId.make(payload.turn.id),
-          });
+          return Ref.update(submittedRootInterruptRef, (submitted) =>
+            submitted === payload.turn.id ? submitted : undefined,
+          ).pipe(
+            Effect.andThen(
+              updateSession(sessionRef, {
+                status: "running",
+                activeTurnId: TurnId.make(payload.turn.id),
+              }),
+            ),
+          );
         }),
       ),
     );
@@ -2673,7 +2692,6 @@ export const makeCodexSessionRuntime = (
       interruptTurn: (turnId) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
-          const session = yield* Ref.get(sessionRef);
           // Settle parked approvals FIRST. The transport answers server
           // requests inline on its stdin read loop, so a pending
           // command/file/app-permission prompt blocks every incoming message,
@@ -2704,14 +2722,45 @@ export const makeCodexSessionRuntime = (
                 .pipe(Effect.timeoutOption("3 seconds"), Effect.ignore),
             { concurrency: 8, discard: true },
           ).pipe(Effect.timeoutOption("10 seconds"), Effect.ignore);
-          const effectiveTurnId = turnId ?? session.activeTurnId;
+          const effectiveTurnId = yield* resolveCodexInterruptTurnId({
+            providerThreadId,
+            requestedTurnId: turnId,
+            readSessionActiveTurnId: Ref.get(sessionRef).pipe(
+              Effect.map((session) => session.activeTurnId),
+            ),
+            readThread: readCodexThreadWithTurns(client, providerThreadId, "notLoaded"),
+          });
           if (!effectiveTurnId) {
             return;
           }
-          yield* client.request("turn/interrupt", {
-            threadId: providerThreadId,
-            turnId: effectiveTurnId,
-          });
+          // Codex can leave a repeat interrupt for an aborted turn unanswered.
+          // Keep successful submissions until the next turn; failures remain retryable.
+          const alreadySubmitted = yield* Ref.getAndSet(submittedRootInterruptRef, effectiveTurnId);
+          if (alreadySubmitted === effectiveTurnId) {
+            return;
+          }
+          yield* client
+            .request("turn/interrupt", {
+              threadId: providerThreadId,
+              turnId: effectiveTurnId,
+            })
+            .pipe(
+              Effect.timeout(CODEX_ROOT_INTERRUPT_TIMEOUT),
+              Effect.catchTag("TimeoutError", (cause) =>
+                CodexErrors.CodexAppServerRequestError.internalError(
+                  "Codex root turn interruption timed out.",
+                  undefined,
+                  { method: "turn/interrupt", operation: "receive-response", cause },
+                ),
+              ),
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit)
+                  ? Effect.void
+                  : Ref.update(submittedRootInterruptRef, (submitted) =>
+                      submitted === effectiveTurnId ? undefined : submitted,
+                    ),
+              ),
+            );
         }),
       verifyNativeThread: (nativeThreadId) =>
         readProviderThreadId.pipe(

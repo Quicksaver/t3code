@@ -1,7 +1,7 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { MessageId, ProviderInstanceId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { createLocalDispatchSnapshot } from "./components/ChatView.logic";
+import { createLocalDispatchSnapshot } from "./components/ChatView.localDispatch";
 import {
   isQueuedMessageDue,
   latestCompletedToolActivityId,
@@ -105,7 +105,7 @@ describe("queuedMessageStore", () => {
   it("a failed send keeps waiting on the dispatch before it", () => {
     const { enqueue, beginSend, markDispatching, finishSend, failSend } =
       useQueuedMessageStore.getState();
-    const earlier = createLocalDispatchSnapshot(undefined);
+    const earlier = createLocalDispatchSnapshot(undefined, MessageId.make("earlier"));
     const first = enqueue("thread-a", makeMessage("first"));
     const second = enqueue("thread-a", makeMessage("second"));
     const third = enqueue("thread-a", makeMessage("third"));
@@ -134,16 +134,24 @@ describe("queuedMessageStore", () => {
     beginSend("thread-a", preparing.id, null);
 
     expect(drain("thread-a").map((message) => message.prompt)).toEqual(["preparing", "waiting"]);
-    expect(markDispatching("thread-a", preparing.id, createLocalDispatchSnapshot(undefined))).toBe(
-      false,
-    );
+    expect(
+      markDispatching(
+        "thread-a",
+        preparing.id,
+        createLocalDispatchSnapshot(undefined, MessageId.make("preparing")),
+      ),
+    ).toBe(false);
     expect(failSend("thread-a", preparing.id)).toBe(false);
 
     const dispatching = enqueue("thread-b", makeMessage("dispatching"));
     enqueue("thread-b", makeMessage("waiting"));
     beginSend("thread-b", dispatching.id, null);
     expect(
-      markDispatching("thread-b", dispatching.id, createLocalDispatchSnapshot(undefined)),
+      markDispatching(
+        "thread-b",
+        dispatching.id,
+        createLocalDispatchSnapshot(undefined, MessageId.make("dispatching")),
+      ),
     ).toBe(true);
 
     expect(drain("thread-b").map((message) => message.prompt)).toEqual(["waiting"]);

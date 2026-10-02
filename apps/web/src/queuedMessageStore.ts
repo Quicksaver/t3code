@@ -6,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { create } from "zustand";
 
-import type { LocalDispatchSnapshot } from "./components/ChatView.logic";
+import type { LocalDispatchSnapshot } from "./components/ChatView.localDispatch";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "./composerDraftStore";
 import type { TerminalContextDraft } from "./lib/terminalContext";
 import { randomUUID } from "./lib/utils";
