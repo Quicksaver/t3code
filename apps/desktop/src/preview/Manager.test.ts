@@ -17,6 +17,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scheduler from "effect/Scheduler";
 import type * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -3460,6 +3461,54 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("keeps a recording retry active after the expired start finishes cleanup", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        let markWarmupStarted!: () => void;
+        const warmupStarted = new Promise<void>((resolve) => {
+          markWarmupStarted = resolve;
+        });
+        let resolveWarmup!: (value: typeof image) => void;
+        const capturePage = vi.fn(async () => image);
+        capturePage.mockImplementationOnce(() => {
+          markWarmupStarted();
+          return new Promise<typeof image>((resolve) => {
+            resolveWarmup = resolve;
+          });
+        });
+        let cursorActive = false;
+        const wc = Object.assign(makeTestPreviewWebContents({ capturePage }), {
+          send: (channel: string, active: unknown) => {
+            if (channel === "preview:recording-cursor") cursorActive = active === true;
+          },
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("recording_retry");
+        yield* manager.registerWebview("recording_retry", 42);
+        const original = yield* manager
+          .startRecording("recording_retry", undefined, 1_000)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => warmupStarted);
+        yield* TestClock.adjust(750);
+        const retry = yield* manager
+          .startRecording("recording_retry")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        resolveWarmup(image);
+        yield* Fiber.join(retry);
+        yield* TestClock.adjust(250);
+        expect(Exit.isFailure(yield* Fiber.await(original))).toBe(true);
+        expect(cursorActive).toBe(true);
+        expect(wc.setBackgroundThrottling.mock.calls.at(-1)).toEqual([false]);
+        yield* manager.stopRecording("recording_retry");
+        expect(cursorActive).toBe(false);
+      }),
+    ).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8)),
+  );
+
   effectIt.effect("bounds recording stop while a recording start holds the lifecycle lock", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -6051,6 +6100,22 @@ describe("automation display wake", () => {
         expect(powerSaveBlockerStop).not.toHaveBeenCalled();
       }),
     ),
+  );
+
+  effectIt.effect("shares one display-sleep blocker across concurrent automation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        yield* manager.createTab("concurrent_wake");
+        const results = yield* Effect.all(
+          Array.from({ length: 8 }, () => manager.automationStatus("concurrent_wake")),
+          { concurrency: "unbounded" },
+        );
+        expect(results.every((status) => status.displaySleepBlocked)).toBe(true);
+        expect(powerSaveBlockerStart).toHaveBeenCalledExactlyOnceWith("prevent-display-sleep");
+        yield* manager.closeTab("concurrent_wake");
+        expect(powerSaveBlockerStop).toHaveBeenCalledExactlyOnceWith(7);
+      }),
+    ).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 8)),
   );
 
   effectIt.effect("refreshes on activity and releases after the inactivity window", () =>

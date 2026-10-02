@@ -105,6 +105,7 @@ interface ClientConnection {
   readonly focused: boolean;
   readonly liveTabs: NonNullable<PreviewAutomationHostFocus["liveTabs"]>;
   readonly focusOrder: number;
+  readonly responseSequence: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
 }
 
@@ -436,10 +437,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     clientId: string,
     queue: ClientConnection["queue"],
     completeStream = false,
+    expectedResponseSequence?: number,
   ) {
     yield* SynchronizedRef.modifyEffect(state, (current) => {
       // Retired generations were already closed by their replacement or eviction.
-      if (current.clients.get(clientId)?.queue !== queue) {
+      const live = current.clients.get(clientId);
+      if (
+        live?.queue !== queue ||
+        (expectedResponseSequence !== undefined &&
+          live.responseSequence !== expectedResponseSequence)
+      ) {
         return Effect.succeed([undefined, current] as const);
       }
       const removed = removeConnectionFromState(current, clientId, queue);
@@ -467,6 +474,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       focused: false,
       liveTabs: [],
       focusOrder: 0,
+      responseSequence: 0,
       queue,
     };
     const registration = yield* SynchronizedRef.modify(state, (current) => {
@@ -636,16 +644,23 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   )(function* (response) {
     const pending = yield* SynchronizedRef.modify(state, (current) => {
       const entry = current.pending.get(response.requestId);
+      const connection = current.clients.get(response.clientId);
       if (
         !entry ||
         entry.context.clientId !== response.clientId ||
-        entry.context.connectionId !== response.connectionId
+        entry.context.connectionId !== response.connectionId ||
+        connection?.queue !== entry.queue
       ) {
         return [undefined, current] as const;
       }
       const next = new Map(current.pending);
       next.delete(response.requestId);
-      return [entry, { ...current, pending: next }] as const;
+      const clients = new Map(current.clients);
+      clients.set(response.clientId, {
+        ...connection,
+        responseSequence: connection.responseSequence + 1,
+      });
+      return [entry, { ...current, clients, pending: next }] as const;
     });
     if (!pending) return;
     if (response.ok) {
@@ -809,15 +824,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     // evict the connection only when nothing at all, not even the renderer's
     // typed timeout, arrives within the grace. A late answer is discarded: the
     // caller already failed and no action is replayed.
-    const watchForEviction = Effect.gen(function* () {
-      const late = yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOption(PREVIEW_AUTOMATION_EVICTION_GRACE_MS),
-        Effect.exit,
-      );
-      if (Exit.isSuccess(late) && Option.isNone(late.value)) {
-        yield* disconnect(connection.clientId, connection.queue, true);
-      }
-    }).pipe(Effect.ensuring(removePending));
+    const watchForEviction = (responseSequence: number) =>
+      Effect.gen(function* () {
+        const late = yield* Deferred.await(deferred).pipe(
+          Effect.timeoutOption(PREVIEW_AUTOMATION_EVICTION_GRACE_MS),
+          Effect.exit,
+        );
+        if (Exit.isSuccess(late) && Option.isNone(late.value)) {
+          yield* disconnect(connection.clientId, connection.queue, true, responseSequence);
+        }
+      }).pipe(Effect.ensuring(removePending));
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
       const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
         // A route can outlive its generation while another request evicts it.
@@ -854,8 +870,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
+            const live = (yield* SynchronizedRef.get(state)).clients.get(connection.clientId);
             pendingOwner = "watcher";
-            yield* Effect.forkIn(watchForEviction, brokerScope);
+            yield* Effect.forkIn(watchForEviction(live?.responseSequence ?? 0), brokerScope);
             return yield* new PreviewAutomationTimeoutError(requestContext);
           }),
         onSome: (value) => Effect.succeed(value as A),
