@@ -841,6 +841,8 @@ VCS status ignores internal `.git/` watcher events before refreshing local statu
 
 Forgejo/Gitea change requests participate in Actionable branch discovery across configured remotes. Its provider returns no commit avatar, so panel rows retain their avatar fallback.
 
+GitHub repository history and head-specific reads share `GitHubCli.listPullRequests`. Head reads retain upstream's batched GraphQL polling and default repository selection; repository-wide history passes its explicit remote repository. The provider adapter owns host identity and structured error mapping without duplicating CLI arguments or response decoding.
+
 The mobile Version Control and file-diff routes use the shared `ScreenHeader`. Version Control closes back to the active thread; the diff returns to Version Control with native compact-layout back navigation and an explicit back action in split layouts. Android uses the shared in-content header. Neither route shows a sidebar action.
 
 Repository-convention message generation uses one repository-context policy reader for generic Git actions and panel commit/stash actions. Panel commit and stash generation applies the registered checkout project’s writer and writing-style overrides, falling back to the main checkout’s project for unregistered sibling worktrees. Both paths resolve the effective writer from the current provider snapshot and fall back to the configured text-generation model when the dedicated writer is disabled or not usable. They read recent commit subjects and `AGENTS.md`; Claude writers also read `CLAUDE.md`.
