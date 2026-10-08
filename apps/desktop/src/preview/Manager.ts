@@ -63,6 +63,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import * as PowerProtection from "./PowerProtection.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_SEND_ENABLED_CHANNEL,
@@ -550,6 +551,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const fileSystem = yield* FileSystem.FileSystem;
   const rendererHistory = yield* DesktopRendererHistory.DesktopRendererHistory;
   const hostPlatform = yield* HostProcessPlatform;
+  const powerProtection = yield* PowerProtection.make(hostPlatform);
+  const recordingPowerLeases = new Map<
+    string,
+    {
+      readonly release: Effect.Effect<void>;
+      readonly lost: Deferred.Deferred<never, PreviewRecordingCaptureUnavailableError>;
+    }
+  >();
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
   const parentScope = yield* Scope.Scope;
@@ -823,6 +832,15 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         captureScope ? Scope.close(captureScope, Exit.void).pipe(Effect.ignore) : Effect.void,
       ),
       Effect.uninterruptible,
+      Effect.ensuring(
+        Effect.suspend(() => {
+          if (consumer !== "recording") return Effect.void;
+          // A failed start may own power before registering a capture consumer.
+          const lease = recordingPowerLeases.get(tabId);
+          recordingPowerLeases.delete(tabId);
+          return lease?.release ?? Effect.void;
+        }),
+      ),
     );
   });
 
@@ -2076,9 +2094,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       return;
     }
-    yield* attemptPromise({ operation: "navigate.loadURL", tabId, webContentsId: wc.id }, () =>
-      wc.loadURL(url),
-    );
+    yield* Effect.tryPromise({
+      // Keep the signal parameter: Effect uses callback arity to make this wait interruptible.
+      try: (_signal) => wc.loadURL(url),
+      catch: (cause) =>
+        new PreviewOperationError({
+          operation: "navigate.loadURL",
+          tabId,
+          webContentsId: wc.id,
+          cause,
+        }),
+    }).pipe(powerProtection.withActivity);
   });
 
   const withWebContents = Effect.fn("PreviewManager.withWebContents")(function* (
@@ -3115,6 +3141,55 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   };
 
+  const acquireRecordingPower = Effect.fnUntraced(function* (tabId: string) {
+    const existing = recordingPowerLeases.get(tabId);
+    if (existing) return existing;
+    const wc = yield* requireWebContents(tabId);
+    const owner = wc.hostWebContents;
+    if (owner === null || owner.isDestroyed()) {
+      return yield* new PreviewMainWindowClosedError({ tabId });
+    }
+    const lost = yield* Deferred.make<never, PreviewRecordingCaptureUnavailableError>();
+    const releasePower = yield* powerProtection.acquire;
+    const release = Effect.sync(() => {
+      wc.off("destroyed", invalidate);
+      owner.off("render-process-gone", invalidate);
+      owner.off("did-navigate", invalidate);
+    }).pipe(Effect.ensuring(releasePower));
+    const lease = { release, lost };
+    const invalidate = () => {
+      if (
+        !Deferred.doneUnsafe(
+          lost,
+          Effect.fail(
+            new PreviewRecordingCaptureUnavailableError({
+              tabId,
+              webContentsId: owner.id,
+            }),
+          ),
+        )
+      )
+        return;
+      runFork(
+        withTabLifecycleLock(
+          tabId,
+          Effect.suspend(() => {
+            if (recordingPowerLeases.get(tabId) !== lease) return Effect.void;
+            clearPendingRecording(tabId);
+            return stopFrameCapture(tabId, "recording");
+          }),
+        ).pipe(Effect.ignore),
+      );
+    };
+    recordingPowerLeases.set(tabId, lease);
+    yield* Effect.sync(() => {
+      wc.on("destroyed", invalidate);
+      owner.on("render-process-gone", invalidate);
+      owner.on("did-navigate", invalidate);
+    });
+    return lease;
+  }, Effect.uninterruptible);
+
   const startRecording = Effect.fn("PreviewManager.startRecording")(function* (
     tabId: string,
     options: RecordingInputOptions = DEFAULT_RECORDING_INPUT_OPTIONS,
@@ -3125,57 +3200,67 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* withTabLifecycleLock(
       tabId,
       Effect.gen(function* () {
-        yield* startFrameCapture(tabId, "recording");
-        yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) =>
-          replaceMap(sessions, (copy) => {
-            const current = copy.get(tabId);
-            if (current) copy.set(tabId, { ...current, recordingInputOptions: options });
-          }),
-        );
-        const wc = yield* requireWebContents(tabId);
-        const requestWebContents = wc.hostWebContents;
-        if (requestWebContents === null) {
-          return yield* new PreviewMainWindowClosedError({ tabId });
-        }
-        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-        yield* attempt({ operation: "recording.cursor", tabId, webContentsId: wc.id }, () =>
-          wc.send(RECORDING_CURSOR_CHANNEL, true, options, tab?.controller),
-        );
-        yield* attemptPromise(
-          {
-            operation: "recording.warmSource",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage().then(() => undefined),
-        ).pipe(Effect.retry({ times: 1 }), Effect.ignore);
-        const currentWebContents = yield* requireWebContents(tabId);
-        if (currentWebContents !== wc || wc.isDestroyed()) {
-          return yield* new PreviewWebContentsNotFoundError({
-            tabId,
-            webContentsId: wc.id,
+        const lease = yield* acquireRecordingPower(tabId);
+        if (Deferred.isDoneUnsafe(lease.lost)) return yield* Deferred.await(lease.lost);
+        yield* Effect.gen(function* () {
+          yield* startFrameCapture(tabId, "recording");
+          yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) =>
+            replaceMap(sessions, (copy) => {
+              const current = copy.get(tabId);
+              if (current) copy.set(tabId, { ...current, recordingInputOptions: options });
+            }),
+          );
+          const wc = yield* requireWebContents(tabId);
+          const requestWebContents = wc.hostWebContents;
+          if (requestWebContents === null) {
+            return yield* new PreviewMainWindowClosedError({ tabId });
+          }
+          const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          yield* attempt({ operation: "recording.cursor", tabId, webContentsId: wc.id }, () =>
+            wc.send(RECORDING_CURSOR_CHANNEL, true, options, tab?.controller),
+          );
+          yield* Effect.tryPromise({
+            // Keep the signal parameter: Effect uses callback arity to make this wait interruptible.
+            try: (_signal) => wc.capturePage().then(() => undefined),
+            catch: (cause) =>
+              new PreviewOperationError({
+                operation: "recording.warmSource",
+                tabId,
+                webContentsId: wc.id,
+                cause,
+              }),
+          }).pipe(Effect.retry({ times: 1 }), Effect.ignore);
+          const currentWebContents = yield* requireWebContents(tabId);
+          if (currentWebContents !== wc || wc.isDestroyed()) {
+            return yield* new PreviewWebContentsNotFoundError({
+              tabId,
+              webContentsId: wc.id,
+            });
+          }
+          if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
+            return yield* new PreviewMainWindowClosedError({ tabId });
+          }
+          installDisplayMediaRequestHandler(requestWebContents.session);
+          yield* armPendingRecording(tabId, wc, requestWebContents.mainFrame.frameTreeNodeId);
+          const captureRequested = yield* Effect.tryPromise({
+            // Keep the signal parameter: Effect uses callback arity to make this wait interruptible.
+            try: (_signal) =>
+              requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
+            catch: (cause) =>
+              new PreviewOperationError({
+                operation: "recording.requestCapture",
+                tabId,
+                webContentsId: requestWebContents.id,
+                cause,
+              }),
           });
-        }
-        if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
-          return yield* new PreviewMainWindowClosedError({ tabId });
-        }
-        installDisplayMediaRequestHandler(requestWebContents.session);
-        yield* armPendingRecording(tabId, wc, requestWebContents.mainFrame.frameTreeNodeId);
-        const captureRequested = yield* attemptPromise(
-          {
-            operation: "recording.requestCapture",
-            tabId,
-            webContentsId: requestWebContents.id,
-          },
-          () =>
-            requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
-        );
-        if (captureRequested !== true) {
-          return yield* new PreviewRecordingCaptureUnavailableError({
-            tabId,
-            webContentsId: requestWebContents.id,
-          });
-        }
+          if (captureRequested !== true) {
+            return yield* new PreviewRecordingCaptureUnavailableError({
+              tabId,
+              webContentsId: requestWebContents.id,
+            });
+          }
+        }).pipe(Effect.raceFirst(Deferred.await(lease.lost)));
       }).pipe(
         Effect.onError(() => {
           clearPendingRecording(tabId);

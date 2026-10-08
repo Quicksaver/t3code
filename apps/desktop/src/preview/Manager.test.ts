@@ -1,3 +1,4 @@
+import * as NodeEvents from "node:events";
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
@@ -195,6 +196,8 @@ const {
   webviewSend,
   writeFile,
   writeClipboard,
+  powerStart,
+  powerStop,
 } = vi.hoisted(() => ({
   browserWindowConstructor: vi.fn(),
   clipboardItemConstructor: vi.fn(),
@@ -210,9 +213,12 @@ const {
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
   writeClipboard: vi.fn(async () => undefined),
+  powerStart: vi.fn(() => 17),
+  powerStop: vi.fn(() => true),
 }));
 
 vi.mock("electron", () => ({
+  powerSaveBlocker: { start: powerStart, stop: powerStop },
   BrowserWindow: browserWindowConstructor,
   ClipboardItem: class {
     constructor(data: Record<string, unknown>) {
@@ -309,7 +315,7 @@ type TestDisplayMediaHandler = (
   callback: (streams: { video?: unknown }) => void,
 ) => void;
 
-interface TestHostWebContents {
+interface TestHostWebContents extends Pick<NodeEvents.EventEmitter, "on" | "off" | "emit"> {
   readonly id: number;
   readonly mainFrame: { readonly frameTreeNodeId: number };
   readonly executeJavaScript: ReturnType<typeof vi.fn>;
@@ -326,7 +332,7 @@ type TestPreviewWebContents = Electron.WebContents & {
 
 const makeTestHostWebContents = (): TestHostWebContents => {
   let handler: TestDisplayMediaHandler | undefined;
-  return {
+  return Object.assign(new NodeEvents.EventEmitter(), {
     id: 7,
     mainFrame: { frameTreeNodeId: 7 },
     executeJavaScript: vi.fn(async () => true),
@@ -337,7 +343,7 @@ const makeTestHostWebContents = (): TestHostWebContents => {
       }),
     },
     displayMediaHandler: () => handler,
-  };
+  });
 };
 
 const makeTestPreviewWebContents = (
@@ -2886,6 +2892,206 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect.each(["success", "failure", "interruption"] as const)(
+    "protects pending native navigation and releases on %s",
+    (outcome) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          let finish: (() => void) | undefined;
+          let fail: ((error: Error) => void) | undefined;
+          const wc = Object.assign(
+            makeTestPreviewWebContents(async () => ({
+              toJPEG: () => Buffer.from("unused"),
+              getSize: () => ({ width: 1, height: 1 }),
+            })),
+            {
+              loadURL: vi.fn(
+                () =>
+                  new Promise<void>((resolve, reject) => {
+                    finish = resolve;
+                    fail = reject;
+                    Deferred.doneUnsafe(started, Effect.void);
+                  }),
+              ),
+            },
+          );
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_navigation_power");
+          yield* manager.registerWebview("tab_navigation_power", 42);
+          const navigation = yield* manager
+            .navigate("tab_navigation_power", "https://example.com/slow")
+            .pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(started);
+          expect(powerStart).toHaveBeenCalledExactlyOnceWith("prevent-app-suspension");
+          expect(powerStop).not.toHaveBeenCalled();
+          if (outcome === "interruption") yield* Fiber.interrupt(navigation);
+          else if (outcome === "failure") fail?.(new Error("load failed"));
+          else finish?.();
+          const exit = yield* Fiber.join(navigation).pipe(Effect.exit);
+          expect(Exit.isSuccess(exit) && Exit.isSuccess(exit.value)).toBe(outcome === "success");
+          expect(powerStop).toHaveBeenCalledExactlyOnceWith(17);
+          finish?.();
+        }),
+      ),
+  );
+
+  effectIt.effect.each(["guest", "renderer", "document"] as const)(
+    "releases recording protection on %s loss and ignores the old guest after reacquisition",
+    (loss) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const stopped = yield* Deferred.make<void>();
+          powerStop.mockImplementationOnce(() => {
+            Deferred.doneUnsafe(stopped, Effect.void);
+            return true;
+          });
+          const host = makeTestHostWebContents();
+          const events = new NodeEvents.EventEmitter();
+          const capturePage = async () => ({
+            toJPEG: () => Buffer.from("recording"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          });
+          const wc = Object.assign(makeTestPreviewWebContents(capturePage, 42, host), {
+            on: events.on.bind(events),
+            off: events.off.bind(events),
+          });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_owner_loss");
+          yield* manager.registerWebview("tab_owner_loss", 42);
+          yield* manager.startRecording("tab_owner_loss");
+          host.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+          host.emit("did-frame-navigate", { isMainFrame: false });
+          host.emit("did-navigate-in-page", { isMainFrame: true });
+          expect(powerStop).not.toHaveBeenCalled();
+          if (loss === "guest") events.emit("destroyed");
+          else if (loss === "renderer") host.emit("render-process-gone");
+          else host.emit("did-navigate");
+          yield* Deferred.await(stopped);
+          expect(powerStop).toHaveBeenCalledExactlyOnceWith(17);
+          yield* manager.stopRecording("tab_owner_loss");
+          expect(powerStop).toHaveBeenCalledTimes(1);
+          const replacement = makeTestPreviewWebContents(capturePage, 43, host);
+          fromId.mockReturnValue(replacement);
+          yield* manager.registerWebview("tab_owner_loss", 43);
+          yield* manager.startRecording("tab_owner_loss");
+          events.emit("destroyed");
+          expect(powerStart).toHaveBeenCalledTimes(2);
+          expect(powerStop).toHaveBeenCalledTimes(1);
+          yield* manager.stopRecording("tab_owner_loss");
+          expect(powerStop).toHaveBeenCalledTimes(2);
+        }),
+      ),
+  );
+
+  effectIt.effect.each([
+    { loss: "guest", stage: "warmSource" },
+    { loss: "renderer", stage: "warmSource" },
+    { loss: "document", stage: "warmSource" },
+    { loss: "guest", stage: "requestCapture" },
+    { loss: "renderer", stage: "requestCapture" },
+    { loss: "document", stage: "requestCapture" },
+  ] as const)(
+    "cancels recording startup on $loss loss during $stage without waiting for capture and permits retry",
+    ({ loss, stage }) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>();
+          const image = {
+            toJPEG: () => Buffer.from("recording"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          };
+          let finish: ((value: typeof image) => void) | undefined;
+          let finishRequest: (() => void) | undefined;
+          const capturePage = vi.fn(async () => image);
+          const host = makeTestHostWebContents();
+          if (stage === "warmSource")
+            capturePage.mockImplementationOnce(
+              () =>
+                new Promise((resolve) => {
+                  finish = resolve;
+                  Deferred.doneUnsafe(started, Effect.void);
+                }),
+            );
+          else
+            host.executeJavaScript.mockImplementationOnce(
+              () =>
+                new Promise<boolean>((resolve) => {
+                  finishRequest = () => resolve(true);
+                  Deferred.doneUnsafe(started, Effect.void);
+                }),
+            );
+          const events = new NodeEvents.EventEmitter();
+          const wc = Object.assign(makeTestPreviewWebContents(capturePage, 42, host), {
+            on: events.on.bind(events),
+            off: events.off.bind(events),
+          });
+          fromId.mockReturnValue(wc);
+          yield* manager.createTab("tab_start_loss");
+          yield* manager.registerWebview("tab_start_loss", 42);
+          const starting = yield* manager
+            .startRecording("tab_start_loss")
+            .pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(started);
+          expect(powerStart).toHaveBeenCalledExactlyOnceWith("prevent-app-suspension");
+          if (loss === "guest") events.emit("destroyed");
+          else if (loss === "renderer") host.emit("render-process-gone");
+          else host.emit("did-navigate");
+          expect(Exit.isFailure(yield* Fiber.join(starting))).toBe(true);
+          expect(powerStop).toHaveBeenCalledExactlyOnceWith(17);
+          expect(host.executeJavaScript).toHaveBeenCalledTimes(stage === "requestCapture" ? 1 : 0);
+          finish?.(image);
+          finishRequest?.();
+          yield* manager.startRecording("tab_start_loss");
+          expect(powerStart).toHaveBeenCalledTimes(2);
+          yield* manager.stopRecording("tab_start_loss");
+          expect(powerStop).toHaveBeenCalledTimes(2);
+        }),
+      ),
+  );
+
+  effectIt.effect("recording owner loss preserves concurrent native navigation protection", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        let finish: (() => void) | undefined;
+        const host = makeTestHostWebContents();
+        const wc = Object.assign(
+          makeTestPreviewWebContents(
+            async () => ({
+              toJPEG: () => Buffer.from("recording"),
+              getSize: () => ({ width: 1280, height: 720 }),
+            }),
+            42,
+            host,
+          ),
+          {
+            loadURL: () =>
+              new Promise<void>((resolve) => {
+                finish = resolve;
+                Deferred.doneUnsafe(started, Effect.void);
+              }),
+          },
+        );
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_loss_concurrent");
+        yield* manager.registerWebview("tab_loss_concurrent", 42);
+        yield* manager.startRecording("tab_loss_concurrent");
+        const navigation = yield* manager
+          .navigate("tab_loss_concurrent", "https://example.com/slow")
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        host.emit("render-process-gone");
+        yield* manager.stopRecording("tab_loss_concurrent");
+        expect(powerStart).toHaveBeenCalledTimes(1);
+        expect(powerStop).not.toHaveBeenCalled();
+        finish?.();
+        yield* Fiber.join(navigation);
+        expect(powerStop).toHaveBeenCalledExactlyOnceWith(17);
+      }),
+    ),
+  );
+
   effectIt.effect("grants each concurrent preview recording its own tab frame", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2963,6 +3169,7 @@ describe("PreviewManager", () => {
         takeGrant();
         yield* manager.startRecording("tab_2");
         takeGrant();
+        expect(powerStart).toHaveBeenCalledExactlyOnceWith("prevent-app-suspension");
         expect(grants).toEqual([{ video: { routingId: 41 } }, { video: { routingId: 42 } }]);
 
         expect(firstCapturePage).toHaveBeenCalledOnce();
@@ -2976,10 +3183,10 @@ describe("PreviewManager", () => {
           expect.anything(),
         );
 
-        yield* Effect.all([manager.stopRecording("tab_1"), manager.stopRecording("tab_2")], {
-          concurrency: 2,
-          discard: true,
-        });
+        yield* manager.stopRecording("tab_1");
+        expect(powerStop).not.toHaveBeenCalled();
+        yield* manager.stopRecording("tab_2");
+        expect(powerStop).toHaveBeenCalledExactlyOnceWith(17);
       }),
     ),
   );
@@ -3145,11 +3352,14 @@ describe("PreviewManager", () => {
           expect(cursorAtCapture).toEqual([true]);
           expect(cursorActive).toBe(false);
 
+          expect(powerStop).toHaveBeenCalledTimes(1);
           yield* manager.startRecording("tab_cursor");
           expect(cursorAtCapture).toEqual([true, true]);
           expect(cursorActive).toBe(true);
           yield* manager.stopRecording("tab_cursor");
           expect(cursorActive).toBe(false);
+          expect(powerStart).toHaveBeenCalledTimes(2);
+          expect(powerStop).toHaveBeenCalledTimes(2);
         }),
       ),
   );
