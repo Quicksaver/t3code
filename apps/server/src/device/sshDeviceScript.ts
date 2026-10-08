@@ -1,5 +1,6 @@
 import { deviceToolMaintenanceScript } from "./deviceToolMaintenance.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { deviceHubWindowsImport } from "./deviceHubWindows.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
@@ -28,6 +29,7 @@ const owner = ${JSON.stringify(owner)};
 const mode = ${JSON.stringify(mode)};
 const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
 const agentVersion = ${JSON.stringify(AGENT_DEVICE_VERSION)};
+const hubWindowsImport = ${JSON.stringify(deviceHubWindowsImport)};
 ` +
   deviceToolMaintenanceScript +
   String.raw`
@@ -70,11 +72,34 @@ const versions = () => {
   };
   return result.hub && result.agent ? result : undefined;
 };
-const stopHub = hub => {
+const stopHub = async hub => {
   if (!hub || hub.owner !== owner) return;
-  const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
+  const failure = reason => Error('Could not retire device hub PID ' + hub.pid + ': ' + reason + '. Ownership retained at ' + path.join(state, 'hub.json') + '. Retry after process inspection recovers or the hub exits.');
+  const alive = () => {
+    try { process.kill(hub.pid, 0); return true; } catch (error) {
+      if (error.code === 'ESRCH') return false;
+      throw failure('process presence could not be verified');
+    }
+  };
+  if (!alive()) return;
+  const inspection = process.platform === 'win32'
+    ? run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); (Get-CimInstance Win32_Process -Filter "ProcessId = ' + Number(hub.pid) + '").CommandLine'])
+    : run('ps', ['-p', String(hub.pid), '-o', 'command=']);
+  const command = !inspection.error && inspection.status === 0 ? (inspection.stdout || '').trim() : '';
+  if (!command) {
+    if (!alive()) return;
+    throw failure('process command line could not be verified');
+  }
   if (command.includes(hub.entryPath) && command.includes(String(hub.port))) {
-    try { process.kill(hub.pid, 'SIGTERM'); } catch {}
+    try { process.kill(hub.pid, 'SIGTERM'); } catch (error) {
+      if (error.code === 'ESRCH') return;
+      throw failure('termination failed');
+    }
+    const deadline = Date.now() + 5000;
+    while (alive()) {
+      if (Date.now() >= deadline) throw failure('process did not exit after termination');
+      await sleep(100);
+    }
   }
 };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -153,37 +178,41 @@ async function install(name, version, entry) {
   const daemonFile = path.join(state, 'daemon.json');
   const agentFile = path.join(state, 'agent.json');
   if (mode === 'stop' || mode === 'stop-agent') {
-    const hub = read(hubFile);
-    if (mode === 'stop' && hub && hub.owner === owner) {
-      stopHub(hub);
-      fs.rmSync(hubFile, { force: true });
+    try {
+      const hub = read(hubFile);
+      if (mode === 'stop' && hub && hub.owner === owner) {
+        await stopHub(hub);
+        fs.rmSync(hubFile, { force: true });
+      }
+    } finally {
+      const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
+      if (fs.existsSync(entry)) run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]);
     }
-    const entry = read(agentFile)?.entryPath || path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
-    if (fs.existsSync(entry)) run(process.execPath, [entry, 'daemon', 'stop', '--state-dir', state]);
     return;
   }
   if (!ios && !android) throw Error(platforms.map(p => p.reason).join(' '));
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
-    stopHub(hub);
+  const windowsImport = process.platform === 'win32' ? hubWindowsImport : null;
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || (windowsImport !== null && hub.windowsImport !== windowsImport) || !await healthy(hub.port, '/readyz')) {
+    await stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
       const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
+      const child = spawn(process.execPath, [...(process.platform === 'win32' ? ['--import', hubWindowsImport] : []), hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
       child.unref();
-      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry };
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, windowsImport };
       write(hubFile, hub);
       const deadline = Date.now() + 30000;
       let listening = false;
       while (child.exitCode === null && child.signalCode === null) {
         if (await healthy(hub.port, '/readyz')) { listening = true; break; }
-        if (Date.now() > deadline) { stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
+        if (Date.now() > deadline) { await stopHub(hub); throw Error('Device hub did not become ready. See ' + path.join(state, 'hub.log')); }
         await sleep(200);
       }
       if (listening) break;

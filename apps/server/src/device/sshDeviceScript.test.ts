@@ -9,8 +9,143 @@ import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { deviceHubWindowsImport } from "./deviceHubWindows.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+
+const hubIdentityCases = (["stop", "start"] as const).flatMap((mode) =>
+  (
+    [
+      "match",
+      "current",
+      "entry-mismatch",
+      "port-mismatch",
+      "failed",
+      "empty",
+      "inspection-error",
+      "termination-error",
+      "still-alive",
+      "absent",
+      "absent-unix",
+      "other-owner",
+    ] as const
+  ).map((condition) => ({ mode, condition })),
+);
+
+it.each(hubIdentityCases)(
+  "hub $mode preserves ownership until retirement is established ($condition record)",
+  async ({ mode, condition }) => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 hub identity "));
+    try {
+      const root = NodePath.join(home, ".t3/device");
+      const state = NodePath.join(root, "hosts/fixture");
+      const tool = NodePath.join(root, `tools/expo-device-hub@${DEVICE_HUB_VERSION}`);
+      const entry = NodePath.join(tool, "node_modules/expo-device-hub/dist/server/cli.mjs");
+      await NodeFSP.mkdir(state, { recursive: true });
+      await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+      await NodeFSP.writeFile(entry, "");
+      await NodeFSP.writeFile(NodePath.join(tool, ".install-complete"), DEVICE_HUB_VERSION);
+      const hub = { owner: "fixture", pid: 12345, port: 54321, entryPath: entry };
+      const hubFile = NodePath.join(state, "hub.json");
+      const originalRecord = JSON.stringify({
+        ...hub,
+        owner: condition === "other-owner" ? "another-owner" : hub.owner,
+        ...(condition === "current" ? { windowsImport: deviceHubWindowsImport } : {}),
+      });
+      await NodeFSP.writeFile(hubFile, originalRecord);
+      const agentEntry = NodePath.join(state, "agent-device.mjs");
+      await NodeFSP.writeFile(agentEntry, "");
+      await NodeFSP.writeFile(
+        NodePath.join(state, "agent.json"),
+        JSON.stringify({ entryPath: agentEntry }),
+      );
+      const hubCommandLine =
+        condition === "entry-mismatch"
+          ? `node unrelated.mjs --port ${hub.port}`
+          : condition === "port-mismatch"
+            ? `node "${entry}" --port 123`
+            : `node "${entry}" --port ${hub.port}`;
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `
+Object.defineProperty(process, 'platform', { value: ${JSON.stringify(condition === "absent-unix" ? "linux" : "win32")} });
+require('node:os').homedir = () => ${JSON.stringify(home)};
+const calls = [];
+let alive = ${condition !== "absent" && condition !== "absent-unix"};
+process.kill = (pid, signal) => {
+  if (!alive) throw Object.assign(new Error('missing'), {code:'ESRCH'});
+  if (signal === 0) return true;
+  calls.push({ pid, signal });
+  if (${condition === "termination-error"}) throw Object.assign(new Error('denied'), {code:'EPERM'});
+  if (!${condition === "still-alive"}) alive = false;
+};
+if (${condition === "still-alive"}) { let now = 0; Date.now = () => now += 6000; }
+const childProcess = require('node:child_process');
+childProcess.spawnSync = (command, args) => {
+  if (command === process.execPath) {
+    require('node:assert/strict').deepEqual(args, [${JSON.stringify(agentEntry)}, 'daemon', 'stop', '--state-dir', ${JSON.stringify(state)}]);
+    calls.push({ daemonStopped: true });
+    return {status: 0, stdout: ''};
+  }
+  return command === 'powershell.exe'
+    ? { status: ${condition === "failed" ? 1 : 0}, stdout: ${JSON.stringify(condition === "empty" ? "" : hubCommandLine)}, ...(${condition === "inspection-error"} ? {error: new Error('unavailable')} : {}) }
+    : { status: command === 'adb' ? 0 : 1, stdout: '' };
+};
+childProcess.spawn = (command, args) => {
+  if (${condition === "match"} && alive) throw Error('replacement before retirement');
+  calls.push({ spawned: args[0] === '--import' });
+  const child = new (require('node:events').EventEmitter)();
+  Object.assign(child, { pid: 23456, exitCode: null, signalCode: null, unref() {} });
+  process.nextTick(() => child.emit('spawn'));
+  return child;
+};
+let healthChecks = 0;
+global.fetch = async () => ({ ok: !(healthChecks++ === 0 && ${condition === "absent-unix"}) });
+process.on('exit', () => console.log(JSON.stringify({ calls })));
+` + remoteDeviceScript("fixture", mode),
+        ],
+        { encoding: "utf8", timeout: 10000 },
+      );
+      const failed = [
+        "failed",
+        "empty",
+        "inspection-error",
+        "termination-error",
+        "still-alive",
+      ].includes(condition);
+      expect(result.status, result.stderr).toBe(failed ? 1 : 0);
+      const output = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+      // A healthy hub already running the current adapter is kept on start.
+      const reused = mode === "start" && condition === "current";
+      const verified = ["match", "current", "termination-error", "still-alive"].includes(condition);
+      expect(output.calls).toEqual([
+        ...(verified && !reused ? [{ pid: hub.pid, signal: "SIGTERM" }] : []),
+        ...(mode === "start" && !reused && !failed
+          ? [{ spawned: condition !== "absent-unix" }]
+          : []),
+        ...(mode === "stop" ? [{ daemonStopped: true }] : []),
+      ]);
+      if (failed) {
+        expect(result.stderr).toContain(`Could not retire device hub PID ${hub.pid}`);
+        expect(result.stderr).toContain(hubFile);
+        expect(await NodeFSP.readFile(hubFile, "utf8")).toBe(originalRecord);
+      } else if (mode === "start" && !reused) {
+        const replacement = JSON.parse(await NodeFSP.readFile(hubFile, "utf8"));
+        expect(replacement.pid).toBe(23456);
+        if (condition !== "absent-unix")
+          expect(replacement.windowsImport).toBe(deviceHubWindowsImport);
+      } else if (reused || condition === "other-owner") {
+        expect(await NodeFSP.readFile(hubFile, "utf8")).toBe(originalRecord);
+      } else {
+        await expect(NodeFSP.stat(hubFile)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    } finally {
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
