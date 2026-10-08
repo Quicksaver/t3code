@@ -101,7 +101,9 @@ The first device listing installs pinned device tools on the host.
 Node 22 or newer and a compatible npm version must be available to non-interactive SSH commands.
 SSH device hosts also need a POSIX-compatible `sh` available to non-interactive SSH commands. On Windows hosts, Git for Windows provides `sh.exe` in its `bin` directory (for example `C:\Program Files\Git\bin`), which its default installation does not add to PATH; add that directory to the PATH SSH sessions use.
 T3 checks common Homebrew and Android SDK locations; custom installations need
-the appropriate PATH and ANDROID_HOME on the host.
+the appropriate PATH and ANDROID_HOME or ANDROID_SDK_ROOT on the host.
+
+Android support on an SSH host requires SDK Platform-Tools, Android Emulator, and the latest SDK Command-line Tools. Having only adb does not enable Android support, and missing Android tools do not disable iOS support.
 
 The picker identifies devices by host when several hosts are configured.
 Connections recover after interruptions. Removing a host closes its device
