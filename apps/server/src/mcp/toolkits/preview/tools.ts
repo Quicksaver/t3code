@@ -21,6 +21,8 @@ import {
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
+  PreviewAutomationHosts,
+  PreviewAutomationSelectHostInput,
   PreviewAutomationTabTargetInput,
   PreviewAutomationTypeInput,
   PreviewAutomationUploadInput,
@@ -72,6 +74,31 @@ const PreviewStatusTool = Tool.make("preview_status", {
 })
   .annotate(Tool.Title, "Get preview status")
   .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const PreviewHostsTool = Tool.make("preview_hosts", {
+  description:
+    "List connected preview clients in this environment, including client IDs, physical hostname/platform when supplied, focus and supported operations. Reports this agent session's automatic selection and explicit pin, including an offline pin. Discovery does not capture pixels or change routing; a connected host is not a guarantee that its locked or sleeping display can capture.",
+  parameters: Tool.EmptyParams,
+  success: PreviewAutomationHosts,
+  failure: PreviewToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "List preview hosts")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const PreviewSelectHostTool = Tool.make("preview_select_host", {
+  description:
+    "Pin a connected preview client by clientId from preview_hosts for this agent session. The pin survives that client's reconnect and fails closed while it is disconnected or lacks an operation, rather than switching hosts. Pass clientId:null to clear an existing pin and make a fresh automatic choice on the next request. Switching hosts or clearing an existing pin forgets the session's current-tab association, even if automatic routing selects the same host; it does not close the browser tab. Use preview_open or an explicit tabId next. Pins last for this provider session in the running server; restarting a client may give it a new ID that must be selected again.",
+  parameters: PreviewAutomationSelectHostInput,
+  success: PreviewAutomationHosts,
+  failure: PreviewToolFailure,
+  dependencies,
+})
+  .annotate(Tool.Title, "Select preview host")
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
@@ -313,6 +340,8 @@ const PreviewRecordingStopTool = safeBrowserTool(
 
 export const PreviewToolkit = Toolkit.make(
   PreviewDialogTool,
+  PreviewHostsTool,
+  PreviewSelectHostTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,
@@ -335,6 +364,8 @@ export const PreviewToolkit = Toolkit.make(
 
 export const PreviewStandardToolkit = Toolkit.make(
   PreviewDialogTool,
+  PreviewHostsTool,
+  PreviewSelectHostTool,
   PreviewStatusTool,
   PreviewOpenTool,
   PreviewNavigateTool,

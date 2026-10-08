@@ -23,6 +23,7 @@ import {
   type PreviewAutomationError,
   type PreviewAutomationOperation,
   type PreviewAutomationHost,
+  type PreviewAutomationHosts,
   type PreviewAutomationHostFocus,
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
@@ -71,6 +72,13 @@ export class PreviewAutomationBroker extends Context.Service<
       options?: PreviewAutomationConnectOptions,
     ) => Effect.Effect<Stream.Stream<PreviewAutomationStreamEvent>>;
     readonly focusHost: (host: PreviewAutomationHostFocus) => Effect.Effect<void>;
+    readonly listHosts: (
+      scope: McpInvocationContext.McpThreadInvocationScope,
+    ) => Effect.Effect<PreviewAutomationHosts>;
+    readonly selectHost: (
+      scope: McpInvocationContext.McpThreadInvocationScope,
+      clientId: string | null,
+    ) => Effect.Effect<PreviewAutomationHosts, PreviewAutomationNoAvailableHostError>;
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
@@ -84,6 +92,7 @@ interface ClientConnection {
   readonly clientId: string;
   readonly connectionId: string;
   readonly environmentId: PreviewAutomationHost["environmentId"];
+  readonly hostInfo: PreviewAutomationHost["hostInfo"];
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly preferred: boolean;
@@ -96,6 +105,13 @@ interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
+}
+
+interface RoutedInvocation {
+  readonly connection: ClientConnection;
+  readonly requestId: string;
+  readonly requestContext: PreviewAutomationRequestErrorContext;
+  readonly requestSequence: number;
 }
 
 /**
@@ -132,6 +148,8 @@ interface PreviewAutomationRequestErrorContext {
 interface BrokerState {
   readonly clients: ReadonlyMap<string, ClientConnection>;
   readonly assignments: ReadonlyMap<string, HostAssignment>;
+  /** Explicit choices survive connection replacement; automatic assignments do not. */
+  readonly pins: ReadonlyMap<string, string>;
   readonly pending: ReadonlyMap<string, PendingRequest>;
   readonly requestSequence: number;
   readonly focusSequence: number;
@@ -176,6 +194,34 @@ const selectorDiagnosticsFromInput = (
 
 const hostAssignmentKey = (scope: McpInvocationContext.McpThreadInvocationScope): string =>
   `${scope.environmentId}\u0000${scope.thread.providerSessionId}`;
+
+const hostInventory = (
+  current: BrokerState,
+  scope: McpInvocationContext.McpThreadInvocationScope,
+): PreviewAutomationHosts => {
+  const key = hostAssignmentKey(scope);
+  const pinnedClientId = current.pins.get(key) ?? null;
+  const assignment = current.assignments.get(key);
+  const assigned = assignment ? current.clients.get(assignment.clientId) : undefined;
+  const selected = pinnedClientId === null ? assigned : current.clients.get(pinnedClientId);
+  return {
+    pinnedClientId,
+    selectedClientId:
+      selected?.environmentId === scope.environmentId &&
+      (pinnedClientId !== null || selected.queue === assignment?.queue)
+        ? selected.clientId
+        : null,
+    hosts: Array.from(current.clients.values())
+      .filter((host) => host.environmentId === scope.environmentId)
+      .map((host) => ({
+        clientId: host.clientId,
+        connectionId: host.connectionId,
+        ...(host.hostInfo === undefined ? {} : { hostInfo: host.hostInfo }),
+        focused: host.focused,
+        supportedOperations: Array.from(host.supportedOperations),
+      })),
+  };
+};
 
 const isPreviewTabId = Schema.is(PreviewTabId);
 const decodeControlReason = Schema.decodeUnknownOption(PreviewAutomationControlReason);
@@ -351,6 +397,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
     assignments: new Map(),
+    pins: new Map(),
     pending: new Map(),
     requestSequence: 0,
     focusSequence: 0,
@@ -407,6 +454,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       clientId,
       connectionId,
       environmentId: host.environmentId,
+      hostInfo: host.hostInfo,
       supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
       preferred: options?.preferred ?? false,
@@ -503,113 +551,182 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
+  const listHosts: PreviewAutomationBroker["Service"]["listHosts"] = Effect.fn(
+    "PreviewAutomationBroker.listHosts",
+  )((scope) =>
+    SynchronizedRef.get(state).pipe(Effect.map((current) => hostInventory(current, scope))),
+  );
+
+  const selectHost: PreviewAutomationBroker["Service"]["selectHost"] = Effect.fn(
+    "PreviewAutomationBroker.selectHost",
+  )((scope, clientId) =>
+    SynchronizedRef.modifyEffect(state, (current) => {
+      if (
+        clientId !== null &&
+        current.clients.get(clientId)?.environmentId !== scope.environmentId
+      ) {
+        return Effect.fail(
+          new PreviewAutomationNoAvailableHostError({
+            operation: "selectHost",
+            environmentId: scope.environmentId,
+            threadId: scope.thread.threadId,
+            providerSessionId: scope.thread.providerSessionId,
+            providerInstanceId: scope.thread.providerInstanceId,
+            clientId,
+            hostSelection: { clientId, reason: "rejected" },
+          }),
+        );
+      }
+      const key = hostAssignmentKey(scope);
+      const previousPin = current.pins.get(key) ?? null;
+      const pins = new Map(current.pins);
+      if (clientId === null) pins.delete(key);
+      else pins.set(key, clientId);
+      const assignments = new Map(current.assignments);
+      if (
+        (clientId === null && previousPin !== null) ||
+        (clientId !== null && assignments.get(key)?.clientId !== clientId)
+      ) {
+        assignments.delete(key);
+      }
+      const next = { ...current, pins, assignments };
+      return Effect.succeed([hostInventory(next, scope), next] as const);
+    }),
+  );
+
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
-    const route = yield* SynchronizedRef.modify(state, (current) => {
-      const assignments = new Map(
-        Array.from(current.assignments).filter(([, assignment]) => {
-          const connection = current.clients.get(assignment.clientId);
-          return (
-            connection?.connectionId === assignment.connectionId &&
-            connection.queue === assignment.queue
-          );
-        }),
-      );
-      const assignmentKey = hostAssignmentKey(input.scope);
-      const assigned = assignments.get(assignmentKey);
-      const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
-      const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
-      // Keep one provider session on one physical desktop runtime so a
-      // multi-step browser interaction cannot jump between independent
-      // Electron cookie/DOM state. A live assignment that predates an
-      // operation is not silently moved to a newer client: the caller gets a
-      // capability failure and can deliberately start a fresh provider
-      // session. A dead lease is pruned above and may fail over.
-      const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
-        host.liveTabs.some(
-          (tab) =>
-            tab.threadId === input.scope.thread.threadId &&
-            (!visibleOnly || tab.visible === true) &&
-            (input.tabId === undefined || tab.tabId === input.tabId),
+    const route = yield* SynchronizedRef.modify(
+      state,
+      (
+        current,
+      ): readonly [RoutedInvocation | PreviewAutomationNoAvailableHostError, BrokerState] => {
+        const assignments = new Map(
+          Array.from(current.assignments).filter(([, assignment]) => {
+            const connection = current.clients.get(assignment.clientId);
+            return (
+              connection?.connectionId === assignment.connectionId &&
+              connection.queue === assignment.queue
+            );
+          }),
         );
-      const connection =
-        hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
-          ? assignedConnection
-          : hasLiveAssignment
-            ? undefined
-            : Array.from(current.clients.values())
-                .filter(
-                  (host) =>
-                    host.environmentId === input.scope.environmentId &&
-                    supportsOperation(host, input.operation),
-                )
-                .sort(
-                  (left, right) =>
-                    Number(input.tabId !== undefined && ownsTargetTab(right)) -
-                      Number(input.tabId !== undefined && ownsTargetTab(left)) ||
-                    Number(right.preferred) - Number(left.preferred) ||
-                    Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
-                    Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
-                    Number(right.focused) - Number(left.focused) ||
-                    right.focusOrder - left.focusOrder,
-                )[0];
-      if (!connection) {
-        if (!hasLiveAssignment) assignments.delete(assignmentKey);
-        return [undefined, { ...current, assignments }] as const;
-      }
-      // The environment host may install Chromium on its first open (up to
-      // ten minutes). Keep that request alive without replaying its effects.
-      const timeoutMs =
-        input.timeoutMs ?? (input.operation === "open" && connection.preferred ? 660_000 : 15_000);
-      const canReuseAssignedTab =
-        assigned !== undefined &&
-        assigned.connectionId === connection.connectionId &&
-        assigned.queue === connection.queue;
-      assignments.set(assignmentKey, {
-        clientId: connection.clientId,
-        connectionId: connection.connectionId,
-        queue: connection.queue,
-        ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
-        ...(canReuseAssignedTab && assigned.tabSequence !== undefined
-          ? { tabSequence: assigned.tabSequence }
-          : {}),
-      });
+        const assignmentKey = hostAssignmentKey(input.scope);
+        const assigned = assignments.get(assignmentKey);
+        const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
+        const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
+        const pinnedClientId = current.pins.get(assignmentKey);
+        const pinnedConnection =
+          pinnedClientId === undefined ? undefined : current.clients.get(pinnedClientId);
+        // Keep one provider session on one physical desktop runtime so a
+        // multi-step browser interaction cannot jump between independent
+        // Electron cookie/DOM state. A live assignment that predates an
+        // operation is not silently moved to a newer client: the caller gets a
+        // capability failure and can deliberately start a fresh provider
+        // session. A dead lease is pruned above and may fail over.
+        const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
+          host.liveTabs.some(
+            (tab) =>
+              tab.threadId === input.scope.thread.threadId &&
+              (!visibleOnly || tab.visible === true) &&
+              (input.tabId === undefined || tab.tabId === input.tabId),
+          );
+        const connection =
+          pinnedClientId !== undefined
+            ? pinnedConnection?.environmentId === input.scope.environmentId &&
+              supportsOperation(pinnedConnection, input.operation)
+              ? pinnedConnection
+              : undefined
+            : hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
+              ? assignedConnection
+              : hasLiveAssignment
+                ? undefined
+                : Array.from(current.clients.values())
+                    .filter(
+                      (host) =>
+                        host.environmentId === input.scope.environmentId &&
+                        supportsOperation(host, input.operation),
+                    )
+                    .sort(
+                      (left, right) =>
+                        Number(input.tabId !== undefined && ownsTargetTab(right)) -
+                          Number(input.tabId !== undefined && ownsTargetTab(left)) ||
+                        Number(right.preferred) - Number(left.preferred) ||
+                        Number(ownsTargetTab(right, true)) - Number(ownsTargetTab(left, true)) ||
+                        Number(ownsTargetTab(right)) - Number(ownsTargetTab(left)) ||
+                        Number(right.focused) - Number(left.focused) ||
+                        right.focusOrder - left.focusOrder,
+                    )[0];
+        if (!connection) {
+          if (!hasLiveAssignment) assignments.delete(assignmentKey);
+          return [
+            new PreviewAutomationNoAvailableHostError({
+              operation: input.operation,
+              environmentId: input.scope.environmentId,
+              threadId: input.scope.thread.threadId,
+              providerSessionId: input.scope.thread.providerSessionId,
+              providerInstanceId: input.scope.thread.providerInstanceId,
+              ...(pinnedClientId === undefined
+                ? {}
+                : {
+                    hostSelection: {
+                      clientId: pinnedClientId,
+                      reason:
+                        pinnedConnection?.environmentId === input.scope.environmentId
+                          ? "unsupported"
+                          : "disconnected",
+                    },
+                  }),
+            }),
+            { ...current, assignments },
+          ] as const;
+        }
+        // Preserve the environment browser first-open installation budget.
+        const timeoutMs =
+          input.timeoutMs ??
+          (input.operation === "open" && connection.preferred ? 660_000 : 15_000);
+        const canReuseAssignedTab =
+          assigned !== undefined &&
+          assigned.connectionId === connection.connectionId &&
+          assigned.queue === connection.queue;
+        assignments.set(assignmentKey, {
+          clientId: connection.clientId,
+          connectionId: connection.connectionId,
+          queue: connection.queue,
+          ...(canReuseAssignedTab && assigned.tabId !== undefined ? { tabId: assigned.tabId } : {}),
+          ...(canReuseAssignedTab && assigned.tabSequence !== undefined
+            ? { tabSequence: assigned.tabSequence }
+            : // A late response from before A -> B -> A must not restore A's old tab.
+              { tabSequence: current.requestSequence }),
+        });
 
-      const requestSequence = current.requestSequence;
-      const requestId = `preview-${requestSequence}`;
-      const tabId = input.tabId ?? (canReuseAssignedTab ? assigned.tabId : undefined);
-      const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
-      const context: PreviewAutomationRequestErrorContext = {
-        operation: input.operation,
-        environmentId: input.scope.environmentId,
-        threadId: input.scope.thread.threadId,
-        providerSessionId: input.scope.thread.providerSessionId,
-        providerInstanceId: input.scope.thread.providerInstanceId,
-        clientId: connection.clientId,
-        connectionId: connection.connectionId,
-        requestId,
-        ...(tabId === undefined ? {} : { tabId }),
-        timeoutMs,
-        ...selectorDiagnostics,
-      };
-      const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
-      return [
-        { connection, requestId, requestContext: context, requestSequence },
-        { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
-      ] as const;
-    });
-    if (!route) {
-      return yield* new PreviewAutomationNoAvailableHostError({
-        operation: input.operation,
-        environmentId: input.scope.environmentId,
-        threadId: input.scope.thread.threadId,
-        providerSessionId: input.scope.thread.providerSessionId,
-        providerInstanceId: input.scope.thread.providerInstanceId,
-      });
-    }
+        const requestSequence = current.requestSequence;
+        const requestId = `preview-${requestSequence}`;
+        const tabId = input.tabId ?? (canReuseAssignedTab ? assigned.tabId : undefined);
+        const selectorDiagnostics = selectorDiagnosticsFromInput(input.input);
+        const context: PreviewAutomationRequestErrorContext = {
+          operation: input.operation,
+          environmentId: input.scope.environmentId,
+          threadId: input.scope.thread.threadId,
+          providerSessionId: input.scope.thread.providerSessionId,
+          providerInstanceId: input.scope.thread.providerInstanceId,
+          clientId: connection.clientId,
+          connectionId: connection.connectionId,
+          requestId,
+          ...(tabId === undefined ? {} : { tabId }),
+          timeoutMs,
+          ...selectorDiagnostics,
+        };
+        const pending = new Map(current.pending);
+        pending.set(requestId, { queue: connection.queue, deferred, context });
+        return [
+          { connection, requestId, requestContext: context, requestSequence },
+          { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
+        ] as const;
+      },
+    );
+    if ("_tag" in route) return yield* route;
     const { connection, requestId, requestContext, requestSequence } = route;
     const { timeoutMs } = requestContext;
     input.onTargetTab?.(requestContext.tabId);
@@ -699,7 +816,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return result;
   });
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, listHosts, selectHost, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

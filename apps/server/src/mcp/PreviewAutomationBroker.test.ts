@@ -65,6 +65,309 @@ const requestsFrom = (
     }),
   );
 
+const attachHost = Effect.fn(function* (
+  broker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  host: PreviewAutomationHost,
+  respond: (request: RoutedRequest) => Effect.Effect<unknown> = (request) =>
+    Effect.succeed({ clientId: host.clientId, tabId: request.tabId ?? `${host.clientId}-tab` }),
+) {
+  const ready = yield* Deferred.make<string>();
+  const events = yield* broker.connect(host);
+  const fiber = yield* Stream.runForEach(events, (event) => {
+    if (event.type === "connected")
+      return Deferred.succeed(ready, event.connectionId).pipe(Effect.asVoid);
+    return respond({ ...event.request, connectionId: event.connectionId }).pipe(
+      Effect.flatMap((result) =>
+        broker.respond({
+          clientId: host.clientId,
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result,
+        }),
+      ),
+      Effect.forkScoped,
+      Effect.asVoid,
+    );
+  }).pipe(Effect.forkScoped);
+  return { fiber, connectionId: yield* Deferred.await(ready) };
+});
+
+it.effect("discovers physical hosts within the caller's environment without assigning a host", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const hostInfo = { hostname: "MacBook-Pro", platform: "darwin" };
+      const first = yield* attachHost(broker, makeHost({ hostInfo }));
+      yield* attachHost(
+        broker,
+        makeHost({ clientId: "foreign", environmentId: EnvironmentId.make("other") }),
+      );
+      expect(yield* broker.listHosts(scope)).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: null,
+        hosts: [
+          { clientId: "client-1", connectionId: first.connectionId, hostInfo, focused: false },
+        ],
+      });
+    }),
+  ),
+);
+
+it.effect("selects a host explicitly, isolates sessions, and restores automatic routing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      yield* attachHost(broker, makeHost());
+      const second = yield* attachHost(broker, makeHost({ clientId: "client-2" }));
+      const otherScope = {
+        ...scope,
+        thread: { ...scope.thread, providerSessionId: "other-session" },
+      };
+      yield* broker.selectHost(scope, "client-1");
+      yield* broker.focusHost({
+        ...makeHost({ clientId: "client-2" }),
+        connectionId: second.connectionId,
+        focused: true,
+      });
+      expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toMatchObject({
+        clientId: "client-1",
+      });
+      expect(
+        yield* broker.invoke({ scope: otherScope, operation: "open", input: {} }),
+      ).toMatchObject({ clientId: "client-2" });
+      expect(yield* broker.listHosts(otherScope)).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: "client-2",
+      });
+      yield* broker.selectHost(scope, "client-2");
+      expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toMatchObject({
+        tabId: "client-2-tab",
+      });
+      yield* broker.selectHost(scope, "client-1");
+      yield* broker.selectHost(scope, null);
+      expect(yield* broker.invoke({ scope, operation: "open", input: {} })).toMatchObject({
+        clientId: "client-2",
+      });
+      expect(yield* broker.listHosts(scope)).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: "client-2",
+      });
+    }),
+  ),
+);
+
+it.effect("clears a live pin and tab assignment before fresh automatic routing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const tabs: Array<string | undefined> = [];
+      yield* attachHost(broker, makeHost(), (request) => {
+        tabs.push(request.tabId);
+        return Effect.succeed({ tabId: request.tabId ?? "live-tab" });
+      });
+      yield* broker.selectHost(scope, "client-1");
+      yield* broker.invoke({ scope, operation: "open", input: {} });
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      expect(yield* broker.selectHost(scope, null)).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: null,
+      });
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      // Clearing an already automatic session is idempotent and keeps its tab association.
+      yield* broker.selectHost(scope, null);
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      expect(tabs).toEqual([undefined, "live-tab", undefined, "live-tab"]);
+      expect(yield* broker.listHosts(scope)).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: "client-1",
+      });
+    }),
+  ),
+);
+
+it.effect(
+  "keeps an explicit disconnected pin, fails closed, and uses the same client's new generation",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const first = yield* attachHost(broker, makeHost());
+        yield* attachHost(broker, makeHost({ clientId: "client-2" }));
+        yield* broker.selectHost(scope, "client-1");
+        yield* broker.invoke({
+          scope,
+          operation: "open",
+          input: {},
+          tabId: PreviewTabId.make("old-tab"),
+        });
+        yield* Fiber.interrupt(first.fiber);
+        expect(yield* broker.listHosts(scope)).toMatchObject({
+          pinnedClientId: "client-1",
+          selectedClientId: null,
+        });
+        const offline = yield* broker
+          .invoke<{ clientId: string }>({ scope, operation: "open", input: {} })
+          .pipe(Effect.flip);
+        expect(offline._tag).toBe("PreviewAutomationNoAvailableHostError");
+        expect(offline.message).toBe(
+          "Pinned preview client client-1 is not connected to run open. The pin is retained. Wait for that client to reconnect, or call preview_hosts and preview_select_host to choose a capable client, or pass clientId:null to restore automatic routing.",
+        );
+        const replacement = yield* attachHost(broker, makeHost());
+        expect(replacement.connectionId).not.toBe(first.connectionId);
+        expect(yield* broker.invoke({ scope, operation: "status", input: {} })).toMatchObject({
+          clientId: "client-1",
+          tabId: "client-1-tab",
+        });
+        expect(yield* broker.listHosts(scope)).toMatchObject({
+          pinnedClientId: "client-1",
+          selectedClientId: "client-1",
+        });
+      }),
+    ),
+);
+
+it.effect(
+  "rejects unknown and foreign hosts without losing a pin and never falls back for unsupported operations",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        yield* attachHost(broker, makeHost({ supportedOperations: ["status"] }));
+        yield* attachHost(
+          broker,
+          makeHost({ clientId: "client-2", supportedOperations: ["resize"] }),
+        );
+        yield* attachHost(
+          broker,
+          makeHost({ clientId: "foreign", environmentId: EnvironmentId.make("other") }),
+        );
+        yield* broker.selectHost(scope, "client-1");
+        for (const clientId of ["unknown", "foreign"]) {
+          const error = yield* broker.selectHost(scope, clientId).pipe(Effect.flip);
+          expect(error._tag).toBe("PreviewAutomationNoAvailableHostError");
+          expect(error.operation).toBe("selectHost");
+          expect(error.message).toBe(
+            `Preview host selection rejected client ${clientId}: it is not connected to this environment. The previous selection is unchanged. Call preview_hosts, then preview_select_host with a connected clientId.`,
+          );
+          expect(yield* broker.listHosts(scope)).toMatchObject({ pinnedClientId: "client-1" });
+        }
+        const unsupported = yield* broker
+          .invoke<{ clientId: string }>({ scope, operation: "resize", input: {} })
+          .pipe(Effect.flip);
+        expect(unsupported._tag).toBe("PreviewAutomationNoAvailableHostError");
+        expect(unsupported.message).toBe(
+          "Pinned preview client client-1 does not support resize. The pin is retained. Call preview_hosts and preview_select_host to choose a capable client, or pass clientId:null to restore automatic routing.",
+        );
+        expect(yield* broker.listHosts(scope)).toMatchObject({ pinnedClientId: "client-1" });
+      }),
+    ),
+);
+
+it.effect(
+  "preserves the current tab on idempotent selection and rejects late tabs after A to B to A",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* makeBroker;
+        const oldRequest = yield* Deferred.make<void>();
+        const releaseOld = yield* Deferred.make<void>();
+        let first = true;
+        const tabs: Array<string | undefined> = [];
+        yield* attachHost(broker, makeHost(), (request) =>
+          Effect.gen(function* () {
+            tabs.push(request.tabId);
+            if (first) {
+              first = false;
+              yield* Deferred.succeed(oldRequest, undefined);
+              yield* Deferred.await(releaseOld);
+              return { tabId: "old-tab" };
+            }
+            return { tabId: request.tabId ?? "new-tab" };
+          }),
+        );
+        yield* attachHost(broker, makeHost({ clientId: "client-2" }));
+        yield* broker.selectHost(scope, "client-1");
+        const pending = yield* broker
+          .invoke({ scope, operation: "open", input: {} })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(oldRequest);
+        yield* broker.selectHost(scope, "client-2");
+        yield* broker.selectHost(scope, "client-1");
+        yield* broker.invoke({ scope, operation: "open", input: {} });
+        yield* Deferred.succeed(releaseOld, undefined);
+        yield* Fiber.join(pending);
+        yield* broker.selectHost(scope, "client-1");
+        yield* broker.invoke({ scope, operation: "status", input: {} });
+        expect(tabs).toEqual([undefined, undefined, "new-tab"]);
+      }),
+    ),
+);
+
+it.effect("rejects a pre-switch tab response when the new A assignment returns no tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const oldRequest = yield* Deferred.make<void>();
+      const releaseOld = yield* Deferred.make<void>();
+      const tabs: Array<string | undefined> = [];
+      yield* attachHost(broker, makeHost(), (request) =>
+        Effect.gen(function* () {
+          tabs.push(request.tabId);
+          if (tabs.length === 1) {
+            yield* Deferred.succeed(oldRequest, undefined);
+            yield* Deferred.await(releaseOld);
+            return { tabId: "old-tab" };
+          }
+          return {};
+        }),
+      );
+      yield* attachHost(broker, makeHost({ clientId: "client-2" }));
+      yield* broker.selectHost(scope, "client-1");
+      const pending = yield* broker
+        .invoke({ scope, operation: "open", input: {} })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(oldRequest);
+      yield* broker.selectHost(scope, "client-2");
+      yield* broker.selectHost(scope, "client-1");
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      yield* Deferred.succeed(releaseOld, undefined);
+      yield* Fiber.join(pending);
+      yield* broker.invoke({ scope, operation: "status", input: {} });
+      expect(tabs).toEqual([undefined, undefined, undefined]);
+    }),
+  ),
+);
+
+it.effect("keeps remote no-host diagnostics separate from explicit pin failures", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const ready = yield* Deferred.make<void>();
+      const events = yield* broker.connect(makeHost());
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Deferred.succeed(ready, undefined)
+          : broker.respond({
+              clientId: "client-1",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: false,
+              error: { _tag: "PreviewAutomationNoAvailableHostError", message: "remote failure" },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(ready);
+      yield* broker.selectHost(scope, "client-1");
+      const error = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {} })
+        .pipe(Effect.flip);
+      expect(error).toBeInstanceOf(PreviewAutomationNoAvailableHostError);
+      expect(error.message).toContain("a headless server has no browser of its own. Do not retry.");
+      expect(error.message).not.toContain("Pinned preview client");
+    }),
+  ),
+);
+
 it.effect("atomically registers a connected host and correlates its response", () =>
   Effect.scoped(
     Effect.gen(function* () {

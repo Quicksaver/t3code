@@ -736,6 +736,36 @@ export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
 export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
 
+/** Describes the physical desktop, which may differ from the environment server. */
+export const PreviewAutomationHostInfo = Schema.Struct({
+  hostname: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  platform: TrimmedNonEmptyString.check(Schema.isMaxLength(32)),
+});
+export type PreviewAutomationHostInfo = typeof PreviewAutomationHostInfo.Type;
+
+export const PreviewAutomationSelectHostInput = Schema.Struct({
+  clientId: Schema.NullOr(PreviewAutomationClientId).annotate({
+    description:
+      "Client ID from preview_hosts to pin for this agent session, or null to clear an existing pin and make a fresh automatic choice on the next request. Switching hosts or clearing an existing pin forgets the current-tab association, even if the same host is chosen, without closing the browser tab.",
+  }),
+});
+export type PreviewAutomationSelectHostInput = typeof PreviewAutomationSelectHostInput.Type;
+
+export const PreviewAutomationHosts = Schema.Struct({
+  pinnedClientId: Schema.NullOr(PreviewAutomationClientId),
+  selectedClientId: Schema.NullOr(PreviewAutomationClientId),
+  hosts: Schema.Array(
+    Schema.Struct({
+      clientId: PreviewAutomationClientId,
+      connectionId: PreviewAutomationConnectionId,
+      hostInfo: Schema.optional(PreviewAutomationHostInfo),
+      focused: Schema.Boolean,
+      supportedOperations: Schema.Array(PreviewAutomationOperation),
+    }),
+  ),
+});
+export type PreviewAutomationHosts = typeof PreviewAutomationHosts.Type;
+
 export const PreviewAutomationHostIdentity = Schema.Struct({
   clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
@@ -744,6 +774,8 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
+  /** Older clients identify themselves only by clientId. */
+  hostInfo: Schema.optional(PreviewAutomationHostInfo),
   /**
    * Missing means the pre-capability-negotiation V1 operation set. This lets
    * a newer server safely coexist with an older desktop during rollout.
@@ -886,6 +918,14 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
   "PreviewAutomationNoAvailableHostError",
   {
     ...PreviewAutomationScopeErrorFields,
+    operation: Schema.Union([PreviewAutomationOperation, Schema.Literal("selectHost")]),
+    /** Set only for explicit host selection/routing failures, never remote capture errors. */
+    hostSelection: Schema.optional(
+      Schema.Struct({
+        clientId: PreviewAutomationClientId,
+        reason: Schema.Literals(["rejected", "disconnected", "unsupported"]),
+      }),
+    ),
     clientId: Schema.optional(TrimmedNonEmptyString),
     connectionId: Schema.optional(PreviewAutomationConnectionId),
     requestId: Schema.optional(TrimmedNonEmptyString),
@@ -895,6 +935,19 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
   },
 ) {
   override get message(): string {
+    if (this.hostSelection) {
+      const { clientId, reason } = this.hostSelection;
+      if (reason === "rejected") {
+        return `Preview host selection rejected client ${clientId}: it is not connected to this environment. The previous selection is unchanged. Call preview_hosts, then preview_select_host with a connected clientId.`;
+      }
+      const failure =
+        reason === "disconnected"
+          ? `is not connected to run ${this.operation}`
+          : `does not support ${this.operation}`;
+      const recovery =
+        reason === "disconnected" ? "Wait for that client to reconnect, or call" : "Call";
+      return `Pinned preview client ${clientId} ${failure}. The pin is retained. ${recovery} preview_hosts and preview_select_host to choose a capable client, or pass clientId:null to restore automatic routing.`;
+    }
     return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. Preview tools run in a T3 Code desktop app that is open and connected to this environment; a headless server has no browser of its own. Do not retry. To check a page, use a headless browser from the shell, such as Playwright, or curl, or ask the user to open this thread in the T3 Code desktop app.`;
   }
 }

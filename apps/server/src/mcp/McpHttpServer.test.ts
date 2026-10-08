@@ -243,6 +243,35 @@ it.effect("tells the agent how to fall back when no desktop app can run the snap
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("returns discoverable recovery advice for a rejected preview host selection", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* serveSnapshots("mcp-selected-client", snapshotResult);
+      const server = yield* McpServer.McpServer;
+      const select = (clientId: string) =>
+        server
+          .callTool({ name: "preview_select_host", arguments: { clientId } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+      yield* select("mcp-selected-client");
+      const rejection = yield* select("missing-client");
+      expect(rejection.isError).toBe(true);
+      expect(rejection.content).toEqual([
+        {
+          type: "text",
+          text: "Preview host selection rejected client missing-client: it is not connected to this environment. The previous selection is unchanged. Call preview_hosts, then preview_select_host with a connected clientId.",
+        },
+      ]);
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      expect(yield* broker.listHosts(invocation)).toMatchObject({
+        pinnedClientId: "mcp-selected-client",
+      });
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   { mode: "default", input: {}, images: true },
   { mode: "explicit image", input: { includeImage: true }, images: true },
@@ -880,6 +909,37 @@ it.effect("registers annotated tools and preserves authenticated request context
         available: true,
         tabId,
       });
+
+      const discover = yield* server
+        .callTool({ name: "preview_hosts", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(discover.isError).toBe(false);
+      expect(discover.structuredContent).toMatchObject({
+        pinnedClientId: null,
+        selectedClientId: "mcp-test-client",
+        hosts: [{ clientId: "mcp-test-client" }],
+      });
+      for (const clientId of ["mcp-test-client", null]) {
+        const selection = yield* server
+          .callTool({ name: "preview_select_host", arguments: { clientId } })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        expect(selection.isError).toBe(false);
+        expect(selection.structuredContent).toMatchObject({ pinnedClientId: clientId });
+      }
+      const invalidSelection = yield* server
+        .callTool({ name: "preview_select_host", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.flip,
+        );
+      expect(invalidSelection._tag).toBe("InvalidParams");
 
       const malformed = yield* server
         .callTool({ name: "preview_click", arguments: { selector: "" } })
