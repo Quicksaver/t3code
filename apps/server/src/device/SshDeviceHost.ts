@@ -172,6 +172,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
           `exec ${[command, ...args].map(SshDeviceScript.quoteRemoteArg).join(" ")}`,
           options?.stdin,
         ),
+        keepErrorOutputTail: true,
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
     ).pipe(
