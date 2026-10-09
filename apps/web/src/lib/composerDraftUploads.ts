@@ -1,7 +1,7 @@
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
-import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { type ComposerThreadTarget, DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { releaseDraftAttachments } from "./attachmentUploadQueue";
 
 export function releaseComposerDraftUploads(target: ScopedThreadRef | DraftId): void {
@@ -12,16 +12,37 @@ export function releaseComposerDraftUploads(target: ScopedThreadRef | DraftId): 
 }
 
 /**
- * Releases only the uploads an archived thread's surviving draft can recreate.
- * Images keep their bytes in the draft and upload again when it reopens. File
- * bytes are never persisted locally: a completed upload is the only copy the
- * draft hydrates from after a reload, and an in-flight one becomes that copy
- * when it finishes, so file uploads stay.
+ * Discards every composer record represented by the target, releasing each
+ * record's uploads before clearing its draft references. A server thread can
+ * have both a scoped composer record and matching draft-session records, so
+ * deletion must sweep both key domains.
  */
-export function releaseArchivedComposerDraftUploads(threadRef: ScopedThreadRef): void {
-  const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-  if (draft) {
-    releaseDraftAttachments(draft.images);
+export function permanentlyDiscardComposerDraft(target: ScopedThreadRef | DraftId): void {
+  const store = useComposerDraftStore.getState();
+  const discardTargets: ComposerThreadTarget[] = [target];
+
+  if (typeof target !== "string") {
+    const directKey = scopedThreadKey(target);
+    // Without its own record, the scoped target resolves to the first matching
+    // session below. Clearing it in the same iteration makes that session's
+    // later explicit target a no-op instead of a second attachment release.
+    for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
+      if (
+        draftKey !== directKey &&
+        session.environmentId === target.environmentId &&
+        session.threadId === target.threadId
+      ) {
+        discardTargets.push(DraftId.make(draftKey));
+      }
+    }
+  }
+
+  for (const discardTarget of discardTargets) {
+    const draft = store.getComposerDraft(discardTarget);
+    if (draft) {
+      releaseDraftAttachments([...draft.images, ...draft.files]);
+    }
+    store.clearDraftThread(discardTarget);
   }
 }
 
@@ -50,5 +71,19 @@ export function releaseProjectDraftUploads(
     if (draft) {
       releaseDraftAttachments([...draft.images, ...draft.files]);
     }
+  }
+}
+
+/**
+ * Releases only the uploads an archived thread's surviving draft can recreate.
+ * Images keep their bytes in the draft and upload again when it reopens. File
+ * bytes are never persisted locally: a completed upload is the only copy the
+ * draft hydrates from after a reload, and an in-flight one becomes that copy
+ * when it finishes, so file uploads stay.
+ */
+export function releaseArchivedComposerDraftUploads(threadRef: ScopedThreadRef): void {
+  const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+  if (draft) {
+    releaseDraftAttachments(draft.images);
   }
 }

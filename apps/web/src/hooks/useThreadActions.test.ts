@@ -73,6 +73,10 @@ vi.mock("../composerDraftStore", () => ({
 }));
 
 vi.mock("../state/terminal", () => ({ terminalEnvironment: { close: {} } }));
+vi.mock("../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/session")>()),
+  readEnvironmentScope: () => true,
+}));
 vi.mock("../state/threads", () => ({
   threadEnvironment: {
     archive: {},
@@ -98,6 +102,7 @@ vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: mocks.refreshArchivedThreads,
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
+  permanentlyDiscardComposerDraft: vi.fn(),
   releaseArchivedComposerDraftUploads: mocks.releaseArchivedComposerDraftUploads,
   releaseComposerDraftUploads: mocks.releaseComposerDraftUploads,
 }));
