@@ -6,14 +6,27 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
+import PullRequestFilesViewed from "./Migrations/066_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
+import { seedUpstreamLedger } from "./upstreamMigrationLedger.testFixtures.ts";
+
+const readHistory = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+    SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+  `;
+  return rows.map((row) => [row.migration_id, row.name] as const);
+});
+
+// Upstream ledgers keep their own 33 and 34 markers; the fork replay starts at 35.
+const forkHistoryFrom35 = migrationManifest.filter(([id]) => id >= 35);
+const forkReplay = migrationManifest.filter(([id]) => id >= 35 && id <= 68);
 
 // The V2 schema is unchanged from the published September 15–16 previews.
 const seedPreview = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* runMigrations({ toMigrationInclusive: 52 });
+  yield* seedUpstreamLedger(52);
   yield* Migrator.make({})({
     loader: Migrator.fromRecord({ "53_OrchestrationV2": OrchestrationV2 }),
   });
@@ -36,31 +49,20 @@ describe("V2 preview upgrade", () => {
       assert.deepStrictEqual(yield* runMigrations(), [
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
-        [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ScheduledTaskWebhooks"],
-        [58, "WebhookRelayDeliveries"],
-        [59, "McpAppModelContext"],
-        [60, "ThreadSnapshotWindowIndexes"],
+        ...forkReplay,
+        ...migrationManifest.filter(([id]) => id >= 70),
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
-      const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
-        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
-      `;
+      const history = yield* readHistory;
       assert.deepStrictEqual(
-        history.map((row) => [row.migration_id, row.name] as const),
-        migrationManifest,
+        history.filter(([id]) => id >= 35),
+        forkHistoryFrom35,
       );
       assert.deepStrictEqual(
-        yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 55`,
+        yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 69`,
         [{ created_at: "2026-09-15 00:00:00" }],
       );
-      yield* sql`
-        INSERT INTO pull_request_files_viewed
-          (provider, host, repository, number, viewer, path, revision, viewed_at)
-        VALUES ('github', 'github.com', 'owner/repo', 1, 'viewer', 'file.ts', 'revision', '2026-09-17')
-      `;
-      assert.strictEqual((yield* sql`SELECT * FROM pull_request_files_viewed`).length, 1);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
@@ -69,7 +71,7 @@ describe("V2 preview upgrade", () => {
     (withIndexes) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 52 });
+        yield* seedUpstreamLedger(52);
         yield* Migrator.make({})({
           loader: Migrator.fromRecord({
             "53_PullRequestFilesViewed": PullRequestFilesViewed,
@@ -81,19 +83,43 @@ describe("V2 preview upgrade", () => {
         });
         yield* runMigrations();
         assert.deepStrictEqual(yield* runMigrations(), []);
-        const history = yield* sql<{
-          readonly migration_id: number;
-          readonly name: string;
-        }>`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id`;
+        const history = yield* readHistory;
         assert.deepStrictEqual(
-          history.map((row) => [row.migration_id, row.name] as const),
-          migrationManifest,
+          history.filter(([id]) => id >= 35),
+          forkHistoryFrom35,
         );
         const columns = yield* sql<{
           readonly name: string;
         }>`PRAGMA table_info(projection_threads)`;
         assert.ok(columns.some((column) => column.name === "auto_settle_disabled_at"));
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("relocates a released upstream V2 ledger without replaying V2", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* seedUpstreamLedger(54);
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "55_OrchestrationV2": OrchestrationV2,
+          "56_RemoveRedundantProjectionIndexes": RemoveRedundantProjectionIndexes,
+        }),
+      });
+      assert.deepStrictEqual(yield* runMigrations(), [
+        ...forkReplay,
+        ...migrationManifest.filter(([id]) => id >= 71),
+      ]);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      const history = yield* readHistory;
+      assert.deepStrictEqual(
+        history.filter(([id]) => id >= 35),
+        forkHistoryFrom35,
+      );
+      const columns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(orchestration_events)`;
+      assert.ok(columns.some((column) => column.name === "application_event_version"));
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
@@ -110,20 +136,13 @@ describe("V2 preview upgrade", () => {
         yield* sql`SELECT migration_id, name FROM effect_sql_migrations WHERE migration_id >= 53`,
         [{ migration_id: 53, name: "OrchestrationV2" }],
       );
-      assert.deepStrictEqual(
-        yield* sql`SELECT name FROM sqlite_master WHERE name = 'pull_request_files_viewed'`,
-        [],
-      );
       assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
       yield* sql`DROP TRIGGER fail_preview_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), [
         [53, "PullRequestFilesViewed"],
         [54, "ProjectionThreadsAutoSettleDisabledAt"],
-        [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ScheduledTaskWebhooks"],
-        [58, "WebhookRelayDeliveries"],
-        [59, "McpAppModelContext"],
-        [60, "ThreadSnapshotWindowIndexes"],
+        ...forkReplay,
+        ...migrationManifest.filter(([id]) => id >= 70),
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

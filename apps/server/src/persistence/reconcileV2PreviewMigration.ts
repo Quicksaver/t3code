@@ -2,8 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
-import AutoSettleDisabledAt from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
+import PullRequestFilesViewed from "./Migrations/066_PullRequestFilesViewed.ts";
+import AutoSettleDisabledAt from "./Migrations/067_ProjectionThreadsAutoSettleDisabledAt.ts";
 
 // Published previews assigned V2 to 53, then 54. Keep their schema and import
 // progress intact while reserving main's migration ids for upgrades from main.
