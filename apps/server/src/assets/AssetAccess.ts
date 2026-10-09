@@ -57,6 +57,7 @@ import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../atta
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as ThreadColdStorage from "../orchestration-v2/ThreadColdStorage.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
@@ -232,7 +233,8 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   readonly index: number;
 }) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  const item = yield* orchestrator.getTurnItem(input);
+  const coldStorage = yield* ThreadColdStorage.ThreadColdStorage;
+  const item = yield* coldStorage.withHot(input.threadId, orchestrator.getTurnItem(input));
   const image =
     item?.type === "dynamic_tool" ? toolOutputImages(item.output)[input.index] : undefined;
   return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
@@ -258,6 +260,52 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
   return png
     ? ({ kind: "bytes", bytes: png, mimeType: "image/png" } satisfies ResolvedAsset)
     : null;
+});
+
+// An archived conversation's attachment files live in its cold bundle; bringing
+// the conversation back writes them to disk again. A failure leaves the file
+// missing, which callers already report as not found.
+const restoreColdAttachment = Effect.fn("AssetAccess.restoreColdAttachment")(function* (
+  attachmentId: string,
+) {
+  const coldStorage = yield* ThreadColdStorage.ThreadColdStorage;
+  yield* coldStorage
+    .ensureAttachmentHot(attachmentId)
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to restore a cold attachment.", { attachmentId, cause }),
+      ),
+    );
+});
+
+// Finds an attachment file on disk, restoring its archived conversation when it
+// is missing. A cold move can remove the file right after that check, so a miss
+// restores once more before the attachment counts as not found.
+const findAttachmentFile = Effect.fn("AssetAccess.findAttachmentFile")(function* (
+  attachmentId: string,
+) {
+  const config = yield* ServerConfig.ServerConfig;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const find = Effect.gen(function* () {
+    yield* restoreColdAttachment(attachmentId);
+    const attachmentPath = resolveAttachmentPathById({
+      attachmentsDir: config.attachmentsDir,
+      attachmentId,
+    });
+    if (!attachmentPath) return null;
+    const info = yield* optionOnNotFound(fileSystem.stat(attachmentPath)).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to inspect attachment asset.", {
+          attachmentId,
+          path: attachmentPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    return Option.isSome(info) && info.value.type === "File" ? attachmentPath : null;
+  });
+  return (yield* find) ?? (yield* find);
 });
 
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
@@ -584,11 +632,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       break;
     }
     case "attachment": {
-      const config = yield* ServerConfig.ServerConfig;
-      const attachmentPath = resolveAttachmentPathById({
-        attachmentsDir: config.attachmentsDir,
-        attachmentId: input.resource.attachmentId,
-      });
+      const attachmentPath = yield* findAttachmentFile(input.resource.attachmentId);
       if (!attachmentPath) {
         return yield* new AssetAttachmentNotFoundError({
           resource: input.resource,
@@ -829,24 +873,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
 
   if (claims.kind === "attachment") {
-    const config = yield* ServerConfig.ServerConfig;
-    const attachmentPath = resolveAttachmentPathById({
-      attachmentsDir: config.attachmentsDir,
-      attachmentId: claims.attachmentId,
-    });
-    if (!attachmentPath) return null;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const info = yield* optionOnNotFound(fileSystem.stat(attachmentPath)).pipe(
-      Effect.tapError((cause) =>
-        Effect.logError("Failed to inspect attachment asset.", {
-          attachmentId: claims.attachmentId,
-          path: attachmentPath,
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => Option.none()),
-    );
-    return Option.isSome(info) && info.value.type === "File"
+    const attachmentPath = yield* findAttachmentFile(claims.attachmentId);
+    return attachmentPath
       ? ({
           kind: "file",
           path: attachmentPath,

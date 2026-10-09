@@ -98,6 +98,7 @@ function persistenceError(
     | "load-thread"
     | "save-thread"
     | "remove-thread"
+    | "list-threads"
     | "load-server-config"
     | "save-server-config"
     | "load-vcs-refs"
@@ -307,6 +308,29 @@ function removeDatabaseValueOnConnection(
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValue"));
 }
 
+function readDatabaseKeysInRangeOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  range: IDBKeyRange,
+) {
+  return Effect.callback<ReadonlyArray<IDBValidKey>, ConnectionTransientError>((resume) => {
+    try {
+      const request = database
+        .transaction(storeName, "readonly")
+        .objectStore(storeName)
+        .getAllKeys(range);
+      request.addEventListener("error", () => {
+        resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
+      });
+      request.addEventListener("success", () => {
+        resume(Effect.succeed(request.result));
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("read", cause)));
+    }
+  }).pipe(Effect.withSpan("web.connectionStorage.readDatabaseKeysInRange"));
+}
+
 function removeDatabaseValuesInRangeOnConnection(
   database: IDBDatabase,
   storeName: string,
@@ -347,6 +371,12 @@ function removeDatabaseValuesInRangeOnConnection(
       resume(Effect.fail(catalogError("remove", cause)));
     }
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValuesInRange"));
+}
+
+function readDatabaseKeysInRange(database: DatabaseHandle, storeName: string, range: IDBKeyRange) {
+  return withDatabase(database, (opened) =>
+    readDatabaseKeysInRangeOnConnection(opened, storeName, range),
+  );
 }
 
 function readDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
@@ -903,6 +933,19 @@ export const layer = Layer.effectContext(
           THREAD_STORE_NAME,
           threadCacheKey(environmentId, threadId),
         ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause))),
+      listThreadIds: (environmentId) =>
+        readDatabaseKeysInRange(
+          database,
+          THREAD_STORE_NAME,
+          IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:￿`),
+        ).pipe(
+          Effect.map((keys) =>
+            keys.flatMap((key) =>
+              typeof key === "string" ? [ThreadId.make(key.slice(environmentId.length + 1))] : [],
+            ),
+          ),
+          Effect.mapError((cause) => persistenceError("list-threads", cause)),
+        ),
       clear: (environmentId) =>
         Effect.all(
           [

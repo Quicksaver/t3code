@@ -167,26 +167,27 @@ export function resolveAttachmentPath(input: {
   });
 }
 
+/** File names an attachment id can be stored under, in lookup order. */
+export function attachmentFileNameCandidates(attachmentId: string): ReadonlyArray<string> {
+  const normalizedId = normalizeAttachmentRelativePath(attachmentId);
+  if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
+    return [];
+  }
+  const fileExtension = parseAttachmentFileExtension(normalizedId);
+  if (fileExtension) {
+    return [`${normalizedId}.${fileExtension.toLowerCase()}`];
+  }
+  return ATTACHMENT_FILENAME_EXTENSIONS.map((extension) => `${normalizedId}${extension}`);
+}
+
 export function resolveAttachmentPathById(input: {
   readonly attachmentsDir: string;
   readonly attachmentId: string;
 }): string | null {
-  const normalizedId = normalizeAttachmentRelativePath(input.attachmentId);
-  if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
-    return null;
-  }
-  const fileExtension = parseAttachmentFileExtension(normalizedId);
-  if (fileExtension) {
-    const filePath = resolveAttachmentRelativePath({
-      attachmentsDir: input.attachmentsDir,
-      relativePath: `${normalizedId}.${fileExtension.toLowerCase()}`,
-    });
-    return filePath && NodeFS.existsSync(filePath) ? filePath : null;
-  }
-  for (const extension of ATTACHMENT_FILENAME_EXTENSIONS) {
+  for (const fileName of attachmentFileNameCandidates(input.attachmentId)) {
     const maybePath = resolveAttachmentRelativePath({
       attachmentsDir: input.attachmentsDir,
-      relativePath: `${normalizedId}${extension}`,
+      relativePath: fileName,
     });
     if (maybePath && NodeFS.existsSync(maybePath)) {
       return maybePath;

@@ -26,6 +26,7 @@ import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadColdStorage from "../orchestration-v2/ThreadColdStorage.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -195,6 +196,53 @@ describe("AssetAccess", () => {
         resource: { ...resource, itemId: oversizedScreenshotItem.id },
       }).pipe(Effect.flip);
       expect(oversized._tag).toBe("AssetWorkspaceAssetNotFoundError");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("signs and serves tool images while their archived conversation is leased hot", () =>
+    Effect.gen(function* () {
+      let leased = false;
+      const coldStorage = Layer.succeed(ThreadColdStorage.ThreadColdStorage, {
+        withHot: (_threadId, use) =>
+          Effect.acquireUseRelease(
+            Effect.sync(() => {
+              leased = true;
+            }),
+            () => use,
+            () =>
+              Effect.sync(() => {
+                leased = false;
+              }),
+          ),
+        ensureAttachmentHot: () => Effect.void,
+        scheduleArchive: () => Effect.void,
+        archive: () => Effect.void,
+        purge: () => Effect.void,
+        reconcile: Effect.void,
+      });
+      const orchestrator = Layer.mock(Orchestrator.OrchestratorV2)({
+        getTurnItem: () => Effect.sync(() => (leased ? screenshotItem : null)),
+      });
+      const assetLayer = Layer.merge(coldStorage, orchestrator);
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "tool-output-image",
+          threadId: screenshotItem.threadId,
+          itemId: screenshotItem.id,
+          index: 0,
+        },
+      }).pipe(Effect.provide(assetLayer));
+      expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+      expect(leased).toBe(false);
+      // Serving takes its own lease after signing releases the first one.
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+          Effect.provide(assetLayer),
+        ),
+      ).toEqual({ kind: "bytes", mimeType: "image/png", bytes: Buffer.from(screenshotPng) });
+      expect(leased).toBe(false);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -924,6 +972,47 @@ describe("AssetAccess", () => {
         kind: "file",
         path: attachmentPath,
       });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("restores an attachment again when a cold move removes it after the check", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "thread-1-00000000-0000-4000-8000-000000000002";
+      const attachmentPath = path.join(config.attachmentsDir, `${attachmentId}.png`);
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      // The first and third restores write the file; the second sees it present
+      // just before a concurrent move removes it.
+      let restores = 0;
+      const coldStorage = Layer.succeed(ThreadColdStorage.ThreadColdStorage, {
+        withHot: (_threadId, use) => use,
+        ensureAttachmentHot: () =>
+          Effect.suspend(() => {
+            restores += 1;
+            return restores === 2
+              ? Effect.void
+              : fileSystem.writeFile(attachmentPath, new Uint8Array([1, 2, 3])).pipe(Effect.orDie);
+          }),
+        scheduleArchive: () => Effect.void,
+        archive: () => Effect.void,
+        purge: () => Effect.void,
+        reconcile: Effect.void,
+      });
+
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "attachment", attachmentId },
+      }).pipe(Effect.provide(coldStorage));
+      yield* fileSystem.remove(attachmentPath);
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const token = suffix.slice(0, suffix.indexOf("/"));
+
+      expect(yield* resolveAsset(token, "ignored.png").pipe(Effect.provide(coldStorage))).toEqual({
+        kind: "file",
+        path: attachmentPath,
+      });
+      expect(restores).toBe(3);
     }).pipe(Effect.provide(layerTest)),
   );
 

@@ -70,6 +70,12 @@ Persisted events must remain decodable on replay. Changing a schema affects old 
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.
 
+## Archived conversation storage
+
+An archived thread's conversation rows and non-lifecycle events may live only in `archivev2.sqlite`. [ThreadColdStorage](../../apps/server/src/orchestration-v2/ThreadColdStorage.ts) moves them there and restores them. Reads and commands through [ThreadManagementService](../../apps/server/src/orchestration-v2/ThreadManagementService.ts) keep the thread hot while they run. [AssetAccess](../../apps/server/src/assets/AssetAccess.ts) restores attachment files with `ensureAttachmentHot` and leases inline tool-image reads through `withHot`. A direct `ProjectionStore` or `Orchestrator` read of an archived thread can see an empty conversation. The shell row, `thread.*` events and the newest stream event always stay hot, so shell replay, cursor resumes and stream versions keep working. A new shell field derived from moved rows must be added to `COLD_SHELL_DERIVED_FIELDS` in [ProjectionStore](../../apps/server/src/orchestration-v2/ProjectionStore.ts) so the frozen-summary overlay retains it.
+
+A new table that holds per-thread conversation data belongs in the cold or purge table lists in `ThreadColdStorage`, or archived conversations leave it behind. Bundles hold the stored projection rows alongside the archived events, and a restore inserts those rows as written instead of rebuilding projections by replay: projection rebuild and verification cannot see cold rows, and a projection schema change has to stay column-compatible (restores drop removed columns and default new ones) or migrate stored bundles. Versions without cold storage cannot read moved histories, which is why the user docs ask to unarchive before downgrading.
+
 ## Turn completion and checkpoints
 
 A provider turn ending and its follow-up work settling are separate milestones. Orchestration

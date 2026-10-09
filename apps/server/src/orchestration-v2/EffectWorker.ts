@@ -25,6 +25,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -102,6 +103,7 @@ export const layerExecutor: Layer.Layer<
   Effect.gen(function* () {
     const runFinalization = yield* RunFinalizationService.RunFinalizationService;
     const resourceCleanup = yield* ResourceCleanupService.ResourceCleanupService;
+    const coldStorage = yield* ThreadColdStorage.ThreadColdStorage;
     const checkpointRollback = yield* CheckpointRollbackService.CheckpointRollbackServiceV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const providerTurnControl = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -486,6 +488,34 @@ export const layerExecutor: Layer.Layer<
               threads,
               executor,
             }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "thread.cold-archive":
+            return coldStorage
+              .archive(
+                effect.threadId,
+                // Import any V1 transcript first so the bundle holds the complete conversation.
+                threads.ensureLegacyTranscript(effect.threadId),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
+          case "thread.storage-purge":
+            return coldStorage.purge(effect.threadId).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

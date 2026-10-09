@@ -37,6 +37,14 @@ import {
   sameThreadPullRequests,
 } from "./shellReducer.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
+import {
+  evictCachedThread,
+  isCachedThreadLive,
+  observeActiveCachedThreads,
+  restoreCachedThread,
+  reviveCachedThread,
+  reviveSequencedEviction,
+} from "./threadCache.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
@@ -67,6 +75,87 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
+// Shell deltas update threads in place, so a positional comparison detects an
+// unchanged membership without allocating on every batch.
+function sameThreadIds(
+  left: OrchestrationV2ShellSnapshot["threads"],
+  right: OrchestrationV2ShellSnapshot["threads"],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]!.id !== right[index]!.id) return false;
+  }
+  return true;
+}
+
+// Records the active threads an applied item removed. A thread that is active
+// again by the end of the batch was archived and restored within it, which the
+// net membership comparison cannot see. Ordinary updates skip this work.
+function collectRemovedThreadIds(
+  item: OrchestrationV2ShellStreamItem,
+  previous: OrchestrationV2ShellSnapshot,
+  next: OrchestrationV2ShellSnapshot,
+  removed: Set<ThreadId>,
+): void {
+  if (previous.threads === next.threads) return;
+  switch (item.kind) {
+    case "thread.removed":
+      if (next.threads.length < previous.threads.length) removed.add(item.threadId);
+      return;
+    case "thread.updated":
+      if (item.location === "archive" && next.threads.length < previous.threads.length) {
+        removed.add(item.thread.id);
+      }
+      return;
+    case "snapshot": {
+      const nextThreadIds = new Set(next.threads.map((thread) => thread.id));
+      for (const thread of previous.threads) {
+        if (!nextThreadIds.has(thread.id)) removed.add(thread.id);
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+// The threads an applied authoritative item shows as active, and the sequence
+// it shows them at. Late archive acknowledgements compare against it, because
+// the server coalesces an archive and a later unarchive into one active update.
+// Enrichment snapshots carry no thread list and stale deltas are not applied.
+// An authoritative snapshot below the applied one replaced the sequence space.
+function activeObservation(
+  item: OrchestrationV2ShellStreamItem,
+  previous: OrchestrationV2ShellSnapshot | undefined,
+):
+  | {
+      readonly threadIds: ReadonlyArray<ThreadId>;
+      readonly sequence: number;
+      readonly reset: boolean;
+    }
+  | undefined {
+  if (item.kind === "snapshot") {
+    return item.resolvedRepositoryIdentityRoots === undefined
+      ? {
+          threadIds: item.snapshot.threads.map((thread) => thread.id),
+          sequence: item.snapshot.snapshotSequence,
+          reset:
+            previous !== undefined && item.snapshot.snapshotSequence < previous.snapshotSequence,
+        }
+      : undefined;
+  }
+  if (
+    item.kind === "thread.updated" &&
+    item.location === "active" &&
+    previous !== undefined &&
+    item.sequence > previous.snapshotSequence
+  ) {
+    return { threadIds: [item.thread.id], sequence: item.sequence, reset: false };
+  }
+  return undefined;
+}
+
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -91,12 +180,23 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
+  const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
   const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
   const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
   const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
+  const listPersistedThreadIds = cache
+    .listThreadIds(environmentId)
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not list cached thread details.").pipe(
+          Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
+          Effect.as<ReadonlyArray<ThreadId>>([]),
+        ),
+      ),
+    );
 
   const persistenceLock = yield* Semaphore.make(1);
   let lastPersisted: OrchestrationV2ShellSnapshot | undefined;
@@ -192,6 +292,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
     let receivedSnapshot = false;
+    let receivedAuthoritativeSnapshot = false;
+    const removedThreadIds = new Set<ThreadId>();
+    const sequencedEvictions = new Set<ThreadId>();
     for (const item of items) {
       if (item.kind === "synchronized") {
         waiting = false;
@@ -219,7 +322,23 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
                   : snapshot,
             });
       if (nextSnapshot === null) continue;
+      if (Option.isSome(next.snapshot)) {
+        collectRemovedThreadIds(item, next.snapshot.value, nextSnapshot, removedThreadIds);
+      }
+      const observed = activeObservation(item, Option.getOrUndefined(next.snapshot));
+      if (observed !== undefined) {
+        const revivals = observeActiveCachedThreads(
+          cache,
+          environmentId,
+          observed.threadIds,
+          observed.sequence,
+          observed.reset,
+        );
+        for (const threadId of revivals) sequencedEvictions.add(threadId);
+      }
       receivedSnapshot ||= item.kind === "snapshot";
+      receivedAuthoritativeSnapshot ||=
+        item.kind === "snapshot" && item.resolvedRepositoryIdentityRoots === undefined;
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
@@ -227,15 +346,90 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       };
     }
     yield* Ref.set(awaitingCompletion, waiting);
-    if (next === initial) return;
-    if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
+    if (next === initial || Option.isNone(next.snapshot)) return;
+    if (pendingLinkIds !== undefined) {
       pendingLinkRows = new Set(
         next.snapshot.value.threads.filter((thread) => pendingLinkIds.has(thread.id)),
       );
     }
-    if (Option.isSome(next.snapshot)) {
-      yield* Ref.set(latestLiveSnapshot, next.snapshot);
+    yield* Ref.set(latestLiveSnapshot, next.snapshot);
+    const nextSnapshot = next.snapshot.value;
+    const previousThreads = Option.match(initial.snapshot, {
+      onNone: () => undefined,
+      onSome: (snapshot) => snapshot.threads,
+    });
+    const membershipChanged =
+      previousThreads !== undefined && !sameThreadIds(previousThreads, nextSnapshot.threads);
+    const pendingEvictions = yield* Ref.get(pendingThreadEvictions);
+    // An authoritative snapshot also reconciles persisted details, recovering
+    // evictions a failed removal and restart (or an empty shell cache) stranded.
+    // Threads with an open detail subscription are skipped: it handles their
+    // lifecycle and may belong to a thread created after this snapshot. Warm
+    // and command retainers do not exempt a thread.
+    const persistedThreadIds = receivedAuthoritativeSnapshot ? yield* listPersistedThreadIds : [];
+
+    if (
+      membershipChanged ||
+      removedThreadIds.size > 0 ||
+      pendingEvictions.size > 0 ||
+      persistedThreadIds.length > 0
+    ) {
+      const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+      const evictionCandidates = new Set(pendingEvictions);
+      if (membershipChanged) {
+        for (const thread of previousThreads) evictionCandidates.add(thread.id);
+      }
+      for (const threadId of persistedThreadIds) {
+        if (!isCachedThreadLive(cache, environmentId, threadId)) evictionCandidates.add(threadId);
+      }
+      for (const threadId of nextThreadIds) {
+        evictionCandidates.delete(threadId);
+      }
+      // Advance cache tombstones before publishing the new shell so detail
+      // observers cannot enqueue an obsolete write in the transition window.
+      // Keep failed disk removals pending while the shell still omits the thread;
+      // a later snapshot or event can then retry instead of stranding stale data.
+      const evictionResults = yield* Effect.forEach(evictionCandidates, (threadId) =>
+        evictCachedThread(cache, environmentId, threadId).pipe(
+          Effect.map((removed) => [threadId, removed] as const),
+        ),
+      );
+      yield* Ref.set(
+        pendingThreadEvictions,
+        new Set(evictionResults.filter(([, removed]) => !removed).map(([threadId]) => threadId)),
+      );
+      if (membershipChanged) {
+        const previousThreadIds = new Set(previousThreads.map((thread) => thread.id));
+        yield* Effect.forEach(
+          nextThreadIds,
+          (threadId) =>
+            previousThreadIds.has(threadId)
+              ? Effect.void
+              : reviveCachedThread(cache, environmentId, threadId),
+          { discard: true },
+        );
+      }
+      yield* Effect.forEach(
+        removedThreadIds,
+        (threadId) =>
+          nextThreadIds.has(threadId)
+            ? restoreCachedThread(cache, environmentId, threadId)
+            : Effect.void,
+        { discard: true },
+      );
     }
+    if (sequencedEvictions.size > 0) {
+      const activeThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+      yield* Effect.forEach(
+        sequencedEvictions,
+        (threadId) =>
+          activeThreadIds.has(threadId)
+            ? reviveSequencedEviction(cache, environmentId, threadId)
+            : Effect.void,
+        { discard: true },
+      );
+    }
+
     yield* SubscriptionRef.set(state, next);
     if (receivedSnapshot) {
       const session = yield* Ref.get(activeSubscriptionSession);

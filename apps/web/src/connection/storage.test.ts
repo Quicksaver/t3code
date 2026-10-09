@@ -359,6 +359,52 @@ describe("IndexedDB connection closed without a close event", () => {
       }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );
+  it.effect("reopens a silently closed connection while listing saved thread details", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("IDBKeyRange", { bound: () => ({}) });
+      const closing = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => {
+          // Chromium force-closed this connection; this tab never saw "close".
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      }) as unknown as IDBDatabase;
+      const fresh = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => ({
+          objectStore: () => ({
+            getAllKeys: () => {
+              const request = Object.assign(new EventTarget(), {
+                result: ["env:thread"],
+                error: null,
+              });
+              queueMicrotask(() => request.dispatchEvent(new Event("success")));
+              return request;
+            },
+          }),
+        }),
+      }) as unknown as IDBDatabase;
+      const databases = [closing, fresh];
+      let openCount = 0;
+      const open = vi.fn(() => {
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        const loaded = yield* cache.listThreadIds(EnvironmentId.make("env"));
+        expect(loaded).toEqual([ThreadId.make("thread")]);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+    }),
+  );
 });
 
 describe("browser GitHub routing permissions", () => {

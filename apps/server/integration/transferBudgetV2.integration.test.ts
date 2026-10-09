@@ -83,6 +83,7 @@ const layerManagement = Layer.unwrap(
     const sink = yield* EventSink.EventSinkV2;
     return Layer.mock(ThreadManagementService.ThreadManagementService)({
       ensureLegacyTranscript: () => Effect.void,
+      withThreadReadable: (_threadId, read) => read,
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),

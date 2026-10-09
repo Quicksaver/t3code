@@ -15,6 +15,9 @@ export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // Only a new, empty database adopts this. Upgraded databases get it from the
+    // V1 snapshot copy (initializeV2Database); others keep their current mode.
+    yield* sql`PRAGMA auto_vacuum = INCREMENTAL;`;
     // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.
     yield* sql`PRAGMA busy_timeout = 5000;`;
     yield* sql`PRAGMA foreign_keys = ON;`;

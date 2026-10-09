@@ -3,7 +3,7 @@ import {
   StoredOrchestrationThreadSnapshot,
   Persistence,
 } from "@t3tools/client-runtime/platform";
-import { type EnvironmentId, ServerConfig, VcsListRefsResult } from "@t3tools/contracts";
+import { type EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -161,6 +161,12 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
       database
         .removeCache(environmentId, "thread", threadId)
         .pipe(Effect.mapError(mapDatabaseError("remove-thread"))),
+    ),
+    listThreadIds: Effect.fn("MobileEnvironmentCache.listThreadIds")((environmentId) =>
+      database.listCacheKeys(environmentId, "thread").pipe(
+        Effect.map((keys) => keys.map((key) => ThreadId.make(key))),
+        Effect.mapError(mapDatabaseError("list-threads")),
+      ),
     ),
     loadServerConfig: Effect.fn("MobileEnvironmentCache.loadServerConfig")((environmentId) =>
       loadDecodedCache({
