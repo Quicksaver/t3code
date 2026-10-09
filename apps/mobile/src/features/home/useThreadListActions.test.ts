@@ -252,7 +252,7 @@ describe("thread list operation permissions", () => {
   );
 
   it("unarchives with only task permission and blocks a later revoked callback", async () => {
-    const actions = useArchivedThreadListActions(() => {});
+    const actions = useArchivedThreadListActions();
     const thread = makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" });
     await actions.unarchiveThread(thread);
     expect(state.requests).toEqual([expect.objectContaining({ action: "unarchive" })]);
@@ -264,10 +264,22 @@ describe("thread list operation permissions", () => {
     expect(state.requests).toEqual([]);
   });
 
+  it("collects a revoked permission failure for a bulk action without a row alert", async () => {
+    const actions = useArchivedThreadListActions();
+    state.scopes.get(primaryEnvironmentId)!.clear();
+    const onFailure = vi.fn();
+
+    expect(await actions.deleteThread(makeThread(), { reportFailure: false, onFailure })).toBe(
+      "failed",
+    );
+    expect(state.requests).toEqual([]);
+    expect(state.alerts).toEqual([]);
+    expect(onFailure).toHaveBeenCalledWith("This connection cannot change threads.");
+  });
+
   it("keeps delete independent of terminal and source-control permissions", async () => {
     vi.stubEnv("EXPO_OS", "android");
-    useArchivedThreadListActions(() => {}).confirmDeleteThread(makeThread());
-    await state.dialogs[0]!.onConfirm();
+    expect(await useArchivedThreadListActions().deleteThread(makeThread())).toBe("succeeded");
 
     expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
   });
