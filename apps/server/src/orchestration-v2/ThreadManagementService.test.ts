@@ -23,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
@@ -317,6 +318,68 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     expect(error).toMatchObject({ projectId, threadId });
     expect("cause" in error).toBe(false);
   }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("restores cold threads for reads and commands, but not for deletion", () => {
+  const threadId = ThreadId.make("thread:thread-management:cold");
+  const calls: Array<string> = [];
+  const rejection = new Orchestrator.OrchestratorDispatchError({
+    commandId: CommandId.make("command:thread-management:unarchive"),
+    commandType: "thread.unarchive",
+    cause: "rejected",
+  });
+  const testLayer = ThreadManagementService.layer.pipe(
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadSnapshot: () => Effect.succeed({ snapshotSequence: 1 } as never),
+        getThreadRecords: () => Effect.succeed({} as never),
+        dispatch: (command) =>
+          command.type === "thread.unarchive"
+            ? Effect.fail(rejection)
+            : Effect.succeed({ sequence: 1, storedEvents: [] }),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(ThreadColdStorage.ThreadColdStorage, {
+        withHot: (_threadId, use, options) =>
+          Effect.sync(() => calls.push(options?.unarchive === true ? "unarchive" : "hot")).pipe(
+            Effect.andThen(use),
+          ),
+        ensureAttachmentHot: () => Effect.void,
+        scheduleArchive: () => Effect.sync(() => calls.push("schedule")),
+        archive: () => Effect.void,
+        purge: () => Effect.void,
+        reconcile: Effect.void,
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    yield* service.getThreadSnapshot(threadId);
+    yield* service.getThreadRecords(threadId, []);
+    yield* service.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("command:thread-management:delete"),
+      threadId,
+    });
+    yield* service.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:thread-management:rename"),
+      threadId,
+      title: "Renamed",
+    });
+    const error = yield* Effect.flip(
+      service.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("command:thread-management:unarchive"),
+        threadId,
+      }),
+    );
+    expect(error).toBe(rejection);
+    // Shell-only reads and deletion leave cold rows alone; an unarchive, even a
+    // failed one, queues the cold-archive effect that settles its bundle.
+    expect(calls).toEqual(["hot", "hot", "unarchive", "schedule"]);
+  }).pipe(Effect.provide(testLayer));
 });
 
 it.effect("preserves failed legacy materialization when reading checkpoint context", () => {

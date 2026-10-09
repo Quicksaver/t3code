@@ -39,6 +39,7 @@ function start(ready) {
   const dependencies = Layer.mergeAll(
     Layer.mock(Threads.ThreadManagementService)({
       ensureLegacyTranscript: () => Effect.void,
+      withThreadReadable: (_threadId, read) => read,
       getThreadSnapshot: () =>
         Effect.sync(() => ({
           snapshotSequence: 1,

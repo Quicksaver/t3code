@@ -15,7 +15,7 @@ import {
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -3465,19 +3465,20 @@ export function ArchivedThreadsPanel() {
     return groups;
   }, [archivedSnapshots, scope]);
 
-  const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "unarchive", label: "Unarchive" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "unarchive") {
+  // Unarchive restores the conversation from cold storage before the server
+  // acknowledges it, so a row stays busy until then instead of accepting a
+  // second restore or a delete that would race the restore.
+  const [unarchivingThreadKeys, setUnarchivingThreadKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const unarchivingThreadKeysRef = useRef(new Set<string>());
+  const handleUnarchiveThread = useCallback(
+    async (threadRef: ScopedThreadRef) => {
+      const threadKey = scopedThreadKey(threadRef);
+      if (unarchivingThreadKeysRef.current.has(threadKey)) return;
+      unarchivingThreadKeysRef.current.add(threadKey);
+      setUnarchivingThreadKeys((current) => new Set(current).add(threadKey));
+      try {
         const result = await unarchiveThread(threadRef);
         if (result._tag === "Success") {
           refreshArchivedThreads();
@@ -3491,6 +3492,32 @@ export function ArchivedThreadsPanel() {
             }),
           );
         }
+      } finally {
+        unarchivingThreadKeysRef.current.delete(threadKey);
+        setUnarchivingThreadKeys((current) => {
+          const next = new Set(current);
+          next.delete(threadKey);
+          return next;
+        });
+      }
+    },
+    [refreshArchivedThreads, unarchiveThread],
+  );
+
+  const handleArchivedThreadContextMenu = useCallback(
+    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "unarchive", label: "Unarchive" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position,
+      );
+
+      if (clicked === "unarchive") {
+        await handleUnarchiveThread(threadRef);
         return;
       }
 
@@ -3510,7 +3537,7 @@ export function ArchivedThreadsPanel() {
         }
       }
     },
-    [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
+    [confirmAndDeleteThread, handleUnarchiveThread, refreshArchivedThreads],
   );
 
   return (
@@ -3550,77 +3577,59 @@ export function ArchivedThreadsPanel() {
             title={project.title}
             icon={<ProjectFavicon project={project} />}
           >
-            {projectThreads.map((thread) => (
-              <SettingsRow
-                key={thread.id}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void (async () => {
-                    const result = await settlePromise(() =>
-                      handleArchivedThreadContextMenu(
-                        scopeThreadRef(thread.environmentId, thread.id),
-                        {
+            {projectThreads.map((thread) => {
+              const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+              const isUnarchiving = unarchivingThreadKeys.has(scopedThreadKey(threadRef));
+              return (
+                <SettingsRow
+                  key={thread.id}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    if (isUnarchiving) return;
+                    void (async () => {
+                      const result = await settlePromise(() =>
+                        handleArchivedThreadContextMenu(threadRef, {
                           x: event.clientX,
                           y: event.clientY,
-                        },
-                      ),
-                    );
-                    if (result._tag === "Failure") {
-                      const error = squashAtomCommandFailure(result);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Archived thread action failed",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
                         }),
                       );
-                    }
-                  })();
-                }}
-                title={thread.title}
-                description={
-                  <>
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </>
-                }
-                control={
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="shrink-0"
-                    onClick={() => {
-                      void (async () => {
-                        const result = await unarchiveThread(
-                          scopeThreadRef(thread.environmentId, thread.id),
+                      if (result._tag === "Failure") {
+                        const error = squashAtomCommandFailure(result);
+                        toastManager.add(
+                          stackedThreadToast({
+                            type: "error",
+                            title: "Archived thread action failed",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          }),
                         );
-                        if (result._tag === "Success") {
-                          refreshArchivedThreads();
-                          return;
-                        }
-                        if (!isAtomCommandInterrupted(result)) {
-                          const error = squashAtomCommandFailure(result);
-                          toastManager.add(
-                            stackedThreadToast({
-                              type: "error",
-                              title: "Failed to unarchive thread",
-                              description:
-                                error instanceof Error ? error.message : "An error occurred.",
-                            }),
-                          );
-                        }
-                      })();
-                    }}
-                  >
-                    <ArchiveX className="size-3.5" />
-                    <span>Unarchive</span>
-                  </Button>
-                }
-              />
-            ))}
+                      }
+                    })();
+                  }}
+                  title={thread.title}
+                  description={
+                    <>
+                      Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                      {" \u00b7 Created "}
+                      {formatRelativeTimeLabel(thread.createdAt)}
+                    </>
+                  }
+                  control={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      className="shrink-0"
+                      disabled={isUnarchiving}
+                      onClick={() => void handleUnarchiveThread(threadRef)}
+                    >
+                      {isUnarchiving ? <Spinner size="sm" /> : <ArchiveX className="size-3.5" />}
+                      <span>{isUnarchiving ? "Unarchiving" : "Unarchive"}</span>
+                    </Button>
+                  }
+                />
+              );
+            })}
           </SettingsSection>
         ))
       )}

@@ -3420,6 +3420,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           request: { type: "terminal.cleanup" },
         } satisfies PendingOrchestrationEffectV2,
+        // Effects run in order per thread: the session is detached and its
+        // terminals closed before the conversation moves to cold storage.
+        {
+          id: `effect:${command.commandId}:thread.cold-archive`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "thread.cold-archive" },
+        } satisfies PendingOrchestrationEffectV2,
       ]);
     }
   });

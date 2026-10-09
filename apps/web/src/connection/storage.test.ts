@@ -300,6 +300,52 @@ describe("IndexedDB connection closed without a close event", () => {
       }).pipe(Effect.provide(ConnectionStorage.layer));
     }),
   );
+  it.effect("reopens a silently closed connection while listing saved thread details", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("window", {});
+      vi.stubGlobal("IDBKeyRange", { bound: () => ({}) });
+      const closing = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => {
+          // Chromium force-closed this connection; this tab never saw "close".
+          throw new DOMException("The database connection is closing.", "InvalidStateError");
+        },
+      }) as unknown as IDBDatabase;
+      const fresh = Object.assign(new EventTarget(), {
+        close: vi.fn(),
+        transaction: () => ({
+          objectStore: () => ({
+            getAllKeys: () => {
+              const request = Object.assign(new EventTarget(), {
+                result: ["env:thread"],
+                error: null,
+              });
+              queueMicrotask(() => request.dispatchEvent(new Event("success")));
+              return request;
+            },
+          }),
+        }),
+      }) as unknown as IDBDatabase;
+      const databases = [closing, fresh];
+      let openCount = 0;
+      const open = vi.fn(() => {
+        const request = Object.assign(new EventTarget(), {
+          result: databases[openCount++],
+          error: null,
+        });
+        queueMicrotask(() => request.dispatchEvent(new Event("success")));
+        return request;
+      });
+      vi.stubGlobal("indexedDB", { open });
+
+      yield* Effect.gen(function* () {
+        const cache = yield* Persistence.EnvironmentCacheStore;
+        const loaded = yield* cache.listThreadIds(EnvironmentId.make("env"));
+        expect(loaded).toEqual([ThreadId.make("thread")]);
+        expect(open).toHaveBeenCalledTimes(2);
+      }).pipe(Effect.provide(ConnectionStorage.layer));
+    }),
+  );
 });
 
 describe("browser GitHub routing permissions", () => {
@@ -389,4 +435,58 @@ describe("browser GitHub routing permissions", () => {
       expect(yield* second.get(entry)).toBe("off");
     }).pipe(Effect.scoped),
   );
+});
+
+describe("upgradeConnectionDatabase", () => {
+  it("does not clear the empty thread store when creating a new database", () => {
+    const stores = new Set<string>();
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 0);
+
+    expect(stores).toEqual(new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]));
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("clears existing thread snapshots when upgrading to archive-time cache eviction", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 4);
+
+    expect(transaction.objectStore).toHaveBeenCalledWith("thread");
+    expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it("does not clear thread snapshots after the migration has already run", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 5);
+
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
 });

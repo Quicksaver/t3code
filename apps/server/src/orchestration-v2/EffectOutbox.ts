@@ -105,6 +105,14 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
   }),
+  /** Moves an archived thread's conversation rows into cold storage, or finalizes an unarchive. */
+  Schema.Struct({
+    type: Schema.Literal("thread.cold-archive"),
+  }),
+  /** Removes a deleted thread's conversation storage, keeping its deleted shell and lifecycle events. */
+  Schema.Struct({
+    type: Schema.Literal("thread.storage-purge"),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
@@ -128,6 +136,8 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
+  "thread.cold-archive",
+  "thread.storage-purge",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
