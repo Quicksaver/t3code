@@ -487,6 +487,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        ThreadCommandExecutor.layer,
         layerStores,
       ),
     ),
