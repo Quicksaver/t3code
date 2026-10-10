@@ -18,6 +18,8 @@ For diagnosing existing verification failures, obtain native control results thr
 
 Recreate local `main` for each assembly. Feature and fix branches are read-only inputs; mirror `FORK.md` and `AGENTS.md` into `base/fork` as integration documentation changes. Rewind `main` to its latest upstream base, fast-forward to `base/main`, then apply all `base/fork` commits or fast-forward `main` to `base/fork` when equivalent. Cherry-pick each remaining worktree branch's commits onto `main` in turn. Complete its integration glue, focused validation, and affected `FORK.md` updates on `main` before applying the next branch. Reassess these notes against current branch implementations and documentation. Keep documentation with the glue it describes, in the cherry-pick commit for conflict resolutions or in the same follow-up integration commit for subsequent work.
 
+The process ownership rule in `AGENTS.md` permits cleanup after recovering task ownership. Upstream's spawn-time PID requirement caused repeated approval requests for verified surviving children and detached helpers during parallel worktree runs.
+
 The composed WebSocket RPC factory exceeds TypeScript's inference depth when its service requirements are inferred through `RpcGroup.toLayer`. `apps/server/src/ws.ts` checks the factory service union and each handler's remaining requirements against concrete mapped interfaces before constructing the layer. Update those interfaces when a handler introduces an uncaptured service. `runServer` declares its filesystem, path, and configuration requirements while deriving startup errors from the server layer, so compiler inference cannot leak `any` into the CLI service boundary.
 
 The repository-local orchestration skills divide responsibilities as follows:
