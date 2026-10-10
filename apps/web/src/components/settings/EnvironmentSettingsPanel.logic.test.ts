@@ -1,13 +1,22 @@
-import { AuthProvidersManageScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildProviderEnvironmentOptions,
-  classifyProviderEnvironmentAccess,
-  isProviderSettingsEnvironmentAvailable,
+  buildEnvironmentOptions,
+  classifyEnvironmentSettingsAccess,
+  isEnvironmentSettingsAvailable,
+  resolveSelectedEnvironmentId,
+  resolveSettingsSearchEnvironmentId,
+  resolvePrimaryOperateAccess as resolvePrimaryEnvironmentAccess,
+  resolveRemoteOperateAccess as resolveRemoteEnvironmentAccess,
+} from "./EnvironmentSettingsPanel.logic";
+import {
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
-  resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
 
 const primaryId = EnvironmentId.make("primary");
@@ -20,58 +29,152 @@ const environments = [
   { environmentId: primaryId, label: "This device" },
 ] as const;
 
-describe("provider environment selection", () => {
+describe("Magi settings permission", () => {
+  it.each(["settings:write", "providers:manage", "orchestration:operate"] as const)(
+    "checks the settings grant independently of %s",
+    (scope) => {
+      const session = {
+        authenticated: true,
+        scopes: [scope],
+        auth: { serverUpdateScope: "environment:maintain" as const },
+      };
+      const state = {
+        session,
+        isPending: true,
+        hasError: false,
+        requiredScope: AuthSettingsWriteScope,
+      };
+      const expected = scope === AuthSettingsWriteScope ? "granted" : "denied";
+      expect(
+        resolvePrimaryEnvironmentAccess({ ...state, isPrimary: true, hasDesktopBridge: true }),
+      ).toBe(expected);
+      expect(resolveRemoteEnvironmentAccess(state)).toBe(expected);
+    },
+  );
+});
+
+describe("settings environment selection", () => {
   it("requires a connected environment with server config for searchable provider settings", () => {
     expect(
-      isProviderSettingsEnvironmentAvailable({
+      isEnvironmentSettingsAvailable({
         connectionPhase: "connected",
         hasServerConfig: true,
       }),
     ).toBe(true);
     expect(
-      isProviderSettingsEnvironmentAvailable({
+      isEnvironmentSettingsAvailable({
         connectionPhase: "reconnecting",
         hasServerConfig: true,
       }),
     ).toBe(false);
     expect(
-      isProviderSettingsEnvironmentAvailable({
+      isEnvironmentSettingsAvailable({
         connectionPhase: "connected",
         hasServerConfig: false,
       }),
     ).toBe(false);
   });
-
   it("sorts the primary environment first and the rest by label", () => {
     expect(
-      buildProviderEnvironmentOptions(environments, primaryId).map(
+      buildEnvironmentOptions(environments, primaryId).map(
         (environment) => environment.environmentId,
       ),
     ).toEqual([primaryId, relayId, sshId]);
   });
 
   it("keeps a valid selection, then falls back to primary or the first environment", () => {
-    const options = buildProviderEnvironmentOptions(environments, primaryId);
+    const options = buildEnvironmentOptions(environments, primaryId);
 
-    expect(resolveSelectedProviderEnvironmentId(options, sshId, primaryId)).toBe(sshId);
+    expect(resolveSelectedEnvironmentId(options, sshId, primaryId)).toBe(sshId);
     expect(
-      resolveSelectedProviderEnvironmentId(
+      resolveSelectedEnvironmentId(
         options.filter((environment) => environment.environmentId !== sshId),
         sshId,
         primaryId,
       ),
     ).toBe(primaryId);
-    expect(resolveSelectedProviderEnvironmentId(options.slice(1), primaryId, primaryId)).toBe(
-      relayId,
-    );
-    expect(resolveSelectedProviderEnvironmentId([], null, primaryId)).toBeNull();
+    expect(resolveSelectedEnvironmentId(options.slice(1), primaryId, primaryId)).toBe(relayId);
+    expect(resolveSelectedEnvironmentId([], null, primaryId)).toBeNull();
   });
 });
 
-describe("provider environment access", () => {
+describe("settings search device selection", () => {
+  const search = {
+    environments: [
+      {
+        environmentId: primaryId,
+        connection: { phase: "connected" },
+        serverConfig: { environment: { platform: { os: "windows" } } },
+      },
+      {
+        environmentId: relayId,
+        connection: { phase: "offline" },
+        serverConfig: { environment: { platform: { os: "darwin" } } },
+      },
+      {
+        environmentId: sshId,
+        connection: { phase: "connected" },
+        serverConfig: { environment: { platform: { os: "darwin" } } },
+      },
+    ],
+    selectedEnvironmentId: primaryId,
+    scoped: false,
+    searchTargetId: "cursor-keychain-usage",
+    searchTargetIds: ["cursor-keychain-usage"],
+    searchPlatform: "darwin",
+  } as const;
+
+  it("routes a macOS-only search past a connected Windows device and an offline Mac", () => {
+    expect(resolveSettingsSearchEnvironmentId(search)).toBe(sshId);
+  });
+
+  it("preserves an explicitly scoped device and an already matching selection", () => {
+    expect(resolveSettingsSearchEnvironmentId({ ...search, scoped: true })).toBeUndefined();
+    expect(
+      resolveSettingsSearchEnvironmentId({ ...search, selectedEnvironmentId: sshId }),
+    ).toBeUndefined();
+  });
+
+  it("does not redirect when matching devices are offline or have no config", () => {
+    expect(
+      resolveSettingsSearchEnvironmentId({
+        ...search,
+        environments: search.environments.slice(0, 2),
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveSettingsSearchEnvironmentId({
+        ...search,
+        environments: [{ ...search.environments[2], serverConfig: null }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not redirect for inactive or unrelated searches", () => {
+    expect(resolveSettingsSearchEnvironmentId({ ...search, searchTargetId: null })).toBeUndefined();
+    expect(
+      resolveSettingsSearchEnvironmentId({ ...search, searchTargetId: "appearance" }),
+    ).toBeUndefined();
+  });
+
+  it("keeps generic settings on an available selection and recovers an unavailable one", () => {
+    expect(
+      resolveSettingsSearchEnvironmentId({ ...search, searchPlatform: undefined }),
+    ).toBeUndefined();
+    expect(
+      resolveSettingsSearchEnvironmentId({
+        ...search,
+        searchPlatform: undefined,
+        selectedEnvironmentId: relayId,
+      }),
+    ).toBe(primaryId);
+  });
+});
+
+describe("settings environment access", () => {
   it("allows connected environments with config and operate access", () => {
     expect(
-      classifyProviderEnvironmentAccess({
+      classifyEnvironmentSettingsAccess({
         connectionPhase: "connected",
         hasServerConfig: true,
         operateAccess: "granted",
@@ -81,7 +184,7 @@ describe("provider environment access", () => {
 
   it("waits for config before exposing controls", () => {
     expect(
-      classifyProviderEnvironmentAccess({
+      classifyEnvironmentSettingsAccess({
         connectionPhase: "connected",
         hasServerConfig: false,
         operateAccess: "granted",
@@ -91,7 +194,7 @@ describe("provider environment access", () => {
 
   it("waits for unresolved operate access instead of assuming it is editable", () => {
     expect(
-      classifyProviderEnvironmentAccess({
+      classifyEnvironmentSettingsAccess({
         connectionPhase: "connected",
         hasServerConfig: true,
         operateAccess: "pending",
@@ -101,7 +204,7 @@ describe("provider environment access", () => {
 
   it("represents known missing operate access as read only", () => {
     expect(
-      classifyProviderEnvironmentAccess({
+      classifyEnvironmentSettingsAccess({
         connectionPhase: "connected",
         hasServerConfig: true,
         operateAccess: "denied",
@@ -113,7 +216,7 @@ describe("provider environment access", () => {
     "keeps %s environments unavailable",
     (connectionPhase) => {
       expect(
-        classifyProviderEnvironmentAccess({
+        classifyEnvironmentSettingsAccess({
           connectionPhase,
           hasServerConfig: true,
           operateAccess: "granted",
@@ -124,7 +227,7 @@ describe("provider environment access", () => {
 
   it("separates connection errors from other unavailable states", () => {
     expect(
-      classifyProviderEnvironmentAccess({
+      classifyEnvironmentSettingsAccess({
         connectionPhase: "error",
         hasServerConfig: true,
         operateAccess: "granted",

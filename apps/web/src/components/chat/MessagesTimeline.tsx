@@ -22,8 +22,10 @@ import {
 import {
   COMPOSER_CONTEXT_KINDS,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
+  isMagiRunTerminal,
   type AssistantCitation,
   type EnvironmentId,
+  type MagiRunSummary,
   type MessageId,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
@@ -61,6 +63,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const NOOP_OPEN_MAGI = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -137,6 +140,7 @@ import {
   type LucideIcon,
   MessageCircleIcon,
   MousePointerClickIcon,
+  Network,
   PaintbrushIcon,
   MinusIcon,
   Redo2Icon,
@@ -158,6 +162,9 @@ import type {
   ComposerContextRecord,
   KnownComposerContextRecord,
 } from "@t3tools/contracts";
+import { MAGI_ARM_CONTEXT_KIND } from "@t3tools/contracts";
+import { magiRunStateLabel } from "@t3tools/client-runtime/state/magiPresentation";
+import { formatCompactTokenCount, formatMagiAgreementProgress } from "../magi/MagiPanel.logic";
 import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
@@ -211,6 +218,8 @@ import {
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
+  resolveMagiActivityPlacement,
+  type MagiActivityPlacement,
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
@@ -397,6 +406,76 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
+
+interface MagiTimelineActivityState {
+  readonly run: MagiRunSummary;
+  readonly rowId: string;
+  readonly position: MagiActivityPlacement["position"];
+  readonly onOpen: () => void;
+}
+
+/** Kept apart from TimelineRowCtx so Magi run updates only re-render its slot. */
+const MagiTimelineActivityCtx = createContext<MagiTimelineActivityState | null>(null);
+
+function MagiActivityBox(props: { readonly run: MagiRunSummary; readonly onOpen: () => void }) {
+  const participantCount = props.run.participantCount ?? null;
+  const totalTokens = props.run.tokenCount ?? 0;
+  const title = `Magi · ${magiRunStateLabel(props.run.state)}`;
+  const turnLimit = props.run.magiTurnLimit ?? null;
+  const agreedVotes = props.run.agreedVoteCount ?? null;
+  const totalVotes = props.run.totalVoteCount ?? null;
+  const progress = formatMagiAgreementProgress(props.run);
+  return (
+    <div className="w-full px-1 pb-2">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md border border-border/60 bg-card/50 px-2.5 py-1.5 text-left text-sm transition hover:bg-accent/50"
+        onClick={props.onOpen}
+      >
+        <Network className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-medium">{title}</span>
+          {progress.leading ? (
+            <span className="text-muted-foreground"> · {progress.leading}</span>
+          ) : null}
+        </span>
+        <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs text-muted-foreground">
+          {participantCount !== null ? (
+            <span>
+              {participantCount} participant{participantCount === 1 ? "" : "s"}
+            </span>
+          ) : null}
+          {agreedVotes !== null && totalVotes !== null ? (
+            <span>
+              {agreedVotes}/{totalVotes} agreed votes
+            </span>
+          ) : null}
+          {progress.remaining ? <span>{progress.remaining}</span> : null}
+          {totalTokens > 0 ? <span>{formatCompactTokenCount(totalTokens)}</span> : null}
+          <span>
+            {turnLimit === null
+              ? `${props.run.completedMagiTurns} turn${props.run.completedMagiTurns === 1 ? "" : "s"}`
+              : `${props.run.completedMagiTurns}/${turnLimit} turns`}
+          </span>
+          <span className="text-info-foreground">
+            {isMagiRunTerminal(props.run.state) ? "View ▸" : "Open Magi ▸"}
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function MagiTimelineActivitySlot(props: {
+  readonly rowId: string;
+  readonly position: MagiActivityPlacement["position"];
+}) {
+  const magi = use(MagiTimelineActivityCtx);
+  if (magi === null || magi.rowId !== props.rowId || magi.position !== props.position) {
+    return null;
+  }
+  return <MagiActivityBox run={magi.run} onOpen={magi.onOpen} />;
+}
 function TimelineListFooter({
   composerInset,
   children,
@@ -448,6 +527,9 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  /** Latest Magi run owned by this conversation, shown beside the turn that started it. */
+  latestMagiRun?: MagiRunSummary | null;
+  onOpenMagi?: () => void;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -565,6 +647,8 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
+  latestMagiRun = null,
+  onOpenMagi = NOOP_OPEN_MAGI,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -922,6 +1006,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
+  // Rows change on every streaming update; only a moved anchor or a new run summary may
+  // produce a new context value, so the Magi slots in mounted rows do not re-render per event.
+  const hasMagiRun = latestMagiRun !== null;
+  const magiStartedAt = latestMagiRun?.startedAt ?? null;
+  const magiPlacement = useMemo(
+    () => (hasMagiRun ? resolveMagiActivityPlacement(rows, magiStartedAt) : null),
+    [hasMagiRun, magiStartedAt, rows],
+  );
+  const magiRowId = magiPlacement?.rowId ?? null;
+  const magiPosition = magiPlacement?.position ?? null;
+  const magiActivity = useMemo<MagiTimelineActivityState | null>(
+    () =>
+      latestMagiRun === null || magiRowId === null || magiPosition === null
+        ? null
+        : { run: latestMagiRun, rowId: magiRowId, position: magiPosition, onOpen: onOpenMagi },
+    [latestMagiRun, magiPosition, magiRowId, onOpenMagi],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -1532,7 +1633,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ({ item }: { item: MessagesTimelineRow }) => (
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+          <MagiTimelineActivitySlot rowId={item.id} position="before" />
           <TimelineRowContent row={item} />
+          <MagiTimelineActivitySlot rowId={item.id} position="after" />
         </div>
       </div>
     ),
@@ -1545,7 +1648,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     parentThreadLink === null &&
     historyControls === undefined &&
     // A status line (settled, snoozed) still needs the list, whose footer renders it.
-    footer === null
+    footer === null &&
+    latestMagiRun === null
   ) {
     if (hideEmptyPlaceholder) {
       // Occupy the pane with the theme surface so a thread switch cannot
@@ -1563,84 +1667,86 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   return (
     <MarkdownFindContext value={findActive}>
-      <TimelineRowCtx value={sharedState}>
-        <TimelineRowActivityCtx value={activityState}>
-          <TooltipScrollDismissArea
-            ref={setTimelineViewportElement}
-            className="relative h-full min-h-0"
-            data-assistant-citation-viewport="true"
-          >
-            {onCiteAssistantText && citationThreadRef ? (
-              <AssistantSelectionToolbar
-                viewport={timelineViewportElement}
-                threadRef={citationThreadRef}
-                onCite={onCiteAssistantText}
+      <MagiTimelineActivityCtx value={magiActivity}>
+        <TimelineRowCtx value={sharedState}>
+          <TimelineRowActivityCtx value={activityState}>
+            <TooltipScrollDismissArea
+              ref={setTimelineViewportElement}
+              className="relative h-full min-h-0"
+              data-assistant-citation-viewport="true"
+            >
+              {onCiteAssistantText && citationThreadRef ? (
+                <AssistantSelectionToolbar
+                  viewport={timelineViewportElement}
+                  threadRef={citationThreadRef}
+                  onCite={onCiteAssistantText}
+                />
+              ) : null}
+              <LegendList<MessagesTimelineRow>
+                ref={setTimelineList}
+                data={rows}
+                extraData={`${listIdentityKey}:${rows.length}`}
+                keyExtractor={keyExtractor}
+                getItemType={getItemType}
+                renderItem={renderItem}
+                estimatedItemSize={90}
+                initialScrollAtEnd={
+                  !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+                }
+                // Legend needs a data refresh to mount new pins without a scroll event.
+                dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+                {...(alwaysRender ? { alwaysRender } : {})}
+                onLoad={handleListLoad}
+                {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+                contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
+                maintainScrollAtEnd={
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+                  anchoredEndSpace ||
+                  !liveFollowEnabled ||
+                  fullscreenAppRowId !== null ||
+                  disclosureToggleSettling
+                    ? false
+                    : isWorking && !prefersReducedMotion && settlingListIdentity === null
+                      ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+                      : TIMELINE_MAINTAIN_SCROLL_AT_END
+                }
+                maintainVisibleContentPosition={
+                  findActive ||
+                  citationPositioning ||
+                  (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                    ? false
+                    : maintainVisibleContentPosition
+                }
+                maintainScrollAtEndThreshold={1}
+                onScroll={handleScroll}
+                onItemSizeChanged={reportContentOverflow}
+                className={cn(
+                  "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+                  topFadeEnabled && "topbar-scroll-fade",
+                )}
+                ListHeaderComponent={listHeader}
+                ListFooterComponent={timelineListFooter}
               />
-            ) : null}
-            <LegendList<MessagesTimelineRow>
-              ref={setTimelineList}
-              data={rows}
-              extraData={`${listIdentityKey}:${rows.length}`}
-              keyExtractor={keyExtractor}
-              getItemType={getItemType}
-              renderItem={renderItem}
-              estimatedItemSize={90}
-              initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
-              }
-              // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
-              {...(alwaysRender ? { alwaysRender } : {})}
-              onLoad={handleListLoad}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
-              maintainVisibleContentPosition={
-                findActive ||
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false)
-                  ? false
-                  : maintainVisibleContentPosition
-              }
-              maintainScrollAtEndThreshold={1}
-              onScroll={handleScroll}
-              onItemSizeChanged={reportContentOverflow}
-              className={cn(
-                "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-                topFadeEnabled && "topbar-scroll-fade",
-              )}
-              ListHeaderComponent={listHeader}
-              ListFooterComponent={timelineListFooter}
-            />
-            <TimelineMinimap
-              items={minimapItems}
-              hasPersistentGutter={minimapHasPersistentGutter}
-              hitStripWidth={minimapHitStripWidth}
-              currentIndex={minimapCurrentIndex}
-              stripMap={minimapStripMap}
-              onSelect={(item) => {
-                onManualNavigation();
-                void listRef.current?.scrollToIndex({
-                  index: item.rowIndex,
-                  animated: true,
-                  viewOffset: 24,
-                });
-              }}
-            />
-          </TooltipScrollDismissArea>
-        </TimelineRowActivityCtx>
-      </TimelineRowCtx>
+              <TimelineMinimap
+                items={minimapItems}
+                hasPersistentGutter={minimapHasPersistentGutter}
+                hitStripWidth={minimapHitStripWidth}
+                currentIndex={minimapCurrentIndex}
+                stripMap={minimapStripMap}
+                onSelect={(item) => {
+                  onManualNavigation();
+                  void listRef.current?.scrollToIndex({
+                    index: item.rowIndex,
+                    animated: true,
+                    viewOffset: 24,
+                  });
+                }}
+              />
+            </TooltipScrollDismissArea>
+          </TimelineRowActivityCtx>
+        </TimelineRowCtx>
+      </MagiTimelineActivityCtx>
     </MarkdownFindContext>
   );
 });
@@ -4682,7 +4788,21 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         ),
     },
   ],
-  fallback: (_kind, _record, context) => <UnavailableUserMessageContextChip {...context} />,
+  // A Magi arm is server-attached context that only the provider reads; show it as a plain
+  // marker rather than as unavailable context.
+  fallback: (kind, _record, context) =>
+    kind === MAGI_ARM_CONTEXT_KIND ? (
+      <UserMessageContextChip
+        icon={<Network />}
+        label="Magi"
+        kindLabel="Magi"
+        tooltip="This message started a Magi run."
+        copyMarkdown={context.copyMarkdown}
+        kind="thread"
+      />
+    ) : (
+      <UnavailableUserMessageContextChip {...context} />
+    ),
 });
 
 /** One inline context chip in a sent message, dispatched by the shared presentation registry. */

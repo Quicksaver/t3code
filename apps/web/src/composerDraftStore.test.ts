@@ -8,12 +8,14 @@ import * as Schema from "effect/Schema";
 import {
   defaultInstanceIdForDriver,
   EnvironmentId,
+  MagiParticipantId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
+  type MagiRunConfig,
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
@@ -198,6 +200,17 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
+
+const MAGI_ARM: MagiRunConfig = {
+  participants: ["a", "b"].map((id) => ({
+    participantId: MagiParticipantId.make(id),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+    personalityId: null,
+    weight: 1,
+  })),
+  consensusThresholdPercent: 67,
+  magiTurnLimit: 1,
+};
 
 describe("composerDraftStore assistant citations", () => {
   beforeEach(resetComposerDraftStore);
@@ -393,6 +406,65 @@ describe("composerDraftStore clearComposerContent", () => {
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+
+  it("keeps a Magi arm when a slash command clears the composer", () => {
+    useComposerDraftStore.getState().setPrompt(threadRef, "/plan");
+    useComposerDraftStore.getState().setMagiArm(threadRef, MAGI_ARM);
+
+    useComposerDraftStore.getState().clearComposerContent(threadRef);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toBe("");
+    expect(draft?.magiArm).toEqual(MAGI_ARM);
+  });
+});
+
+describe("composerDraftStore Magi arm persistence", () => {
+  const armOnlyRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-arm-only"));
+  const promptedRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-arm-prompted"));
+
+  beforeEach(resetComposerDraftStore);
+
+  const reload = (persisted: unknown) =>
+    useComposerDraftStore.persist.getOptions().merge!(
+      JSON.parse(JSON.stringify(persisted)),
+      useComposerDraftStore.getInitialState(),
+    );
+
+  it("keeps armed drafts armed across a reload, including arm-only drafts", () => {
+    const store = useComposerDraftStore.getState();
+    store.setMagiArm(armOnlyRef, MAGI_ARM);
+    store.setPrompt(promptedRef, "Review the plan");
+    store.setMagiArm(promptedRef, MAGI_ARM);
+
+    const hydrated = reload(partializeComposerDraftStoreState(useComposerDraftStore.getState()));
+
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(armOnlyRef)]?.magiArm).toEqual(MAGI_ARM);
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(promptedRef)]).toMatchObject({
+      prompt: "Review the plan",
+      magiArm: MAGI_ARM,
+    });
+  });
+
+  it("drops an arm that no longer decodes", () => {
+    const invalidArm = { ...MAGI_ARM, participants: "not-a-roster" };
+    const hydrated = reload({
+      draftsByThreadKey: {
+        [scopedThreadKey(armOnlyRef)]: { prompt: "", attachments: [], magiArm: invalidArm },
+        [scopedThreadKey(promptedRef)]: {
+          prompt: "Review the plan",
+          attachments: [],
+          magiArm: invalidArm,
+        },
+      },
+    });
+
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(armOnlyRef)]).toBeUndefined();
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(promptedRef)]).toMatchObject({
+      prompt: "Review the plan",
+      magiArm: null,
+    });
   });
 });
 
@@ -2745,6 +2817,47 @@ describe("composerDraftStore model seed migration", () => {
       expect(useComposerDraftStore.getState()).toMatchObject({
         stickyModelSelectionByProvider: { [CODEX_INSTANCE]: stickySelection },
         stickyActiveProvider: CODEX_INSTANCE,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps v8 arm-only draft sessions and their seeded models", async () => {
+    vi.useFakeTimers();
+    try {
+      const armedDraftId = DraftId.make("draft-legacy-armed");
+      const staleSelection = modelSelection(CODEX_DRIVER, "gpt-5.4");
+      const storage = useComposerDraftStore.persist.getOptions().storage;
+      expect(storage).toBeDefined();
+      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 8,
+        state: {
+          draftsByThreadKey: {
+            [armedDraftId]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+              magiArm: MAGI_ARM,
+            },
+          },
+          draftThreadsByThreadKey: {
+            [armedDraftId]: draftThread(ThreadId.make("thread-legacy-armed")),
+          },
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+          stickyModelSelectionByProvider: {},
+          stickyActiveProvider: null,
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(draftByKey(armedDraftId)).toMatchObject({
+        magiArm: MAGI_ARM,
+        modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+        activeProvider: CODEX_INSTANCE,
       });
     } finally {
       vi.useRealTimers();

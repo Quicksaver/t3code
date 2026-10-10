@@ -59,6 +59,14 @@ export function ThreadHeader(
         onPress: onMergeBack,
       });
     }
+    if (props.onOpenMagi) {
+      actions.push({
+        accessibilityLabel: "Open magi",
+        icon: "brain",
+        menuOnly: true,
+        onPress: props.onOpenMagi,
+      });
+    }
     return actions;
   }, [
     props.inspectorMode,
@@ -67,6 +75,7 @@ export function ThreadHeader(
     onOpenTerminal,
     onMergeBack,
     props.onOpenGitInspector,
+    props.onOpenMagi,
     toggleAuxiliaryPane,
     props.onReturnToThread,
     props.hasThreadCwd,

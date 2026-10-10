@@ -33,8 +33,12 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
+import * as MagiService from "../../../magi/MagiService.ts";
 
 const layerStubServices = Layer.mergeAll(
+  Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({}),
+  Layer.mock(MagiService.MagiService)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
   Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
   Layer.mock(DeviceService.DeviceService)({}),

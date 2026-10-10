@@ -5,6 +5,8 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_MAGI_SETTINGS,
+  MAGI_WS_METHODS,
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -252,6 +254,60 @@ describe("RPC scope middleware", () => {
       });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+});
+
+describe("Magi mutation authorization", () => {
+  const methods = [MAGI_WS_METHODS.disarmThread, MAGI_WS_METHODS.resetSettings] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof methods)[number]> =>
+        !(methods as readonly string[]).includes(tag),
+    ),
+  );
+
+  it.effect.each([AuthOrchestrationOperateScope, AuthSettingsWriteScope])(
+    "limits a %s session to its permitted Magi action",
+    (scope) =>
+      Effect.gen(function* () {
+        const handled: string[] = [];
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(MAGI_WS_METHODS.disarmThread, () =>
+                Effect.sync(() => {
+                  handled.push("disarm");
+                }),
+              ),
+              group.toLayerHandler(MAGI_WS_METHODS.resetSettings, () =>
+                Effect.sync(() => {
+                  handled.push("reset");
+                  return DEFAULT_MAGI_SETTINGS;
+                }),
+              ),
+              RpcAuthorization.layer([scope]),
+            ),
+          ),
+        );
+        const disarm = client[MAGI_WS_METHODS.disarmThread]({
+          threadId: ThreadId.make("magi-owner"),
+          expectedRevision: 0,
+        });
+        const reset = client[MAGI_WS_METHODS.resetSettings]({ target: "arbitrator-prompt" });
+        if (scope === AuthOrchestrationOperateScope) {
+          yield* disarm;
+          expect(yield* reset.pipe(Effect.flip)).toMatchObject({
+            requiredPermission: AuthSettingsWriteScope,
+          });
+          expect(handled).toEqual(["disarm"]);
+        } else {
+          yield* reset;
+          expect(yield* disarm.pipe(Effect.flip)).toMatchObject({
+            requiredPermission: AuthOrchestrationOperateScope,
+          });
+          expect(handled).toEqual(["reset"]);
+        }
+      }).pipe(Effect.scoped),
   );
 });
 

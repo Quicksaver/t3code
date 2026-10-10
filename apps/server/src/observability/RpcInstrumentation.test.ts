@@ -2,6 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationReadScope,
+  MAGI_WS_METHODS,
+  ThreadId,
   type AuthEnvironmentScope,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -102,6 +104,29 @@ const requestDuration = (snapshots: ReadonlyArray<Metric.Metric.Snapshot>, metho
   )?.state;
 
 describe("WS RPC instrumentation middleware", () => {
+  it.effect("records Magi calls through the shared RPC middleware", () =>
+    withTelemetry((ended) =>
+      Effect.gen(function* () {
+        const group = groupOf(MAGI_WS_METHODS.getArm);
+        const client = yield* RpcTest.makeClient(group).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              group.toLayerHandler(MAGI_WS_METHODS.getArm, () => Effect.succeed(null)),
+              readOnlyConnection,
+            ),
+          ),
+        );
+        assert.equal(
+          yield* client[MAGI_WS_METHODS.getArm]({ threadId: ThreadId.make("magi-owner") }),
+          null,
+        );
+        const spans = rpcSpans(ended);
+        assert.equal(spans.length, 1);
+        assert.equal(spans[0]?.attributes.get("rpc.aggregate"), "magi");
+        assert.equal(spans[0]?.attributes.get("rpc.method"), MAGI_WS_METHODS.getArm);
+      }),
+    ),
+  );
   it.effect("records one span and request metric per call, including rejected calls", () =>
     withTelemetry((ended) =>
       Effect.gen(function* () {

@@ -44,6 +44,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { MagiRunConfig } from "./magi.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -3206,6 +3207,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  /** Arms Magi for the initial message; the server records the arm before sending it. */
+  magiArm: Schema.optional(MagiRunConfig),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),

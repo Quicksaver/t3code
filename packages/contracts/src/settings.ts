@@ -29,6 +29,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { DEFAULT_MAGI_SETTINGS, MagiSettings, MagiSettingsPatch } from "./magi.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -1299,6 +1300,7 @@ export const ServerSettings = Schema.Struct({
   usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  magi: MagiSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAGI_SETTINGS))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1540,6 +1542,7 @@ export const ServerSettingsPatch = Schema.Struct({
       tokens: Schema.optionalKey(Schema.Record(GitHubHost, TrimmedString)),
     }),
   ),
+  magi: Schema.optionalKey(MagiSettingsPatch),
   // Whole-map replacement for the new instance config. Patching individual
   // entries is intentionally out of scope: the map is small, and partial
   // patches risk leaving driver-specific config in a half-merged state.

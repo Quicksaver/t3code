@@ -24,13 +24,16 @@ import {
   canDetachThreadProviderSession,
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
-import type {
-  EnvironmentId,
-  OrchestrationV2Subagent,
-  OrchestrationV2ThreadShell,
-  ThreadId,
-} from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { magiRunStateLabel } from "@t3tools/client-runtime/state/magiPresentation";
+import {
+  isMagiRunTerminal,
+  type EnvironmentId,
+  type MagiRunSummary,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadShell,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import { useNavigate } from "@tanstack/react-router";
@@ -41,6 +44,7 @@ import {
   GitForkIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
+  NetworkIcon,
   PlusIcon,
   SquareIcon,
   UnplugIcon,
@@ -48,6 +52,9 @@ import {
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { useRightPanelStore } from "../../rightPanelStore";
+import { magiRunLineageStatus } from "../magi/MagiPanel.logic";
+import { useMagiRunHistory } from "../magi/useMagiRunHistory";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   useProjects,
@@ -119,18 +126,17 @@ export function ThreadLineageRowList(props: {
   );
 }
 
-function ThreadLineageGroup(props: {
+function ThreadLineageGroup<Row>(props: {
   readonly label: string | null;
-  readonly rows: ReadonlyArray<ThreadRelationshipWalkRow>;
+  readonly rows: ReadonlyArray<Row>;
   readonly expanded: boolean;
-  readonly children: (rows: ReadonlyArray<ThreadRelationshipWalkRow>) => ReactNode;
+  readonly failedCount: number;
+  readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
-  const failedCount = props.rows.filter(
-    ({ edge }) => edge.status === "failed" || edge.status === "error",
-  ).length;
+  const failedCount = props.failedCount;
   if (props.rows.length === 0) return null;
   return (
     <div>
@@ -210,13 +216,64 @@ function currentSubagent<Agent extends RuntimeSubagent>(
   };
 }
 
+/** One of the conversation's own Magi runs; opens the Magi panel with the run expanded. */
+function MagiLineageRow(props: { readonly run: MagiRunSummary; readonly onOpen: () => void }) {
+  const status = magiRunLineageStatus(props.run.state);
+  const stateLabel = magiRunStateLabel(props.run.state);
+  return (
+    <li className="group flex h-9 items-center rounded-lg">
+      <Tooltip>
+        <TooltipTrigger
+          delay={200}
+          render={
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              aria-label={`Magi run: ${props.run.title.title}, ${stateLabel}`}
+              onClick={props.onOpen}
+            />
+          }
+        >
+          <ThreadRelationshipIcon fallbackIcon={NetworkIcon} status={status} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {props.run.title.title}
+            </span>
+          </span>
+          <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
+            <AgentElapsed
+              agent={{
+                status: isMagiRunTerminal(props.run.state) ? "completed" : "running",
+                startedAt: props.run.startedAt,
+                completedAt: props.run.completedAt,
+              }}
+            />
+          </span>
+          <span className="shrink-0 text-2xs text-muted-foreground">{stateLabel}</span>
+        </TooltipTrigger>
+        <TooltipPopup side="left">Open this Magi run</TooltipPopup>
+      </Tooltip>
+    </li>
+  );
+}
+
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const ref = useMemo(
+    () => scopeThreadRef(props.environmentId, props.threadId),
+    [props.environmentId, props.threadId],
+  );
   const projection = useThreadProjection(ref)?.projection ?? null;
-  const providers = useServerConfigs().get(props.environmentId)?.providers;
+  const serverConfig = useServerConfigs().get(props.environmentId);
+  const providers = serverConfig?.providers;
+  // The same live subscription the timeline and Magi panel share; subagents' runs stay in theirs.
+  const magiHistory = useMagiRunHistory(
+    serverConfig?.environment.capabilities.magi === true ? ref : null,
+  ).history;
+  const magiRuns = (magiHistory?.runs ?? []).filter((run) => run.rootThreadId === props.threadId);
   const subagentsByThreadId = useMemo(
     () =>
       new Map(
@@ -290,6 +347,8 @@ export function ThreadRelationshipsPanel(props: {
       ? "previous"
       : "active";
   });
+  const relationshipFailedCount = (rows: ReadonlyArray<ThreadRelationshipWalkRow>) =>
+    rows.filter(({ edge }) => edge.status === "failed" || edge.status === "error").length;
   const groups = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: active, expanded: true },
@@ -301,7 +360,7 @@ export function ThreadRelationshipsPanel(props: {
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (relationshipRows.length === 0 && runningCount === 0 && magiRuns.length === 0) {
     return null;
   }
 
@@ -393,7 +452,11 @@ export function ThreadRelationshipsPanel(props: {
       }
     >
       {groups.map((group) => (
-        <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+        <ThreadLineageGroup
+          key={`${scopedThreadKey(ref)}:${group.id}`}
+          {...group}
+          failedCount={relationshipFailedCount(group.rows)}
+        >
           {(visibleRows) =>
             visibleRows.map(({ threadId, edge }) => {
               const node = graph.nodes.get(threadId);
@@ -607,6 +670,23 @@ export function ThreadRelationshipsPanel(props: {
           }
         </ThreadLineageGroup>
       ))}
+      <ThreadLineageGroup
+        key={`${scopedThreadKey(ref)}:magi`}
+        label="Magi runs"
+        rows={magiRuns}
+        expanded
+        failedCount={magiRuns.filter((run) => magiRunLineageStatus(run.state) === "failed").length}
+      >
+        {(visibleRuns) =>
+          visibleRuns.map((run) => (
+            <MagiLineageRow
+              key={run.runId}
+              run={run}
+              onOpen={() => useRightPanelStore.getState().openMagiRun(ref, run.runId)}
+            />
+          ))
+        }
+      </ThreadLineageGroup>
     </ThreadDetailsSection>
   );
 }

@@ -4,6 +4,7 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  MagiParticipantId,
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
@@ -1352,6 +1353,82 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           sensitiveLast ? "secret-last" : "",
         );
       }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("persists only the Magi fields that differ from the bundled defaults", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const readPersistedMagi = Effect.gen(function* () {
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // Inspect raw persisted JSON before schema decoding can apply defaults.
+        const persisted = JSON.parse(raw) as { magi?: Record<string, unknown> };
+        const decoded = yield* decodeServerSettingsJson(raw);
+        return { stored: persisted.magi, decoded: decoded.magi };
+      });
+      const defaults = DEFAULT_SERVER_SETTINGS.magi;
+      const lastPanelRoster = [
+        {
+          participantId: MagiParticipantId.make("first"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+          personalityId: defaults.personalities[0]!.id,
+          weight: 2,
+        },
+        {
+          participantId: MagiParticipantId.make("second"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+          personalityId: null,
+          weight: 1,
+        },
+      ];
+      yield* serverSettings.updateSettings({
+        magi: {
+          lastPanelRoster,
+          lastPanelConsensusThresholdPercent: 67,
+          lastPanelMagiTurnLimit: null,
+        },
+      });
+
+      const remembered = yield* readPersistedMagi;
+      assert.deepStrictEqual(remembered.stored, {
+        lastPanelRoster,
+        lastPanelConsensusThresholdPercent: 67,
+        lastPanelMagiTurnLimit: null,
+      });
+      assert.deepStrictEqual(remembered.decoded, {
+        ...defaults,
+        lastPanelRoster,
+        lastPanelConsensusThresholdPercent: 67,
+        lastPanelMagiTurnLimit: null,
+      });
+
+      // Edits persist whole; a shorter roster or personality list replaces the stored array.
+      const personalities = [{ ...defaults.personalities[0]!, prompt: "Review it differently." }];
+      yield* serverSettings.updateSettings({
+        magi: {
+          arbitratorPrompt: "Arbitrate tersely.",
+          personalities,
+          lastPanelRoster: [lastPanelRoster[1]!],
+        },
+      });
+      const edited = yield* readPersistedMagi;
+      assert.strictEqual(edited.stored?.arbitratorPrompt, "Arbitrate tersely.");
+      assert.deepStrictEqual(edited.decoded.personalities, personalities);
+      assert.deepStrictEqual(edited.decoded.lastPanelRoster, [lastPanelRoster[1]!]);
+
+      // Restoring defaults drops them from the file so they track the bundled values again.
+      yield* serverSettings.updateSettings({
+        magi: {
+          arbitratorPrompt: defaults.arbitratorPrompt,
+          personalities: defaults.personalities,
+        },
+      });
+      const restored = yield* readPersistedMagi;
+      assert.notProperty(restored.stored, "arbitratorPrompt");
+      assert.notProperty(restored.stored, "personalities");
+      assert.deepStrictEqual(restored.decoded.personalities, defaults.personalities);
+    }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>

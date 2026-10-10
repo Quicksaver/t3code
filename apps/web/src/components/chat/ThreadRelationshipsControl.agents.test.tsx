@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   configs: new Map<string, unknown>(),
   showTooltips: false,
   command: vi.fn().mockResolvedValue({ _tag: "Success" }),
+  magiRuns: [] as unknown[],
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
@@ -31,6 +32,14 @@ vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.command }));
+vi.mock("../magi/useMagiRunHistory", () => ({
+  // Subscribed only when the environment supports Magi.
+  useMagiRunHistory: (ref: unknown) => ({
+    history: ref === null ? null : { runs: state.magiRuns, activeRunCount: 0, nextCursor: null },
+    loading: false,
+    failed: false,
+  }),
+}));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
@@ -38,6 +47,8 @@ vi.mock("../ui/tooltip", () => ({
   TooltipPopup: ({ children }: { children: ReactNode }) => (state.showTooltips ? children : null),
 }));
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 let renderer: ReactTestRenderer;
@@ -51,6 +62,77 @@ afterEach(async () => {
   state.showTooltips = false;
   state.command.mockClear();
   state.projection = null;
+  state.magiRuns = [];
+});
+
+it("lists the conversation's own Magi runs and opens one expanded in the Magi panel", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null }, activeProviderThreadId: null },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [],
+  };
+  const run = (runId: string, rootThreadId: string, runState: string, title: string) => ({
+    runId,
+    rootThreadId,
+    source: "agent",
+    title: { state: "generated", title },
+    state: runState,
+    objective: null,
+    completedMagiTurns: 1,
+    startedAt: "2026-10-05T10:00:00.000Z",
+    completedAt: runState === "deliberating" ? null : "2026-10-05T10:01:30.000Z",
+  });
+  state.magiRuns = [
+    run("run-active", "parent", "deliberating", "Active review"),
+    run("run-done", "parent", "succeeded", "Plan check"),
+    run("run-limit", "parent", "turn-limit-reached", "Stalled debate"),
+    run("run-subagent", "child", "succeeded", "Delegate review"),
+  ];
+  const environmentId = EnvironmentId.make("test");
+  const threadId = ThreadId.make("parent");
+  const panel = <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />;
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ")
+      .replace(/\s+/g, " ");
+
+  // Without the Magi capability there is nothing to list, and Lineage stays hidden.
+  await act(async () => {
+    renderer = create(panel);
+  });
+  expect(renderer.toJSON()).toBeNull();
+
+  state.configs.set("test", { providers: [], environment: { capabilities: { magi: true } } });
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("Magi runs");
+  expect(text()).toContain("1 failed");
+  expect(text()).toContain("Active review");
+  expect(text()).toContain("Plan check");
+  expect(text()).toContain("Failed to reach consensus");
+  expect(text()).toContain("1m 30s");
+  expect(text()).not.toContain("Delegate review");
+
+  await act(async () =>
+    renderer.root
+      .findByProps({ "aria-label": "Magi run: Plan check, Consensus reached" })
+      .props.onClick(),
+  );
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      scopeThreadRef(environmentId, threadId),
+    ),
+  ).toMatchObject({
+    isOpen: true,
+    activeSurfaceId: "magi",
+    surfaces: [{ id: "magi", kind: "magi", revealRunId: "run-done" }],
+  });
 });
 
 it.each([
@@ -346,6 +428,7 @@ it("shows readable models and only differing workspace details in agent tooltips
   ];
   state.shells = [{ environmentId: "test", source: child }];
   state.configs.set("test", {
+    environment: { capabilities: {} },
     providers: [
       {
         instanceId: "codex",
@@ -514,6 +597,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     ["cursor", serviceTier, "priority", ""],
   ] as const) {
     state.configs.set("test", {
+      environment: { capabilities: {} },
       providers: [
         {
           instanceId: "codex",
@@ -564,6 +648,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     }
   }
   state.configs.set("test", {
+    environment: { capabilities: {} },
     providers: [
       {
         instanceId: "codex",

@@ -12,6 +12,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -197,6 +198,48 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
     );
   return { ...context, projection };
 });
+
+/**
+ * Applies Magi participant restrictions to thread callers. OAuth clients have no participant
+ * lineage and retain the runtime ceilings enforced by the regular tool and service paths.
+ */
+export const requireMagiParticipantToolAllowed = Effect.fn("mcp.requireMagiParticipantToolAllowed")(
+  function* (input: {
+    readonly action: Exclude<MagiParticipantPolicy.MagiParticipantAction, "start-magi">;
+    readonly targetThreadId?: ThreadId;
+  }) {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    // OAuth clients have no participant lineage; their runtime ceilings still apply in the service.
+    if (scope.thread === undefined) return;
+    const policy = yield* MagiParticipantPolicy.MagiParticipantPolicy;
+    yield* policy.requireToolAllowed({
+      ...input,
+      callerThreadId: scope.thread.threadId,
+    });
+  },
+);
+
+export const requireThreadWriteAllowed = (targetThreadId: ThreadId) =>
+  requireMagiParticipantToolAllowed({ action: "send-to-thread", targetThreadId });
+
+/**
+ * Fails unless the caller may have scheduled runs post into `boundThreadId`, or launch a fresh
+ * top-level thread per run when it is null. Binding to the caller itself is always allowed.
+ */
+export const requireScheduledTaskTargetAllowed = Effect.fn("mcp.requireScheduledTaskTargetAllowed")(
+  function* (boundThreadId: ThreadId | null) {
+    const scope = yield* McpInvocationContext.McpInvocationContext;
+    if (scope.thread === undefined || boundThreadId === scope.thread.threadId) return;
+    yield* requireMagiParticipantToolAllowed(
+      boundThreadId === null
+        ? { action: "create-threads" }
+        : {
+            action: "send-to-thread",
+            targetThreadId: boundThreadId,
+          },
+    );
+  },
+);
 
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {
   const crypto = yield* Crypto.Crypto;

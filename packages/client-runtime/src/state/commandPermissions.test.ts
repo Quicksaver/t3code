@@ -14,6 +14,7 @@ import {
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
+  MAGI_WS_METHODS,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -81,6 +82,39 @@ describe("command permissions", () => {
         yield* cleanup.authorize(registry, env);
         registry.set(sessions(other), AsyncResult.success(grant(false)));
         expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    [MAGI_WS_METHODS.armThread, AuthOrchestrationOperateScope, AuthSettingsWriteScope],
+    [MAGI_WS_METHODS.disarmThread, AuthOrchestrationOperateScope, AuthSettingsWriteScope],
+    [MAGI_WS_METHODS.updateSettings, AuthSettingsWriteScope, AuthOrchestrationOperateScope],
+    [MAGI_WS_METHODS.resetSettings, AuthSettingsWriteScope, AuthOrchestrationOperateScope],
+  ] as const)("checks the destination grant for %s", ([method, required, unrelated]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, method);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes: [required], permissions: [required] }),
+        );
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
+        registry.set(
+          sessions(other),
+          AsyncResult.success({ ...grant(false), scopes: [unrelated], permissions: [unrelated] }),
+        );
+        expect(registry.get(command.permissionAtom(other))).toBe(false);
+        expect(
+          (yield* command.authorize(registry, other).pipe(Effect.flip)).requiredPermission,
+        ).toBe(required);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect((yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+          required,
+        );
       }),
     ),
   );

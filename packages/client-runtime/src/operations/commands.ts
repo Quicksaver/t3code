@@ -9,6 +9,7 @@ import {
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
+  type MagiRunConfig,
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
@@ -162,6 +163,8 @@ interface StartThreadBootstrap {
     readonly startFromOrigin?: boolean;
   };
   readonly runSetupScript?: boolean;
+  /** Arms Magi for the launch's initial message. */
+  readonly magiArm?: MagiRunConfig;
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
@@ -679,6 +682,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(input.bootstrap?.magiArm === undefined ? {} : { magiArm: input.bootstrap.magiArm }),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

@@ -11,11 +11,13 @@ import {
   MessageId,
   ModelSelection,
   OrchestrationMessageContext,
+  MagiRunConfig,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
   type ModelSelection as ModelSelectionType,
+  type MagiRunConfig as MagiRunConfigType,
   type ProjectId as ProjectIdType,
   type ProviderInteractionMode as ProviderInteractionModeType,
   type RuntimeMode as RuntimeModeType,
@@ -58,6 +60,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  magiArm: Schema.optional(MagiRunConfig),
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -95,6 +98,7 @@ export interface QueuedThreadMessage {
    * which keep the previous always-queue delivery.
    */
   readonly dispatchMode?: ComposerDispatchMode;
+  readonly magiArm?: MagiRunConfigType;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
