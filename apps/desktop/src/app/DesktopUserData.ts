@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -37,7 +38,12 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
     readonly platform: NodeJS.Platform;
+    readonly desktopUserDataDir?: Option.Option<string>;
   }) {
+    // An explicit profile, such as a worktree dev desktop's, bypasses legacy profile selection.
+    if (input.desktopUserDataDir !== undefined && Option.isSome(input.desktopUserDataDir)) {
+      return input.desktopUserDataDir.value;
+    }
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const names = input.isDevelopment

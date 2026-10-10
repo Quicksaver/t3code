@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
@@ -24,6 +25,64 @@ const emptyCatalog = {
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
 const encodeCatalog = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+
+it.effect("opens the published version 7 cache alongside the saved desktop catalog", () => {
+  const target = new BearerConnectionTarget({
+    environmentId: EnvironmentId.make("saved-mac"),
+    label: "Mac",
+    connectionId: "saved-mac-connection",
+  });
+  const raw = encodeCatalog({ ...emptyCatalog, targets: [target] });
+  const write = vi.fn();
+  const close = vi.fn();
+  const database = Object.assign(new EventTarget(), {
+    version: 7,
+    close,
+    transaction: () => ({
+      objectStore: () => ({
+        get: () => {
+          const request = Object.assign(new EventTarget(), { result: undefined, error: null });
+          queueMicrotask(() => request.dispatchEvent(new Event("success")));
+          return request;
+        },
+      }),
+    }),
+  });
+  vi.stubGlobal(
+    "window",
+    Object.assign(new EventTarget(), {
+      desktopBridge: {
+        getConnectionCatalog: () => Promise.resolve(raw),
+        setConnectionCatalog: write,
+      },
+    }),
+  );
+  vi.stubGlobal("indexedDB", {
+    open: (_name: string, version: number) => {
+      const request = Object.assign(new EventTarget(), {
+        result: database,
+        error:
+          version < 7
+            ? new DOMException("Requested version is below the installed version", "VersionError")
+            : null,
+      });
+      queueMicrotask(() => request.dispatchEvent(new Event(request.error ? "error" : "success")));
+      return request;
+    },
+  });
+  return Effect.gen(function* () {
+    const targets = yield* Effect.gen(function* () {
+      const cache = yield* Persistence.EnvironmentCacheStore;
+      expect(
+        Option.isNone(yield* cache.loadThread(target.environmentId, ThreadId.make("saved-thread"))),
+      ).toBe(true);
+      return yield* (yield* Persistence.ConnectionTargetStore).list;
+    }).pipe(Effect.provide(ConnectionStorage.layer));
+    expect(targets).toEqual([target]);
+    expect(write).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -389,4 +448,58 @@ describe("browser GitHub routing permissions", () => {
       expect(yield* second.get(entry)).toBe("off");
     }).pipe(Effect.scoped),
   );
+});
+
+describe("upgradeConnectionDatabase", () => {
+  it("does not clear the empty thread store when creating a new database", () => {
+    const stores = new Set<string>();
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 0);
+
+    expect(stores).toEqual(new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]));
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("clears existing thread snapshots when upgrading to archive-time cache eviction", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 4);
+
+    expect(transaction.objectStore).toHaveBeenCalledWith("thread");
+    expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it("does not clear thread snapshots after the migration has already run", () => {
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const clear = vi.fn();
+    const database = {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: vi.fn((name: string) => stores.add(name)),
+    } as unknown as IDBDatabase;
+    const transaction = {
+      objectStore: vi.fn(() => ({ clear })),
+    } as unknown as IDBTransaction;
+
+    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 7);
+
+    expect(transaction.objectStore).not.toHaveBeenCalled();
+    expect(clear).not.toHaveBeenCalled();
+  });
 });

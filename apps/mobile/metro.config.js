@@ -15,7 +15,10 @@ const licenseGeneratorSource = path.join(
   "lib",
   "third-party-licenses.ts",
 );
-const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapedWorkspaceRoot = workspaceRoot
+  .split(/[\\/]/)
+  .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("[/\\\\]");
 const mobileShikiRoot = path.dirname(require.resolve("shiki/package.json", { paths: [__dirname] }));
 const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
 const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-stream");
@@ -43,7 +46,7 @@ config.resolver = {
       : config.resolver?.blockList
         ? [config.resolver.blockList]
         : []),
-    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
+    new RegExp(`^${escapedWorkspaceRoot}[/\\\\]\\.t3(?:[/\\\\].*)?$`),
   ],
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
