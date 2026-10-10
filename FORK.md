@@ -666,7 +666,7 @@ Primary files:
 - `apps/web/src/hooks/useThreadArchiveActions.test.ts`
 - `docs/user/thread-sidebar.md`
 
-On main, every sidebar and chat-header archive, including bulk and Archive all, goes through useThreadActions.archiveThread, so cache eviction and pending-upload release apply before server cold storage. The Archive panel uses its own row reservations; both paths reach the same lifecycle commands and preserve subagent cascading.
+On main, every sidebar and chat-header archive, including bulk and Archive all, goes through `useThreadActions.archiveThread`, so cache eviction and recreatable draft-upload release apply before server cold storage. The Archive panel uses its own row reservations; both paths reach the same lifecycle commands and preserve subagent cascading. The real-route Undo fixture mocks the upload boundary independently so it continues to verify delayed shell delivery and reader navigation with the integrated cleanup helpers.
 
 The upstream thread-action permission and Undo fixtures mock both integrated draft-cleanup exports: archive releases regenerable uploads, while permanent deletion discards the draft. Their tests retain the upstream permission and Undo behaviors through the integrated archive path.
 
