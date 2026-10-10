@@ -3789,6 +3789,104 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("serializes nested subagent cascades with in-flight lifecycle commands", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (const operation of ["archive", "unarchive"] as const) {
+        const { ids } = yield* seedSubagentTree(`runtime-subagent-concurrent-${operation}`);
+        const lifecycle = (id: ThreadId, type: "archive" | "unarchive", suffix: string) =>
+          orchestrator.dispatch({
+            type: `thread.${type}`,
+            commandId: CommandId.make(`runtime-subagent-concurrent-${operation}-${suffix}`),
+            threadId: id,
+          });
+        const archived = (id: ThreadId) =>
+          orchestrator
+            .getThreadProjection(id)
+            .pipe(Effect.map((projection) => projection.thread.archivedAt !== null));
+        if (operation === "unarchive") {
+          yield* lifecycle(ids.parent, "archive", "setup-parent");
+          yield* worker.drain();
+          yield* lifecycle(ids.child, "unarchive", "setup-child");
+          yield* worker.drain();
+          yield* lifecycle(ids.grandchild, "archive", "setup-grandchild");
+        } else {
+          yield* lifecycle(ids.child, "archive", "setup-child");
+          yield* worker.drain();
+          yield* lifecycle(ids.grandchild, "unarchive", "setup-grandchild");
+        }
+        yield* worker.drain();
+        yield* lifecycle(ids.parent, operation, "parent");
+
+        const entered = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const undoQueued = yield* Deferred.make<void>();
+        const getChildren = projections.getSubagentChildThreads;
+        const withLock = executor.withLock;
+        let paused = false;
+        let childLockRequests = 0;
+        const listingSpy = vi
+          .spyOn(projections, "getSubagentChildThreads")
+          .mockImplementation((id, options) =>
+            getChildren(id, options).pipe(
+              Effect.tap(() => {
+                if (id !== ids.child || paused) return Effect.void;
+                paused = true;
+                return Deferred.succeed(entered, undefined).pipe(
+                  Effect.andThen(Deferred.await(resume)),
+                );
+              }),
+            ),
+          );
+        const observeLock: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withLock"] = (
+          key,
+          effect,
+        ) =>
+          key === ids.child && ++childLockRequests === 2
+            ? Deferred.succeed(undoQueued, undefined).pipe(Effect.andThen(withLock(key, effect)))
+            : withLock(key, effect);
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.gen(function* () {
+          const cascade = yield* worker.drain().pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.raceFirst(
+            Deferred.await(entered),
+            Fiber.join(cascade).pipe(
+              Effect.andThen(Effect.die("Nested traversal was not reached.")),
+            ),
+          );
+          const undo = yield* lifecycle(
+            ids.child,
+            operation === "archive" ? "unarchive" : "archive",
+            "undo",
+          ).pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Effect.raceFirst(
+            Deferred.await(undoQueued),
+            Fiber.join(undo).pipe(Effect.andThen(Effect.die("Undo bypassed the cascade lock."))),
+          );
+          assert.equal(yield* archived(ids.child), operation === "archive");
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(cascade);
+          yield* Fiber.join(undo);
+          yield* worker.drain();
+          assert.equal(yield* archived(ids.child), operation !== "archive");
+          assert.equal(yield* archived(ids.grandchild), operation !== "archive");
+          assert.isFalse(yield* archived(ids.fork));
+          assert.isFalse(yield* archived(ids.forkChild));
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              listingSpy.mockRestore();
+              lockSpy.mockRestore();
+            }),
+          ),
+        );
+      }
+    }),
+  );
+
   it.effect("archives a subagent whose cascade command id holds a stored rejection", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

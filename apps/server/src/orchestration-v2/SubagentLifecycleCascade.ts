@@ -10,6 +10,7 @@ import type {
 import type { OrchestratorV2Error } from "./Orchestrator.ts";
 import type { ProjectionStoreV2Error, ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 import type { ThreadManagementServiceShape } from "./ThreadManagementService.ts";
+import type { ThreadCommandExecutor } from "./ThreadCommandExecutor.ts";
 
 export type SubagentLifecycleOperation = "archive" | "unarchive" | "delete";
 
@@ -69,6 +70,7 @@ export function cascadeSubagentLifecycle(input: {
   readonly projections: Pick<ProjectionStoreV2Shape, "getSubagentChildThreads" | "getThread">;
   readonly receipts: Pick<CommandReceiptStoreV2Shape, "getByCommandId">;
   readonly threads: Pick<ThreadManagementServiceShape, "dispatch">;
+  readonly executor: Pick<ThreadCommandExecutor["Service"], "withLock">;
 }): Effect.Effect<void, OrchestratorV2Error | ProjectionStoreV2Error | CommandReceiptStoreV2Error> {
   const { projections, receipts, threads, operation } = input;
   const commandIdFrom = (
@@ -86,7 +88,7 @@ export function cascadeSubagentLifecycle(input: {
         ),
       );
   };
-  return projections
+  const cascade = projections
     .getSubagentChildThreads(input.threadId, { includeDeleted: operation === "delete" })
     .pipe(
       Effect.flatMap((children) =>
@@ -127,4 +129,17 @@ export function cascadeSubagentLifecycle(input: {
       ),
       Effect.withSpan("SubagentLifecycleCascade.cascade"),
     );
+  if (operation === "delete") return cascade;
+  // Recursive walks run in the ancestor's outbox lane. Serialize each parent
+  // with its commands so an older walk cannot outlive that parent's Undo.
+  return input.executor.withLock(
+    input.threadId,
+    projections
+      .getThread(input.threadId)
+      .pipe(
+        Effect.flatMap((parent) =>
+          parent.deletedAt === null && reachedState(parent, operation) ? cascade : Effect.void,
+        ),
+      ),
+  );
 }

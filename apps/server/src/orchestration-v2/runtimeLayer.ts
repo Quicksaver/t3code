@@ -300,6 +300,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
       layerRuntimeRequestServiceProvided,
       layerThreadTitleRegenerationProvided,
       layerThreadManagementProvided,
+      ThreadCommandExecutor.layer,
       ProjectionStore.layer,
       layerCommandReceiptStoreProvided,
     ),

@@ -26,6 +26,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -92,6 +93,7 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ThreadCommandExecutor.ThreadCommandExecutor
   | ProjectionStore.ProjectionStoreV2
   | CommandReceiptStore.CommandReceiptStoreV2
   | ServerSettings.ServerSettingsService
@@ -108,6 +110,7 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
@@ -481,6 +484,7 @@ export const layerExecutor: Layer.Layer<
               projections,
               receipts,
               threads,
+              executor,
             }).pipe(
               Effect.mapError(
                 (cause) =>
