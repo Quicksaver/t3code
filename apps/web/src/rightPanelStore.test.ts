@@ -46,7 +46,7 @@ describe("rightPanelStore", () => {
     store.open(refA, "diff");
     store.closeSurface(refA, pr.id);
     store.closeSurfacesToRight(refA, "device");
-    store.closeOtherSurfaces(refA, "file:src/app.ts");
+    store.closeOtherSurfaces(refA, fileSurfaceId("src/app.ts"));
     expect(
       useClosedViewStore
         .getState()
@@ -99,7 +99,7 @@ describe("rightPanelStore", () => {
       platform: "android",
     } as const;
     store.openFile(refA, "src/app.ts");
-    store.closeSurface(refA, "file:src/app.ts");
+    store.closeSurface(refA, fileSurfaceId("src/app.ts"));
     store.openDevice(refA, device);
     store.closeSurface(refA, "device:nucbox:emulator-5580");
 
@@ -108,24 +108,24 @@ describe("rightPanelStore", () => {
 
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
-    ).toEqual([expect.objectContaining({ id: "file:src/app.ts" })]);
+    ).toEqual([expect.objectContaining({ id: fileSurfaceId("src/app.ts") })]);
   });
 
   it("records only closed tabs when a panel is hidden or a terminal tab closes", () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "diff");
     store.openFile(refA, "src/app.ts");
-    store.closeSurface(refA, "file:src/app.ts");
+    store.closeSurface(refA, fileSurfaceId("src/app.ts"));
     store.close(refA);
     expect(useClosedViewStore.getState().entries).toMatchObject([
-      { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
+      { kind: "panel-tab", threadRef: refA, surface: { id: fileSurfaceId("src/app.ts") } },
     ]);
     store.toggleVisibility(refA);
     store.toggle(refA, "diff");
     store.openTerminal(refA, "term-1");
     store.closeSurface(refA, "terminal:term-1");
     expect(useClosedViewStore.getState().entries).toMatchObject([
-      { kind: "panel-tab", threadRef: refA, surface: { id: "file:src/app.ts" } },
+      { kind: "panel-tab", threadRef: refA, surface: { id: fileSurfaceId("src/app.ts") } },
     ]);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
