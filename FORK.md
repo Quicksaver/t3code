@@ -712,7 +712,7 @@ Primary reference:
 
 - `SOURCE_CONTROL.md`
 
-On main, the shared launcher descriptor combines Version Control with Magi: V follows Diff and G follows Device, with the Magi active-run badge carried through the memoized actions. ServerSettingsPatch includes both sourceControl and magi. The right-panel store retains cwd-aware File tabs and Magi run reveal requests together; preview reconciliation must preserve both singleton surfaces.
+On main, the shared launcher descriptor combines Version Control with Magi: V follows Diff and G follows Device, with the Magi active-run badge carried through the memoized actions. ServerSettingsPatch includes both sourceControl and magi. The right-panel store retains cwd-aware File tabs, Magi run reveal requests, and upstream's persisted maximized state together. Source Control availability normalization preserves that layout state, and preview reconciliation must preserve both singleton surfaces.
 
 The core WebSocket handler group retains all twelve Magi RPCs and its armed-message/launch wrappers, while the Version Control handlers remain in their separate group to keep compiler inference bounded. Both Magi and panel destination-grant tests remain in the shared command-permission suite. ChatView's terminal launcher checks the effective destination project and grants alongside the Magi launcher in both panel layouts.
 
