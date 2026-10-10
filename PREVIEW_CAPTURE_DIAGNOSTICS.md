@@ -2,9 +2,9 @@
 
 This is the tracked text accessory copy for `fix/preview-capture-diagnostics`.
 
-The current standalone source is `afab6ed2ad453a727db103a6894974ae6c40e77c` above pinned `base/main` `18656a3402459d9d145bb3fa5767723531b27ac7`. Main combines its safe typed native capture failures and private formatter with screenshot rendering consumers and requester-bound recording. Recording uses getUserMedia and page-frame fallback, so integrated rejection fixtures now fail the fallback and verify actionable diagnostics, primary causes, cleanup and native retry. Generic errors remain generic.
+The current standalone source is `78b910b879c63122c91f109e9d09e33b4ed54671` above pinned `base/main` `348f217a853dd4a23d7fa4834dedb05f545c2075`. Main combines its safe typed native capture failures and private formatter with screenshot rendering consumers and requester-bound recording. Recording uses getUserMedia and page-frame fallback, so integrated rejection fixtures now fail the fallback and verify actionable diagnostics, primary causes, cleanup and native retry. Generic errors remain generic. The raw bridge unions use `PreviewCaptureFailureEncoded`; the decoded bridge retains exact screenshot artifact and recording Void inference. Host-state guidance identifies the target tab, capture host, display-on state and restored window without promising automatic recovery.
 
-Current branch context records 56 focused tests, contracts/desktop/web typechecks and an isolated Browser-panel renderer fixture at that source. That fixture is not genuine native acquisition or ordinary toolbar/broker proof. Historical native acquisition and locked/display-off evidence below retains its actual source attribution. The standalone accessory is absent; this tracked copy is maintained from current ignored BRANCH_DETAILS.md while preserving historical proof.
+Current branch context records 57 focused tests, contracts/desktop/web typechecks and an isolated Browser-panel renderer fixture at that source. That fixture is not genuine native acquisition or ordinary toolbar/broker proof. Historical native acquisition and locked/display-off evidence below retains its actual source attribution. The standalone accessory is absent; this tracked copy is maintained from current ignored BRANCH_DETAILS.md while preserving historical proof.
 
 ## Historical acquisition proof at 26285ab
 

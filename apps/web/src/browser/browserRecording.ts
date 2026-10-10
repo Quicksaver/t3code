@@ -1,4 +1,7 @@
-import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
+import {
+  DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
+  PreviewCaptureFailure,
+} from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingArtifact,
   DesktopPreviewRecordingFrame,
@@ -16,6 +19,8 @@ import { randomUUID } from "~/lib/utils";
 import { createRecordingCompositor } from "./recordingCompositor";
 
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
+
+const isPreviewCaptureFailure = Schema.is(PreviewCaptureFailure);
 
 export class BrowserRecordingUnavailableError extends Schema.TaggedError<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
@@ -91,6 +96,23 @@ export class BrowserRecordingOperationError extends Schema.TaggedError<BrowserRe
   },
 ) {
   override get message(): string {
+    if (isPreviewCaptureFailure(this.cause)) {
+      return this.cause.message;
+    }
+    // Stream acquisition stores its primary failure on the aggregate when cleanup also fails.
+    const captureCause =
+      this.operation === "capture-media-stream"
+        ? this.cause instanceof AggregateError
+          ? this.cause.cause
+          : this.cause
+        : undefined;
+    if (captureCause instanceof DOMException && captureCause.name === "NotReadableError") {
+      return (
+        "Unable to start the preview video source. Make sure the capture host is unlocked " +
+        "and its display is on, then retry. " +
+        `${captureCause.name}: ${captureCause.message}`
+      );
+    }
     return `Browser recording operation ${this.operation} failed for tab ${this.tabId}.`;
   }
 }
