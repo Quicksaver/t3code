@@ -56,17 +56,17 @@ The installed Windows and Mac databases use the published fork migration IDs 1 t
 
 Upstream seeds `statev2.sqlite` once by copying `state.sqlite`, ledger included, and the migrator runs only IDs above the newest recorded one. Main therefore registers upstream's post-V1 migrations, and the standalone branch migrations that follow them, after the published tail:
 
-| Main ID | Name                               | Source                                                                                             |
-| ------- | ---------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 69      | `OrchestrationV2`                  | upstream `055_OrchestrationV2.ts`                                                                  |
-| 70      | `RemoveRedundantProjectionIndexes` | upstream `056_RemoveRedundantProjectionIndexes.ts`                                                 |
-| 71      | `ThreadStorageLifecycle`           | Conversation Data Savings `057_ThreadStorageLifecycle.ts`, through `071_ThreadStorageLifecycle.ts` |
-| 72      | `MagiV2Projections`                | Magi `057_MagiProjections.ts`                                                                      |
-| 73      | `MagiV2ArmClearingAndParticipants` | main-only `073_MagiV2ArmClearingAndParticipants.ts`                                                |
-| 74      | `ScheduledTaskWebhooks`            | upstream `057_ScheduledTaskWebhooks.ts`                                                            |
-| 75      | `WebhookRelayDeliveries`           | upstream `058_WebhookRelayDeliveries.ts`                                                           |
-| 76      | `McpAppModelContext`               | upstream `059_McpAppModelContext.ts`                                                               |
-| 77      | `ThreadSnapshotWindowIndexes`      | upstream `060_ThreadSnapshotWindowIndexes.ts`                                                      |
+| Main ID | Name                               | Source                                                                                                       |
+| ------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 69      | `OrchestrationV2`                  | upstream `055_OrchestrationV2.ts`                                                                            |
+| 70      | `RemoveRedundantProjectionIndexes` | upstream `056_RemoveRedundantProjectionIndexes.ts`                                                           |
+| 71      | `ThreadStorageLifecycle`           | Conversation Data Savings `061_ThreadStorageLifecycle.ts`, through published `071_ThreadStorageLifecycle.ts` |
+| 72      | `MagiV2Projections`                | Published `057_MagiProjections.ts`, representing the standalone Magi schema                                  |
+| 73      | `MagiV2ArmClearingAndParticipants` | main-only `073_MagiV2ArmClearingAndParticipants.ts`                                                          |
+| 74      | `ScheduledTaskWebhooks`            | upstream `057_ScheduledTaskWebhooks.ts`                                                                      |
+| 75      | `WebhookRelayDeliveries`           | upstream `058_WebhookRelayDeliveries.ts`                                                                     |
+| 76      | `McpAppModelContext`               | upstream `059_McpAppModelContext.ts`                                                                         |
+| 77      | `ThreadSnapshotWindowIndexes`      | upstream `060_ThreadSnapshotWindowIndexes.ts`                                                                |
 
 `apps/server/src/persistence/Migrations.ts` imports the upstream files under these IDs without renaming them and exports `PUBLISHED_FORK_MIGRATION_ID` and `ORCHESTRATION_V2_MIGRATION_ID`. A published fork database runs only this tail. An upstream ledger has its exact divergent markers at 35 through 54 removed before the canonical fork replay from 35; upstream's own 33 and 34 markers stay and appear in upstream's divergence warning. Upstream V2 is not idempotent, so its markers at 55 through 58 are held aside, the replay runs through 68, and they are recorded at 69, 70, 74, and 75 with their original timestamps, all in one transaction. Missing fork migrations between relocated markers run before the later marker is recorded, so an upstream webhook or MCP App ledger cannot skip the fork cold-storage and Magi schema. Published fork ledgers may already contain the full tail through 77. Rebuilds preserve all these IDs and migration bodies; startup applies only migrations above the recorded tail. Upstream snapshot marker 60 relocates to 77 with its original timestamp. Upstream MCP App marker 59 relocates to 76 with its original timestamp during upstream-ledger replay. Upstream's `reconcileV2PreviewMigration` still converts V2 preview ledgers into that upstream shape first; it imports the published `066_PullRequestFilesViewed.ts` and `067_ProjectionThreadsAutoSettleDisabledAt.ts` and runs when the requested range reaches 69. Tests that need an upstream ledger use `seedUpstreamLedger` from `apps/server/src/persistence/upstreamMigrationLedger.testFixtures.ts`, which records upstream's ledger over the fork V1 schema; `reconcileV2PreviewMigration.test.ts` covers preview and released upstream V2 ledgers, and `LegacyV1Cutover.integration.test.ts` expects the 33, 34, and site-local 41 divergence.
 
