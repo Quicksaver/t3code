@@ -258,6 +258,100 @@ describe("GitCafeSourceControlProvider", () => {
     );
   });
 
+  it.effect.each([
+    { name: "no selector", selection: {}, limit: 3, expected: [1, 2, 3] },
+    {
+      name: "an owner-qualified selector",
+      selection: { headSelector: "fork:feature" },
+      limit: 1,
+      expected: [3],
+    },
+    {
+      name: "an explicit source without a head selector",
+      selection: { source: { refName: "feature", owner: "fork", repository: "fork/project" } },
+      limit: 1,
+      expected: [3],
+    },
+  ])(
+    "lists pulls with $name while preserving pagination and limits",
+    ({ selection, limit, expected }) => {
+      const urls: Array<URL> = [];
+      const pull = (number: number) => ({
+        number,
+        title: `Change ${number}`,
+        state: "open",
+        draft: false,
+        sourceBranch: number === 1 ? "other" : "feature",
+        targetBranch: "main",
+        updatedAt: null,
+      });
+      const client = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        urls.push(url);
+        const detailNumber = /\/pulls\/(\d+)$/u.exec(url.pathname)?.[1];
+        const number = Number(detailNumber);
+        const body = detailNumber
+          ? {
+              ...pull(number),
+              sourceRepo: { owner: number === 2 ? "other" : "fork", name: "project" },
+              closedAt: null,
+              mergedAt: null,
+            }
+          : url.searchParams.has("after")
+            ? { items: [pull(3), pull(4)], next: null }
+            : { items: [pull(1), pull(2)], next: "page-2" };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(encodeJson(body))));
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafeSourceControlProvider.make;
+        const pulls = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          context: {
+            provider: { kind: "gitcafe", name: "GitCafe", baseUrl: "https://git.cafe" },
+            remoteName: "origin",
+            remoteUrl: "https://git.cafe/team/project.git",
+          },
+          state: "open",
+          ...selection,
+          limit,
+        });
+        assert.deepStrictEqual(
+          pulls.map((item) => item.number),
+          expected,
+        );
+        const pages = urls.filter((url) => url.pathname.endsWith("/pulls"));
+        assert.strictEqual(pages.length, 2);
+        assert.strictEqual(pages[0]?.searchParams.get("after"), null);
+        assert.strictEqual(pages[1]?.searchParams.get("after"), "page-2");
+        for (const page of pages) {
+          assert.strictEqual(page.pathname, "/api/repos/team/project/pulls");
+          assert.strictEqual(page.searchParams.get("state"), "open");
+          assert.strictEqual(page.searchParams.get("limit"), String(limit));
+          assert.strictEqual(
+            page.searchParams.get("sourceBranches"),
+            expected.length === 3 ? null : '["feature"]',
+          );
+        }
+        assert.deepStrictEqual(
+          urls
+            .filter((url) => /\/pulls\/\d+$/u.test(url.pathname))
+            .map((url) => Number(url.pathname.split("/").at(-1))),
+          expected.length === 3 ? [1, 2, 3] : [2, 3],
+        );
+      }).pipe(
+        Effect.provide(
+          GitCafeApi.layer.pipe(
+            Layer.provide(GitCafeCredentials.layer),
+            Layer.provideMerge(TestSourceControlHost.layer()),
+            Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+            Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("waits for a created repository's admission before handing out its URLs", () => {
     const urls: Array<string> = [];
     const states = ["running", "complete"];

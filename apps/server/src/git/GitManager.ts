@@ -2,7 +2,6 @@ import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
-import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -32,10 +31,8 @@ import {
   type VcsStatusLocalResult,
   type VcsStatusRemoteResult,
   VcsStatusResult,
-  ModelSelection,
   type ProjectId,
   SourceControlProviderError,
-  type SourceControlWritingStyleSettings,
   type ThreadId,
   type ThreadPullRequestKey,
   type VcsCreateWorktreeInput,
@@ -68,10 +65,10 @@ import {
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
-  conventionalCommitsTextGenerationPolicy,
-  customTextGenerationPolicy,
-  repositoryConventionsTextGenerationPolicy,
-} from "../textGeneration/TextGenerationPresets.ts";
+  makeSourceControlRepositoryInstructionReader,
+  makeSourceControlWritingPolicyResolver,
+  type SourceControlTextGenerationSettings,
+} from "../textGeneration/SourceControlWriting.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -83,6 +80,7 @@ import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { canonicalizeExistingPath } from "../utils/CanonicalPath.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
@@ -97,6 +95,8 @@ export interface GitRunStackedActionOptions {
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   /** Retry a cached missing PR without clearing known PRs or failed lookup backoff. */
   readonly refreshMissingPullRequest?: boolean;
+  /** Skip provider-backed PR lookup when the caller only needs repository synchronization state. */
+  readonly includePullRequest?: boolean;
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
@@ -108,11 +108,6 @@ export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
   readonly headSha?: string | null;
 };
 
-interface SourceControlTextGenerationSettings {
-  readonly modelSelection: ModelSelection;
-  readonly style: SourceControlWritingStyleSettings;
-}
-
 export class GitManager extends Context.Service<
   GitManager,
   {
@@ -122,6 +117,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly status: (
       input: VcsStatusInput,
+      options?: GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly localStatus: (
       input: VcsStatusInput,
@@ -160,7 +156,6 @@ export class GitManager extends Context.Service<
   }
 >()("t3/git/GitManager") {}
 
-const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
 const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
@@ -761,82 +756,17 @@ export const make = Effect.gen(function* () {
     return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
   });
 
-  const readRepositoryInstructions = (cwd: string, fileName: string) =>
-    Effect.gen(function* () {
-      const root = yield* fileSystem.realPath(cwd);
-      const instructionPath = yield* fileSystem.realPath(path.join(root, fileName));
-      if (!instructionPath.startsWith(`${root}${path.sep}`)) {
-        return "";
-      }
-      const info = yield* fileSystem.stat(instructionPath);
-      if (info.type !== "File" || info.size > ByteSize.bytes(20_000)) {
-        return "";
-      }
-      return (yield* fileSystem.readFileString(instructionPath)).trim();
-    }).pipe(Effect.orElseSucceed(() => ""));
-
-  const readRecentCommitSubjects = (cwd: string) =>
-    gitCore
-      .execute({
-        operation: "GitManager.readRecentCommitSubjects",
-        cwd,
-        args: ["log", "-n", "20", "--no-merges", "--pretty=format:%s"],
-      })
-      .pipe(
-        Effect.map((result) =>
-          result.stdout
-            .split("\n")
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0),
-        ),
-        Effect.orElseSucceed(() => []),
-      );
-
-  const resolveStylePolicy = (cwd: string, settings: SourceControlTextGenerationSettings) =>
-    Effect.gen(function* () {
-      switch (settings.style.mode) {
-        case "conventional_commits":
-          return conventionalCommitsTextGenerationPolicy;
-        case "custom":
-          return customTextGenerationPolicy(
-            settings.style.customInstructions
-              ? {
-                  commitInstructions: settings.style.customInstructions,
-                  changeRequestInstructions: settings.style.customInstructions,
-                }
-              : {},
-          );
-        case "repo_conventions": {
-          const subjects = yield* readRecentCommitSubjects(cwd);
-          const agentInstructions = yield* readRepositoryInstructions(cwd, "AGENTS.md");
-          const isClaudeWriter =
-            settings.modelSelection.instanceId === "claudeAgent" ||
-            (yield* providerRegistry.getProviders).some(
-              (provider) =>
-                provider.instanceId === settings.modelSelection.instanceId &&
-                provider.driver === "claudeAgent",
-            );
-          const claudeInstructions = isClaudeWriter
-            ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
-            : "";
-          const examples = [
-            ...(subjects.length > 0
-              ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
-              : []),
-            ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-            ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
-          ].join("\n\n");
-          if (!examples) {
-            return repositoryConventionsTextGenerationPolicy;
-          }
-          return {
-            ...repositoryConventionsTextGenerationPolicy,
-            commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\n${examples}`,
-            changeRequestInstructions: `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\n${examples}`,
-          };
-        }
-      }
-    });
+  const resolveStylePolicy = makeSourceControlWritingPolicyResolver({
+    runGit: (cwd, args) =>
+      gitCore
+        .execute({
+          operation: "GitManager.readRecentCommitSubjects",
+          cwd,
+          args,
+        })
+        .pipe(Effect.map((result) => result.stdout)),
+    readRepositoryInstructions: makeSourceControlRepositoryInstructionReader(fileSystem, path),
+  });
   const randomUUIDv4 = (cwd: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.mapError(
@@ -1065,9 +995,7 @@ export const make = Effect.gen(function* () {
       ),
     );
   const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
-  const canonicalizeExistingPath = (value: string) =>
-    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const normalizeStatusCacheKey = canonicalizeExistingPath;
+  const normalizeStatusCacheKey = (value: string) => canonicalizeExistingPath(fileSystem, value);
   const nonRepositoryStatusDetails: GitVcsDriver.GitStatusDetails = {
     isRepo: false,
     hasOriginRemote: false,
@@ -1376,7 +1304,7 @@ export const make = Effect.gen(function* () {
     }
 
     const pr =
-      details.branch !== null
+      options?.includePullRequest !== false && details.branch !== null
         ? yield* lookupStatusPr(
             cwd,
             {
@@ -1401,9 +1329,25 @@ export const make = Effect.gen(function* () {
     capacity: STATUS_RESULT_CACHE_CAPACITY,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
   });
+  // Synchronization state for callers that skip the PR lookup, so a miss never starts one.
+  const remoteSyncStatusResultCache = yield* Cache.makeWith(
+    (cwd: string) => readRemoteStatus(cwd, { includePullRequest: false }),
+    {
+      capacity: STATUS_RESULT_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
+    },
+  );
   const invalidateRemoteStatusResultCache = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
-      Effect.flatMap((cacheKey) => Cache.invalidate(remoteStatusResultCache, cacheKey)),
+      Effect.flatMap((cacheKey) =>
+        Effect.all(
+          [
+            Cache.invalidate(remoteStatusResultCache, cacheKey),
+            Cache.invalidate(remoteSyncStatusResultCache, cacheKey),
+          ],
+          { discard: true },
+        ),
+      ),
     );
 
   const readConfigValueNullable = (cwd: string, key: string) =>
@@ -2078,7 +2022,6 @@ export const make = Effect.gen(function* () {
           }
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
       stage: filePaths ? { filePaths } : {},
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
@@ -2230,11 +2173,16 @@ export const make = Effect.gen(function* () {
       if (options?.refreshUpstream === false || options?.refreshMissingPullRequest) {
         return yield* readRemoteStatus(cacheKey, options);
       }
-      return yield* Cache.get(remoteStatusResultCache, cacheKey);
+      return yield* Cache.get(
+        options?.includePullRequest === false
+          ? remoteSyncStatusResultCache
+          : remoteStatusResultCache,
+        cacheKey,
+      );
     },
   );
-  const status: GitManager["Service"]["status"] = Effect.fn("status")(function* (input) {
-    const [local, remote] = yield* Effect.all([localStatus(input), remoteStatus(input)], {
+  const status: GitManager["Service"]["status"] = Effect.fn("status")(function* (input, options) {
+    const [local, remote] = yield* Effect.all([localStatus(input), remoteStatus(input, options)], {
       concurrency: "unbounded",
     });
     return mergeGitStatusParts(local, remote);
@@ -2452,7 +2400,7 @@ export const make = Effect.gen(function* () {
     };
     return yield* Effect.gen(function* () {
       const normalizedReference = normalizePullRequestReference(input.reference);
-      const rootWorktreePath = yield* canonicalizeExistingPath(input.cwd);
+      const rootWorktreePath = yield* canonicalizeExistingPath(fileSystem, input.cwd);
       const pullRequestSummary = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
         cwd: input.cwd,
         reference: normalizedReference,
@@ -2616,7 +2564,7 @@ export const make = Effect.gen(function* () {
             continue;
           }
 
-          const worktreePath = yield* canonicalizeExistingPath(branch.worktreePath);
+          const worktreePath = yield* canonicalizeExistingPath(fileSystem, branch.worktreePath);
           if (worktreePath !== rootWorktreePath) {
             return branch;
           }
@@ -2627,7 +2575,7 @@ export const make = Effect.gen(function* () {
 
       const existingBranchBeforeFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchBeforeFetchPath = existingBranchBeforeFetch?.worktreePath
-        ? yield* canonicalizeExistingPath(existingBranchBeforeFetch.worktreePath)
+        ? yield* canonicalizeExistingPath(fileSystem, existingBranchBeforeFetch.worktreePath)
         : null;
       if (
         existingBranchBeforeFetch?.worktreePath &&
@@ -2655,7 +2603,7 @@ export const make = Effect.gen(function* () {
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);
       const existingBranchAfterFetchPath = existingBranchAfterFetch?.worktreePath
-        ? yield* canonicalizeExistingPath(existingBranchAfterFetch.worktreePath)
+        ? yield* canonicalizeExistingPath(fileSystem, existingBranchAfterFetch.worktreePath)
         : null;
       if (
         existingBranchAfterFetch?.worktreePath &&
@@ -2796,23 +2744,18 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* projectSettingsFor(input).pipe(
-          Effect.flatMap((settings) =>
-            settings.sourceControlWriterModelSelection === null
-              ? Effect.succeed({
-                  modelSelection: settings.textGenerationModelSelection,
-                  style: settings.sourceControlWritingStyle,
-                })
-              : providerRegistry.getProviders.pipe(
-                  Effect.map((providers) => ({
-                    modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
-                      settings,
-                      providers,
-                    ),
-                    style: settings.sourceControlWritingStyle,
-                  })),
-                ),
-          ),
+        const textGenerationSettings = yield* Effect.all(
+          [projectSettingsFor(input), providerRegistry.getProviders],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map(([settings, providers]) => ({
+            modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
+              settings,
+              providers,
+            ),
+            providers,
+            style: settings.sourceControlWritingStyle,
+          })),
           Effect.mapError(
             (cause) =>
               new GitManagerError({

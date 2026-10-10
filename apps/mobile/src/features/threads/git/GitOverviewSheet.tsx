@@ -79,6 +79,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const supportsLinkedPrSnapshots =
     selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
+  // Servers from before the Version Control panel reject every vcs.panel.* request.
+  const supportsVersionControl =
+    selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.sourceControlPanel === true;
   const linkedPrChains = useMemo(
     () =>
       resolveThreadPullRequestChains(
@@ -316,6 +319,25 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             />
           </>
         ) : null}
+        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+        <SheetListRow
+          icon="point.topleft.down.curvedto.point.bottomright.up"
+          title="Version Control"
+          subtitle={
+            supportsVersionControl
+              ? "Actionable branches, selected files, stashes, and remotes"
+              : "Update this environment's T3 Code server to use Version Control"
+          }
+          disabled={busy || !isRepo || !supportsVersionControl}
+          onPress={() => {
+            const params = { environmentId: String(environmentId), threadId: String(threadId) };
+            navigation.dispatch(
+              resolveGitOverviewReviewNavigationAction(presentation) === "replace"
+                ? StackActions.replace("VersionControl", params)
+                : CommonActions.navigate("VersionControl", params),
+            );
+          }}
+        />
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="text.bubble"

@@ -85,6 +85,7 @@ it.effect.each(
   ).map((scenario) => [scenario.label, scenario] as const),
 )("%s", ([, scenario]) => {
   const refreshed: string[] = [];
+  const localRefreshOptions: unknown[] = [];
   const threadId = ThreadId.make("thread-pr-refresh");
   const runId = RunId.make("completed-run");
   const layer = RunFinalization.layerObserver.pipe(
@@ -95,15 +96,17 @@ it.effect.each(
           refreshAfterTurn: () => Effect.void,
         }),
         Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
-          refreshLocalStatus: () =>
-            Effect.succeed({
-              isRepo: true,
-              hasPrimaryRemote: true,
-              isDefaultRef: scenario.checkedOut === "main",
-              refName: scenario.checkedOut,
-              hasWorkingTreeChanges: false,
-              workingTree: { files: [], insertions: 0, deletions: 0 },
-            }),
+          refreshLocalStatus: (_cwd, options) =>
+            Effect.sync(() => localRefreshOptions.push(options)).pipe(
+              Effect.as({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: scenario.checkedOut === "main",
+                refName: scenario.checkedOut,
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            ),
           refreshStatus: () =>
             Effect.die("turn completion must preserve known PRs and lookup backoff"),
           refreshPullRequestStatus: (cwd) =>
@@ -127,5 +130,8 @@ it.effect.each(
     const observer = yield* RunFinalization.RunFinalizationObserver;
     yield* observer.refresh({ cwd: "/repo", threadId, runId });
     assert.deepEqual(refreshed, [...scenario.expected]);
+    // An empty commit or message-only amend leaves the local status unchanged, so even the
+    // default branch, which skips the PR refresh, must force subscribers to re-read history.
+    assert.deepEqual(localRefreshOptions, [{ forcePublish: true }]);
   }).pipe(Effect.provide(layer));
 });

@@ -349,6 +349,13 @@ function repositoryCloneUrls(
 }
 
 const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmptyString }));
+const decodeCommitAuthor = decodeJsonResult(
+  Schema.Struct({
+    author: Schema.NullOr(
+      Schema.Struct({ avatar_url: Schema.optional(Schema.NullOr(Schema.String)) }),
+    ),
+  }),
+);
 
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
@@ -551,6 +558,52 @@ export const make = Effect.gen(function* () {
 
   const rest = (input: GitHubApi.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
+
+  // History and avatars belong to the selected remote, not gh's default PR repository.
+  const panelRepository = (input: {
+    readonly cwd: string;
+    readonly context?: SourceControlProvider.SourceControlProviderContext;
+  }) => {
+    if (!input.context) return resolveRepository(input);
+    const remote = normalizeGitRemoteUrl(input.context.remoteUrl);
+    const locator = parseGitHubRepositorySelector(
+      remote.slice(remote.indexOf("/") + 1),
+      contextHost(input.context) ?? "github.com",
+    );
+    return locator === null
+      ? Effect.fail(failure("The selected GitHub repository could not be resolved."))
+      : Effect.succeed(locator);
+  };
+
+  const listRepositoryHistory = Effect.fn("GitHubSourceControlProvider.listRepositoryHistory")(
+    function* (
+      input: Parameters<
+        SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"]
+      >[0],
+      allowReserve: boolean,
+    ) {
+      const locator = yield* panelRepository(input);
+      const decoded = yield* graphqlJson(
+        {
+          host: locator.host,
+          operation: "listRepositoryHistory",
+          query: `query RepositoryPullRequests($owner: String!, $name: String!, $states: [PullRequestState!], $limit: Int!) { repository(owner: $owner, name: $name) { history: pullRequests(states: $states, first: $limit, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PULL_REQUEST_NODE_SELECTION} } } } }`,
+          variables: {
+            owner: locator.owner,
+            name: locator.name,
+            states: GRAPHQL_STATES[input.state],
+            limit: Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 100),
+          },
+          allowReserve,
+        },
+        decodePullRequestsByHead,
+        "GitHub returned an invalid change request list.",
+      );
+      if (decoded.data.repository === null)
+        return yield* notFound("The repository could not be read.");
+      return decodeGitHubPullRequestEntries(decoded.data.repository.history?.nodes ?? []);
+    },
+  );
 
   const headResolver = RequestResolver.makeGrouped<PullRequestsByHeadRead, string>({
     key: ({ request, context }) =>
@@ -965,20 +1018,42 @@ export const make = Effect.gen(function* () {
       // An open lookup is a user waiting on a status; the rest may be a background sweep.
       (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
-          listByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? (input.state === "open" ? 1 : 20),
-            host: contextHost(input.context),
-            context: input.context,
-            allowReserve,
-          }),
+          input.headSelector
+            ? listByHead({
+                cwd: input.cwd,
+                headSelector: input.headSelector,
+                state: input.state,
+                limit: input.limit ?? (input.state === "open" ? 1 : 20),
+                host: contextHost(input.context),
+                context: input.context,
+                allowReserve,
+              })
+            : listRepositoryHistory(input, allowReserve),
         ),
         Effect.map((records) => records.map(toChangeRequest)),
         Effect.mapError(
-          providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+          providerError(
+            "listChangeRequests",
+            input.cwd,
+            input.headSelector === undefined ? {} : { reference: input.headSelector },
+          ),
         ),
+      ),
+    getCommitAvatarUrl: (input) =>
+      Effect.gen(function* () {
+        const locator = yield* panelRepository(input);
+        const response = yield* rest({
+          host: locator.host,
+          operation: "getCommitAvatarUrl",
+          path: `repos/${locator.owner}/${locator.name}/commits/${encodeURIComponent(input.sha)}`,
+        });
+        const decoded = decodeCommitAuthor(response.body);
+        if (Result.isFailure(decoded)) {
+          return yield* failure("GitHub returned an invalid commit author.", decoded.failure);
+        }
+        return decoded.success.author?.avatar_url?.trim() || null;
+      }).pipe(
+        Effect.mapError(providerError("getCommitAvatarUrl", input.cwd, { reference: input.sha })),
       ),
     getChangeRequest: (input) =>
       readPullRequest({ ...input, host: contextHost(input.context) }).pipe(

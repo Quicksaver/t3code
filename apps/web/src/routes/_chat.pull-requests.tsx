@@ -2251,6 +2251,7 @@ function PullRequestsRouteView() {
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
+            onAddSourceControl={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
@@ -2258,6 +2259,7 @@ function PullRequestsRouteView() {
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
+            sourceControlAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             deviceAvailable={false}

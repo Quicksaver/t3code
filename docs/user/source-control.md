@@ -255,3 +255,23 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## Use the Version Control panel
+
+The Version Control panel shows a repository's working tree changes, its worktrees, local branches with pending commits or pull requests, remotes, and stashes. On web and desktop, open it from the right panel's surface launcher, press `V` while the launcher is open, or choose **Version Control** from the dropdown beside **Changes** in the thread details panel. On mobile, open **Version Control** from a thread's Git actions. When the same project is open in several connected environments, the panel shows one section per environment.
+
+Select files to commit or stash only those files. Branch sync buttons push or pull as needed; hold Option or Alt to fetch first. Hold Shift to force the sync: the panel asks for confirmation first and names what is overwritten, either the remote branch or your local commits.
+
+## Control background remote refreshes
+
+The Git details in **Settings → Source Control** expose two separate refresh intervals:
+
+- **Git fetch interval** refreshes the current branch's upstream status.
+- **Version Control all remotes interval** refreshes every remote shown by an open Version Control panel. Balanced mode uses five minutes, Performance uses one minute, and Battery saver disables it.
+
+Automatic all-remotes refreshes follow the shared Background Activity rules for low-power mode,
+battery state, and active clients. A locked host does not pause them while a client is actively
+viewing that repository's panel, so remote use of a locked machine keeps refs fresh. Set the
+all-remotes interval to `0` to prevent
+opening, focusing, or leaving the Version Control panel open from fetching remotes. The panel still
+refreshes local repository state, and its explicit **Fetch** action remains available.

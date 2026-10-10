@@ -291,22 +291,30 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "gitcafe",
+    getCommitAvatarUrl: () => Effect.succeed(null),
     repositoryNameFromRemoteUrl: (url) => GitCafeHosts.parseGitCafeRemote(url)?.repository ?? null,
     getChangeRequest: getPull,
     listChangeRequests: Effect.fn("GitCafeSourceControlProvider.listChangeRequests")(
       function* (input) {
         const target = yield* resolveTarget("listChangeRequests", input);
-        const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const branch = SourceControlProvider.sourceBranch(input);
+        const selector = input.source?.refName ?? input.headSelector;
+        const selectedInput =
+          selector === undefined ? undefined : { ...input, headSelector: selector };
+        const source = selectedInput
+          ? SourceControlProvider.sourceControlRefFromInput(selectedInput)
+          : undefined;
+        const branch = selectedInput
+          ? SourceControlProvider.sourceBranch(selectedInput)
+          : undefined;
         const limit = input.limit ?? 20;
         const items: Array<ChangeRequest> = [];
         let after: string | null = null;
         do {
           const query = new URLSearchParams({
-            sourceBranches: encodeBranches([branch]),
             limit: String(Math.min(limit, 100)),
             sort: "newest",
           });
+          if (branch !== undefined) query.set("sourceBranches", encodeBranches([branch]));
           if (input.state !== "all") query.set("state", input.state);
           if (after !== null) query.set("after", after);
           const page: typeof Pulls.Type = yield* read(
@@ -316,8 +324,9 @@ export const make = Effect.gen(function* () {
             Pulls,
           );
           for (const pull of page.items) {
-            if (pull.sourceBranch !== branch || items.length >= limit) continue;
-            // List rows omit fork identity, so only the branch's own rows are read in full.
+            if ((branch !== undefined && pull.sourceBranch !== branch) || items.length >= limit)
+              continue;
+            // List rows omit fork identity, so read matching branches in full before filtering.
             const detail = yield* getPull({
               cwd: input.cwd,
               reference: `https://${target.host}/${target.repository}/pulls/${pull.number}`,
