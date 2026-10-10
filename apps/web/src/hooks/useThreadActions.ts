@@ -48,6 +48,7 @@ import {
   readProject,
   readThreadShell,
   readThreadShells,
+  waitForThreadShell,
 } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
 import { clearThreadPreviewState } from "../previewStateStore";
@@ -361,12 +362,18 @@ export function useThreadActions() {
       }
       refreshArchivedThreadsForEnvironment(target.environmentId);
       if (opts.navigate) {
-        return settlePromise(() =>
-          router.navigate({
+        return settlePromise(async () => {
+          // The command receipt can arrive before the live shell restores the thread.
+          if (!(await waitForThreadShell(target))) {
+            throw new Error(
+              "The thread was restored, but its data did not reach this client. Reconnect and open it from the sidebar.",
+            );
+          }
+          await router.navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(target),
-          }),
-        );
+          });
+        });
       }
       return result;
     },

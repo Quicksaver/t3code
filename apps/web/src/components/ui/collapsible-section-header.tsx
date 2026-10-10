@@ -15,19 +15,23 @@ export function CollapsibleSectionHeader({
   expanded,
   tone = "muted",
   accessory,
+  trailing,
   ...buttonProps
 }: Omit<ComponentProps<"button">, "className" | "style" | "aria-expanded"> & {
   expanded: boolean;
   tone?: keyof typeof tones;
   accessory?: ReactNode;
+  /** Interactive controls beside the toggle; rendered outside its button. */
+  trailing?: ReactNode;
 }) {
-  return (
+  const toggle = (
     <button
       {...buttonProps}
       type="button"
       aria-expanded={expanded}
       className={cn(
         "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        trailing != null && "min-w-0",
         tones[tone].label,
       )}
     >
@@ -39,6 +43,13 @@ export function CollapsibleSectionHeader({
         className={cn("size-3 shrink-0 transition-transform", !expanded && "rotate-180")}
       />
     </button>
+  );
+  if (trailing == null) return toggle;
+  return (
+    <div className="flex h-8 w-full min-w-0 items-center">
+      {toggle}
+      {trailing}
+    </div>
   );
 }
 
