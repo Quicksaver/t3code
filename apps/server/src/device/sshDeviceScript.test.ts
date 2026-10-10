@@ -7,10 +7,223 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+import * as SshDeviceScript from "./sshDeviceScript.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+
+/** Runs a remote device command through the host's native login shell, as sshd would. */
+const runThroughLoginShell = (command: ReturnType<typeof SshDeviceScript.remoteDeviceCommand>) =>
+  Effect.map(HostProcess.Platform, (platform) =>
+    NodeChildProcess.spawnSync(
+      platform === "win32" ? "powershell.exe" : "sh",
+      platform === "win32"
+        ? ["-NoProfile", "-NonInteractive", "-Command", command.remoteCommandArgs.join(" ")]
+        : ["-c", command.remoteCommandArgs.join(" ")],
+      { input: command.stdin, encoding: "utf8", timeout: 10000 },
+    ),
+  );
+
+it.effect(
+  "passes bootstrap code through the remote login shell without reinterpreting quotes",
+  () =>
+    Effect.gen(function* () {
+      const value = "spaces 'single' \"double\" $HOME `literal`\nsecond line";
+      const result = yield* runThroughLoginShell(
+        SshDeviceScript.remoteDeviceCommand(
+          "exec node",
+          `process.stdout.write(${JSON.stringify(value)});`,
+          { nodeBootstrap: true },
+        ),
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(value);
+    }),
+);
+
+it.effect(
+  "preserves remote arguments and exact stdin, and reports failure through the login shell",
+  () =>
+    Effect.gen(function* () {
+      const value = "quotes ' \" $HOME\nno trailing newline";
+      const input = `${value}\r\nCR\rNUL\0backslash \\ \\0015 %s`;
+      const code =
+        "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8')}));process.exitCode=23";
+      const result = yield* runThroughLoginShell(
+        SshDeviceScript.remoteDeviceCommand(
+          `exec ${[process.execPath.replaceAll("\\", "/"), "-e", code, value].map(SshDeviceScript.quoteRemoteArg).join(" ")}`,
+          input,
+        ),
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.stderr).toBe("");
+      // PowerShell -Command normalizes a failing native command to exit code 1.
+      expect(result.status).toBe((yield* HostProcess.Platform) === "win32" ? 1 : 23);
+      expect(JSON.parse(result.stdout)).toEqual({ args: [value], input });
+    }),
+);
+
+it("runs Windows npm probe and installation through Node with paths containing spaces", async () => {
+  const home = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture ")),
+  );
+  try {
+    const node = NodePath.join(home, "Node runtime", "node.exe");
+    const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
+    const calls = NodePath.join(home, "npm calls.jsonl");
+    await NodeFSP.mkdir(NodePath.dirname(npm), { recursive: true });
+    await NodeFSP.copyFile(process.execPath, node);
+    await NodeFSP.writeFile(
+      npm,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ node: process.execPath, args }) + '\\n');
+if (args[0] === 'install') { console.error('fixture registry unavailable'); process.exitCode = 23; }
+else console.log('11.0.0');`,
+    );
+    const invoke = async (mode: "probe" | "start", npmPath = "", nodeVersion?: string) => {
+      const script = NodePath.join(home, `${mode}.cjs`);
+      await NodeFSP.writeFile(
+        script,
+        `Object.defineProperty(process, 'platform', { value: 'win32' });
+${nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(nodeVersion)} });` : ""}
+require('node:os').homedir = () => ${JSON.stringify(home)};
+const childProcess = require('node:child_process');
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (command, args, options) => command === 'adb'
+  ? { status: 0, stdout: '', stderr: '' }
+  : originalSpawnSync(command, args, options);
+` + SshDeviceScript.remoteDeviceScript("fixture", mode),
+      );
+      return exec(node, [script], { env: { ...process.env, PATH: npmPath } });
+    };
+    expect(JSON.parse((await invoke("probe")).stdout).nodePath).toBe(node);
+    await expect(invoke("start")).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "Installing expo-device-hub: exit code 23: fixture registry unavailable",
+      ),
+    });
+    const invocations = (await NodeFSP.readFile(calls, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(invocations).toEqual([
+      { node, args: ["--version"] },
+      {
+        node,
+        args: [
+          "install",
+          "--prefix",
+          expect.stringContaining(home),
+          "--no-fund",
+          "--no-audit",
+          `expo-device-hub@${DEVICE_HUB_VERSION}`,
+        ],
+      },
+    ]);
+    await NodeFSP.writeFile(
+      npm,
+      "console.error('fixture npm configuration invalid'); process.exitCode = 17;",
+    );
+    await expect(invoke("probe")).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        "npm probe failed: exit code 17: fixture npm configuration invalid",
+      ),
+    });
+    await NodeFSP.writeFile(
+      npm,
+      "console.log('fixture stdout-only failure'); process.exitCode = 19;",
+    );
+    for (const mode of ["probe", "start"] as const) {
+      await expect(invoke(mode)).rejects.toMatchObject({
+        stderr: expect.stringContaining("exit code 19: fixture stdout-only failure"),
+      });
+    }
+    await expect(invoke("probe", "", "18.0.0")).rejects.toMatchObject({
+      stderr: expect.stringContaining(`Found 18.0.0 at ${node}.`),
+    });
+    await NodeFSP.rm(npm);
+    await expect(invoke("probe")).rejects.toMatchObject({
+      stderr: expect.stringContaining("npm is missing:"),
+    });
+    const fallback = NodePath.join(home, "npm on PATH");
+    const fallbackEntry = NodePath.join(fallback, "node_modules/npm/bin/npm-cli.js");
+    await NodeFSP.mkdir(NodePath.dirname(fallbackEntry), { recursive: true });
+    await NodeFSP.writeFile(fallbackEntry, "console.log('11.0.0');");
+    expect(JSON.parse((await invoke("probe", `"${fallback}"`)).stdout).nodePath).toBe(node);
+  } finally {
+    await NodeFSP.rm(home, { recursive: true, force: true });
+  }
+});
+
+it.effect.each([{ supported: true }, { supported: false }])(
+  "preserves a working SSH Node/npm pair and replaces an old Node: supported=$supported",
+  ({ supported }) =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      yield* Effect.promise(async () => {
+        const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-path-"));
+        try {
+          const bin = NodePath.join(home, "selected-node/bin");
+          const fallback = NodePath.join(home, ".local/bin");
+          const sdk = NodePath.join(home, "android-sdk");
+          const jvm = NodePath.join(home, "java-home");
+          await NodeFSP.mkdir(bin, { recursive: true });
+          await NodeFSP.mkdir(fallback, { recursive: true });
+          for (const [tool, directory] of [
+            ["adb", NodePath.join(sdk, "platform-tools")],
+            ["java", NodePath.join(jvm, "bin")],
+          ] as const) {
+            await NodeFSP.mkdir(directory, { recursive: true });
+            await NodeFSP.writeFile(
+              NodePath.join(directory, tool),
+              `#!/bin/sh\necho configured-${tool}\n`,
+              { mode: 0o755 },
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(fallback, tool),
+              `#!/bin/sh\necho wrong-${tool}\n`,
+              { mode: 0o755 },
+            );
+          }
+          for (const tool of ["node", "npm"]) {
+            await NodeFSP.writeFile(
+              NodePath.join(bin, tool),
+              `#!/bin/sh\nif [ "$1" = "-e" ]; then exit ${supported ? 0 : 1}; fi\necho selected\n`,
+              {
+                mode: 0o755,
+              },
+            );
+            await NodeFSP.writeFile(
+              NodePath.join(fallback, tool),
+              '#!/bin/sh\nif [ "$1" = "-e" ]; then exit 0; fi\necho fallback\n',
+              {
+                mode: 0o755,
+              },
+            );
+          }
+          const result = await exec(
+            "/bin/sh",
+            [
+              "-c",
+              `${SshDeviceScript.remoteDeviceEnvironment({ nodeBootstrap: true })}\nnode; npm; adb; java`,
+            ],
+            {
+              env: { HOME: home, PATH: bin, JAVA_HOME: jvm, ANDROID_HOME: sdk },
+            },
+          );
+          expect(result.stdout).toBe(
+            (supported ? "selected\nselected\n" : "fallback\nfallback\n") +
+              "configured-adb\nconfigured-java\n",
+          );
+        } finally {
+          await NodeFSP.rm(home, { recursive: true, force: true });
+        }
+      });
+    }),
+);
 
 it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
@@ -25,9 +238,13 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
           "#!/bin/sh\necho test-java\n",
           { mode: 0o755 },
         );
-        const result = await exec("/bin/sh", ["-c", `${remoteDeviceEnvironment}\njava`], {
-          env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
-        });
+        const result = await exec(
+          "/bin/sh",
+          ["-c", `${SshDeviceScript.remoteDeviceEnvironment()}\njava`],
+          {
+            env: { HOME: home, PATH: "/nonexistent", JAVA_HOME: "" },
+          },
+        );
         expect(result.stdout.trim()).toBe("test-java");
       } finally {
         await NodeFSP.rm(home, { recursive: true, force: true });
@@ -41,7 +258,7 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
     if ((yield* HostProcess.Platform) === "win32") return;
     yield* Effect.promise(async () => {
       const value = "quotes ' \" ; $(echo expanded) $HOME\nnext line";
-      const result = await exec("sh", ["-c", `printf %s ${quoteRemoteArg(value)}`]);
+      const result = await exec("sh", ["-c", `printf %s ${SshDeviceScript.quoteRemoteArg(value)}`]);
       expect(result.stdout).toBe(value);
     });
   }),
@@ -99,7 +316,7 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
           await NodeFSP.writeFile(
             file,
             `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
-              remoteDeviceScript(owner, mode)
+              SshDeviceScript.remoteDeviceScript(owner, mode)
                 .replace(DEVICE_HUB_VERSION, upgraded ? nextHubVersion : DEVICE_HUB_VERSION)
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
@@ -199,7 +416,7 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
           ).toBe(String(upgradedDaemon.pid));
           expect(repaired.daemonPort).not.toBe(upgraded.daemonPort);
           // Stop still uses the recorded entry when a future pinned package is not installed yet.
-          const originalScript = remoteDeviceScript("one", "stop-agent");
+          const originalScript = SshDeviceScript.remoteDeviceScript("one", "stop-agent");
           const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");
           await NodeFSP.writeFile(
             upgradedStop,
