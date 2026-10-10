@@ -838,7 +838,7 @@ Native human preview screenshots retain the original guest and acquire a unique 
 
 The desktop Screenshot action uses `PreviewManager.captureScreenshot`. Environment-server snapshots use CDP and bypass this helper; annotation capture remains separate. Deleted desktop agent automation and takeover paths stay deleted. Browser-only, mobile, providers, and wire contracts have no customization delta.
 
-Focused coverage lives in `apps/desktop/src/preview/Manager.test.ts` and `apps/desktop/src/ipc/methods/preview.test.ts`. The shared Manager fixture must retain the still-image paint controls when recording fixtures are combined. [PREVIEW_SCREENSHOTS.md](PREVIEW_SCREENSHOTS.md) and the branch's ignored `BRANCH_DETAILS.md` retain exact-source native evidence and limitations. Rebuilding source does not establish a new installed-build, locked-state, live-recording coexistence, or guaranteed fallback-freshness result. Verification must not initiate OS sleep, wake, display, lock, unlock, power, or security changes.
+Focused coverage lives in `apps/desktop/src/preview/Manager.test.ts` and `apps/desktop/src/ipc/methods/preview.test.ts`. The shared Manager fixture retains both recording controls and still-image paint controls in one VM-backed import; neither branch may replace the other fixture contract. [PREVIEW_SCREENSHOTS.md](PREVIEW_SCREENSHOTS.md) and the branch's ignored `BRANCH_DETAILS.md` retain exact-source native evidence and limitations. Rebuilding source does not establish a new installed-build, locked-state, live-recording coexistence, or guaranteed fallback-freshness result. Verification must not initiate OS sleep, wake, display, lock, unlock, power, or security changes.
 
 ## Preview recording startup without foreground focus
 

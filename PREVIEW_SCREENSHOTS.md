@@ -1,4 +1,10 @@
-# Native screenshot status
+# Native background preview screenshots
+
+The current standalone input is `4b7c7a3124d7e5f42af34ca0e6a22f964d36c31b` above pinned base `348f217a853dd4a23d7fa4834dedb05f545c2075`. Its customization remains a unique screenshot rendering consumer, isolated-world paint confirmation through the owned debugger, discarded warmup and final native readback. Failed warmup is best effort; replaced guests, interruption and final-readback errors propagate. The combined Manager fixture keeps the recording and still-image controls together.
+
+Focused source checks cover Manager and native preview IPC. They establish source composition, not a newly built desktop's native acquisition or physical locked/display-off behavior. No artifact build or OS-state transition is authorized by a source rebuild. The current branch has no standalone accessory file; its ignored BRANCH_DETAILS.md and the update receipt in `C:/Users/Quicksaver/AppData/Local/Temp/t3-unattended-20261014/preview-background-screenshots-update-receipt.json` retain the exact-source evidence. The older publication account below is historical; PR 17242 is now closed.
+
+## Historical source notes
 
 Current-state babysitting on 2026-10-13 is complete with no actionable new work. Local, origin tracking, live remote, PR and check SHA remain `1f35a8f7b455cbc253634f9c307e55d94271233e`, directly above fixed `e82a1ce3`. PR #17242 is OPEN/MERGEABLE/CLEAN. All 26 check runs completed, 22 successful and four skipped; all eight required contexts pass or skip, and CodeRabbit status is SUCCESS. Its substantive review still covers historical `581d6f0c`. All 13 comment/review records match publication, and the sole thread remains resolved. Existing source fixes and written dispositions remain valid. No code, commit, push, remote reply, review request, Magi round or integrated UI verification was needed. T3 rejected this subagent's watch request because monitoring belongs to the parent; no polling or sleep followed. Receipts and per-ID outcomes are in `.piz/proof/babysit-1f35a8f7-20261013`. No Git/runtime artifact or nested task was created, fixed ports are free and the runtime ledger is empty. This pass owns only ignored receipts and context/ledger updates; earlier resources and evidence remain preserved. The following publication account retains its original timing.
 
