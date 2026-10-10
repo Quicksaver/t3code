@@ -3,6 +3,8 @@ import {
   CommandId,
   ComposerContextId,
   EnvironmentId,
+  MagiParticipantId,
+  type MagiRunConfig,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -183,6 +185,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  setComposerDraftMagiArm,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -195,6 +198,17 @@ import {
   undoComposerDraftMergeState,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
+
+const MAGI_ARM: MagiRunConfig = {
+  participants: ["a", "b"].map((id) => ({
+    participantId: MagiParticipantId.make(id),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+    personalityId: null,
+    weight: 1,
+  })),
+  consensusThresholdPercent: 100,
+  magiTurnLimit: 1,
+};
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -1900,6 +1914,40 @@ describe("mobile composer drafts", () => {
     expect(moved.project).toEqual({ ...to, createdAt });
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), from)).toEqual([]);
     expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), to)).toEqual([key]);
+  });
+
+  it("keeps a Magi arm on a project move but drops it across environments", () => {
+    const key = createNewTaskDraft({
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    });
+    setComposerDraftMagiArm(key, MAGI_ARM);
+
+    retargetNewTaskDraft(key, {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-2"),
+    });
+    expect(getComposerDraftSnapshot(key).magiArm).toEqual(MAGI_ARM);
+
+    // Arm configs name provider instances of the environment they were built on.
+    retargetNewTaskDraft(key, {
+      environmentId: EnvironmentId.make("environment-2"),
+      projectId: ProjectId.make("project-3"),
+    });
+    expect(getComposerDraftSnapshot(key).magiArm).toBeUndefined();
+  });
+
+  it("keeps an empty new-task draft's project stamp when its Magi arm is removed", () => {
+    const project = {
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    };
+    const key = createNewTaskDraft(project);
+    setComposerDraftMagiArm(key, MAGI_ARM);
+    setComposerDraftMagiArm(key, null);
+
+    expect(getComposerDraftSnapshot(key).project).toMatchObject(project);
+    expect(findNewTaskDraftKeys(appAtomRegistry.get(composerDraftsAtom), project)).toEqual([key]);
   });
 
   it("hydrates the global sticky model selection", () => {

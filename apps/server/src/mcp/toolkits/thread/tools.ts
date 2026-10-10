@@ -26,6 +26,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
@@ -56,6 +57,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
+    MagiParticipantPolicy.MagiParticipantPolicy,
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
@@ -71,6 +73,11 @@ const commandTool = {
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
+};
+// Commands on another thread, restricted for a Magi participant's subtree.
+const participantGatedCommandTool = {
+  ...commandTool,
+  dependencies: [...commandTool.dependencies, MagiParticipantPolicy.MagiParticipantPolicy],
 };
 const queueEntry = Schema.Struct({
   queuedRunId: RunId,
@@ -102,7 +109,7 @@ const QueueReadTool = Tool.make("t3_queue_read", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const QueueEditTool = Tool.make("t3_queue_edit", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Replace a queued message's text, preserving its attachments. The service rejects runs that are no longer queued.",
   parameters: Schema.Struct({
@@ -111,17 +118,17 @@ const QueueEditTool = Tool.make("t3_queue_edit", {
   }),
 }).annotate(Tool.Destructive, true);
 const QueueCancelTool = Tool.make("t3_queue_cancel", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description: "Cancel a queued run using the existing queue command.",
   parameters: Schema.Struct(queueTarget),
 }).annotate(Tool.Destructive, true);
 const QueueReorderTool = Tool.make("t3_queue_reorder", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description: "Move a queued run before another queued run, or to the end with beforeRunId=null.",
   parameters: Schema.Struct({ ...queueTarget, beforeRunId: Schema.NullOr(RunId) }),
 }).annotate(Tool.Destructive, true);
 const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Deliver a queued message as steering to the specified active run. Existing provider and run-state rules apply.",
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
@@ -167,7 +174,7 @@ const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
   parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
@@ -201,7 +208,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 
 const transferResult = Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId });
 const ThreadForkTool = Tool.make("t3_thread_fork", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Fork a thread from a stable run or checkpoint using the existing fork command. Omit threadId to fork this thread. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
   parameters: Schema.Struct({
@@ -212,7 +219,7 @@ const ThreadForkTool = Tool.make("t3_thread_fork", {
   success: transferResult,
 }).annotate(Tool.Destructive, true);
 const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Merge context from a thread back to a related thread in the same project. Omit sourceThreadId to merge from this thread. Existing lineage and transfer rules apply.",
   parameters: Schema.Struct({
@@ -266,7 +273,10 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
     runCount: NonNegativeInt,
     nextRunAt: ScheduledTask.fields.nextRunAt,
   }),
-  dependencies: [...commandTool.dependencies, ScheduledTaskService.ScheduledTaskService],
+  dependencies: [
+    ...participantGatedCommandTool.dependencies,
+    ScheduledTaskService.ScheduledTaskService,
+  ],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);

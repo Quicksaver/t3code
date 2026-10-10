@@ -1,4 +1,9 @@
-import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
+import {
+  MAGI_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
+  WS_METHODS,
+  type WsRpcGroup,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
@@ -15,6 +20,18 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
  * prefix. Adding an RPC to `WsRpcGroup` without a label is a type error.
  */
 const RPC_AGGREGATES = {
+  [MAGI_WS_METHODS.getOptions]: "magi",
+  [MAGI_WS_METHODS.getSettings]: "magi",
+  [MAGI_WS_METHODS.updateSettings]: "magi",
+  [MAGI_WS_METHODS.resetSettings]: "magi",
+  [MAGI_WS_METHODS.armThread]: "magi",
+  [MAGI_WS_METHODS.getArm]: "magi",
+  [MAGI_WS_METHODS.disarmThread]: "magi",
+  [MAGI_WS_METHODS.listRuns]: "magi",
+  [MAGI_WS_METHODS.getRunDetail]: "magi",
+  [MAGI_WS_METHODS.subscribeThreadRuns]: "magi",
+  [MAGI_WS_METHODS.subscribeRunDetail]: "magi",
+  [MAGI_WS_METHODS.exportDiagnostics]: "magi",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: "orchestration",

@@ -31,6 +31,7 @@ import {
   timelineEntryTurnFoldRunId,
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
+  resolveMagiActivityPlacement,
   liveWorkEntryLabel,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -391,6 +392,99 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("resolveMagiActivityPlacement", () => {
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    createdAt: string,
+    runId: RunId | null = null,
+  ): TimelineEntry => ({
+    id: `entry-${id}`,
+    kind: "message",
+    createdAt,
+    message: {
+      id: MessageId.make(id),
+      role,
+      text: id,
+      runId,
+      createdAt,
+      updatedAt: createdAt,
+      streaming: false,
+    },
+  });
+  const rowsFor = (timelineEntries: ReadonlyArray<TimelineEntry>) =>
+    deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: true,
+    });
+
+  it("anchors the latest Magi summary after the user message that started it", () => {
+    const rows = rowsFor([
+      message("user-1", "user", "2026-01-01T00:00:00Z"),
+      message("assistant-1", "assistant", "2026-01-01T00:00:05Z"),
+      message("user-2", "user", "2026-01-01T00:01:00Z"),
+      message("assistant-2", "assistant", "2026-01-01T00:01:10Z"),
+    ]);
+
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:01:01Z")).toEqual({
+      rowId: "entry-assistant-2",
+      position: "before",
+    });
+  });
+
+  it("places the summary after the initiating message while the turn has no reply yet", () => {
+    const rows = rowsFor([message("user", "user", "2026-01-01T00:00:00Z")]);
+
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:00:01Z")).toEqual({
+      rowId: "entry-user",
+      position: "after",
+    });
+  });
+
+  it("keeps the summary attached to its turn when the turn's work folds", () => {
+    const runId = RunId.make("run-1");
+    const rows = rowsFor([
+      message("user", "user", "2026-01-01T00:00:00Z", runId),
+      {
+        id: "entry-command",
+        kind: "work",
+        createdAt: "2026-01-01T00:00:02Z",
+        entry: {
+          id: "command",
+          createdAt: "2026-01-01T00:00:02Z",
+          runId,
+          label: "Ran command",
+          itemType: "command_execution",
+          tone: "tool",
+        },
+      },
+      message("assistant", "assistant", "2026-01-01T00:00:05Z", runId),
+    ]);
+
+    expect(rows.map((row) => row.id)).toEqual(["entry-user", "turn-fold:run-1", "entry-assistant"]);
+    expect(resolveMagiActivityPlacement(rows, "2026-01-01T00:00:01Z")).toEqual({
+      rowId: "turn-fold:run-1",
+      position: "before",
+    });
+  });
+
+  it("falls back to the end of the timeline without a start time", () => {
+    const rows = rowsFor([
+      message("user", "user", "2026-01-01T00:00:00Z"),
+      message("assistant", "assistant", "2026-01-01T00:00:05Z"),
+    ]);
+
+    expect(resolveMagiActivityPlacement(rows, null)).toEqual({
+      rowId: "entry-assistant",
+      position: "after",
+    });
+    expect(resolveMagiActivityPlacement([], "2026-01-01T00:00:01Z")).toBeNull();
   });
 });
 

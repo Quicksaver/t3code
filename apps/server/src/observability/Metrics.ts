@@ -89,6 +89,34 @@ export const secretRefsConsumedTotal = Metric.counter("t3_secret_refs_consumed_t
   description: "Secret refs tools tried to use, by result.",
 });
 
+export const magiRunsTotal = Metric.counter("t3_magi_runs_total", {
+  description: "Total Magi runs started, correlated by source and terminal outcome.",
+});
+
+export const magiTurnsTotal = Metric.counter("t3_magi_turns_total", {
+  description: "Total Magi deliberation turns completed.",
+});
+
+export const magiParticipantTurnsTotal = Metric.counter("t3_magi_participant_turns_total", {
+  description: "Total Magi participant turns by provider outcome and parse mode.",
+});
+
+export const magiParticipantTurnDuration = Metric.timer("t3_magi_participant_turn_duration", {
+  description: "Duration of one Magi participant turn.",
+});
+
+export const magiParticipantTokensTotal = Metric.counter("t3_magi_participant_tokens_total", {
+  description: "Provider-reported Magi participant tokens by direction.",
+});
+
+export const magiProposalsTotal = Metric.counter("t3_magi_proposals_total", {
+  description: "Total Magi proposals observed during arbitration.",
+});
+
+export const magiActionsTotal = Metric.counter("t3_magi_actions_total", {
+  description: "Total Magi actions issued or reconciled.",
+});
+
 export const metricAttributes = (
   attributes: Readonly<Record<string, unknown>>,
 ): ReadonlyArray<[string, string]> => Object.entries(compactMetricAttributes(attributes));

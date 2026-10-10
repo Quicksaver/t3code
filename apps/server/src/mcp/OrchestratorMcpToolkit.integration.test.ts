@@ -73,6 +73,8 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
+import { ProjectionMagiRepository } from "../persistence/ProjectionMagi.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -496,6 +498,13 @@ const layerMemorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, (
   });
 });
 
+// These conversations are not Magi participants; the policy then leaves every tool available.
+const noMagiParticipantsPolicyLayer = MagiParticipantPolicy.layerFromServices.pipe(
+  Layer.provide(
+    Layer.mock(ProjectionMagiRepository)({ findParticipantThreads: () => Effect.succeed([]) }),
+  ),
+);
+
 const layerUnusedScheduledTaskStub = Layer.succeed(
   ScheduledTaskService.ScheduledTaskService,
   ScheduledTaskService.ScheduledTaskService.of({
@@ -677,6 +686,7 @@ describe("orchestrator MCP toolkit", () => {
             McpHttpServer.layerThreadToolkit,
           ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provide(noMagiParticipantsPolicyLayer),
             Layer.provideMerge(layerOrchestration),
             Layer.provide(layerRegistry),
             Layer.provide(layerProviderRegistry),
@@ -3818,6 +3828,7 @@ describe("orchestrator MCP toolkit", () => {
         ]);
         const layerTest = McpHttpServer.layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(noMagiParticipantsPolicyLayer),
           Layer.provideMerge(layerOrchestration),
           Layer.provide(
             CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript).pipe(

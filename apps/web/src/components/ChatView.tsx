@@ -291,6 +291,8 @@ import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
 import { WizardPopup } from "./ui/wizard";
+import { MagiPanel } from "./magi/MagiPanel";
+import { useMagiRunHistory } from "./magi/useMagiRunHistory";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -1800,6 +1802,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerMagiArm = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.magiArm ?? null,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1813,6 +1818,7 @@ export default function ChatView(props: ChatViewProps) {
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftMagiArm = useComposerDraftStore((store) => store.setMagiArm);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -3001,6 +3007,16 @@ export default function ChatView(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const magiSupported = serverConfig?.environment.capabilities.magi === true;
+  const magiAvailable = magiSupported && (isServerThread || isLocalDraftThread);
+  const magiRunHistory = useMagiRunHistory(
+    magiSupported && isServerThread ? activeThreadRef : null,
+  );
+  // The history also lists subagents' runs; the timeline shows this conversation's own.
+  const latestMagiRun =
+    magiRunHistory.history?.runs.find((run) => run.rootThreadId === activeThreadRef?.threadId) ??
+    null;
+  const activeMagiRunCount = magiRunHistory.history?.activeRunCount ?? 0;
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -5577,6 +5593,10 @@ export default function ChatView(props: ChatViewProps) {
     );
     if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
   }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
+  const addMagiSurface = useCallback(() => {
+    if (!activeThreadRef || (!isServerThread && !isLocalDraftThread)) return;
+    useRightPanelStore.getState().open(activeThreadRef, "magi");
+  }, [activeThreadRef, isLocalDraftThread, isServerThread]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -9068,6 +9088,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
+    const magiArmSnapshot = composerMagiArm;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -9343,6 +9364,17 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
+    // A Magi arm starts one conversation; a fan-out would silently drop it.
+    if (multipleModelSelections !== null && magiArmSnapshot) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Magi is armed",
+          description: "Disarm Magi or choose a single model before sending.",
+        }),
+      );
+      return;
+    }
     const multipleTargets = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
@@ -9932,6 +9964,7 @@ export default function ChatView(props: ChatViewProps) {
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
+                    ...(magiArmSnapshot ? { magiArm: magiArmSnapshot } : {}),
                   }
                 : {}),
               ...(baseBranchForWorktree
@@ -10026,6 +10059,8 @@ export default function ChatView(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         setKeepFullHistory(routeThreadKey, false);
+        // The launch carried the arm; a failed send keeps it on the draft for the retry.
+        if (magiArmSnapshot) setComposerDraftMagiArm(composerDraftTarget, null);
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -11099,6 +11134,46 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "magi" && activeThreadRef && magiAvailable ? (
+      <MagiPanel
+        key={activeThreadKey}
+        environmentId={activeThreadRef.environmentId}
+        threadId={activeThreadRef.threadId}
+        isVisible={rightPanelOpen}
+        history={magiRunHistory.history}
+        historyLoading={magiRunHistory.loading}
+        historyFailed={magiRunHistory.failed}
+        revealRun={
+          renderedRightPanelSurface.revealRunId !== undefined &&
+          renderedRightPanelSurface.revealRequestId !== undefined
+            ? {
+                runId: renderedRightPanelSurface.revealRunId,
+                requestId: renderedRightPanelSurface.revealRequestId,
+              }
+            : undefined
+        }
+        providers={providerStatuses}
+        settings={settings}
+        readiness={{
+          activeTurn: isWorking,
+          pendingApproval: pendingApprovals.length > 0,
+          pendingUserInput: pendingUserInputs.length > 0,
+          submissionInFlight: isSendBusy,
+        }}
+        {...(isLocalDraftThread
+          ? {
+              draftArm: composerMagiArm,
+              onDraftArmChange: (config) => setComposerDraftMagiArm(composerDraftTarget, config),
+            }
+          : {})}
+      />
+    ) : renderedRightPanelSurface?.kind === "magi" ? (
+      // A restored Magi tab on an environment or conversation without Magi.
+      serverConfig === null ? null : (
+        <p className="p-5 text-sm text-muted-foreground">
+          Magi is not available for this conversation.
+        </p>
+      )
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11452,6 +11527,8 @@ export default function ChatView(props: ChatViewProps) {
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
+                latestMagiRun={paintOnlyDisplayedTimeline ? null : latestMagiRun}
+                {...(!paintOnlyDisplayedTimeline ? { onOpenMagi: addMagiSurface } : {})}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={
@@ -12004,11 +12081,14 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurface}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
+          onAddMagi={addMagiSurface}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          magiAvailable={magiAvailable}
+          activeMagiRunCount={activeMagiRunCount}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -12063,11 +12143,14 @@ export default function ChatView(props: ChatViewProps) {
             onAddDevice={addDeviceSurface}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
+            onAddMagi={addMagiSurface}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
+            magiAvailable={magiAvailable}
+            activeMagiRunCount={activeMagiRunCount}
           >
             {rightPanelContent}
           </RightPanelTabs>

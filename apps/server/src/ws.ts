@@ -43,7 +43,8 @@ import {
   type OrchestrationV2Command,
   type GitActionProgressEvent,
   type GitManagerServiceError,
-  type MessageId,
+  MessageId,
+  type OrchestrationV2ThreadLaunchInput,
   type AcpRegistryImportSessionInput,
   type AcpRegistryDeleteSessionInput,
   type AcpRegistryDisableProviderInput,
@@ -54,6 +55,8 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationV2SearchThreadError,
   OrchestrationGetTurnDiffError,
+  MagiValidationError,
+  MAGI_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -120,6 +123,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import { MagiService } from "./magi/MagiService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -1292,6 +1296,7 @@ const layerWsRpc = (
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const magi = yield* MagiService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1823,7 +1828,73 @@ const layerWsRpc = (
         return result;
       });
 
+      // A user message consumes the conversation's pending Magi arm; MagiService keeps the arm
+      // pending when the message is not accepted.
+      const withMagiArmedMessage = <A, E, R>(
+        command: OrchestrationV2Command,
+        dispatch: (command: OrchestrationV2Command) => Effect.Effect<A, E, R>,
+      ) =>
+        command.type !== "message.dispatch"
+          ? dispatch(command)
+          : magi.sendArmedMessage(
+              {
+                threadId: command.threadId,
+                messageId: command.messageId,
+                text: command.text,
+                context: command.context,
+                attachments: command.attachments,
+              },
+              (message) => dispatch({ ...command, ...message }),
+            );
+      const withMagiArmedLaunch = <A, E, R>(
+        input: OrchestrationV2ThreadLaunchInput,
+        launch: (
+          initialMessage: OrchestrationV2ThreadLaunchInput["initialMessage"],
+        ) => Effect.Effect<A, E, R>,
+      ) => {
+        const initialMessage = input.initialMessage;
+        if (input.magiArm === undefined || initialMessage === undefined) {
+          return launch(initialMessage);
+        }
+        if (input.threadId === undefined) {
+          return Effect.fail(
+            new MagiValidationError({
+              reason: "invalid-config",
+              message: "Arming Magi for a new thread requires its thread id.",
+              field: "threadId",
+            }),
+          );
+        }
+        // A stable message id lets a retried launch find the message and arm it already has.
+        const messageId =
+          initialMessage.messageId ?? MessageId.make(`${input.commandId}:magi-initial-message`);
+        return magi.sendArmedMessage(
+          {
+            threadId: input.threadId,
+            messageId,
+            text: initialMessage.text,
+            context: initialMessage.context,
+            attachments: initialMessage.attachments,
+            config: input.magiArm,
+          },
+          (message) => launch({ ...initialMessage, ...message, messageId }),
+        );
+      };
+
       const handlers = ServerWsRpcGroup.of({
+        [MAGI_WS_METHODS.getOptions]: () => magi.getOptions,
+        [MAGI_WS_METHODS.getSettings]: () => magi.getSettings,
+        [MAGI_WS_METHODS.updateSettings]: (input) => magi.updateSettings(input),
+        [MAGI_WS_METHODS.resetSettings]: (input) => magi.resetSettings(input.target),
+        [MAGI_WS_METHODS.armThread]: (input) => magi.armThread(input),
+        [MAGI_WS_METHODS.getArm]: (input) => magi.getArm(input.threadId),
+        [MAGI_WS_METHODS.disarmThread]: (input) =>
+          magi.disarmThread(input.threadId, input.expectedRevision),
+        [MAGI_WS_METHODS.listRuns]: (input) => magi.listRuns(input),
+        [MAGI_WS_METHODS.getRunDetail]: (input) => magi.getRunDetail(input),
+        [MAGI_WS_METHODS.subscribeThreadRuns]: (input) => magi.subscribeThreadRuns(input),
+        [MAGI_WS_METHODS.subscribeRunDetail]: (input) => magi.subscribeRunDetail(input),
+        [MAGI_WS_METHODS.exportDiagnostics]: (input) => magi.exportDiagnostics(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -1848,12 +1919,14 @@ const layerWsRpc = (
                   // A retry also restarts the preparation work the launch owns.
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
-                    : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                    : withMagiArmedMessage(command, (armed) =>
+                        ThreadMessageIntake.dispatchCommand(
+                          ThreadManagementService.withCreationProvenance(armed, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -1963,38 +2036,40 @@ const layerWsRpc = (
             Effect.andThen(
               startup
                 .enqueueCommand(
-                  ThreadMessageIntake.launchThread({
-                    commandId: input.commandId,
-                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
-                    ...(input.reuseExistingThread === undefined
-                      ? {}
-                      : { reuseExistingThread: input.reuseExistingThread }),
-                    projectId: input.projectId,
-                    title: input.title,
-                    ...(input.generateTitle === undefined
-                      ? {}
-                      : { generateTitle: input.generateTitle }),
-                    modelSelection: input.modelSelection,
-                    runtimeMode: input.runtimeMode,
-                    interactionMode: input.interactionMode,
-                    workspaceStrategy: input.workspaceStrategy,
-                    ...(input.initialMessage === undefined
-                      ? {}
-                      : {
-                          initialMessage: {
-                            ...(input.initialMessage.messageId === undefined
-                              ? {}
-                              : { messageId: input.initialMessage.messageId }),
-                            text: input.initialMessage.text,
-                            attachments: input.initialMessage.attachments,
-                            ...(input.initialMessage.context === undefined
-                              ? {}
-                              : { context: input.initialMessage.context }),
-                          },
-                        }),
-                    createdBy: "user",
-                    creationSource: input.creationSource ?? "web",
-                  }).pipe(Effect.provide(intakeContext)),
+                  withMagiArmedLaunch(input, (initialMessage) =>
+                    ThreadMessageIntake.launchThread({
+                      commandId: input.commandId,
+                      ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                      ...(input.reuseExistingThread === undefined
+                        ? {}
+                        : { reuseExistingThread: input.reuseExistingThread }),
+                      projectId: input.projectId,
+                      title: input.title,
+                      ...(input.generateTitle === undefined
+                        ? {}
+                        : { generateTitle: input.generateTitle }),
+                      modelSelection: input.modelSelection,
+                      runtimeMode: input.runtimeMode,
+                      interactionMode: input.interactionMode,
+                      workspaceStrategy: input.workspaceStrategy,
+                      ...(initialMessage === undefined
+                        ? {}
+                        : {
+                            initialMessage: {
+                              ...(initialMessage.messageId === undefined
+                                ? {}
+                                : { messageId: initialMessage.messageId }),
+                              text: initialMessage.text,
+                              attachments: initialMessage.attachments,
+                              ...(initialMessage.context === undefined
+                                ? {}
+                                : { context: initialMessage.context }),
+                            },
+                          }),
+                      createdBy: "user",
+                      creationSource: input.creationSource ?? "web",
+                    }),
+                  ).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
                   Effect.tap(() =>
@@ -2014,6 +2089,13 @@ const layerWsRpc = (
                     projection: projectThreadProjectionForWire(result.projection),
                   })),
                   Effect.catchTags({
+                    MagiValidationError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                     AttachmentClaimError: (cause) =>
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
