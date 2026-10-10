@@ -3,6 +3,7 @@ import { followStreamInEnvironment } from "./environmentStreams.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   type EnvironmentId as EnvironmentIdType,
 } from "@t3tools/contracts";
@@ -365,10 +366,11 @@ export async function executeAtomQuery<A, E>(
   options: AtomQueryOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
+  const hasCachedNode = options.refresh ? registry.getNodes().has(atom) : false;
   const query = Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
-      if (options.refresh) {
+      if (hasCachedNode) {
         yield* Effect.sync(() => {
           // Only a settled value can be a leftover from an earlier read; a
           // computation that mounting just started is already fresh.
@@ -776,6 +778,10 @@ export function createEnvironmentRpcCommand<
         readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
+      exit: Exit.Exit<
+        EnvironmentRpcSuccess<TTag>,
+        EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError | EnvironmentAuthorizationError
+      >,
     ) => Effect.Effect<void, never, R>;
   },
 ) {
@@ -798,7 +804,7 @@ export function createEnvironmentRpcCommand<
             createCommandPermissions(runtime, method).authorize(registry, id, payload),
         }),
         Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
-        Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+        Effect.onExit((exit) => options.onSettled?.(target, registry, exit) ?? Effect.void),
       );
     },
   });

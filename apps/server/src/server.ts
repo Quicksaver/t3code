@@ -105,6 +105,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as Observability from "./observability/Observability.ts";
@@ -340,13 +341,14 @@ const layerRepositoryIdentityResolver = Layer.effect(
   }),
 ).pipe(Layer.provide(layerSourceControlProviderRegistry), Layer.provide(ProcessRunner.layer));
 
+const layerSourceControlRateLimit = SourceControlRateLimit.layer;
 const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
   // Where the viewed-file marks live for a host that keeps none of its own.
   Layer.provide(PullRequestFilesViewed.layer),
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(layerSourceControlProviderRegistry),
-  Layer.provide(SourceControlRateLimit.layer),
+  Layer.provide(layerSourceControlRateLimit),
 );
 
 const layerGitManager = GitManager.layer.pipe(
@@ -378,6 +380,17 @@ const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
   Layer.provide(layerSourceControlRepositoryService),
 );
 
+const layerSourceControlPanelService = SourceControlPanelService.layer.pipe(
+  // Project-scoped writer and style overrides resolve the panel cwd's project.
+  Layer.provide(ProjectStore.layer),
+  Layer.provideMerge(layerGitWorkflow),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerSourceControlProviderRegistry),
+  Layer.provide(layerSourceControlRateLimit),
+  Layer.provideMerge(TextGeneration.layer.pipe(Layer.provide(layerSourceControlProviderRegistry))),
+  Layer.provideMerge(layerServerSettings),
+);
+
 const layerReview = ReviewService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
@@ -391,6 +404,7 @@ const layerVcs = Layer.empty.pipe(
   Layer.provideMerge(layerReview),
   Layer.provideMerge(layerSourceControlRepositoryService),
   Layer.provideMerge(layerProjectCloneTracker),
+  Layer.provideMerge(layerSourceControlPanelService),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(layerGitWorkflow),

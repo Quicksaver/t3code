@@ -13,12 +13,14 @@ import {
   requiresDefaultBranchConfirmation,
   resolveQuickAction,
 } from "@t3tools/client-runtime/state/vcs";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useCallback, useMemo } from "react";
 import { Alert } from "react-native";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentScope } from "../../state/session";
+import { serverEnvironment } from "../../state/server";
 import {
   basename,
   getTerminalStatusLabel,
@@ -130,6 +132,14 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus?.isDefaultRef ?? false;
+  // Servers from before the Version Control panel reject every vcs.panel.* request.
+  const supportsVersionControl = useAtomValue(
+    serverEnvironment.configValueAtom(EnvironmentId.make(String(environmentId))),
+    (config) => config?.environment.capabilities.sourceControlPanel === true,
+  );
+  const versionControlSubtitle = supportsVersionControl
+    ? "Actionable branches, stashes, and remotes"
+    : "Update this environment's T3 Code server to use Version Control";
 
   const quickAction = useMemo(() => {
     if (!isRepo) {
@@ -262,16 +272,26 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     });
   }, [environmentId, props.onOpenGitInspector, navigation, threadId]);
 
+  const openVersionControl = useCallback(() => {
+    navigation.navigate("VersionControl", {
+      environmentId: String(environmentId),
+      threadId: String(threadId),
+    });
+  }, [environmentId, navigation, threadId]);
+
   return {
     currentBranchLabel,
     isRepo,
     openFiles,
     openGitInspector,
     openReview,
+    openVersionControl,
     quickAction,
     quickActionHint,
     quickActionIcon,
     runQuickAction,
+    supportsVersionControl,
+    versionControlSubtitle,
   };
 }
 
@@ -406,6 +426,17 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               type: "action",
             },
             {
+              description: model.versionControlSubtitle,
+              disabled: !model.isRepo || !model.supportsVersionControl,
+              icon: {
+                name: "point.topleft.down.curvedto.point.bottomright.up",
+                type: "sfSymbol",
+              },
+              label: "Version Control",
+              onPress: model.openVersionControl,
+              type: "action",
+            },
+            {
               description: "Turn diffs and worktree changes",
               disabled: !model.isRepo,
               icon: { name: "text.bubble", type: "sfSymbol" },
@@ -445,11 +476,14 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       model.openFiles,
       model.openGitInspector,
       model.openReview,
+      model.openVersionControl,
       model.quickAction.disabled,
       model.quickAction.label,
       model.quickActionHint,
       model.quickActionIcon,
       model.runQuickAction,
+      model.supportsVersionControl,
+      model.versionControlSubtitle,
       props.canOpenFiles,
       props.canOpenTerminal,
       props.canOperateTerminal,
@@ -641,6 +675,14 @@ function threadGitMenuDefinition(
         onPress: () => {
           void model.runQuickAction();
         },
+      },
+      {
+        id: "git-version-control",
+        title: "Version Control",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        disabled: !model.isRepo || !model.supportsVersionControl,
+        subtitle: model.versionControlSubtitle,
+        onPress: model.openVersionControl,
       },
       {
         id: "git-review",

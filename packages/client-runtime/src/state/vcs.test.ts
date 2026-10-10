@@ -5,11 +5,13 @@ import {
   WS_METHODS,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsPanelSnapshotResult,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Latch from "effect/Latch";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -29,6 +31,7 @@ import * as Persistence from "../platform/persistence.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { executeAtomQuery } from "./runtime.ts";
 
 import {
   commitVcsRefsRefresh,
@@ -118,6 +121,265 @@ function cacheWithRefs(
 }
 
 describe("cached VCS refs", () => {
+  it.effect("reads post-fetch peer state independently of an older in-flight panel snapshot", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Latch.make();
+        const finishOlderRead = yield* Latch.make();
+        const behindCount = yield* Ref.make(0);
+        let reads = 0;
+        const client = {
+          [WS_METHODS.vcsPanelSnapshot]: () =>
+            Effect.gen(function* () {
+              const result: VcsPanelSnapshotResult = {
+                status: {
+                  isRepo: true,
+                  hasPrimaryRemote: true,
+                  isDefaultRef: true,
+                  refName: "main",
+                  hasWorkingTreeChanges: false,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                  hasUpstream: true,
+                  aheadCount: 0,
+                  behindCount: yield* Ref.get(behindCount),
+                  aheadOfDefaultCount: 0,
+                  pr: null,
+                },
+                changeGroups: [],
+                worktreeChangeSets: [],
+                localBranches: [],
+                branchDetails: [],
+                remotes: [],
+                actionableForkBranches: [],
+                stashes: [],
+                recentCommits: [],
+                defaultCompareRef: "origin/main",
+              };
+              if (++reads === 1) {
+                yield* started.open;
+                yield* finishOlderRead.await;
+              }
+              return result;
+            }),
+          [WS_METHODS.vcsPanelFetchBranch]: () => Ref.set(behindCount, 1),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                run,
+                followStream,
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const target = {
+          environmentId: TARGET.environmentId,
+          input: { cwd: "/repo", refresh: "full" as const },
+        };
+        const olderSnapshot = atoms.panelSnapshot(target);
+        yield* AtomRegistry.mount(registry, olderSnapshot);
+        yield* started.await;
+        const fetched = yield* Effect.promise(() =>
+          atoms.panelFetchBranch.run(registry, {
+            environmentId: TARGET.environmentId,
+            input: { cwd: "/repo", branchName: "main" },
+          }),
+        );
+        expect(AsyncResult.isSuccess(fetched)).toBe(true);
+
+        const fresh = yield* Effect.promise(() => atoms.readPanelSnapshot.run(registry, target));
+        expect(AsyncResult.isSuccess(fresh)).toBe(true);
+        if (AsyncResult.isSuccess(fresh)) expect(fresh.value.status.behindCount).toBe(1);
+        expect(reads).toBe(2);
+
+        yield* finishOlderRead.open;
+        const stale = yield* AtomRegistry.getResult(registry, olderSnapshot, {
+          suspendOnWaiting: true,
+        });
+        expect(stale.status.behindCount).toBe(0);
+      }),
+    ),
+  );
+
+  it.effect("reads post-mutation branch details independently of an older in-flight read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Latch.make();
+        const finishOlderRead = yield* Latch.make();
+        let reads = 0;
+        const client = {
+          [WS_METHODS.vcsPanelBranchDetails]: () =>
+            Effect.gen(function* () {
+              const read = ++reads;
+              if (read === 1) {
+                yield* started.open;
+                yield* finishOlderRead.await;
+              }
+              return { name: "main", aheadCommitsRemaining: read };
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                run,
+                followStream,
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const target = {
+          environmentId: TARGET.environmentId,
+          input: {
+            cwd: "/repo",
+            branch: { name: "main", current: true, isDefault: true, worktreePath: null },
+            defaultCompareRef: null,
+          },
+        };
+        const olderDetails = atoms.panelBranchDetails(target);
+        yield* AtomRegistry.mount(registry, olderDetails);
+        yield* started.await;
+
+        const fresh = yield* Effect.promise(() =>
+          atoms.readPanelBranchDetails.run(registry, target),
+        );
+        expect(AsyncResult.isSuccess(fresh)).toBe(true);
+        if (AsyncResult.isSuccess(fresh)) expect(fresh.value.aheadCommitsRemaining).toBe(2);
+        expect(reads).toBe(2);
+        yield* finishOlderRead.open;
+      }),
+    ),
+  );
+
+  it.effect("releases settled panel reads while keeping commit file lists cached", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const client = {
+          [WS_METHODS.vcsPanelReadFileDiff]: () =>
+            Effect.succeed({ path: "file.ts", staged: false, patch: "@@ -1 +1 @@" }),
+          [WS_METHODS.vcsPanelCommitFiles]: () => Effect.succeed({ files: [] }),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target: TARGET,
+          state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        });
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(
+              EnvironmentRegistry.EnvironmentRegistry,
+              EnvironmentRegistry.EnvironmentRegistry.of({
+                run,
+                followStream,
+              } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+            ),
+            Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+          ),
+        );
+        const atoms = createVcsEnvironmentAtoms(runtime);
+        // Registry tasks drain on microtasks; flushing them synchronously below
+        // makes the pending idle-node removals observable without timers.
+        const tasks: Array<() => void> = [];
+        const flushTasks = () => {
+          while (tasks.length > 0) tasks.shift()!();
+        };
+        const registry = yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            AtomRegistry.make({
+              scheduleTask: (task) => {
+                tasks.push(task);
+                queueMicrotask(flushTasks);
+                return () => {
+                  const index = tasks.indexOf(task);
+                  if (index >= 0) tasks.splice(index, 1);
+                };
+              },
+            }),
+          ),
+          (registry) => Effect.sync(() => registry.dispose()),
+        );
+        const diff = atoms.panelReadFileDiff({
+          environmentId: TARGET.environmentId,
+          input: { cwd: "/repo", path: "file.ts" },
+        });
+        const commitFiles = atoms.panelCommitFiles({
+          environmentId: TARGET.environmentId,
+          input: { cwd: "/repo", sha: "a".repeat(40) },
+        });
+
+        const diffResult = yield* Effect.promise(() =>
+          executeAtomQuery(registry, diff, { refresh: true }),
+        );
+        const filesResult = yield* Effect.promise(() => executeAtomQuery(registry, commitFiles));
+        expect(AsyncResult.isSuccess(diffResult)).toBe(true);
+        expect(AsyncResult.isSuccess(filesResult)).toBe(true);
+        flushTasks();
+
+        expect(registry.getNodes().has(diff)).toBe(false);
+        expect(registry.getNodes().has(commitFiles)).toBe(true);
+      }),
+    ),
+  );
+
   it("invalidates all ref streams in the mutated environment", () => {
     const registry = AtomRegistry.make();
     const environment = {
@@ -346,6 +608,129 @@ describe("cached VCS refs", () => {
         expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
       }),
     ),
+  );
+
+  it.effect(
+    "invalidates panel ref mutations on success and failure but excludes working-tree, stash, and skipped fetch-all actions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const expectedError = new EnvironmentRpcUnavailableError({
+            environmentId: TARGET.environmentId,
+            message: "fetch failed after updating a remote ref",
+          });
+          const fetchAllResults = [
+            Effect.succeed(false),
+            Effect.succeed(true),
+            Effect.fail(expectedError),
+          ];
+          const client = {
+            [WS_METHODS.vcsPanelCreateBranchFromCommit]: () =>
+              Effect.succeed({ refName: "feature/panel-cache" }),
+            [WS_METHODS.vcsPanelFetchRemote]: () => Effect.fail(expectedError),
+            [WS_METHODS.vcsPanelFetchAllRemotes]: () => fetchAllResults.shift()!,
+            [WS_METHODS.vcsPanelStageFiles]: () => Effect.void,
+            [WS_METHODS.vcsPanelCreateStash]: () => Effect.void,
+          } as unknown as WsRpcProtocolClient;
+          const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+            target: TARGET,
+            state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+            session: yield* SubscriptionRef.make(Option.some(session(client))),
+            prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+            connect: Effect.void,
+            disconnect: Effect.void,
+            retryNow: Effect.void,
+          } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+          const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+            _environmentId,
+            effect,
+          ) =>
+            Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+          const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+            run,
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+          const clears = yield* Ref.make(0);
+          const runtime = Atom.runtime(
+            Layer.merge(
+              Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+              Layer.succeed(
+                Persistence.EnvironmentCacheStore,
+                cacheWithRefs(Option.none(), {
+                  clearVcsRefs: () => Ref.update(clears, (count) => count + 1),
+                }),
+              ),
+            ),
+          );
+          const atoms = createVcsEnvironmentAtoms(runtime);
+          const registry = yield* Effect.acquireRelease(
+            Effect.sync(AtomRegistry.make),
+            (registry) => Effect.sync(() => registry.dispose()),
+          );
+
+          const created = yield* Effect.promise(() =>
+            atoms.panelCreateBranchFromCommit.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: {
+                cwd: "/repo",
+                sha: "abc123",
+                branchName: "feature/panel-cache",
+              },
+            }),
+          );
+          expect(AsyncResult.isSuccess(created)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(1);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
+
+          const fetched = yield* Effect.promise(() =>
+            atoms.panelFetchRemote.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", remoteName: "origin" },
+            }),
+          );
+          expect(AsyncResult.isFailure(fetched)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(2);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+          const fetchAll = () =>
+            Effect.promise(() =>
+              atoms.panelFetchAllRemotes.run(registry, {
+                environmentId: TARGET.environmentId,
+                input: { cwd: "/repo" },
+              }),
+            );
+          const skippedFetchAll = yield* fetchAll();
+          expect(AsyncResult.isSuccess(skippedFetchAll)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(2);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+          const fetchedAll = yield* fetchAll();
+          expect(AsyncResult.isSuccess(fetchedAll)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(3);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
+          const failedFetchAll = yield* fetchAll();
+          expect(AsyncResult.isFailure(failedFetchAll)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(4);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(4);
+
+          const staged = yield* Effect.promise(() =>
+            atoms.panelStageFiles.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", paths: ["file.ts"] },
+            }),
+          );
+          const stashed = yield* Effect.promise(() =>
+            atoms.panelCreateStash.run(registry, {
+              environmentId: TARGET.environmentId,
+              input: { cwd: "/repo", message: "test stash" },
+            }),
+          );
+          expect(AsyncResult.isSuccess(staged)).toBe(true);
+          expect(AsyncResult.isSuccess(stashed)).toBe(true);
+          expect(yield* Ref.get(clears)).toBe(4);
+          expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(4);
+        }),
+      ),
   );
 
   it.effect("suppresses persisted snapshots after an environment-wide clear fails", () =>

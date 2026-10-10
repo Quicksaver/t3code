@@ -119,6 +119,62 @@ describe("command permissions", () => {
     ),
   );
 
+  it("blocks panel mutations on a denied destination and settles without executing", async () => {
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(sessions(env));
+    registry.set(sessions(env), AsyncResult.success(grant(false)));
+    registry.set(
+      sessions(other),
+      AsyncResult.success({
+        ...grant(true),
+        scopes: [AuthSourceControlWriteScope],
+        permissions: [AuthSourceControlWriteScope],
+      }),
+    );
+    const execute = vi.fn(() => Effect.succeed(undefined));
+    const settled = vi.fn(() => Effect.void);
+    const command = createEnvironmentRpcCommand(runtime, {
+      label: "test.panel.stage",
+      tag: WS_METHODS.vcsPanelStageFiles,
+      execute,
+      onSettled: settled,
+    });
+    try {
+      const result = await command.run(registry, {
+        environmentId: env,
+        input: { cwd: "/repo", paths: ["file.ts"] },
+      });
+      expect(result._tag).toBe("Failure");
+      expect(execute).not.toHaveBeenCalled();
+      expect(settled).toHaveBeenCalledOnce();
+      expect(settled).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ _tag: "Failure" }),
+      );
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(true),
+          scopes: [AuthSourceControlWriteScope],
+          permissions: [AuthSourceControlWriteScope],
+        }),
+      );
+      expect(
+        (
+          await command.run(registry, {
+            environmentId: env,
+            input: { cwd: "/repo", paths: ["file.ts"] },
+          })
+        )._tag,
+      ).toBe("Success");
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

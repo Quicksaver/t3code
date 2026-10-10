@@ -8,6 +8,7 @@ import {
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
@@ -18,6 +19,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -26,7 +28,14 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
-import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
+import {
+  vcsCommandConcurrency,
+  vcsCommandScheduler,
+  vcsRemoteRefreshCommandConcurrency,
+  vcsRemoteRefreshCommandScheduler,
+  vcsStatusRefreshCommandConcurrency,
+  vcsStatusRefreshCommandScheduler,
+} from "./vcsCommandScheduler.ts";
 import {
   invalidateCachedVcsRefs,
   vcsRefsCacheStateAtom,
@@ -38,6 +47,10 @@ const VCS_REFS_IDLE_TTL_MS = 30_000;
 // Rows keep the last status they rendered, so the live stream only needs a
 // short grace period when virtualization or scrolling releases its consumer.
 const VCS_STATUS_IDLE_TTL_MS = 10_000;
+// Panel reads always force a fresh request, so a settled result is never reused.
+// Releasing it on unmount keeps diffs and enrichment payloads out of the
+// registry while identical in-flight reads still coalesce.
+const VCS_PANEL_READ_IDLE_TTL_MS = 0;
 const VCS_REFS_RETRY_SCHEDULE = Schedule.exponential("1 second").pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, Duration.seconds(30))),
@@ -304,8 +317,8 @@ export function createVcsEnvironmentAtoms<R, E>(
     refreshStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-status",
       tag: WS_METHODS.vcsRefreshStatus,
-      scheduler: vcsCommandScheduler,
-      concurrency: vcsCommandConcurrency,
+      scheduler: vcsStatusRefreshCommandScheduler,
+      concurrency: vcsStatusRefreshCommandConcurrency,
       onSettled: invalidateRefs,
     }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
@@ -354,6 +367,205 @@ export function createVcsEnvironmentAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
+    }),
+    panelSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:snapshot",
+      tag: WS_METHODS.vcsPanelSnapshot,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    // Mutation follow-ups must not join a snapshot read that began before the mutation.
+    readPanelSnapshot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:read-snapshot",
+      tag: WS_METHODS.vcsPanelSnapshot,
+    }),
+    panelBranchDetails: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:branch-details",
+      tag: WS_METHODS.vcsPanelBranchDetails,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    // Mutation follow-ups must not join a branch-details read that began before the mutation.
+    readPanelBranchDetails: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:read-branch-details",
+      tag: WS_METHODS.vcsPanelBranchDetails,
+    }),
+    panelCommitFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:commit-files",
+      tag: WS_METHODS.vcsPanelCommitFiles,
+      staleTimeMs: Infinity,
+    }),
+    panelBranchCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:branch-commits",
+      tag: WS_METHODS.vcsPanelBranchCommits,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    panelStashDetails: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:stash-details",
+      tag: WS_METHODS.vcsPanelStashDetails,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    panelStageFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:stage-files",
+      tag: WS_METHODS.vcsPanelStageFiles,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelUnstageFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:unstage-files",
+      tag: WS_METHODS.vcsPanelUnstageFiles,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelDiscardFiles: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:discard-files",
+      tag: WS_METHODS.vcsPanelDiscardFiles,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelEnrichWorkingTreeFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:enrich-working-tree-files",
+      tag: WS_METHODS.vcsPanelEnrichWorkingTreeFiles,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    panelReadFileDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:read-file-diff",
+      tag: WS_METHODS.vcsPanelReadFileDiff,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
+    }),
+    panelCommitStaged: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:commit-staged",
+      tag: WS_METHODS.vcsPanelCommitStaged,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelPullBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:pull-branch",
+      tag: WS_METHODS.vcsPanelPullBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelPushBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:push-branch",
+      tag: WS_METHODS.vcsPanelPushBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelDeleteBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:delete-branch",
+      tag: WS_METHODS.vcsPanelDeleteBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelUndoLatestCommit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:undo-latest-commit",
+      tag: WS_METHODS.vcsPanelUndoLatestCommit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelRevertCommit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:revert-commit",
+      tag: WS_METHODS.vcsPanelRevertCommit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelCheckoutCommit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:checkout-commit",
+      tag: WS_METHODS.vcsPanelCheckoutCommit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelCreateBranchFromCommit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:create-branch-from-commit",
+      tag: WS_METHODS.vcsPanelCreateBranchFromCommit,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelMergeBranchIntoCurrent: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:merge-branch-into-current",
+      tag: WS_METHODS.vcsPanelMergeBranchIntoCurrent,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelRebaseCurrentOnto: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:rebase-current-onto",
+      tag: WS_METHODS.vcsPanelRebaseCurrentOnto,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelFetchBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:fetch-branch",
+      tag: WS_METHODS.vcsPanelFetchBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelFetchRemote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:fetch-remote",
+      tag: WS_METHODS.vcsPanelFetchRemote,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelFetchAllRemotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:fetch-all-remotes",
+      tag: WS_METHODS.vcsPanelFetchAllRemotes,
+      scheduler: vcsRemoteRefreshCommandScheduler,
+      concurrency: vcsRemoteRefreshCommandConcurrency,
+      // `false` means the server's background policy skipped the fetch, so no refs changed.
+      onSettled: (target, registry, exit) =>
+        Exit.isSuccess(exit) && !exit.value ? Effect.void : invalidateRefs(target, registry),
+    }),
+    panelAddRemote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:add-remote",
+      tag: WS_METHODS.vcsPanelAddRemote,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelRemoveRemote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:remove-remote",
+      tag: WS_METHODS.vcsPanelRemoveRemote,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
+    panelCreateStash: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:create-stash",
+      tag: WS_METHODS.vcsPanelCreateStash,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelApplyStash: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:apply-stash",
+      tag: WS_METHODS.vcsPanelApplyStash,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelPopStash: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:pop-stash",
+      tag: WS_METHODS.vcsPanelPopStash,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelDropStash: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:panel:drop-stash",
+      tag: WS_METHODS.vcsPanelDropStash,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
+    panelCompare: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:panel:compare",
+      tag: WS_METHODS.vcsPanelCompare,
+      idleTtlMs: VCS_PANEL_READ_IDLE_TTL_MS,
     }),
   };
 }
