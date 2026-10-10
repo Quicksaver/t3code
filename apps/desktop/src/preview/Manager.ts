@@ -2620,10 +2620,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           // with scheduler throttling disabled. Discard this warmup image and
           // accept its output only after readiness settles. If the bounded
           // probe cannot confirm paint, retain the native capture fallback.
-          yield* Effect.all([paintReady, capturePageWithRetry(errorContext, tabId, wc)], {
-            concurrency: 2,
-            discard: true,
-          });
+          const warmup = capturePageWithRetry(errorContext, tabId, wc).pipe(
+            Effect.catchTags({
+              PreviewOperationError: (error) =>
+                Effect.logWarning("Preview warmup capture failed; continuing with final capture.", {
+                  tabId,
+                  webContentsId: wc.id,
+                  error,
+                }),
+            }),
+          );
+          yield* Effect.all([paintReady, warmup], { concurrency: 2, discard: true });
           return yield* capturePageWithRetry(errorContext, tabId, wc);
         }),
       () => stopFrameCapture(tabId, consumer),

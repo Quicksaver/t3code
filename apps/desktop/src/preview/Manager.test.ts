@@ -2528,13 +2528,16 @@ describe("PreviewManager", () => {
         capturePage.mockClear();
         const captureCause = new Error("capture failed");
         capturePage.mockRejectedValue(captureCause);
+        const writesBeforeFailure = writeFile.mock.calls.length;
         const failingFiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
           Effect.forkChild({ startImmediately: true }),
         );
         yield* TestClock.adjust(1_000);
         const exit = yield* Fiber.join(failingFiber);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(capturePage).toHaveBeenCalledTimes(3);
+        expect(capturePage).toHaveBeenCalledTimes(6);
+        expect(writeFile).toHaveBeenCalledTimes(writesBeforeFailure);
+        expect(fromId(42)?.setBackgroundThrottling).toHaveBeenLastCalledWith(true);
         if (Exit.isSuccess(exit)) return;
         const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
         expect(error).toMatchObject({
@@ -2544,6 +2547,42 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("captures final pixels after warmup fails and paint readiness settles", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toPNG: () => Buffer.from("final-png"),
+          getSize: () => ({ width: 100, height: 80 }),
+        };
+        const paint = Promise.withResolvers<void>();
+        const capturePage = vi
+          .fn()
+          .mockRejectedValueOnce(new Error("UnknownVizError"))
+          .mockRejectedValueOnce(new Error("UnknownVizError"))
+          .mockRejectedValueOnce(new Error("UnknownVizError"))
+          .mockResolvedValue(image);
+        const wc = makeTestStillImageWebContents(capturePage);
+        holdStillImagePaint(wc, paint.promise);
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_warmup_failure");
+        yield* manager.registerWebview("tab_warmup_failure", wc.id);
+        yield* manager.setColorScheme("tab_warmup_failure", "system");
+        const screenshot = yield* manager
+          .captureScreenshot("tab_warmup_failure")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(300);
+        expect(capturePage).toHaveBeenCalledTimes(3);
+        expect(writeFile).not.toHaveBeenCalled();
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+        paint.resolve();
+        const artifact = yield* Fiber.join(screenshot);
+        expect(capturePage).toHaveBeenCalledTimes(4);
+        expect(writeFile.mock.calls).toEqual([[artifact.path, Buffer.from("final-png")]]);
+        expect(wc.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }),
     ),
   );
