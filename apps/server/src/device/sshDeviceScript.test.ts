@@ -12,6 +12,38 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
+const writeNpmPackage = async (
+  directory: string,
+  version: string,
+  nodeEngine: string,
+  platform: NodeJS.Platform,
+) => {
+  const root = NodePath.join(directory, "node_modules/npm");
+  await NodeFSP.mkdir(NodePath.join(root, "bin"), { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(root, "package.json"),
+    JSON.stringify({ version, engines: { node: nodeEngine } }),
+  );
+  // Use npm's real bundled engine checker, without adding a repository dependency.
+  await NodeFSP.cp(
+    NodePath.resolve(
+      NodePath.dirname(process.execPath),
+      platform === "win32"
+        ? "node_modules/npm/node_modules/semver"
+        : "../lib/node_modules/npm/node_modules/semver",
+    ),
+    NodePath.join(root, "node_modules/semver"),
+    { recursive: true },
+  );
+};
+
+const writeNodeRuntime = async (directory: string, platform: NodeJS.Platform) => {
+  await NodeFSP.copyFile(process.execPath, NodePath.join(directory, "node.exe"));
+  if (platform !== "win32") {
+    await NodeFSP.symlink("node.exe", NodePath.join(directory, "node"));
+  }
+};
+
 /** Runs a remote device command through the host's native login shell, as sshd would. */
 const runThroughLoginShell = (command: ReturnType<typeof SshDeviceScript.remoteDeviceCommand>) =>
   Effect.map(HostProcess.Platform, (platform) =>
@@ -65,98 +97,181 @@ it.effect(
     }),
 );
 
-it("runs Windows npm probe and installation through Node with paths containing spaces", async () => {
-  const home = await NodeFSP.realpath(
-    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture ")),
-  );
-  try {
-    const node = NodePath.join(home, "Node runtime", "node.exe");
-    const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
-    const calls = NodePath.join(home, "npm calls.jsonl");
-    await NodeFSP.mkdir(NodePath.dirname(npm), { recursive: true });
-    await NodeFSP.copyFile(process.execPath, node);
-    await NodeFSP.writeFile(
-      npm,
-      `const fs = require('node:fs');
+it.effect("runs Windows npm probe and installation through Node with paths containing spaces", () =>
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    yield* Effect.promise(async () => {
+      const home = await NodeFSP.realpath(
+        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 npm fixture ")),
+      );
+      try {
+        const node = NodePath.join(home, "Node runtime", "node.exe");
+        const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
+        const calls = NodePath.join(home, "npm calls.jsonl");
+        await writeNpmPackage(NodePath.dirname(node), "11.0.0", "^20.17.0 || >=22.9.0", platform);
+        await writeNodeRuntime(NodePath.dirname(node), platform);
+        const npmFixture = `const fs = require('node:fs');
 const args = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ node: process.execPath, args }) + '\\n');
+const child = require('node:child_process').spawnSync(process.env.ComSpec || '/bin/sh',
+  process.platform === 'win32' ? ['/d', '/s', '/c', 'node -p process.execPath'] : ['-c', 'node -p process.execPath'],
+  { cwd: ${JSON.stringify(home)}, encoding: 'utf8' });
+if (child.error || child.status !== 0) { console.error(child.error?.message || child.stderr); process.exit(29); }
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ node: process.execPath, args, childNode: child.stdout.trim() }) + '\\n');
 if (args[0] === 'install') { console.error('fixture registry unavailable'); process.exitCode = 23; }
-else console.log('11.0.0');`,
-    );
-    const invoke = async (mode: "probe" | "start", npmPath = "", nodeVersion?: string) => {
-      const script = NodePath.join(home, `${mode}.cjs`);
-      await NodeFSP.writeFile(
-        script,
-        `Object.defineProperty(process, 'platform', { value: 'win32' });
+else console.log(require('../package.json').version);`;
+        await NodeFSP.writeFile(npm, npmFixture);
+        const invoke = async (
+          mode: "probe" | "start",
+          npmPath = "",
+          nodeVersion?: string,
+          pathKey: "PATH" | "Path" = "PATH",
+          siblingVersion?: string,
+        ) => {
+          const script = NodePath.join(home, `${mode}.cjs`);
+          await NodeFSP.writeFile(
+            script,
+            `Object.defineProperty(process, 'platform', { value: 'win32' });
 ${nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(nodeVersion)} });` : ""}
 require('node:os').homedir = () => ${JSON.stringify(home)};
 const childProcess = require('node:child_process');
 const originalSpawnSync = childProcess.spawnSync;
 childProcess.spawnSync = (command, args, options) => command === 'adb'
   ? { status: 0, stdout: '', stderr: '' }
+  ${siblingVersion ? `: args[0] === '-p' ? { status: 0, stdout: ${JSON.stringify(siblingVersion)}, stderr: '' }` : ""}
   : originalSpawnSync(command, args, options);
 ` + SshDeviceScript.remoteDeviceScript("fixture", mode),
-      );
-      return exec(node, [script], { env: { ...process.env, PATH: npmPath } });
-    };
-    expect(JSON.parse((await invoke("probe")).stdout).nodePath).toBe(node);
-    await expect(invoke("start")).rejects.toMatchObject({
-      stderr: expect.stringContaining(
-        "Installing expo-device-hub: exit code 23: fixture registry unavailable",
-      ),
+          );
+          const env = Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"),
+          );
+          return exec(node, [script], { env: { ...env, [pathKey]: npmPath } });
+        };
+        expect(JSON.parse((await invoke("probe")).stdout).nodePath).toBe(node);
+        await expect(invoke("start")).rejects.toMatchObject({
+          stderr: expect.stringContaining(
+            "Installing expo-device-hub: exit code 23: fixture registry unavailable",
+          ),
+        });
+        const invocations = (await NodeFSP.readFile(calls, "utf8"))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line));
+        expect(invocations).toEqual([
+          { node, args: ["--version"], childNode: node },
+          {
+            node,
+            childNode: node,
+            args: [
+              "install",
+              "--prefix",
+              expect.stringContaining(home),
+              "--no-fund",
+              "--no-audit",
+              `expo-device-hub@${DEVICE_HUB_VERSION}`,
+            ],
+          },
+        ]);
+        const competitor = NodePath.join(home, "Competing runtime");
+        await NodeFSP.mkdir(competitor);
+        await writeNodeRuntime(competitor, platform);
+        expect(
+          JSON.parse((await invoke("probe", competitor, undefined, "Path")).stdout).nodePath,
+        ).toBe(node);
+        const competingCall = JSON.parse(
+          (await NodeFSP.readFile(calls, "utf8")).trim().split("\n").at(-1)!,
+        );
+        expect(competingCall.childNode).toBe(node);
+
+        await writeNpmPackage(NodePath.dirname(node), "10.0.0", "^18.17.0 || >=20.0.0", platform);
+        expect(JSON.parse((await invoke("probe", "", "22.0.0")).stdout).nodePath).toBe(node);
+        await expect(invoke("start", "", "22.0.0")).rejects.toMatchObject({
+          stderr: expect.stringContaining("Installing expo-device-hub: exit code 23"),
+        });
+        await writeNpmPackage(NodePath.dirname(node), "11.0.0", "^20.17.0 || >=22.9.0", platform);
+        for (const mode of ["probe", "start"] as const) {
+          await expect(invoke(mode, "", "22.8.0")).rejects.toMatchObject({
+            stderr: expect.stringContaining("No compatible Node 22+ and npm pair:"),
+          });
+        }
+        await expect(invoke("probe", "", "22.8.0")).rejects.toMatchObject({
+          stderr: expect.stringContaining(`found 22.8.0 at ${node}`),
+        });
+        await NodeFSP.writeFile(
+          npm,
+          "console.error('fixture npm configuration invalid'); process.exitCode = 17;",
+        );
+        await expect(invoke("probe")).rejects.toMatchObject({
+          stderr: expect.stringContaining(
+            "npm probe failed: exit code 17: fixture npm configuration invalid",
+          ),
+        });
+        await NodeFSP.writeFile(
+          npm,
+          "console.log('fixture stdout-only failure'); process.exitCode = 19;",
+        );
+        for (const mode of ["probe", "start"] as const) {
+          await expect(invoke(mode)).rejects.toMatchObject({
+            stderr: expect.stringContaining("exit code 19: fixture stdout-only failure"),
+          });
+        }
+        await expect(invoke("probe", "", "18.0.0")).rejects.toMatchObject({
+          stderr: expect.stringContaining(`Found 18.0.0 at ${node}.`),
+        });
+        await NodeFSP.rm(npm);
+        await expect(invoke("probe")).rejects.toMatchObject({
+          stderr: expect.stringContaining("npm is missing:"),
+        });
+        const fallback = NodePath.join(home, "npm on PATH");
+        const fallbackEntry = NodePath.join(fallback, "node_modules/npm/bin/npm-cli.js");
+        await writeNpmPackage(fallback, "10.0.0", "^18.17.0 || >=20.0.0", platform);
+        await NodeFSP.writeFile(fallbackEntry, "console.log('10.0.0');");
+        expect(JSON.parse((await invoke("probe", `"${fallback}"`, "22.0.0")).stdout).nodePath).toBe(
+          node,
+        );
+        await writeNpmPackage(fallback, "11.0.0", "^20.17.0 || >=22.9.0", platform);
+        await expect(invoke("probe", fallback, "22.8.0")).rejects.toMatchObject({
+          stderr: expect.stringContaining("npm 11.0.0"),
+        });
+        const sibling = NodePath.join(fallback, "node.exe");
+        await writeNodeRuntime(fallback, platform);
+        await NodeFSP.writeFile(fallbackEntry, npmFixture);
+        expect(JSON.parse((await invoke("probe", fallback, "22.8.0")).stdout).nodePath).toBe(node);
+        await expect(invoke("start", fallback, "22.8.0")).rejects.toMatchObject({
+          stderr: expect.stringContaining(
+            "Installing expo-device-hub: exit code 23: fixture registry unavailable",
+          ),
+        });
+        const fallbackCalls = (await NodeFSP.readFile(calls, "utf8"))
+          .trim()
+          .split("\n")
+          .slice(-2)
+          .map((line) => JSON.parse(line));
+        expect(fallbackCalls.map((call) => call.node)).toEqual([sibling, sibling]);
+        expect(fallbackCalls.map((call) => call.childNode)).toEqual([sibling, sibling]);
+        expect(fallbackCalls.map((call) => call.args[0])).toEqual(["--version", "install"]);
+        expect(
+          JSON.parse((await invoke("probe", fallback, undefined, "PATH", "18.0.0")).stdout)
+            .nodePath,
+        ).toBe(node);
+        const compatibleBootstrap = JSON.parse(
+          (await NodeFSP.readFile(calls, "utf8")).trim().split("\n").at(-1)!,
+        );
+        expect(compatibleBootstrap.node).toBe(node);
+        expect(compatibleBootstrap.childNode).toBe(node);
+        await writeNpmPackage(NodePath.dirname(node), "10.0.0", "^18.17.0 || >=20.0.0", platform);
+        await NodeFSP.writeFile(npm, npmFixture);
+        expect(JSON.parse((await invoke("probe", fallback, "22.0.0")).stdout).nodePath).toBe(node);
+        const preferred = JSON.parse(
+          (await NodeFSP.readFile(calls, "utf8")).trim().split("\n").at(-1)!,
+        );
+        expect(preferred.node).toBe(node);
+        expect(preferred.childNode).toBe(node);
+      } finally {
+        await NodeFSP.rm(home, { recursive: true, force: true });
+      }
     });
-    const invocations = (await NodeFSP.readFile(calls, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(invocations).toEqual([
-      { node, args: ["--version"] },
-      {
-        node,
-        args: [
-          "install",
-          "--prefix",
-          expect.stringContaining(home),
-          "--no-fund",
-          "--no-audit",
-          `expo-device-hub@${DEVICE_HUB_VERSION}`,
-        ],
-      },
-    ]);
-    await NodeFSP.writeFile(
-      npm,
-      "console.error('fixture npm configuration invalid'); process.exitCode = 17;",
-    );
-    await expect(invoke("probe")).rejects.toMatchObject({
-      stderr: expect.stringContaining(
-        "npm probe failed: exit code 17: fixture npm configuration invalid",
-      ),
-    });
-    await NodeFSP.writeFile(
-      npm,
-      "console.log('fixture stdout-only failure'); process.exitCode = 19;",
-    );
-    for (const mode of ["probe", "start"] as const) {
-      await expect(invoke(mode)).rejects.toMatchObject({
-        stderr: expect.stringContaining("exit code 19: fixture stdout-only failure"),
-      });
-    }
-    await expect(invoke("probe", "", "18.0.0")).rejects.toMatchObject({
-      stderr: expect.stringContaining(`Found 18.0.0 at ${node}.`),
-    });
-    await NodeFSP.rm(npm);
-    await expect(invoke("probe")).rejects.toMatchObject({
-      stderr: expect.stringContaining("npm is missing:"),
-    });
-    const fallback = NodePath.join(home, "npm on PATH");
-    const fallbackEntry = NodePath.join(fallback, "node_modules/npm/bin/npm-cli.js");
-    await NodeFSP.mkdir(NodePath.dirname(fallbackEntry), { recursive: true });
-    await NodeFSP.writeFile(fallbackEntry, "console.log('11.0.0');");
-    expect(JSON.parse((await invoke("probe", `"${fallback}"`)).stdout).nodePath).toBe(node);
-  } finally {
-    await NodeFSP.rm(home, { recursive: true, force: true });
-  }
-});
+  }),
+);
 
 it.effect.each([{ supported: true }, { supported: false }])(
   "preserves a working SSH Node/npm pair and replaces an old Node: supported=$supported",

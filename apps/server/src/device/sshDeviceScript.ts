@@ -64,14 +64,40 @@ const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
-// Windows cannot spawn npm.cmd directly. Run its JS entry with the selected Node,
-// keeping paths and arguments out of a command shell for both probe and install.
+// Windows cannot spawn npm.cmd directly. Keep npm paired with a compatible Node,
+// including lifecycle children, without putting paths or arguments in a shell.
 const runNpm = (args, options) => {
   if (process.platform !== 'win32') return run('npm', args, options);
-  const directories = [path.dirname(process.execPath), ...(process.env.PATH || '').split(path.delimiter)];
-  const entry = directories.filter(Boolean).map(dir => path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'npm', 'bin', 'npm-cli.js')).find(file => fs.existsSync(file));
-  if (!entry) throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
-  return run(process.execPath, [entry, ...args], options);
+  const env = { ...process.env, ...options?.env };
+  const pathKeys = Object.keys(env).filter(key => key.toLowerCase() === 'path');
+  const inheritedPath = pathKeys.map(key => env[key]).filter(Boolean).join(path.delimiter);
+  for (const key of pathKeys) delete env[key];
+  const directories = [path.dirname(process.execPath), ...inheritedPath.split(path.delimiter)];
+  const failures = [];
+  for (const directory of [...new Set(directories.filter(Boolean).map(dir => dir.replace(/^"|"$/g, '')))]) {
+    const npmRoot = path.join(directory, 'node_modules', 'npm');
+    const entry = path.join(npmRoot, 'bin', 'npm-cli.js');
+    if (!fs.existsSync(entry)) continue;
+    const npm = JSON.parse(fs.readFileSync(path.join(npmRoot, 'package.json'), 'utf8'));
+    const semver = require(path.join(npmRoot, 'node_modules', 'semver'));
+    const sibling = path.join(directory, 'node.exe');
+    const nodes = [...new Set([...(fs.existsSync(sibling) ? [sibling] : []), process.execPath])];
+    for (const node of nodes) {
+      const version = node === process.execPath ? null : run(node, ['-p', 'process.versions.node']);
+      if (version && (version.error || version.status !== 0)) {
+        failures.push('Node at ' + node + ': ' + commandFailure(version));
+        continue;
+      }
+      const nodeVersion = version ? version.stdout.trim() : process.versions.node;
+      if (!semver.satisfies(nodeVersion, '>=22') || !semver.satisfies(nodeVersion, npm.engines.node)) {
+        failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node);
+        continue;
+      }
+      return run(node, [entry, ...args], { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } });
+    }
+  }
+  if (failures.length) throw Error('No compatible Node 22+ and npm pair: ' + failures.join('; '));
+  throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
 };
 const commandFailure = result => [
   result.error?.message,
