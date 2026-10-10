@@ -23,6 +23,7 @@ import {
   PullRequestOperationError,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -3592,6 +3593,427 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         error.cause,
         `Thread ${threadId} has a queued message. Send it or remove it from the queue before settling.`,
       );
+    }),
+  );
+
+  // parent -> delegated child (with a live session) -> native grandchild, and
+  // parent -> fork -> the fork's own subagent.
+  const seedSubagentTree = (prefix: string) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const ids = {
+        parent: ThreadId.make(`${prefix}-parent`),
+        child: ThreadId.make(`${prefix}-child`),
+        grandchild: ThreadId.make(`${prefix}-grandchild`),
+        fork: ThreadId.make(`${prefix}-fork`),
+        forkChild: ThreadId.make(`${prefix}-fork-child`),
+      };
+      const childSessionId = ProviderSessionId.make(`${prefix}-child-session`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${prefix}-create`),
+        threadId: ids.parent,
+        projectId: ProjectId.make(`${prefix}-project`),
+        title: "Subagent lifecycle parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const parent = (yield* orchestrator.getThreadProjection(ids.parent)).thread;
+      const related = (
+        id: ThreadId,
+        parentThreadId: ThreadId,
+        relationshipToParent: "fork" | "subagent",
+        creationSource: "server" | "provider",
+      ) => ({
+        id: EventId.make(`${id}-created`),
+        type: "thread.created" as const,
+        threadId: id,
+        providerInstanceId: modelSelection.instanceId,
+        occurredAt: now,
+        payload: {
+          ...parent,
+          id,
+          title: id,
+          createdBy: "agent" as const,
+          creationSource,
+          lineage: { parentThreadId, relationshipToParent, rootThreadId: ids.parent },
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make(`${prefix}-seed`),
+        events: [
+          related(ids.child, ids.parent, "subagent", "server"),
+          related(ids.grandchild, ids.child, "subagent", "provider"),
+          related(ids.fork, ids.parent, "fork", "server"),
+          related(ids.forkChild, ids.fork, "subagent", "server"),
+          {
+            id: EventId.make(`${prefix}-child-session-attached`),
+            type: "provider-session.attached",
+            threadId: ids.child,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: childSessionId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              status: "running",
+              cwd: "/tmp/runtime-layer-subagent-lifecycle",
+              model: modelSelection.model,
+              capabilities: CodexProviderCapabilitiesV2,
+              createdAt: now,
+              updatedAt: now,
+              lastError: null,
+            },
+          },
+        ],
+      });
+      return { ids, childSessionId };
+    });
+
+  it.effect("archives and unarchives subagent descendants without crossing a fork", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids, childSessionId } = yield* seedSubagentTree("runtime-subagent-archive");
+      const thread = (id: ThreadId) =>
+        orchestrator.getThreadProjection(id).pipe(Effect.map((projection) => projection.thread));
+      const archived = (id: ThreadId) =>
+        thread(id).pipe(Effect.map((current) => current.archivedAt !== null));
+
+      const archive = {
+        type: "thread.archive" as const,
+        commandId: CommandId.make("runtime-subagent-archive-parent"),
+        threadId: ids.parent,
+      };
+      yield* orchestrator.dispatch(archive);
+      yield* worker.drain();
+      assert.isTrue(yield* archived(ids.parent));
+      assert.isTrue(yield* archived(ids.child));
+      assert.isTrue(yield* archived(ids.grandchild));
+      assert.isFalse(yield* archived(ids.fork));
+      assert.isFalse(yield* archived(ids.forkChild));
+
+      // The child is archived like its parent: its session is detached and its
+      // MCP credential revoked.
+      const child = yield* orchestrator.getThreadProjection(ids.child);
+      assert.lengthOf(child.providerSessions, 0);
+      const childArchiveCommandId = CommandId.make(`${archive.commandId}:subagent:${ids.child}`);
+      const childEffects = yield* outbox.listByCommandId(childArchiveCommandId);
+      assert.deepInclude(
+        childEffects.map((effect) => ({ request: effect.request, status: effect.status })),
+        {
+          request: {
+            type: "provider-session.detach",
+            providerSessionId: childSessionId,
+            detail: "Thread archived.",
+            revokeMcpCredential: true,
+          },
+          status: "succeeded",
+        },
+      );
+
+      // A retried archive replays its receipt without touching the subtree again.
+      const eventSequence = yield* orchestrator.getThreadEventSequence(ids.child);
+      yield* orchestrator.dispatch(archive);
+      yield* worker.drain();
+      assert.equal(yield* orchestrator.getThreadEventSequence(ids.child), eventSequence);
+
+      // A fork keeps its own lifecycle, which reaches its own subagents.
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-subagent-archive-fork"),
+        threadId: ids.fork,
+      });
+      yield* worker.drain();
+      assert.isTrue(yield* archived(ids.forkChild));
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-subagent-unarchive-parent"),
+        threadId: ids.parent,
+      });
+      yield* worker.drain();
+      assert.isFalse(yield* archived(ids.parent));
+      assert.isFalse(yield* archived(ids.child));
+      assert.isFalse(yield* archived(ids.grandchild));
+      assert.isTrue(yield* archived(ids.fork));
+      assert.isTrue(yield* archived(ids.forkChild));
+    }),
+  );
+
+  it.effect("settles subagents to the parent's last lifecycle change before cascades run", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids } = yield* seedSubagentTree("runtime-subagent-undo");
+      const archived = (id: ThreadId) =>
+        orchestrator
+          .getThreadProjection(id)
+          .pipe(Effect.map((projection) => projection.thread.archivedAt !== null));
+      const lifecycle = (type: "thread.archive" | "thread.unarchive", suffix: string) =>
+        orchestrator.dispatch({
+          type,
+          commandId: CommandId.make(`runtime-subagent-undo-${suffix}`),
+          threadId: ids.parent,
+        });
+
+      // Archive, then Undo before the archive's cascade runs.
+      yield* lifecycle("thread.archive", "archive");
+      yield* lifecycle("thread.unarchive", "undo");
+      yield* worker.drain();
+      assert.isFalse(yield* archived(ids.parent));
+      assert.isFalse(yield* archived(ids.child));
+      assert.isFalse(yield* archived(ids.grandchild));
+
+      // Archive again after an unarchive whose cascade has not run yet.
+      yield* lifecycle("thread.archive", "archive-again");
+      yield* worker.drain();
+      yield* lifecycle("thread.unarchive", "unarchive-again");
+      yield* lifecycle("thread.archive", "redo");
+      yield* worker.drain();
+      assert.isTrue(yield* archived(ids.parent));
+      assert.isTrue(yield* archived(ids.child));
+      assert.isTrue(yield* archived(ids.grandchild));
+      assert.isFalse(yield* archived(ids.fork));
+    }),
+  );
+
+  it.effect("archives a subagent whose cascade command id holds a stored rejection", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids } = yield* seedSubagentTree("runtime-subagent-poisoned");
+      const archive = CommandId.make("runtime-subagent-poisoned-archive");
+      // An earlier attempt failed while planning the child's archive.
+      yield* eventSink.commitRejectedCommand({
+        commandId: CommandId.make(`${archive}:subagent:${ids.child}`),
+        threadId: ids.child,
+        commandType: "thread.archive",
+        rejectedAt: yield* DateTime.now,
+        error: "Projection read failed.",
+      });
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: archive,
+        threadId: ids.parent,
+      });
+      yield* worker.drain();
+      const archived = (id: ThreadId) =>
+        orchestrator
+          .getThreadProjection(id)
+          .pipe(Effect.map((projection) => projection.thread.archivedAt !== null));
+      assert.isTrue(yield* archived(ids.child));
+      assert.isTrue(yield* archived(ids.grandchild));
+    }),
+  );
+
+  it.effect("walks through subagents already in the target state", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids } = yield* seedSubagentTree("runtime-subagent-mixed");
+      const thread = (id: ThreadId) =>
+        orchestrator.getThreadProjection(id).pipe(Effect.map((projection) => projection.thread));
+      const archived = (id: ThreadId) =>
+        thread(id).pipe(Effect.map((current) => current.archivedAt !== null));
+      // Flip only the middle subagent, as an older build or a direct command could.
+      const setChildArchived = (archivedAt: DateTime.Utc | null, suffix: string) =>
+        Effect.gen(function* () {
+          const child = yield* thread(ids.child);
+          yield* eventSink.write({
+            commandId: CommandId.make(`runtime-subagent-mixed-${suffix}`),
+            events: [
+              {
+                id: EventId.make(`runtime-subagent-mixed-${suffix}-event`),
+                type: archivedAt === null ? "thread.unarchived" : "thread.archived",
+                threadId: ids.child,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...child, archivedAt },
+              },
+            ],
+          });
+        });
+
+      yield* setChildArchived(yield* DateTime.now, "child-archived");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-subagent-mixed-archive"),
+        threadId: ids.parent,
+      });
+      yield* worker.drain();
+      assert.isTrue(yield* archived(ids.grandchild));
+      assert.isFalse(yield* archived(ids.fork));
+
+      yield* setChildArchived(null, "child-unarchived");
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-subagent-mixed-unarchive"),
+        threadId: ids.parent,
+      });
+      yield* worker.drain();
+      assert.isFalse(yield* archived(ids.parent));
+      assert.isFalse(yield* archived(ids.child));
+      assert.isFalse(yield* archived(ids.grandchild));
+    }),
+  );
+
+  it.effect("refuses new delegated work under an archived parent", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-subagent-delegate-archived");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-subagent-delegate-archived-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-subagent-delegate-archived-project"),
+        title: "Archived delegating parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-subagent-delegate-archived",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-subagent-delegate-archived-message"),
+        threadId,
+        messageId: MessageId.make("runtime-subagent-delegate-archived-message"),
+        text: "Keep working while the thread is archived.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0];
+      assert.isDefined(run);
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-subagent-delegate-archived-archive"),
+        threadId,
+      });
+
+      const error = yield* orchestrator
+        .dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("runtime-subagent-delegate-archived-request"),
+          parentThreadId: threadId,
+          parentRunId: run.id,
+          parentNodeId: run.rootNodeId ?? NodeId.make("runtime-subagent-delegate-archived-node"),
+          task: "Start after the archive.",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+      assert.include(String(error.cause), "archived");
+    }),
+  );
+
+  it.effect("deletes live subagent descendants behind tombstones without restoring them", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids } = yield* seedSubagentTree("runtime-subagent-tombstone");
+      const child = (yield* orchestrator.getThreadProjection(ids.child)).thread;
+      const deletedAt = yield* DateTime.now;
+      // An older deletion can leave only the middle thread tombstoned, with no cascade effect.
+      yield* eventSink.write({
+        commandId: CommandId.make("runtime-subagent-tombstone-seed"),
+        events: [
+          {
+            id: EventId.make("runtime-subagent-tombstone-deleted"),
+            type: "thread.deleted",
+            threadId: ids.child,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: deletedAt,
+            payload: { ...child, deletedAt },
+          },
+        ],
+      });
+      for (const operation of ["archive", "unarchive"] as const) {
+        yield* orchestrator.dispatch({
+          type: `thread.${operation}`,
+          commandId: CommandId.make(`runtime-subagent-tombstone-${operation}`),
+          threadId: ids.parent,
+        });
+        yield* worker.drain();
+        const grandchild = (yield* orchestrator.getThreadProjection(ids.grandchild)).thread;
+        assert.isNull(grandchild.archivedAt);
+        assert.isNull(grandchild.deletedAt);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(ids.child)).thread.deletedAt,
+          deletedAt,
+        );
+      }
+      const commandId = CommandId.make("runtime-subagent-tombstone-delete");
+      yield* orchestrator.dispatch({ type: "thread.delete", commandId, threadId: ids.parent });
+      yield* worker.drain();
+      assert.isNotNull((yield* orchestrator.getThreadProjection(ids.grandchild)).thread.deletedAt);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(ids.child)).thread.deletedAt,
+        deletedAt,
+      );
+      assert.deepEqual(
+        yield* eventSink
+          .readByCommandId({ commandId: CommandId.make(`${commandId}:subagent:${ids.child}`) })
+          .pipe(Stream.runCollect),
+        [],
+      );
+      for (const id of [ids.fork, ids.forkChild]) {
+        assert.isNull((yield* orchestrator.getThreadProjection(id)).thread.deletedAt);
+      }
+    }),
+  );
+
+  it.effect("deletes subagent descendants without crossing a fork", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const { ids } = yield* seedSubagentTree("runtime-subagent-delete");
+      const deleted = (id: ThreadId) =>
+        orchestrator
+          .getThreadProjection(id)
+          .pipe(Effect.map((projection) => projection.thread.deletedAt !== null));
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("runtime-subagent-delete-parent"),
+        threadId: ids.parent,
+      });
+      yield* worker.drain();
+      assert.isTrue(yield* deleted(ids.parent));
+      assert.isTrue(yield* deleted(ids.child));
+      assert.isTrue(yield* deleted(ids.grandchild));
+      assert.isFalse(yield* deleted(ids.fork));
+      assert.isFalse(yield* deleted(ids.forkChild));
+      assert.lengthOf((yield* orchestrator.getThreadProjection(ids.child)).providerSessions, 0);
+      const shell = yield* orchestrator.getShellSnapshot();
+      const visible = [...shell.threads, ...shell.archivedThreads].map((thread) => thread.id);
+      assert.notInclude(visible, ids.child);
+      assert.notInclude(visible, ids.grandchild);
+      assert.include(visible, ids.fork);
     }),
   );
 

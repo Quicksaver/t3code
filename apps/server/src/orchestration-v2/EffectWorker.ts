@@ -26,8 +26,11 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import { cascadeSubagentLifecycle } from "./SubagentLifecycleCascade.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -89,6 +92,8 @@ export const layerExecutor: Layer.Layer<
   | RuntimeRequestService.RuntimeRequestServiceV2
   | ThreadTitleRegenerationService.ThreadTitleRegenerationService
   | ThreadManagementService.ThreadManagementService
+  | ProjectionStore.ProjectionStoreV2
+  | CommandReceiptStore.CommandReceiptStoreV2
   | ServerSettings.ServerSettingsService
 > = Layer.effect(
   OrchestrationEffectExecutorV2,
@@ -103,6 +108,8 @@ export const layerExecutor: Layer.Layer<
     const threadTitleRegeneration =
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
@@ -457,6 +464,24 @@ export const layerExecutor: Layer.Layer<
             );
           case "attachment.cleanup":
             return resourceCleanup.cleanupAttachments(effect.request.attachmentIds).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "subagent-threads.cascade":
+            return cascadeSubagentLifecycle({
+              commandId: effect.commandId,
+              threadId: effect.threadId,
+              operation: effect.request.operation,
+              projections,
+              receipts,
+              threads,
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

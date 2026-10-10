@@ -327,6 +327,56 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+const subagentLookupIncludesTombstonesOnlyOnRequest = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const parentId = yield* addOrphanedRecoveryCandidate("subagent-tombstones");
+  const parent = yield* store.getThread(parentId);
+  const now = yield* DateTime.now;
+  const ids = {
+    active: ThreadId.make("thread:subagent-tombstones:active"),
+    archived: ThreadId.make("thread:subagent-tombstones:archived"),
+    deleted: ThreadId.make("thread:subagent-tombstones:deleted"),
+    fork: ThreadId.make("thread:subagent-tombstones:fork"),
+  };
+  for (const [kind, threadId] of Object.entries(ids)) {
+    yield* store.apply({
+      id: EventId.make(`event:subagent-tombstones:${kind}`),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...parent,
+        id: threadId,
+        lineage: {
+          parentThreadId: parentId,
+          relationshipToParent: kind === "fork" ? "fork" : "subagent",
+          rootThreadId: parentId,
+        },
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: kind === "archived" ? now : null,
+        deletedAt: kind === "deleted" ? now : null,
+      },
+    });
+  }
+  assert.deepEqual(
+    (yield* store.getSubagentChildThreads(parentId)).map(({ id }) => id),
+    [ids.active, ids.archived],
+  );
+  assert.deepEqual(
+    (yield* store.getSubagentChildThreads(parentId, { includeDeleted: false })).map(({ id }) => id),
+    [ids.active, ids.archived],
+  );
+  assert.deepEqual(
+    (yield* store.getSubagentChildThreads(parentId, { includeDeleted: true })).map(({ id }) => id),
+    [ids.active, ids.archived, ids.deleted],
+  );
+});
+
+it.effect("memory subagent lookup includes tombstones only on request", () =>
+  subagentLookupIncludesTombstonesOnlyOnRequest.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
@@ -350,6 +400,10 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect(
+    "SQL subagent lookup includes tombstones only on request",
+    () => subagentLookupIncludesTombstonesOnlyOnRequest,
+  );
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
