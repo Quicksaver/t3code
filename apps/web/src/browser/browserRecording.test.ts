@@ -2,6 +2,7 @@ import {
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
   EnvironmentId,
   ThreadId,
+  PreviewCaptureFailure,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -705,11 +706,13 @@ describe("browser recording", () => {
     });
 
     await startBrowserRecording("recording-tab");
-    FakeMediaRecorder.stopError = new Error("stop failed");
+    const cleanupCause = new DOMException("Could not start video source", "NotReadableError");
+    FakeMediaRecorder.stopError = cleanupCause;
 
     await expect(stopBrowserRecording("recording-tab")).rejects.toMatchObject({
       operation: "cleanup",
       tabId: "recording-tab",
+      message: "Browser recording operation cleanup failed for tab recording-tab.",
     });
     expect(stopTrack).toHaveBeenCalledOnce();
   });
@@ -775,6 +778,81 @@ describe("browser recording", () => {
 
     expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
     expect(events.at(-1)).toBe("clear");
+  });
+
+  it.each([false, true])(
+    "explains fallback video-source rejection and permits retry when cleanup fails: %s",
+    async (cleanupFails) => {
+      const cause = new DOMException("Could not start video source", "NotReadableError");
+      const cleanupCause = new Error("native stop failed");
+      const frames = prepareFrameFallback();
+      frames.canvas.captureStream.mockImplementationOnce(() => {
+        throw cause;
+      });
+      if (cleanupFails) stopScreencast.mockRejectedValueOnce(cleanupCause);
+
+      const failed = startBrowserRecording("recording-tab").catch((failure: unknown) => failure);
+      await frames.ready;
+      await frames.receive();
+      const error = await failed;
+      expect(error).toMatchObject({
+        _tag: "BrowserRecordingOperationError",
+        operation: "capture-media-stream",
+        tabId: "recording-tab",
+        message:
+          "Unable to start the preview video source. Make sure the capture host is unlocked " +
+          "and its display is on, then retry. NotReadableError: Could not start video source",
+        cause: cleanupFails ? { cause, errors: [cause, cleanupCause] } : cause,
+      });
+      expect(stopScreencast).toHaveBeenCalledWith("recording-tab");
+      expect(FakeMediaRecorder.instances).toHaveLength(0);
+      expect(save).not.toHaveBeenCalled();
+      expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+      expect(useBrowserSurfaceStore.getState().activityByTabId["recording-tab"]).toBeUndefined();
+
+      const recoveredFrames = prepareFrameFallback();
+      const restarted = startBrowserRecording("recording-tab");
+      await recoveredFrames.ready;
+      await recoveredFrames.receive();
+      await restarted;
+      await stopBrowserRecording("recording-tab");
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("keeps unrecognized acquisition failures generic", async () => {
+    const cause = new Error("capture failed");
+    cause.name = "NotReadableError";
+    getUserMedia.mockRejectedValueOnce(cause);
+
+    await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
+      operation: "capture-media-stream",
+      cause,
+      message: "Browser recording operation capture-media-stream failed for tab recording-tab.",
+    });
+  });
+
+  it("reports a native arm diagnostic immediately and frees the tab for a retry", async () => {
+    const cause = new PreviewCaptureFailure({
+      reason: "renderer-unavailable",
+      stage: "recording-start",
+    });
+    startScreencast.mockRejectedValueOnce(cause);
+
+    await expect(startBrowserRecording("recording-tab")).rejects.toMatchObject({
+      _tag: "BrowserRecordingOperationError",
+      operation: "start-screencast",
+      tabId: "recording-tab",
+      cause,
+      message: cause.message,
+    });
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+    expect(useBrowserSurfaceStore.getState().activityByTabId["recording-tab"]).toBeUndefined();
+
+    await startBrowserRecording("recording-tab");
+    await stopBrowserRecording("recording-tab");
+    expect(getUserMedia).toHaveBeenCalledOnce();
   });
 
   it("times out stalled stream acquisition and stops a late stream", async () => {
