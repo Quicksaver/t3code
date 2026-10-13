@@ -311,6 +311,95 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
   ),
 );
 
+it.effect.each([
+  { name: "no selector", selection: {}, head: null, limit: 4, expected: [1, 2, 3, 4] },
+  {
+    name: "an owner-qualified selector",
+    selection: { headSelector: "fork:feature/with space" },
+    head: "feature/with space",
+    limit: 2,
+    expected: [3, 4],
+  },
+  {
+    name: "an explicit source without a head selector",
+    selection: {
+      source: { refName: "feature/with space", owner: "fork", repository: "fork/project" },
+    },
+    head: "feature/with space",
+    limit: 1,
+    expected: [4],
+  },
+])(
+  "lists Forgejo pulls with $name across pages and limits",
+  ({ selection, head, limit, expected }) => {
+    const urls: Array<URL> = [];
+    const pull = (number: number) => ({
+      number,
+      title: `Change ${number}`,
+      html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+      state: "open",
+      merged: false,
+      base: { ref: "main", sha: "base", repo: null },
+      head: {
+        ref: number === 1 ? "other" : "feature/with space",
+        sha: `head-${number}`,
+        repo: {
+          full_name: number === 3 ? "fork/other-project" : "fork/project",
+          owner: { login: number === 2 ? "other" : "fork" },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoSourceControlProvider.make;
+      const pulls = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        state: "open",
+        ...selection,
+        limit,
+      });
+      assert.deepStrictEqual(
+        pulls.map((item) => item.number),
+        expected,
+      );
+      assert.deepStrictEqual(
+        urls.map((url) => url.searchParams.get("page")),
+        ["1", "2"],
+      );
+      for (const url of urls) {
+        assert.strictEqual(url.pathname, "/repos/maria/project/pulls");
+        assert.strictEqual(url.searchParams.get("state"), "open");
+        assert.strictEqual(url.searchParams.get("head"), head);
+        if (head !== null) assert.include(url.search, "head=feature%2Fwith%20space");
+        assert.strictEqual(url.searchParams.get("sort"), "recentupdate");
+        assert.strictEqual(url.searchParams.get("limit"), "50");
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+          TestSourceControlHost.layer({ process: {} }),
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            resolveRepository: () =>
+              Effect.succeed({
+                login: "work",
+                repository: "maria/project",
+                baseUrl: "https://forgejo.test",
+              }),
+            api: (input) => {
+              const url = new URL(input.path, "https://forgejo.test");
+              urls.push(url);
+              const page = Number(url.searchParams.get("page"));
+              const body =
+                page === 1 ? [pull(1), pull(2)] : page === 2 ? [pull(3), pull(4), pull(5)] : [];
+              return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;

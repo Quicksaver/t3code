@@ -1,6 +1,36 @@
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { getTerminalFocusOwner, isTerminalFocused } from "./terminalFocus";
+import { claimTerminalShortcut, getTerminalFocusOwner, isTerminalFocused } from "./terminalFocus";
+
+describe("terminal shortcut ownership", () => {
+  it.each([
+    { drawerAvailable: false, panelAvailable: true },
+    { drawerAvailable: true, panelAvailable: false },
+  ])("consumes shortcuts only for the focused destination: %j", (permissions) => {
+    for (const focusOwner of ["drawer", "right-panel", null] as const) {
+      let prevented = false;
+      let stopped = false;
+      const claimed = claimTerminalShortcut(
+        {
+          preventDefault: () => {
+            prevented = true;
+          },
+          stopPropagation: () => {
+            stopped = true;
+          },
+        },
+        { ...permissions, focusOwner },
+      );
+      const allowed =
+        focusOwner === "right-panel" ? permissions.panelAvailable : permissions.drawerAvailable;
+      expect({ claimed, prevented, stopped }).toEqual({
+        claimed: allowed,
+        prevented: allowed,
+        stopped: allowed,
+      });
+    }
+  });
+});
 
 class MockHTMLElement {
   isConnected = false;

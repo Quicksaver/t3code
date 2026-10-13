@@ -45,12 +45,13 @@ export interface SourceControlActionScope {
   readonly cwd: string | null;
 }
 
-interface SourceControlActionState<
+export interface SourceControlActionState<
   TArgs extends ReadonlyArray<unknown>,
   R extends AtomCommandResult<unknown, unknown>,
 > {
   readonly isPending: boolean;
   readonly isAllowed: boolean;
+  readonly activityLabel: string | null;
   readonly error: unknown;
   readonly run: (
     ...args: TArgs
@@ -134,6 +135,7 @@ function useAction<
     isAllowed,
     error: ownsState ? state.error : null,
     isPending: ownsState && state.isRunning,
+    activityLabel: ownsState && state.isRunning ? state.currentLabel : null,
     resetError,
     run,
   };

@@ -291,24 +291,33 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("forgejo"),
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
+    getCommitAvatarUrl: () => Effect.succeed(null),
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
-        const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const branch = SourceControlProvider.sourceBranch(input);
+        const source =
+          input.source ??
+          (input.headSelector
+            ? SourceControlProvider.sourceControlRefFromInput({
+                ...input,
+                headSelector: input.headSelector,
+              })
+            : undefined);
+        const branch = source?.refName ?? input.headSelector;
+        const headQuery = branch === undefined ? "" : `&head=${encodeURIComponent(branch)}`;
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
         for (let page = 1; results.length < limit; page++) {
           const items = yield* request(
             {
               ...input,
-              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&head=${encodeURIComponent(branch)}&sort=recentupdate&limit=50&page=${page}`,
+              path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}${headQuery}&sort=recentupdate&limit=50&page=${page}`,
             },
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
             if (
-              item.head.ref !== branch ||
+              (branch !== undefined && item.head.ref !== branch) ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )

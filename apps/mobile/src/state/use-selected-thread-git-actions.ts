@@ -181,7 +181,12 @@ export function useSelectedThreadGitActions() {
         readonly project: EnvironmentProject;
         readonly cwd: string;
       }) => Promise<AtomCommandResult<T, E>>,
-      options?: { readonly managedExternally?: boolean; readonly changesThreadBranch?: boolean },
+      options?: {
+        readonly managedExternally?: boolean;
+        readonly reportFailure?: boolean;
+        readonly throwOnFailure?: boolean;
+        readonly changesThreadBranch?: boolean;
+      },
     ): Promise<T | null> => {
       if (
         !selectedThread ||
@@ -191,6 +196,8 @@ export function useSelectedThreadGitActions() {
         (options?.changesThreadBranch === true &&
           !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope))
       ) {
+        if (options?.throwOnFailure === true)
+          throw new Error("No repository or permission is available for this Git action.");
         return null;
       }
 
@@ -198,7 +205,8 @@ export function useSelectedThreadGitActions() {
         environmentId: selectedThread.environmentId,
         cwd: selectedThreadCwd,
       };
-      setPendingConnectionError(null);
+      const reportFailure = options?.reportFailure !== false;
+      if (reportFailure) setPendingConnectionError(null);
       const run = () =>
         execute({
           thread: selectedThread,
@@ -210,10 +218,18 @@ export function useSelectedThreadGitActions() {
           ? await run()
           : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
       if (AsyncResult.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause)) {
+          return null;
+        }
         const error = Cause.squash(result.cause);
         const message = error instanceof Error ? error.message : "Git action failed.";
-        setPendingConnectionError(message);
-        showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        if (reportFailure) {
+          setPendingConnectionError(message);
+          showGitActionResult({ type: "error", title: "Git action failed", description: message });
+        }
+        if (options?.throwOnFailure === true) {
+          throw error;
+        }
         return null;
       }
       return result.value;
@@ -253,8 +269,14 @@ export function useSelectedThreadGitActions() {
   );
 
   const onCheckoutSelectedThreadBranch = useCallback(
-    async (branch: string) => {
-      return runSelectedThreadGitMutation(
+    async (
+      branch: string,
+      options?: {
+        readonly reportFailure?: boolean;
+        readonly throwOnFailure?: boolean;
+      },
+    ) => {
+      return await runSelectedThreadGitMutation(
         "switch_ref",
         "Switching branch",
         async ({ thread, cwd }) => {
@@ -275,7 +297,7 @@ export function useSelectedThreadGitActions() {
           });
           return AsyncResult.isFailure(syncResult) ? AsyncResult.failure(syncResult.cause) : result;
         },
-        { changesThreadBranch: true },
+        { ...options, changesThreadBranch: true },
       );
     },
     [
