@@ -47,7 +47,7 @@ import {
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
-// ── Client Settings (local-only) ───────────────────────────────
+// â”€â”€ Client Settings (local-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -256,7 +256,7 @@ export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
 /**
  * The environment's theme, set with `t3 theme set <id>`. Each client applies
- * it once per value — live when connected, on its next connect otherwise — so
+ * it once per value â€” live when connected, on its next connect otherwise â€” so
  * setting it switches every client, while a theme a user picks in Settings
  * afterwards sticks until the next set. Empty means "no environment theme",
  * which is also how it is cleared.
@@ -269,7 +269,7 @@ export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
 /**
  * Defaults for the in-app preview browser, applied whenever a tab is opened
- * without an explicit viewport/zoom/appearance — by the user opening a browser
+ * without an explicit viewport/zoom/appearance â€” by the user opening a browser
  * tab, or by an agent calling `preview_open` with no size. Recording quality is
  * client-local for the same reason: the Chromium guest being captured belongs
  * to the desktop app.
@@ -365,7 +365,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   /**
    * Whether an agent using a preview pops the floating mini player into
-   * view. Only applies when the agent didn't ask either way — an explicit
+   * view. Only applies when the agent didn't ask either way â€” an explicit
    * `open`/`show` on `preview_open` still wins, since that is the agent
    * deliberately showing or hiding its work.
    */
@@ -424,8 +424,8 @@ export const ClientSettingsSchema = Schema.Struct({
   // disabling restores the platform's heavier default. No effect off macOS.
   fontSmoothing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // When the first-run welcome wizard finished (or was skipped), as an ISO
-  // timestamp. `null` alone does not mean "show the wizard" — every install
-  // that predates this field decodes to `null` — so the gate also requires an
+  // timestamp. `null` alone does not mean "show the wizard" â€” every install
+  // that predates this field decodes to `null` â€” so the gate also requires an
   // empty workspace before it treats the client as a fresh install.
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -511,7 +511,7 @@ export type ClientSettings = typeof ClientSettingsSchema.Type;
 
 export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettingsSchema)({});
 
-// ── Server Settings (server-authoritative) ────────────────────
+// â”€â”€ Server Settings (server-authoritative) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UsageModelTokenPrice = Schema.Number.check(
   Schema.isFinite(),
@@ -849,6 +849,23 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const SourceControlProviderSettings = Schema.Struct({
+  showCommitAuthorAvatar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type SourceControlProviderSettings = typeof SourceControlProviderSettings.Type;
+
+export const SourceControlSettings = Schema.Struct({
+  providers: Schema.Struct({
+    github: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    gitlab: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    "azure-devops": SourceControlProviderSettings.pipe(
+      Schema.withDecodingDefault(Effect.succeed({})),
+    ),
+    bitbucket: SourceControlProviderSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type SourceControlSettings = typeof SourceControlSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -877,6 +894,7 @@ export interface BranchNamingOptions {
 }
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+export const DEFAULT_SOURCE_CONTROL_ALL_REMOTES_FETCH_INTERVAL = Duration.minutes(5);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
@@ -897,6 +915,7 @@ export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfil
 
 export const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  sourceControlAllRemotesFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorIdleInterval: Schema.optionalKey(Schema.DurationFromMillis),
@@ -908,6 +927,12 @@ export const BackgroundActivityOverrides = Schema.Struct({
 });
 export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
+const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT = {
+  schemaVersion: 1,
+  profile: DEFAULT_BACKGROUND_ACTIVITY_PROFILE,
+  overrides: {},
+} as const;
+
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
   profile: BackgroundActivityProfileSelection.pipe(
@@ -915,8 +940,11 @@ export const BackgroundActivitySettings = Schema.Struct({
   ),
   baseProfile: Schema.optionalKey(BackgroundActivityProfile),
   overrides: BackgroundActivityOverrides.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+}).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT)));
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
+export const DEFAULT_BACKGROUND_ACTIVITY_SETTINGS: BackgroundActivitySettings = Schema.decodeSync(
+  BackgroundActivitySettings,
+)(DEFAULT_BACKGROUND_ACTIVITY_SETTINGS_INPUT);
 
 /**
  * How assistant text reaches clients while a turn runs.
@@ -1137,7 +1165,7 @@ export const ServerSettings = Schema.Struct({
    * withholds the MCP credential, so the `t3-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
    * text describing those tools is dropped along with them. The user's own
-   * browser panel is unaffected — this gates agent access only.
+   * browser panel is unaffected â€” this gates agent access only.
    *
    * Server-authoritative rather than client-local: tool injection and prompt
    * construction both happen on the server, and the answer must not differ
@@ -1323,6 +1351,7 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  sourceControl: SourceControlSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Keyed by source control host kind, such as `gitcafe`; see `SourceControlHostSettings`. */
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
@@ -1477,7 +1506,7 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   }
 }
 
-// ── Unified type ─────────────────────────────────────────────────────
+// â”€â”€ Unified type â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export type UnifiedSettings = Omit<ServerSettings, keyof ModelPreferences> & ClientSettings;
 export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
@@ -1485,12 +1514,16 @@ export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
   ...DEFAULT_CLIENT_SETTINGS,
 };
 
-// ── Server Settings Patch (replace with a Schema.deepPartial if available) ──────────────────────────────────────────
+// â”€â”€ Server Settings Patch (replace with a Schema.deepPartial if available) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const ModelSelectionPatch = Schema.Struct({
   instanceId: Schema.optionalKey(ProviderInstanceId),
   model: Schema.optionalKey(TrimmedNonEmptyString),
   options: Schema.optionalKey(ProviderOptionSelections),
+});
+
+const SourceControlProviderSettingsPatch = Schema.Struct({
+  showCommitAuthorAvatar: Schema.optionalKey(Schema.Boolean),
 });
 
 export const ServerSettingsPatch = Schema.Struct({
@@ -1630,6 +1663,18 @@ export const ServerSettingsPatch = Schema.Struct({
    */
   sourceControlHosts: Schema.optionalKey(Schema.Record(Schema.String, SourceControlHostSettings)),
   magi: Schema.optionalKey(MagiSettingsPatch),
+  sourceControl: Schema.optionalKey(
+    Schema.Struct({
+      providers: Schema.optionalKey(
+        Schema.Struct({
+          github: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          gitlab: Schema.optionalKey(SourceControlProviderSettingsPatch),
+          "azure-devops": Schema.optionalKey(SourceControlProviderSettingsPatch),
+          bitbucket: Schema.optionalKey(SourceControlProviderSettingsPatch),
+        }),
+      ),
+    }),
+  ),
   // Whole-map replacement for the new instance config. Patching individual
   // entries is intentionally out of scope: the map is small, and partial
   // patches risk leaving driver-specific config in a half-merged state.

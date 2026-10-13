@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
+import { sourceControlProviderError } from "./SourceControlProvider.ts";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 const github = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
@@ -147,5 +148,132 @@ it.effect("keeps a fresh provider reset from an older request", () =>
     yield* limits.recordRateLimit({ ...github, lease: staleLease, retryAt: 61_000 });
 
     assert.equal((yield* Effect.flip(limits.check(github))).retryAt, 61_000);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("shares provider backoff with best-effort panel reads", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(1_000);
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    let attempts = 0;
+    const rateLimited = sourceControlProviderError({
+      provider: SourceControlProviderKind.make("bitbucket"),
+      operation: "listChangeRequests",
+      cwd: "/repo",
+      error: {
+        _tag: "BitbucketResponseError",
+        status: 429,
+        retryAt: 121_000,
+        detail: "Bitbucket returned HTTP 429.",
+      },
+    });
+
+    yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: SourceControlProviderKind.make("bitbucket"),
+      baseUrl: "https://Bitbucket.example.test:8443/path",
+      effect: Effect.sync(() => {
+        attempts += 1;
+      }).pipe(Effect.andThen(Effect.fail(rateLimited))),
+    }).pipe(Effect.exit);
+
+    assert.equal(
+      (yield* Effect.flip(
+        limits.check({
+          provider: SourceControlProviderKind.make("bitbucket"),
+          host: "bitbucket.example.test:8443",
+        }),
+      )).retryAt,
+      121_000,
+    );
+
+    assert.equal(
+      yield* limits.check({
+        provider: SourceControlProviderKind.make("bitbucket"),
+        host: "bitbucket.example.test",
+      }),
+      0,
+    );
+    assert.equal(
+      yield* limits.check({
+        provider: SourceControlProviderKind.make("bitbucket"),
+        host: "bitbucket.example.test:9443",
+      }),
+      0,
+    );
+
+    const paused = yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: SourceControlProviderKind.make("bitbucket"),
+      baseUrl: "https://bitbucket.example.test:8443/other",
+      effect: Effect.sync(() => {
+        attempts += 1;
+      }),
+    }).pipe(Effect.flip);
+
+    assert.equal(attempts, 1);
+    assert.deepInclude(paused, {
+      _tag: "SourceControlRateLimitPausedError",
+      provider: SourceControlProviderKind.make("bitbucket"),
+      host: "bitbucket.example.test:8443",
+      retryAt: 121_000,
+    });
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("does not pause panel reads after ordinary provider failures", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const failed = sourceControlProviderError({
+      provider: SourceControlProviderKind.make("gitlab"),
+      operation: "getCommitAvatarUrl",
+      cwd: "/repo",
+      error: { _tag: "GitLabCliCommandError" },
+      detail: "Provider request failed.",
+    });
+
+    yield* SourceControlRateLimit.protectProviderRequest({
+      limits,
+      provider: SourceControlProviderKind.make("gitlab"),
+      baseUrl: "https://gitlab.example.test",
+      effect: Effect.fail(failed),
+    }).pipe(Effect.exit);
+
+    assert.equal(
+      yield* limits.check({
+        provider: SourceControlProviderKind.make("gitlab"),
+        host: "gitlab.example.test",
+      }),
+      0,
+    );
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("panel reads honor GitHub adapter cooldowns on enterprise ports", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const key = {
+      provider: SourceControlProviderKind.make("github"),
+      host: "github.example.test:8443",
+    };
+    const lease = yield* limits.check(key);
+    yield* limits.recordRateLimit({ ...key, lease });
+    let attempts = 0;
+    const read = (baseUrl: string) =>
+      SourceControlRateLimit.protectProviderRequest({
+        limits,
+        provider: SourceControlProviderKind.make("github"),
+        baseUrl,
+        effect: Effect.sync(() => {
+          attempts += 1;
+        }),
+      });
+
+    const paused = yield* read("https://GitHub.example.test:8443/api/v3").pipe(Effect.flip);
+    assert.equal(paused._tag, "SourceControlRateLimitPausedError");
+    assert.equal(attempts, 0);
+    yield* read("https://github.example.test:9443/api/v3");
+    yield* read("https://github.example.test/api/v3");
+    assert.equal(attempts, 2);
   }).pipe(Effect.provide(SourceControlRateLimit.layer)),
 );

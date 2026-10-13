@@ -117,6 +117,8 @@ import {
   WsMagiSubscribeThreadRunsRpc,
   WsMagiSubscribeRunDetailRpc,
   WsMagiExportDiagnosticsRpc,
+  WsCoreRpcGroup,
+  WsVcsPanelRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
@@ -252,6 +254,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -583,7 +586,10 @@ const ServerMagiWsRpcGroup = RpcGroup.make(
 )
   .middleware(RpcScopeAuthorization)
   .middleware(RpcInstrumentation);
-const ServerCoreWsRpcGroup = ServerWsRpcGroup.omit(...Object.values(MAGI_WS_METHODS));
+const ServerCoreWsRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation).omit(
+  ...Object.values(MAGI_WS_METHODS),
+);
+const ServerVcsPanelRpcGroup = WsVcsPanelRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1243,7 +1249,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-const layerWsRpc = (
+const layerCoreWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
@@ -3281,6 +3287,48 @@ const layerWsRpc = (
       );
     }),
   );
+
+// Keep panel handler inference separate from the growing core RPC group.
+const layerVcsPanelRpc = ServerVcsPanelRpcGroup.toLayer(
+  Effect.map(SourceControlPanelService.SourceControlPanelService, (sourceControlPanel) => ({
+    [WS_METHODS.vcsPanelSnapshot]: (input) => sourceControlPanel.snapshot(input),
+    [WS_METHODS.vcsPanelBranchDetails]: (input) => sourceControlPanel.branchDetails(input),
+    [WS_METHODS.vcsPanelCommitFiles]: (input) => sourceControlPanel.commitFiles(input),
+    [WS_METHODS.vcsPanelBranchCommits]: (input) => sourceControlPanel.branchCommits(input),
+    [WS_METHODS.vcsPanelStashDetails]: (input) => sourceControlPanel.stashDetails(input),
+    [WS_METHODS.vcsPanelEnrichWorkingTreeFiles]: (input) =>
+      sourceControlPanel.enrichWorkingTreeFiles(input),
+    [WS_METHODS.vcsPanelReadFileDiff]: (input) => sourceControlPanel.readFileDiff(input),
+    [WS_METHODS.vcsPanelCommitStaged]: (input) => sourceControlPanel.commitStaged(input),
+    [WS_METHODS.vcsPanelStageFiles]: (input) => sourceControlPanel.stageFiles(input),
+    [WS_METHODS.vcsPanelUnstageFiles]: (input) => sourceControlPanel.unstageFiles(input),
+    [WS_METHODS.vcsPanelDiscardFiles]: (input) => sourceControlPanel.discardFiles(input),
+    [WS_METHODS.vcsPanelPullBranch]: (input) => sourceControlPanel.pullBranch(input),
+    [WS_METHODS.vcsPanelPushBranch]: (input) => sourceControlPanel.pushBranch(input),
+    [WS_METHODS.vcsPanelDeleteBranch]: (input) => sourceControlPanel.deleteBranch(input),
+    [WS_METHODS.vcsPanelUndoLatestCommit]: (input) => sourceControlPanel.undoLatestCommit(input),
+    [WS_METHODS.vcsPanelRevertCommit]: (input) => sourceControlPanel.revertCommit(input),
+    [WS_METHODS.vcsPanelCheckoutCommit]: (input) => sourceControlPanel.checkoutCommit(input),
+    [WS_METHODS.vcsPanelCreateBranchFromCommit]: (input) =>
+      sourceControlPanel.createBranchFromCommit(input),
+    [WS_METHODS.vcsPanelMergeBranchIntoCurrent]: (input) =>
+      sourceControlPanel.mergeBranchIntoCurrent(input),
+    [WS_METHODS.vcsPanelRebaseCurrentOnto]: (input) => sourceControlPanel.rebaseCurrentOnto(input),
+    [WS_METHODS.vcsPanelFetchBranch]: (input) => sourceControlPanel.fetchBranch(input),
+    [WS_METHODS.vcsPanelFetchRemote]: (input) => sourceControlPanel.fetchRemote(input),
+    [WS_METHODS.vcsPanelFetchAllRemotes]: (input) => sourceControlPanel.fetchAllRemotes(input),
+    [WS_METHODS.vcsPanelAddRemote]: (input) => sourceControlPanel.addRemote(input),
+    [WS_METHODS.vcsPanelRemoveRemote]: (input) => sourceControlPanel.removeRemote(input),
+    [WS_METHODS.vcsPanelCreateStash]: (input) => sourceControlPanel.createStash(input),
+    [WS_METHODS.vcsPanelApplyStash]: (input) => sourceControlPanel.applyStash(input),
+    [WS_METHODS.vcsPanelPopStash]: (input) => sourceControlPanel.popStash(input),
+    [WS_METHODS.vcsPanelDropStash]: (input) => sourceControlPanel.dropStash(input),
+    [WS_METHODS.vcsPanelCompare]: (input) => sourceControlPanel.compare(input),
+  })),
+);
+
+const layerWsRpc = (...args: Parameters<typeof layerCoreWsRpc>) =>
+  Layer.merge(layerCoreWsRpc(...args), layerVcsPanelRpc);
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
 // sends a socket-level Defect frame instead, and the client ends every pending

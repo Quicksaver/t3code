@@ -98,8 +98,13 @@ export const layerObserver = Layer.effect(
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: ({ cwd, threadId, runId }) =>
         Effect.gen(function* () {
+          // A turn can commit or amend without changing the aggregate local status, and its
+          // .git-only writes never reach the local watcher, so subscribers must re-read history.
           const [, local] = yield* Effect.all(
-            [workspaceEntries.refresh(cwd), vcsStatus.refreshLocalStatus(cwd)],
+            [
+              workspaceEntries.refresh(cwd),
+              vcsStatus.refreshLocalStatus(cwd, { forcePublish: true }),
+            ],
             { concurrency: "unbounded" },
           );
           if (local.refName === null || local.isDefaultRef) return;
