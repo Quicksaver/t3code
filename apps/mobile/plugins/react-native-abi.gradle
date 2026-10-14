@@ -1,0 +1,18 @@
+// React Native owns the fbjni ABI and the C++ runtime packaged with the app.
+// A native module's wildcard must not upgrade fbjni independently of that runtime.
+def reactNativeFbjni = extensions.getByType(VersionCatalogsExtension)
+    .named("expoLibs").findLibrary("fbjni")
+if (reactNativeFbjni.isPresent()) {
+    def fbjni = reactNativeFbjni.get().get()
+    subprojects { nativeProject ->
+        nativeProject.configurations.configureEach {
+            resolutionStrategy.eachDependency { dependency ->
+                if (dependency.requested.group == fbjni.module.group &&
+                    dependency.requested.name == fbjni.module.name) {
+                    dependency.useVersion(fbjni.versionConstraint.requiredVersion)
+                    dependency.because("fbjni must match the installed React Native native runtime")
+                }
+            }
+        }
+    }
+}
