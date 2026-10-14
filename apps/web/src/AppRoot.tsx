@@ -5,6 +5,7 @@ import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+import { ThreadRemovalCleanupObserver } from "./threadRemovalCleanupObserver";
 
 /**
  * Owns renderer-wide providers. The Electron browser host intentionally sits
@@ -14,6 +15,7 @@ import type { AppRouter } from "./router";
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
+      <ThreadRemovalCleanupObserver />
       <RouterProvider router={router} />
       <ElectronBrowserHost />
       <BrowserProfileReporter />

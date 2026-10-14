@@ -138,6 +138,8 @@ vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: () => state.localEffects.push("refresh-archive"),
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
+  permanentlyDiscardComposerDraft: vi.fn(),
+  releaseArchivedComposerDraftUploads: () => state.localEffects.push("release-uploads"),
   releaseComposerDraftUploads: () => state.localEffects.push("release-uploads"),
 }));
 vi.mock("../localApi", () => ({

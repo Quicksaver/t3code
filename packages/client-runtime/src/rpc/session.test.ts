@@ -824,6 +824,7 @@ describe("RpcSessionFactory", () => {
             loadThread: () => Effect.succeedNone,
             saveThread: () => Effect.void,
             removeThread: () => Effect.void,
+            listThreadIds: () => Effect.succeed([]),
             loadServerConfig: () => Effect.succeedNone,
             saveServerConfig: () => Effect.void,
             loadVcsRefs: () => Effect.succeedNone,

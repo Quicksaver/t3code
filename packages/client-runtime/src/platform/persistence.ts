@@ -30,6 +30,7 @@ export class ConnectionPersistenceError extends Schema.TaggedError<ConnectionPer
       "load-thread",
       "save-thread",
       "remove-thread",
+      "list-threads",
       "load-server-config",
       "save-server-config",
       "load-vcs-refs",
@@ -103,6 +104,14 @@ export class EnvironmentCacheStore extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<void, ConnectionPersistenceError>;
+    /**
+     * Thread ids with a persisted detail in an environment. Authoritative shell
+     * snapshots reconcile these, so a removal that failed before a restart is
+     * retried without loading any detail body.
+     */
+    readonly listThreadIds: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, ConnectionPersistenceError>;
     /**
      * The last complete server configuration. This deliberately includes provider
      * metadata so offline task creation can still offer the models a user last saw.

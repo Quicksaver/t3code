@@ -33,7 +33,10 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { permanentlyDiscardComposerDraft } from "../lib/composerDraftUploads";
+import {
+  permanentlyDiscardComposerDraft,
+  releaseArchivedComposerDraftUploads,
+} from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
@@ -402,6 +405,9 @@ export function useThreadActions() {
         markThreadVisited(scopedThreadKey(threadRef), wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+      // The local composer draft intentionally survives archive; release only
+      // the uploads it can recreate (see releaseArchivedComposerDraftUploads).
+      releaseArchivedComposerDraftUploads(threadRef);
       opts.onArchived?.();
       showThreadUndoNotice({
         action: "Archived",
