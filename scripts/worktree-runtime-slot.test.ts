@@ -16,10 +16,7 @@ import {
 } from "./worktree-runtime-slot.ts";
 
 const fixtureDirectories = new Set<string>();
-
-const delay = async (durationMs: number): Promise<void> => {
-  await new Promise((resolve) => setTimeout(resolve, durationMs));
-};
+const fixtureAcquisitionCleanups = new Set<() => Promise<void>>();
 
 const makeSignal = () => {
   let resolve!: (signal: AcquisitionSignal) => void;
@@ -33,18 +30,31 @@ const makeManager = () => {
   const directoryPath = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-runtime-slot-"));
   fixtureDirectories.add(directoryPath);
   const messages: string[] = [];
+  const messageWaiters = new Map<string, (() => void)[]>();
   const stateFilePath = NodePath.join(directoryPath, "slots.json");
   return {
     directoryPath,
     manager: new RuntimeSlotManager({
       lockRetryMs: 2,
       lockStaleAfterMs: 20,
-      logger: { log: (message) => messages.push(message) },
+      logger: {
+        log: (message) => {
+          messages.push(message);
+          for (const resolve of messageWaiters.get(message) ?? []) resolve();
+          messageWaiters.delete(message);
+        },
+      },
       pollIntervalMs: 5,
       stateFilePath,
     }),
     messages,
     stateFilePath,
+    waitForMessage: (message: string): Promise<void> => {
+      if (messages.includes(message)) return Promise.resolve();
+      return new Promise((resolve) => {
+        messageWaiters.set(message, [...(messageWaiters.get(message) ?? []), resolve]);
+      });
+    },
   };
 };
 
@@ -81,6 +91,9 @@ describe("worktree-runtime-slot", () => {
   });
 
   afterEach(async () => {
+    // A failed assertion must not leave a poller writing into a deleted fixture.
+    for (const cleanup of fixtureAcquisitionCleanups) await cleanup();
+    fixtureAcquisitionCleanups.clear();
     await Promise.all(
       [...fixtureDirectories].map((directoryPath) =>
         NodeFSP.rm(directoryPath, { recursive: true, force: true }),
@@ -99,7 +112,7 @@ describe("worktree-runtime-slot", () => {
   });
 
   it("cancels a request-scoped acquisition when interrupted while waiting", async () => {
-    const { manager } = makeManager();
+    const { manager, waitForMessage } = makeManager();
     await manager.acquire("desktop", "/worktrees/holder", "holder-request");
     const signal = makeSignal();
     const interrupted = acquireWithCancellationSignal(
@@ -110,8 +123,12 @@ describe("worktree-runtime-slot", () => {
       signal.promise,
       20,
     );
+    fixtureAcquisitionCleanups.add(async () => {
+      signal.resolve("SIGINT");
+      await interrupted;
+    });
 
-    await delay(10);
+    await waitForMessage("Waiting for desktop capacity held by /worktrees/holder.");
     signal.resolve("SIGINT");
 
     await expect(interrupted).resolves.toBe("SIGINT");
@@ -124,7 +141,7 @@ describe("worktree-runtime-slot", () => {
   });
 
   it("releases a holder interrupted immediately after acquisition", async () => {
-    const { manager } = makeManager();
+    const { manager, waitForMessage } = makeManager();
     const signal = makeSignal();
     const interrupted = acquireWithCancellationSignal(
       manager,
@@ -134,8 +151,14 @@ describe("worktree-runtime-slot", () => {
       signal.promise,
       50,
     );
+    fixtureAcquisitionCleanups.add(async () => {
+      signal.resolve("SIGTERM");
+      await interrupted;
+    });
 
-    await delay(5);
+    await waitForMessage(
+      "Acquired desktop runtime slot for /worktrees/candidate under request candidate-request.",
+    );
     signal.resolve("SIGTERM");
 
     await expect(interrupted).resolves.toBe("SIGTERM");
@@ -171,27 +194,33 @@ describe("worktree-runtime-slot", () => {
   });
 
   it("waits only after mobile reaches capacity", async () => {
-    const { manager, messages } = makeManager();
+    const { manager, waitForMessage } = makeManager();
     await manager.acquire("mobile", "/worktrees/first", "first-request");
     await manager.acquire("mobile", "/worktrees/second", "second-request");
     let thirdAcquired = false;
-    const thirdAcquire = manager.acquire("mobile", "/worktrees/third", "third-request").then(() => {
-      thirdAcquired = true;
+    const thirdAcquire = manager
+      .acquire("mobile", "/worktrees/third", "third-request")
+      .then((result) => {
+        thirdAcquired = result === "acquired";
+        return result;
+      });
+    fixtureAcquisitionCleanups.add(async () => {
+      await manager.cancel("mobile", "/worktrees/third", "third-request");
+      await thirdAcquire;
+      await manager.cleanup("/worktrees/third");
     });
 
-    await delay(20);
+    await waitForMessage(
+      "Waiting for mobile capacity held by /worktrees/first, /worktrees/second.",
+    );
     expect(thirdAcquired).toBe(false);
-    expect(
-      messages.some(
-        (message) =>
-          message.startsWith("Waiting for mobile capacity held by ") &&
-          message.includes("/worktrees/first") &&
-          message.includes("/worktrees/second"),
-      ),
-    ).toBe(true);
+    expect(await manager.status()).toMatchObject({
+      mobile: [{ worktree: "/worktrees/first" }, { worktree: "/worktrees/second" }],
+      requests: { "third-request": { cancelledAt: null, worktree: "/worktrees/third" } },
+    });
 
     await manager.release("mobile", "/worktrees/first", "first-request");
-    await thirdAcquire;
+    await expect(thirdAcquire).resolves.toBe("acquired");
 
     expect(thirdAcquired).toBe(true);
     expect((await manager.status()).mobile).toEqual([
@@ -212,16 +241,22 @@ describe("worktree-runtime-slot", () => {
   });
 
   it("cancels a request while it waits without later taking released capacity", async () => {
-    const { manager, messages } = makeManager();
+    const { manager, messages, waitForMessage } = makeManager();
     await manager.acquire("mobile", "/worktrees/holder-one", "holder-one-request");
     await manager.acquire("mobile", "/worktrees/holder-two", "holder-two-request");
     const waiting = manager.acquire("mobile", "/worktrees/candidate", "representative-1");
+    fixtureAcquisitionCleanups.add(async () => {
+      await manager.cancel("mobile", "/worktrees/candidate", "representative-1");
+      await waiting;
+      await manager.cleanup("/worktrees/candidate");
+    });
 
-    await delay(20);
+    await waitForMessage(
+      "Waiting for mobile capacity held by /worktrees/holder-one, /worktrees/holder-two.",
+    );
     expect(await manager.cancel("mobile", "/worktrees/candidate", "representative-1")).toBe(false);
     await expect(waiting).resolves.toBe("cancelled");
     await manager.release("mobile", "/worktrees/holder-one", "holder-one-request");
-    await delay(10);
 
     expect((await manager.status()).mobile).toHaveLength(1);
     expect((await manager.status()).requests).toMatchObject({
