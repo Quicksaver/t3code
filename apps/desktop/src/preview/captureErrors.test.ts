@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { normalizeCaptureFailure } from "./captureErrors.ts";
 const encodeCaptureFailure = Schema.encodeSync(PreviewCaptureFailure);
+const decodeCaptureFailure = Schema.decodeSync(PreviewCaptureFailure);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it("preserves a native pixel capture timeout across the encoded IPC result", () => {
@@ -51,11 +52,18 @@ it.each(["captureScreenshot.capturePage"])(
       },
       "screenshot",
     );
-    expect(encodeCaptureFailure(failure)).toEqual({
+    const encoded = encodeCaptureFailure(failure);
+    expect(encoded).toEqual({
       _tag: "PreviewCaptureFailure",
       reason: "capture-unavailable",
       stage: "capture-page",
     });
+    const decoded = decodeCaptureFailure(encoded);
+    expect(decoded).toMatchObject({ reason: "capture-unavailable", stage: "capture-page" });
+    expect(decoded.message).toContain("target tab");
+    expect(decoded.message).toContain("unlocked");
+    expect(decoded.message).toContain("display is on");
+    expect(decoded.message).toContain("window is restored");
   },
 );
 

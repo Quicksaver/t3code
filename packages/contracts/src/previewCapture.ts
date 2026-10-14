@@ -17,7 +17,7 @@ function previewCaptureFailureMessage(diagnostic: PreviewCaptureDiagnostic): str
     case "renderer-unavailable":
       return "The preview renderer is unavailable. Reopen the preview tab before retrying.";
     case "capture-unavailable":
-      return "The preview capture surface is unavailable. Present the target tab before retrying.";
+      return "The preview capture surface is unavailable. Present the target tab and check that the preview host is unlocked, its display is on and its window is restored before retrying.";
     case "capture-timeout":
       return `Preview capture timed out during ${diagnostic.stage}. Check the preview host's lock, display and window state before retrying.`;
     case "recording-conflict":
