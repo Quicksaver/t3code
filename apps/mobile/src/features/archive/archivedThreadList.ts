@@ -2,6 +2,7 @@ import {
   archivedThreadActionKey as sharedArchivedThreadActionKey,
   tryAcquireArchivedThreadActionLock as acquireSharedArchivedThreadActionLock,
   archivedThreadSearchScore,
+  isListedArchivedThread,
   archivedThreadSortTimestamp,
   compareArchivedThreads,
   type ArchivedThreadSearchInput,
@@ -166,8 +167,13 @@ export function buildArchivedThreadGroups(input: {
       string,
       Array<{ readonly thread: EnvironmentThreadShell; readonly searchScore: number }>
     >();
+    const archivedIds = new Set(
+      entry.snapshot.threads
+        .filter((thread) => thread.archivedAt !== null)
+        .map((thread) => thread.id),
+    );
     for (const rawThread of entry.snapshot.threads) {
-      if (rawThread.archivedAt === null) continue;
+      if (!isListedArchivedThread(rawThread, archivedIds)) continue;
       const searchScore = archivedThreadSearchScore({
         normalizedTitle: normalizeSearchQuery(rawThread.title),
         normalizedQuery: input.search.normalizedQuery,

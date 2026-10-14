@@ -53,6 +53,7 @@ import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
+import * as SubagentLifecycleCascade from "../SubagentLifecycleCascade.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import {
   runOrchestratorV2Scenario,
@@ -482,6 +483,11 @@ export function layerWithRegistry<Error>(
           ),
         )
       : Layer.empty;
+  const layerSubagentLifecycleCascadeProvided = SubagentLifecycleCascade.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerThreadManagementProvided, ThreadCommandExecutor.layer, layerStores),
+    ),
+  );
   const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -494,6 +500,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerSubagentLifecycleCascadeProvided,
       ),
     ),
   );

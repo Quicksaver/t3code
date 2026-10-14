@@ -1,3 +1,4 @@
+import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 const ARCHIVED_THREAD_ALL_TOKENS_SCORE_OFFSET = 1_000;
@@ -163,4 +164,17 @@ export function nextArchivedThreadSortState(
     return { field, direction: "desc" };
   }
   return { field, direction: current.direction === "desc" ? "asc" : "desc" };
+}
+
+/** Hide subagents restored with an archived parent before applying title search. */
+export function isListedArchivedThread(
+  thread: OrchestrationV2ThreadShell,
+  archivedThreadIds: ReadonlySet<string>,
+): boolean {
+  return (
+    thread.archivedAt !== null &&
+    (thread.lineage.relationshipToParent !== "subagent" ||
+      thread.lineage.parentThreadId === null ||
+      !archivedThreadIds.has(thread.lineage.parentThreadId))
+  );
 }

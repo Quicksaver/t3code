@@ -214,6 +214,39 @@ describe("scopeArchivedThreadSnapshots", () => {
 });
 
 describe("buildArchivedThreadGroups", () => {
+  it("hides a matching subagent before search when its archived parent does not match", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const parent = makeThread({
+      id: ThreadId.make("parent"),
+      projectId: project.id,
+      title: "Owner",
+    });
+    const child = {
+      ...makeThread({ id: ThreadId.make("child"), projectId: project.id, title: "Needle" }),
+      lineage: {
+        parentThreadId: parent.id,
+        rootThreadId: parent.id,
+        relationshipToParent: "subagent" as const,
+      },
+    };
+    const search = parseArchivedThreadSearchInput("needle");
+    const groups = (parentArchived: boolean) =>
+      buildArchivedThreadGroups({
+        snapshots: [
+          makeSnapshot(
+            [project],
+            [{ ...parent, archivedAt: parentArchived ? parent.archivedAt : null }, child],
+          ),
+        ],
+        normalizedSearchQuery: search.normalizedQuery,
+        searchTokens: search.tokens,
+        isSearching: search.isSearching,
+        sort: { field: "archivedAt", direction: "desc" },
+      });
+    expect(groups(true)).toEqual([]);
+    expect(groups(false)[0]?.threads.map((thread) => thread.id)).toEqual([child.id]);
+  });
+
   it("keeps project order when not searching and sorts threads by archive timestamp", () => {
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "First" });
     const secondProject = makeProject({ id: ProjectId.make("project-2"), title: "Second" });

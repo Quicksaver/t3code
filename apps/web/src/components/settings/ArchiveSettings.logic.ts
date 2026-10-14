@@ -1,5 +1,6 @@
 import {
   archivedThreadSearchScore,
+  isListedArchivedThread,
   compareArchivedThreads,
   type ArchivedThreadSortState,
 } from "@t3tools/client-runtime/state/archivedThreadList";
@@ -358,8 +359,11 @@ export function buildArchivedThreadGroups(input: {
       });
     }
 
+    const archivedIds = new Set(
+      snapshot.threads.filter((thread) => thread.archivedAt !== null).map((thread) => thread.id),
+    );
     for (const rawThread of snapshot.threads) {
-      if (rawThread.archivedAt === null) continue;
+      if (!isListedArchivedThread(rawThread, archivedIds)) continue;
       const thread = presentThreadShell(environmentId, rawThread);
       const searchScore = archivedThreadSearchScore({
         normalizedTitle: normalizeSearchQuery(thread.title),

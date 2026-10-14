@@ -892,3 +892,5 @@ When updating from upstream, keep these local behaviors unless upstream has an e
 These local patches can be removed when upstream provides the equivalent, superseding, or overriding behavior.
 
 When retiring the local changes, remove the corresponding tests; expect upstream behavior to be tested by upstream incoming tests as well; we do not test or concern ourselves with validating upstream.
+
+The rebuilt archive lists share `isListedArchivedThread` from client-runtime. Both lists filter archived subagents using the complete snapshot before title search, preserving Archive Settings sorting, ranking and bulk actions. The effect worker retains cold-archive, storage-purge and descendant-cascade effects together; cascade dispatch uses the cold-storage-aware thread management layer and leaves Magi ownership cleanup intact.

@@ -114,6 +114,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("thread.storage-purge"),
   }),
   Schema.Struct({
+    /** Applies the thread's archive, unarchive, or delete to its direct subagent threads. */
+    type: Schema.Literal("subagent-threads.cascade"),
+    operation: Schema.Literals(["archive", "unarchive", "delete"]),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
       Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
@@ -138,6 +143,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "attachment.cleanup",
   "thread.cold-archive",
   "thread.storage-purge",
+  "subagent-threads.cascade",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
