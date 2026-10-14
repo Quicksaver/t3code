@@ -551,8 +551,8 @@ const checkpoints = databases.map((db) => {
         try {
           schema.get();
         } catch (cause) {
-          // Initializing WAL can briefly lock the archive. Retry on the next check.
-          if (cause.errcode === 5) return state;
+          // WAL initialization or recovery can be busy. Retry on the next check.
+          if ((cause.errcode & 0xff) === 5) return state;
           throw cause;
         }
         state = frames.get();
