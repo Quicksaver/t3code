@@ -810,13 +810,19 @@ const withCheckpointClient = <A, E>(
 const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
   Effect.promise(
     () =>
-      new Promise<void>((resolve) => {
+      new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          worker.off("message", onReply);
+          reject(error);
+        };
         const onReply = (reply: unknown) => {
           if (reply !== "barrier") return;
           worker.off("message", onReply);
+          worker.off("error", onError);
           resolve();
         };
         worker.on("message", onReply);
+        worker.once("error", onError);
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
         worker.postMessage("barrier");
       }),
@@ -898,6 +904,44 @@ it.effect("checkpoints an attached archive while the main database is idle", () 
         }>`SELECT count(*) AS count FROM cold_archive.pages`;
         assert.equal(rows[0]?.count, 1201);
       }),
+    ["archive.sqlite"],
+  ),
+);
+
+it.effect("keeps checkpointing after a transient archive schema lock", () =>
+  withCheckpointClient(
+    (sql, filename) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const archive = path.join(path.dirname(filename), "archive.sqlite");
+        const worker = startedWorkers.at(-1)!;
+        yield* checkpointWorkerReply(worker);
+        const lock = yield* Effect.acquireRelease(
+          Effect.sync(() => new NodeSqlite.DatabaseSync(archive)),
+          (db) => Effect.sync(() => db.close()),
+        );
+        lock.exec("BEGIN EXCLUSIVE");
+        // The worker must reply while the rollback-mode read is still blocked.
+        yield* checkpointWorkerReply(worker);
+        lock.exec("ROLLBACK");
+        const backstop = yield* sql<{ readonly wal_autocheckpoint: number }>`
+          PRAGMA wal_autocheckpoint
+        `;
+        assert.equal(backstop[0]?.wal_autocheckpoint, 10_000);
+        yield* sql.unsafe("ATTACH DATABASE ? AS cold_archive", [archive]);
+        yield* sql`PRAGMA cold_archive.journal_mode = WAL`;
+        yield* sql`CREATE TABLE cold_archive.pages(payload BLOB)`;
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+          INSERT INTO cold_archive.pages(payload) SELECT randomblob(4000) FROM n
+        `;
+        yield* checkpointWorkerReply(worker);
+        const wal = yield* sql<{ readonly log: number; readonly checkpointed: number }>`
+          PRAGMA cold_archive.wal_checkpoint(NOOP)
+        `;
+        assert.isAbove(wal[0]!.log, 1000);
+        assert.equal(wal[0]!.checkpointed, wal[0]!.log);
+      }).pipe(Effect.scoped),
     ["archive.sqlite"],
   ),
 );
