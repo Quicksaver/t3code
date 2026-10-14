@@ -43,10 +43,16 @@ const layerSetup = Layer.effectDiscard(
   }),
 );
 
-export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
+export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (
+  dbPath: string,
+  checkpointAdditionalPaths: ReadonlyArray<string> = [],
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+  for (const filename of checkpointAdditionalPaths) {
+    yield* fs.makeDirectory(path.dirname(filename), { recursive: true });
+  }
 
   return Layer.provideMerge(
     layerSetup,
@@ -56,6 +62,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       // Checkpoints sync the database, with F_FULLFSYNC on macOS. Run them off
       // the event loop so a slow flush cannot stall clients.
       checkpointWorker: true,
+      checkpointAdditionalPaths,
       spanAttributes: {
         "db.name": path.basename(dbPath),
         "service.name": "t3code-server",
@@ -71,8 +78,9 @@ export const layerMemory = Layer.provideMerge(
 
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
-    const { dbPath } = yield* ServerConfig.ServerConfig;
+    const { dbPath, archiveDbPath } = yield* ServerConfig.ServerConfig;
     yield* initializeV2Database(dbPath);
-    return layerFromPath(dbPath);
+    // The writer's checkpoint backstop also applies to attached databases.
+    return layerFromPath(dbPath, [archiveDbPath]);
   }),
 );

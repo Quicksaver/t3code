@@ -782,7 +782,8 @@ const withCheckpointClient = <A, E>(
   use: (
     sql: SqlClient.SqlClient,
     filename: string,
-  ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem>,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem | Path.Path>,
+  additionalFilenames: ReadonlyArray<string> = [],
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -793,7 +794,15 @@ const withCheckpointClient = <A, E>(
       const sql = yield* SqlClient.SqlClient;
       yield* sql`PRAGMA journal_mode = WAL`;
       return yield* use(sql, filename);
-    }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
+    }).pipe(
+      Effect.provide(
+        SqliteClient.layer({
+          filename,
+          checkpointWorker: true,
+          checkpointAdditionalPaths: additionalFilenames.map((name) => path.join(directory, name)),
+        }),
+      ),
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 // Resolves once the worker has handled a request sent now, after every
@@ -847,6 +856,49 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
       yield* sql`INSERT INTO pages(payload) VALUES (x'00')`;
       assert.isAtMost(yield* walSize, limit);
     }),
+  ),
+);
+
+it.effect("checkpoints an attached archive while the main database is idle", () =>
+  withCheckpointClient(
+    (sql, filename) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const archive = path.join(path.dirname(filename), "archive.sqlite");
+        const worker = startedWorkers.at(-1)!;
+        // The worker must observe the empty archive before the writer enables WAL.
+        yield* checkpointWorkerReply(worker);
+        yield* sql.unsafe("ATTACH DATABASE ? AS cold_archive", [archive]);
+        yield* sql`PRAGMA cold_archive.journal_mode = WAL`;
+        yield* sql`PRAGMA cold_archive.auto_vacuum = INCREMENTAL`;
+        yield* sql`PRAGMA main.synchronous = NORMAL`;
+        const limit = 1024 * 1024;
+        yield* sql.unsafe(`PRAGMA cold_archive.journal_size_limit = ${limit}`);
+        yield* sql`CREATE TABLE cold_archive.pages(payload BLOB)`;
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+          INSERT INTO cold_archive.pages(payload) SELECT randomblob(4000) FROM n
+        `;
+        yield* checkpointWorkerReply(worker);
+        const wal = yield* sql<{
+          readonly log: number;
+          readonly checkpointed: number;
+        }>`PRAGMA cold_archive.wal_checkpoint(NOOP)`;
+        assert.isAbove(wal[0]!.log, 1000);
+        assert.equal(wal[0]!.checkpointed, wal[0]!.log);
+        const policy = yield* sql<{
+          readonly synchronous: number;
+        }>`PRAGMA cold_archive.synchronous`;
+        assert.equal(policy[0]?.synchronous, 2);
+        yield* sql`INSERT INTO cold_archive.pages(payload) VALUES (x'00')`;
+        assert.isAtMost(Number((yield* fs.stat(`${archive}-wal`)).size), limit);
+        const rows = yield* sql<{
+          readonly count: number;
+        }>`SELECT count(*) AS count FROM cold_archive.pages`;
+        assert.equal(rows[0]?.count, 1201);
+      }),
+    ["archive.sqlite"],
   ),
 );
 
