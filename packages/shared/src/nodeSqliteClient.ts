@@ -56,6 +56,8 @@ export interface SqliteClientConfig {
    * Ignored for in-memory databases.
    */
   readonly checkpointWorker?: boolean | undefined;
+  /** Additional database files, such as attached archives, to checkpoint on the same worker. */
+  readonly checkpointAdditionalPaths?: ReadonlyArray<string> | undefined;
 }
 
 /**
@@ -531,22 +533,41 @@ const CHECKPOINT_IDLE_MS = 100;
 const checkpointWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
-const db = new DatabaseSync(workerData.filename);
-const version = db.prepare("SELECT sqlite_version() AS version").get().version;
+const databases = workerData.filenames.map((filename) => new DatabaseSync(filename));
+const version = databases[0].prepare("SELECT sqlite_version() AS version").get().version;
 const [major, minor] = version.split(".").map(Number);
 if (major < 3 || (major === 3 && minor < 51)) throw new Error("SQLite " + version + " has no NOOP checkpoint");
 // macOS fsync() does not flush the drive cache; F_FULLFSYNC does. Other platforms ignore this.
-db.exec("PRAGMA checkpoint_fullfsync = ON;");
-const frames = db.prepare("PRAGMA wal_checkpoint(NOOP)");
-const checkpoint = db.prepare("PRAGMA wal_checkpoint(PASSIVE)");
+const checkpoints = databases.map((db) => {
+  db.exec("PRAGMA checkpoint_fullfsync = ON;");
+  const frames = db.prepare("PRAGMA wal_checkpoint(NOOP)");
+  const schema = db.prepare("SELECT 1 FROM sqlite_schema LIMIT 1");
+  return {
+    frames: () => {
+      let state = frames.get();
+      // An attached file can be empty when this worker starts. A read picks
+      // up WAL mode once the writer has initialized it; NOOP alone does not.
+      if (state.log < 0) {
+        schema.get();
+        state = frames.get();
+      }
+      return state;
+    },
+    checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
+  };
+});
 const finish = () => {
-  const { log, checkpointed } = frames.get();
-  if (log >= workerData.frames && checkpointed < log) checkpoint.get();
+  for (const { frames, checkpoint } of checkpoints) {
+    const { log, checkpointed } = frames();
+    if (log >= workerData.frames && checkpointed < log) checkpoint.get();
+  }
 };
 let idle;
 parentPort.on("message", (request) => {
-  const { log, checkpointed } = frames.get();
-  if (log - checkpointed >= workerData.frames) checkpoint.get();
+  for (const { frames, checkpoint } of checkpoints) {
+    const { log, checkpointed } = frames();
+    if (log - checkpointed >= workerData.frames) checkpoint.get();
+  }
   clearTimeout(idle);
   idle = setTimeout(finish, workerData.idleMs);
   parentPort.postMessage(request);
@@ -562,6 +583,7 @@ parentPort.on("message", (request) => {
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
+  additionalPaths: ReadonlyArray<string>,
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -572,7 +594,11 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   try {
     worker = new NodeWorkerThreads.Worker(checkpointWorkerSource, {
       eval: true,
-      workerData: { filename, frames: CHECKPOINT_FRAMES, idleMs: CHECKPOINT_IDLE_MS },
+      workerData: {
+        filenames: [...new Set([filename, ...additionalPaths])],
+        frames: CHECKPOINT_FRAMES,
+        idleMs: CHECKPOINT_IDLE_MS,
+      },
     });
   } catch (cause) {
     // No worker threads here: the writer keeps checkpointing.
@@ -668,7 +694,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(options.filename, db)
+        ? yield* startCheckpointWorker(
+            options.filename,
+            db,
+            options.checkpointAdditionalPaths ?? [],
+          )
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
