@@ -230,5 +230,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       request: { type: "attachment.cleanup", attachmentIds },
     });
   }
+  // Last, so attachment owners remain readable until their files are removed.
+  effects.push({
+    id: `effect:${command.commandId}:thread.storage-purge`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "thread.storage-purge" },
+  });
   return { events, effects };
 });

@@ -12,6 +12,20 @@ export function releaseComposerDraftUploads(target: ScopedThreadRef | DraftId): 
 }
 
 /**
+ * Releases only the uploads an archived thread's surviving draft can recreate.
+ * Images keep their bytes in the draft and upload again when it reopens. File
+ * bytes are never persisted locally: a completed upload is the only copy the
+ * draft hydrates from after a reload, and an in-flight one becomes that copy
+ * when it finishes, so file uploads stay.
+ */
+export function releaseArchivedComposerDraftUploads(threadRef: ScopedThreadRef): void {
+  const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+  if (draft) {
+    releaseDraftAttachments(draft.images);
+  }
+}
+
+/**
  * Releases every upload a deleted project's drafts still hold. Draft-thread
  * sessions carry their project ref, but drafts on the project's real threads
  * live in `draftsByThreadKey` under scoped thread keys with no project in the

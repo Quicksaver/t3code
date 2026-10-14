@@ -80,9 +80,11 @@ it("keeps the legacy importer out of reach of new code", () => {
     )
     .map(({ path }) => path)
     .toSorted();
-  // Startup imports pending transcripts, the V2 runtime wires the importer, and
-  // thread and project services hydrate a V1 transcript before they act on it.
+  // Startup imports pending transcripts, the V2 runtime wires the importer,
+  // thread and project services hydrate a V1 transcript before they act on it,
+  // and cold storage moves an archived thread's imported V1 rows with it.
   assert.deepEqual(importers, [
+    "orchestration-v2/ThreadColdStorage.ts",
     "orchestration-v2/ThreadManagementService.ts",
     "orchestration-v2/runtimeLayer.ts",
     "project/ProjectService.ts",

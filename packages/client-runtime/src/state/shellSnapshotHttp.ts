@@ -92,7 +92,8 @@ const decodeShellSnapshotResponse = (
  * Loads the environment shell snapshot over HTTP, returning `Option.none()` when
  * it cannot be loaded (so the caller falls back to the socket-embedded snapshot).
  * Decouples the shell state machine from the underlying HTTP + DPoP details and
- * keeps them out of test contexts.
+ * keeps them out of test contexts. Callers refresh this snapshot for every
+ * WebSocket session; the persisted cache is only an immediate rendering source.
  */
 export class ShellSnapshotLoader extends Context.Service<
   ShellSnapshotLoader,

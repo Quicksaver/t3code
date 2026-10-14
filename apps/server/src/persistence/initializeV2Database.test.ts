@@ -154,6 +154,50 @@ it.effect("includes committed WAL data and does not publish a failed snapshot", 
   );
 });
 
+it.effect.each([
+  { sourceMode: "NONE", sourceCode: 0 },
+  { sourceMode: "FULL", sourceCode: 1 },
+  { sourceMode: "INCREMENTAL", sourceCode: 2 },
+])("copies an auto_vacuum $sourceMode V1 database into a reclaimable V2 copy", (scenario) => {
+  const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-v2-auto-vacuum-"));
+  const sourcePath = NodePath.join(directory, "state.sqlite");
+  const destinationPath = NodePath.join(directory, "statev2.sqlite");
+  return Effect.gen(function* () {
+    const source = new NodeSqlite.DatabaseSync(sourcePath);
+    source.exec(
+      `PRAGMA auto_vacuum = ${scenario.sourceMode}; CREATE TABLE messages(text TEXT); INSERT INTO messages VALUES ('kept');`,
+    );
+    source.close();
+    yield* initializeV2Database(destinationPath);
+    const copy = new NodeSqlite.DatabaseSync(destinationPath, { readOnly: true });
+    try {
+      // FULL already returns pages on every commit; NONE becomes INCREMENTAL.
+      assert.equal(
+        copy.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum,
+        scenario.sourceCode === 0 ? 2 : scenario.sourceCode,
+      );
+      assert.deepEqual(
+        copy
+          .prepare("SELECT text FROM messages")
+          .all()
+          .map((row) => row.text),
+        ["kept"],
+      );
+    } finally {
+      copy.close();
+    }
+    const original = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
+    try {
+      assert.equal(original.prepare("PRAGMA auto_vacuum").get()?.auto_vacuum, scenario.sourceCode);
+    } finally {
+      original.close();
+    }
+  }).pipe(
+    Effect.provide(NodeServices.layer),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(directory, { recursive: true, force: true }))),
+  );
+});
+
 it.effect("uses statev2.sqlite for default and explicit development paths", () =>
   Effect.gen(function* () {
     for (const devUrl of [undefined, new URL("http://localhost:5173")]) {
