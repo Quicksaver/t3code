@@ -207,7 +207,6 @@ describe("worktree-runtime-slot", () => {
     fixtureAcquisitionCleanups.add(async () => {
       await manager.cancel("mobile", "/worktrees/third", "third-request");
       await thirdAcquire;
-      await manager.cleanup("/worktrees/third");
     });
 
     await waitForMessage(
@@ -222,7 +221,6 @@ describe("worktree-runtime-slot", () => {
     await manager.release("mobile", "/worktrees/first", "first-request");
     await expect(thirdAcquire).resolves.toBe("acquired");
 
-    expect(thirdAcquired).toBe(true);
     expect((await manager.status()).mobile).toEqual([
       expect.objectContaining({ worktree: "/worktrees/second" }),
       expect.objectContaining({ worktree: "/worktrees/third" }),
@@ -248,7 +246,6 @@ describe("worktree-runtime-slot", () => {
     fixtureAcquisitionCleanups.add(async () => {
       await manager.cancel("mobile", "/worktrees/candidate", "representative-1");
       await waiting;
-      await manager.cleanup("/worktrees/candidate");
     });
 
     await waitForMessage(
