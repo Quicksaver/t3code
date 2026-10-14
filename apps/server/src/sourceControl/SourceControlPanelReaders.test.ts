@@ -275,7 +275,7 @@ describe("SourceControlPanelReaders generated messages", () => {
     (rejectsNulWorktreeList) =>
       Effect.gen(function* () {
         const projectId = ProjectId.make("main-project");
-        let request: TextGeneration.CommitMessageGenerationInput | undefined;
+        const requests: TextGeneration.CommitMessageGenerationInput[] = [];
         const projectTextWriter = { ...textGenerationModelSelection, model: "project-text-writer" };
         const readers = makeReaders({
           sourceControlWriterModelSelection,
@@ -299,16 +299,16 @@ describe("SourceControlPanelReaders generated messages", () => {
           workspaceRoot: "/sibling",
           mainWorkspaceRoot: "/repo",
           rejectsNulWorktreeList,
-          onGenerate: (value) => {
-            request = value;
-          },
+          onGenerate: (request) => requests.push(request),
         });
         yield* readers.generatedCommitMessage("/sibling");
-        assert.deepStrictEqual(request?.modelSelection, projectTextWriter);
-        assert.equal(request?.policy?.commitInstructions, "Main project style");
+        assert.equal(requests.length, 1);
         yield* readers.generatedStashMessage("/sibling", "all");
-        assert.deepStrictEqual(request?.modelSelection, projectTextWriter);
-        assert.equal(request?.policy?.commitInstructions, "Main project style");
+        assert.equal(requests.length, 2);
+        for (const request of requests) {
+          assert.deepStrictEqual(request.modelSelection, projectTextWriter);
+          assert.equal(request.policy?.commitInstructions, "Main project style");
+        }
       }),
   );
 
