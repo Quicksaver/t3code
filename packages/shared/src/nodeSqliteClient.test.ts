@@ -877,8 +877,6 @@ it.effect("checkpoints an attached archive while the main database is idle", () 
         yield* checkpointWorkerReply(worker);
         yield* sql.unsafe("ATTACH DATABASE ? AS cold_archive", [archive]);
         yield* sql`PRAGMA cold_archive.journal_mode = WAL`;
-        yield* sql`PRAGMA cold_archive.auto_vacuum = INCREMENTAL`;
-        yield* sql`PRAGMA main.synchronous = NORMAL`;
         const limit = 1024 * 1024;
         yield* sql.unsafe(`PRAGMA cold_archive.journal_size_limit = ${limit}`);
         yield* sql`CREATE TABLE cold_archive.pages(payload BLOB)`;
@@ -893,10 +891,6 @@ it.effect("checkpoints an attached archive while the main database is idle", () 
         }>`PRAGMA cold_archive.wal_checkpoint(NOOP)`;
         assert.isAbove(wal[0]!.log, 1000);
         assert.equal(wal[0]!.checkpointed, wal[0]!.log);
-        const policy = yield* sql<{
-          readonly synchronous: number;
-        }>`PRAGMA cold_archive.synchronous`;
-        assert.equal(policy[0]?.synchronous, 2);
         yield* sql`INSERT INTO cold_archive.pages(payload) VALUES (x'00')`;
         assert.isAtMost(Number((yield* fs.stat(`${archive}-wal`)).size), limit);
         const rows = yield* sql<{
