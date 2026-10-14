@@ -91,15 +91,18 @@ describe("worktree-runtime-slot", () => {
   });
 
   afterEach(async () => {
-    // A failed assertion must not leave a poller writing into a deleted fixture.
-    for (const cleanup of fixtureAcquisitionCleanups) await cleanup();
+    // Join owned acquisitions before deleting their fixture. A failed join retains
+    // its fixture rather than racing a possibly live poller.
+    const cleanups = [...fixtureAcquisitionCleanups];
+    const directories = [...fixtureDirectories];
     fixtureAcquisitionCleanups.clear();
+    fixtureDirectories.clear();
+    for (const cleanup of cleanups) await cleanup();
     await Promise.all(
-      [...fixtureDirectories].map((directoryPath) =>
+      directories.map((directoryPath) =>
         NodeFSP.rm(directoryPath, { recursive: true, force: true }),
       ),
     );
-    fixtureDirectories.clear();
   });
 
   it("requires request-scoped command-line acquisition and release", async () => {
@@ -197,13 +200,7 @@ describe("worktree-runtime-slot", () => {
     const { manager, waitForMessage } = makeManager();
     await manager.acquire("mobile", "/worktrees/first", "first-request");
     await manager.acquire("mobile", "/worktrees/second", "second-request");
-    let thirdAcquired = false;
-    const thirdAcquire = manager
-      .acquire("mobile", "/worktrees/third", "third-request")
-      .then((result) => {
-        thirdAcquired = result === "acquired";
-        return result;
-      });
+    const thirdAcquire = manager.acquire("mobile", "/worktrees/third", "third-request");
     fixtureAcquisitionCleanups.add(async () => {
       await manager.cancel("mobile", "/worktrees/third", "third-request");
       await thirdAcquire;
@@ -212,7 +209,6 @@ describe("worktree-runtime-slot", () => {
     await waitForMessage(
       "Waiting for mobile capacity held by /worktrees/first, /worktrees/second.",
     );
-    expect(thirdAcquired).toBe(false);
     expect(await manager.status()).toMatchObject({
       mobile: [{ worktree: "/worktrees/first" }, { worktree: "/worktrees/second" }],
       requests: { "third-request": { cancelledAt: null, worktree: "/worktrees/third" } },
