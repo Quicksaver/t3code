@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   command: vi.fn().mockResolvedValue({ _tag: "Success" }),
   workflowCommand: vi.fn().mockResolvedValue({ _tag: "Success" }),
   toast: vi.fn(),
+  magiRuns: [] as unknown[],
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
@@ -51,6 +52,14 @@ vi.mock("../../state/orchestration", async () => {
     },
   };
 });
+vi.mock("../magi/useMagiRunHistory", () => ({
+  // Subscribed only when the environment supports Magi.
+  useMagiRunHistory: (ref: unknown) => ({
+    history: ref === null ? null : { runs: state.magiRuns, activeRunCount: 0, nextCursor: null },
+    loading: false,
+    failed: false,
+  }),
+}));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
@@ -58,6 +67,8 @@ vi.mock("../ui/tooltip", () => ({
   TooltipPopup: ({ children }: { children: ReactNode }) => (state.showTooltips ? children : null),
 }));
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
 let renderer: ReactTestRenderer;
@@ -74,6 +85,128 @@ afterEach(async () => {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  state.magiRuns = [];
+});
+
+it("lists the conversation's own Magi runs and opens one expanded in the Magi panel", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.projection = {
+    thread: { id: "parent", lineage: { relationshipToParent: null }, activeProviderThreadId: null },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [],
+  };
+  const run = (runId: string, rootThreadId: string, runState: string, title: string) => ({
+    runId,
+    rootThreadId,
+    source: "agent",
+    title: { state: "generated", title },
+    state: runState,
+    objective: null,
+    completedMagiTurns: 1,
+    startedAt: "2026-10-05T10:00:00.000Z",
+    completedAt: runState === "deliberating" ? null : "2026-10-05T10:01:30.000Z",
+  });
+  state.magiRuns = [
+    run("run-active", "parent", "deliberating", "Active review"),
+    run("run-done", "parent", "succeeded", "Plan check"),
+    run("run-limit", "parent", "turn-limit-reached", "Stalled debate"),
+    run("run-subagent", "child", "succeeded", "Delegate review"),
+  ];
+  const environmentId = EnvironmentId.make("test");
+  const threadId = ThreadId.make("parent");
+  const panel = <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />;
+  const text = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ")
+      .replace(/\s+/g, " ");
+
+  // Without the Magi capability there is nothing to list, and Lineage stays hidden.
+  await act(async () => {
+    renderer = create(panel);
+  });
+  expect(renderer.toJSON()).toBeNull();
+
+  const participantThreadId =
+    "thread:delegated-task:magi%3Arun-active%3Aparticipant-one%3Aparticipant";
+  const agents = [
+    { childThreadId: participantThreadId, title: "Magi participant" },
+    { childThreadId: "ordinary-worker", title: "Ordinary worker" },
+  ].map((agent) => ({
+    ...agent,
+    id: agent.childThreadId,
+    threadId: "parent",
+    origin: "app_owned",
+    driver: "codex",
+    providerInstanceId: "codex",
+    nativeTaskRef: { driver: "codex", nativeId: agent.childThreadId, strength: "strong" },
+    prompt: "Review the change",
+    model: "gpt-5.4",
+    status: "running",
+    progress: null,
+    result: null,
+    startedAt: DateTime.makeUnsafe("2026-10-05T10:00:00Z"),
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-10-05T10:00:00Z"),
+  }));
+  state.projection = {
+    ...(state.projection as object),
+    subagents: agents,
+    contextTransfers: agents.flatMap((agent) => [
+      {
+        type: "subagent_spawn",
+        sourceThreadId: "parent",
+        targetThreadId: agent.childThreadId,
+        status: "consumed",
+      },
+      {
+        type: "subagent_result",
+        sourceThreadId: agent.childThreadId,
+        targetThreadId: "parent",
+        status: "consumed",
+      },
+    ]),
+  };
+  state.shells = agents.map((agent) => ({
+    environmentId: "test",
+    source: {
+      id: agent.childThreadId,
+      title: agent.title,
+      lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+    },
+  }));
+  state.configs.set("test", { providers: [], environment: { capabilities: { magi: true } } });
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("Magi runs");
+  expect(text()).toContain("1 failed");
+  expect(text()).toContain("Active review");
+  expect(text()).toContain("Plan check");
+  expect(text()).toContain("Failed to reach consensus");
+  expect(text()).toContain("1m 30s");
+  expect(text()).not.toContain("Delegate review");
+  expect(text()).not.toContain("Magi participant");
+  expect(text()).toContain("Ordinary worker");
+  expect(renderer.root.findAllByProps({ title: "Lineage · 1 running" })).not.toHaveLength(0);
+
+  await act(async () =>
+    renderer.root
+      .findByProps({ "aria-label": "Magi run: Plan check, Consensus reached" })
+      .props.onClick(),
+  );
+  expect(
+    selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      scopeThreadRef(environmentId, threadId),
+    ),
+  ).toMatchObject({
+    isOpen: true,
+    activeSurfaceId: "magi",
+    surfaces: [{ id: "magi", kind: "magi", revealRunId: "run-done" }],
+  });
 });
 
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
@@ -237,6 +370,7 @@ it("opens the correct chat for every workflow phase and unphased member", async 
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.showTooltips = true;
   state.configs.set("remote", {
+    environment: { capabilities: {} },
     providers: [
       {
         instanceId: "claude-personal",
@@ -779,6 +913,7 @@ it("shows readable models and only differing workspace details in agent tooltips
   ];
   state.shells = [{ environmentId: "test", source: child }];
   state.configs.set("test", {
+    environment: { capabilities: {} },
     providers: [
       {
         instanceId: "codex",
@@ -951,6 +1086,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     ["cursor", serviceTier, "priority", ""],
   ] as const) {
     state.configs.set("test", {
+      environment: { capabilities: {} },
       providers: [
         {
           instanceId: "codex",
@@ -984,6 +1120,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     else expect(text()).not.toContain("mode on");
   }
   state.configs.set("test", {
+    environment: { capabilities: {} },
     providers: [
       {
         instanceId: "codex",

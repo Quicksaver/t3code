@@ -11,6 +11,7 @@ export interface ScreenHeaderAction {
   /** Shows a spinner in place of the icon while the action's work is pending. */
   readonly loading?: boolean;
   readonly selected?: boolean;
+  readonly menuOnly?: boolean;
   readonly tintColor?: ColorValue;
 }
 

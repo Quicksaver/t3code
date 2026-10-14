@@ -77,6 +77,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import type * as SqlClient from "effect/sql/SqlClient";
+import {
+  ProjectionMagiRepository,
+  ProjectionMagiRepositoryLive,
+} from "../persistence/ProjectionMagi.ts";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import {
@@ -824,6 +829,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
+  const magiRepository = yield* ProjectionMagiRepository;
+  const hasPendingMagiWork = magiRepository.hasPendingOwnerWork;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
@@ -10158,11 +10165,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.taskId);
       const childRun =
-        taskRuns.length === 0
-          ? options.taskId === forkedFrom.nodeId
-            ? options.resultRun
-            : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        options.taskId === forkedFrom.nodeId && options.resultRun !== undefined
+          ? options.resultRun
+          : taskRuns.length === 0
+            ? options.taskId === forkedFrom.nodeId
+              ? options.resultRun
+              : undefined
+            : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
@@ -10454,6 +10463,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         childControls.thread.forkedFrom?.type !== "node"
       )
         return;
+      // A Magi owner can end its provider turn while the panel works. Its delegated task
+      // still owes arbitration and the final answer, including between panel settlement and enqueue.
+      if (yield* hasPendingMagiWork(childThreadId)) return;
       const progress = delegatedTaskProgress(childControls);
       const parent = yield* projectionStore.getThreadRecords(parentThreadId, [
         "subagents",
@@ -11436,12 +11448,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { messageRoles: ["user"] },
       );
       if (taskId !== undefined) {
+        if (
+          child.thread.forkedFrom?.type === "node" &&
+          taskId === child.thread.forkedFrom.nodeId &&
+          (yield* hasPendingMagiWork(childThreadId))
+        )
+          return true;
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
         return yield* childAwaitsRestartContinuation(runs, run);
       }
       const progress = delegatedTaskProgress(child);
+      if (yield* hasPendingMagiWork(childThreadId)) return true;
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
@@ -11612,8 +11631,10 @@ export const layer: Layer.Layer<
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
   | ThreadForkServiceV2
+  | SqlClient.SqlClient
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(ProjectionMagiRepositoryLive),
 );
 
 const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(

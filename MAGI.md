@@ -199,7 +199,7 @@ Because arbitration and actions happen in the owning conversation, there is no s
 - Each conversation uses its configured provider instance, model, and options, and the owner's runtime and interaction modes.
 - Later Magi turns, retries, structural repairs, and compaction requests are ordinary queued messages to the same participant conversation, sent by the server with deterministic command and message ids. The participant's provider session therefore retains its earlier context. Every turn repeats the initiating-task envelope so native compaction cannot drop the task.
 - Magi waits for the participant run's terminal `run.updated` event and reads the run's latest assistant message, or its error, as the participant's raw response.
-- Provider session loss and restart recovery are V2's responsibility. A run interrupted by a server restart while deliberating ends as failed; other states resume as recorded.
+- Provider session loss and restart recovery are V2's responsibility. A Magi run interrupted by a server restart while initializing or deliberating ends as failed; other states resume as recorded. Magi does not reconstruct participant collectors across restarts. V2 may continue a participant conversation independently, but that continuation is not evidence for the failed Magi turn. A paused deliberation whose live fiber was lost requires a new Magi turn after resume. Participant results and token totals belong to the physical runs Magi dispatched, including its own retries, repairs, and compaction. Adopting V2's continuation-aware task waiter would require a separate change to Magi's restart policy and durable collection, rather than a waiter substitution.
 - Participant conversations are ordinary conversations: they can be read, receive approvals, and use their own tools and subagents. The Magi panel links to them from the run detail.
 
 ## Orchestration V2 integration
@@ -500,7 +500,7 @@ nonterminal state
 
 `awaiting-actions` never transitions directly to `succeeded`. Recording an action changes the candidate fingerprint, so the run moves to `awaiting-next-turn` or, when no bounded turn remains, `turn-limit-reached`.
 
-Migration `062_MagiProjections` follows upstream `061_PullRequestReviewGuides` and creates six tables in the shared `effect_sql_migrations` ledger:
+Standalone migration `063_MagiProjections` follows upstream `062_ThreadFailureLookupIndex`. Main preserves the equivalent published schema at 72 `MagiV2Projections` plus 73 `MagiV2ArmClearingAndParticipants`; it does not replay standalone ID 63. These migrations create six tables in the shared `effect_sql_migrations` ledger:
 
 - `magi_arms`: one row per conversation with the arm id, revision, configuration, and the message that carried it, if any.
 - `magi_runs`: one row per run with its owner, source, state, title, objective, initiating reference, turn count, timestamps, and the complete `PersistedMagiRun` snapshot (detail, protocol state, initiating instruction, objective, arbitrator prompt, and the owner's starting run and message ids). A partial unique index allows one nonterminal run per owner.
@@ -646,7 +646,7 @@ Automated tests cover only what Magi implements:
 - Prompt envelopes, escaping, and manifests (`MagiPrompts`), result projection (`MagiResultProjection`), and service helpers such as recovery routing, capacity decisions, lifecycle transitions, and arm delivery to the provider (`MagiService.test.ts`).
 - Evidence listing, selection, and per-caller read ordering (`MagiContextAssembler`).
 - Participant token totals over dispatched runs (`MagiTokenUsage`).
-- Persistence: run round trips, owner existence, active-run counts, lineage audiences with owner attribution, per-participant artifact grants, arm attachment, and owner deletion (`ProjectionMagi.test.ts`), plus migration 062_MagiProjections.
+- Persistence: run round trips, owner existence, active-run counts, lineage audiences with owner attribution, per-participant artifact grants, arm attachment, and owner deletion (`ProjectionMagi.test.ts`), plus migration 063_MagiProjections.
 - V2 seams with deterministic providers (`MagiService.integration.test.ts`): participants become `subagent` child conversations, receive manifests but not result bodies, return structured results with provider-reported token usage, read only their own artifacts, and are deleted with their owner; a delegated task's run appears, attributed and counted, in its root conversation's history and subscription.
 - MCP boundaries: actual toolkit handlers reject threadless OAuth access to Magi and context artifacts; upstream OAuth targeting and runtime ceilings still apply, and participant fixtures enforce lineage, explicit scheduling targets, and fork restrictions.
 - Client logic: panel roster and indicator logic, timeline placement, settings save scheduling, environment selection, mobile sheet logic, and `magiArm` on the launch command.

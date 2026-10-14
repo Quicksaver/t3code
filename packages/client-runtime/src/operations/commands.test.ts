@@ -4,6 +4,7 @@ import {
   CheckpointScopeId,
   CommandId,
   EnvironmentId,
+  MagiParticipantId,
   MessageId,
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -353,6 +354,55 @@ describe("V2 environment commands", () => {
           worktreePath: "/workspace/project-worktrees/feature",
           branch: "feature",
         },
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("arms Magi on the launch that sends a thread's first message", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const magiArm = {
+        participants: [1, 2].map((index) => ({
+          participantId: MagiParticipantId.make(`participant-${index}`),
+          modelSelection: v2Projection.thread.modelSelection,
+          personalityId: null,
+          weight: 1,
+        })),
+        consensusThresholdPercent: 100,
+        magiTurnLimit: 1,
+      };
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-magi-arm"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-magi-arm"),
+          role: "user",
+          text: "Review this with Magi",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+          magiArm,
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({
+        threadId: v2ThreadId,
+        magiArm,
+        initialMessage: { text: "Review this with Magi" },
       });
     }).pipe(Effect.provide(layerTestCrypto)),
   );

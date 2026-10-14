@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, MagiRunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
@@ -349,6 +349,36 @@ describe("rightPanelStore", () => {
       },
     });
     expect(selectThreadRightPanelState(migrated.byThreadKey, refA).maximized).toBe(true);
+  });
+
+  it("opens the Magi surface on a requested run, and asks again for every later request", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.openMagiRun(refA, MagiRunId.make("run-1"));
+    store.openMagiRun(refA, MagiRunId.make("run-2"));
+    store.openMagiRun(refA, MagiRunId.make("run-2"));
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.isOpen).toBe(true);
+    expect(state.activeSurfaceId).toBe("magi");
+    expect(state.surfaces).toEqual([
+      { id: "diff", kind: "diff" },
+      { id: "magi", kind: "magi", revealRunId: "run-2", revealRequestId: 3 },
+    ]);
+  });
+
+  it("does not replay a Magi run request after reload", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "magi",
+            surfaces: [{ id: "magi", kind: "magi", revealRunId: "run-1", revealRequestId: 4 }],
+          },
+        },
+      }).byThreadKey["env-1:thread-A"]?.surfaces,
+    ).toEqual([{ id: "magi", kind: "magi" }]);
   });
 
   it("drops the legacy singleton terminal surface during migration", () => {

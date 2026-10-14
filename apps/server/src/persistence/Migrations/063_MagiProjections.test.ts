@@ -8,7 +8,7 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
-layer("062_MagiProjections", (it) => {
+layer("063_MagiProjections", (it) => {
   it.effect("adds only Magi tables after the orchestration V2 schema", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

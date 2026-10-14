@@ -2,11 +2,19 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 
-import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import {
+  readCaller,
+  requireMagiParticipantToolAllowed,
+  requireScheduledTaskTargetAllowed,
+  requireThreadWriteAllowed,
+  unavailable,
+} from "../../threadAccess.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads(() =>
@@ -42,6 +50,7 @@ const handlers = {
     (input) =>
       Effect.gen(function* () {
         const { threads } = yield* readCaller();
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* threads.stopWorkflow(input).pipe(
           Effect.as({}),
           Effect.mapError(
@@ -64,6 +73,15 @@ const handlers = {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const { caller } = yield* readCaller();
+        // Mirrors OrchestratorMcpService.scheduleTask's binding rule; keep them in sync.
+        const bindsToCaller =
+          input.bindToCurrentThread ??
+          (caller !== undefined &&
+            (input.projectId === undefined || input.projectId === caller.projectId));
+        yield* requireScheduledTaskTargetAllowed(
+          bindsToCaller && caller !== undefined ? caller.id : null,
+        );
         return yield* service.scheduleTask(scope, input);
       }),
   ),
@@ -78,6 +96,22 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      if (scope.thread !== undefined) {
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+        const task = tasks.find((task) => task.id === input.scheduledTaskId);
+        if (task !== undefined) {
+          yield* requireScheduledTaskTargetAllowed(task.threadId);
+          // Mirrors OrchestratorMcpService.updateScheduledTask's binding rule; keep them in sync.
+          const nextThreadId =
+            input.bindToCurrentThread === undefined
+              ? task.threadId
+              : input.bindToCurrentThread
+                ? scope.thread.threadId
+                : null;
+          yield* requireScheduledTaskTargetAllowed(nextThreadId);
+        }
+      }
       return yield* service.updateScheduledTask(scope, input);
     }),
   ),
@@ -99,6 +133,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      yield* requireMagiParticipantToolAllowed({ action: "create-threads" });
       return yield* service.createThreads(scope, input);
     }),
   ),
@@ -134,6 +169,7 @@ const handlers = {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* service.sendToThread(scope, input);
       }),
   ),
@@ -150,6 +186,7 @@ const handlers = {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* service.interruptThread(scope, input);
       }),
   ),
