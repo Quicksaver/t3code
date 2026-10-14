@@ -44,6 +44,7 @@ function makeReaders(input: {
   readonly projects?: Readonly<Record<string, ProjectId>>;
   readonly workspaceRoot?: string;
   readonly mainWorkspaceRoot?: string;
+  readonly rejectsNulWorktreeList?: boolean;
   readonly failProjectLookup?: boolean;
   readonly generate?: (
     request: TextGeneration.CommitMessageGenerationInput,
@@ -102,19 +103,31 @@ function makeReaders(input: {
         : Effect.succeed(input.projects?.[cwd] ?? null),
     run:
       input.run ??
-      ((operation) =>
-        Effect.succeed(
-          operation === "vcs.panel.writingWorkspaceRoot"
-            ? (input.workspaceRoot ?? "/repo")
-            : operation === "vcs.panel.writingWorktrees"
-              ? `worktree ${input.mainWorkspaceRoot ?? "/repo"}\0detached\0\0`
-              : (input.diffOutput ??
-                (operation.endsWith("Summary")
-                  ? "1 file changed"
-                  : operation.endsWith("Status")
-                    ? "M src/example.ts"
-                    : "diff --git a/src/example.ts b/src/example.ts")),
-        )),
+      ((operation, cwd, args) =>
+        operation === "vcs.panel.writingWorktrees" &&
+        args.includes("-z") &&
+        input.rejectsNulWorktreeList
+          ? Effect.fail(
+              new GitCommandError({
+                operation,
+                cwd,
+                command: "git worktree list",
+                detail: "unknown switch `z'",
+                exitCode: 129,
+              }),
+            )
+          : Effect.succeed(
+              operation === "vcs.panel.writingWorkspaceRoot"
+                ? (input.workspaceRoot ?? "/repo")
+                : operation === "vcs.panel.writingWorktrees"
+                  ? `worktree ${input.mainWorkspaceRoot ?? "/repo"}${args.includes("-z") ? "\0detached\0\0" : "\ndetached\n\n"}`
+                  : (input.diffOutput ??
+                    (operation.endsWith("Summary")
+                      ? "1 file changed"
+                      : operation.endsWith("Status")
+                        ? "M src/example.ts"
+                        : "diff --git a/src/example.ts b/src/example.ts")),
+            )),
     serverSettings: {
       getSettings: Effect.succeed(settings),
     } as unknown as ServerSettingsService["Service"],
@@ -257,40 +270,46 @@ describe("SourceControlPanelReaders generated messages", () => {
     }),
   );
 
-  it.effect("inherits main-project overrides for unregistered sibling worktrees", () =>
-    Effect.gen(function* () {
-      const projectId = ProjectId.make("main-project");
-      let request: TextGeneration.CommitMessageGenerationInput | undefined;
-      const projectTextWriter = { ...textGenerationModelSelection, model: "project-text-writer" };
-      const readers = makeReaders({
-        sourceControlWriterModelSelection,
-        sourceControlWritingStyle: {
-          mode: "custom",
-          customInstructions: "Environment style",
-          followChangeRequestTemplates: true,
-        },
-        projectSettingsOverrides: {
-          [projectId]: {
-            sourceControlWriterModelSelection: null,
-            textGenerationModelSelection: projectTextWriter,
-            sourceControlWritingStyle: {
-              mode: "custom",
-              customInstructions: "Main project style",
-              followChangeRequestTemplates: true,
+  it.effect.each([false, true])(
+    "inherits main-project overrides for unregistered sibling worktrees, old Git=%s",
+    (rejectsNulWorktreeList) =>
+      Effect.gen(function* () {
+        const projectId = ProjectId.make("main-project");
+        let request: TextGeneration.CommitMessageGenerationInput | undefined;
+        const projectTextWriter = { ...textGenerationModelSelection, model: "project-text-writer" };
+        const readers = makeReaders({
+          sourceControlWriterModelSelection,
+          sourceControlWritingStyle: {
+            mode: "custom",
+            customInstructions: "Environment style",
+            followChangeRequestTemplates: true,
+          },
+          projectSettingsOverrides: {
+            [projectId]: {
+              sourceControlWriterModelSelection: null,
+              textGenerationModelSelection: projectTextWriter,
+              sourceControlWritingStyle: {
+                mode: "custom",
+                customInstructions: "Main project style",
+                followChangeRequestTemplates: true,
+              },
             },
           },
-        },
-        projects: { "/repo": projectId },
-        workspaceRoot: "/sibling",
-        mainWorkspaceRoot: "/repo",
-        onGenerate: (value) => {
-          request = value;
-        },
-      });
-      yield* readers.generatedStashMessage("/sibling", "all");
-      assert.deepStrictEqual(request?.modelSelection, projectTextWriter);
-      assert.equal(request?.policy?.commitInstructions, "Main project style");
-    }),
+          projects: { "/repo": projectId },
+          workspaceRoot: "/sibling",
+          mainWorkspaceRoot: "/repo",
+          rejectsNulWorktreeList,
+          onGenerate: (value) => {
+            request = value;
+          },
+        });
+        yield* readers.generatedCommitMessage("/sibling");
+        assert.deepStrictEqual(request?.modelSelection, projectTextWriter);
+        assert.equal(request?.policy?.commitInstructions, "Main project style");
+        yield* readers.generatedStashMessage("/sibling", "all");
+        assert.deepStrictEqual(request?.modelSelection, projectTextWriter);
+        assert.equal(request?.policy?.commitInstructions, "Main project style");
+      }),
   );
 
   it.effect("keeps environment generation when project lookup fails", () =>

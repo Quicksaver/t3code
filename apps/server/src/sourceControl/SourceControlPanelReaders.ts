@@ -142,7 +142,15 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         "list",
         "--porcelain",
         "-z",
-      ]);
+      ]).pipe(
+        // Git before 2.36 rejects -z; its line output still identifies the main checkout.
+        Effect.catchTags({
+          GitCommandError: () =>
+            run("vcs.panel.writingWorktrees", cwd, ["worktree", "list", "--porcelain"]).pipe(
+              Effect.map((output) => output.replaceAll("\n", "\0")),
+            ),
+        }),
+      );
       const first = worktrees.split("\0")[0];
       const mainRoot = first?.startsWith("worktree ") ? first.slice(9) : null;
       return mainRoot && mainRoot !== cwd && mainRoot !== root ? yield* lookup(mainRoot) : null;
