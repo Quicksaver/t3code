@@ -33,6 +33,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  Network,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -143,6 +144,7 @@ interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddMagi?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -150,7 +152,10 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  magiAvailable?: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  /** Nonterminal Magi runs of this conversation and its subagents; badges the Magi entry and tab. */
+  activeMagiRunCount?: number;
   children: ReactNode;
 }
 
@@ -178,6 +183,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
+  magi: "Magi is not available for this conversation.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -201,6 +207,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
+  magi: "Available for Magi-capable conversations.",
 } as const;
 
 type TabContextMenuAction =
@@ -341,6 +348,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddMagi?: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -348,6 +356,8 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  magiAvailable?: boolean;
+  activeMagiRunCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -409,6 +419,16 @@ function RightPanelEmptyState(props: {
       available: props.deviceAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
+    },
+    {
+      label: "Magi",
+      description: "Configure or inspect consensus runs.",
+      icon: Network,
+      shortcut: "G",
+      available: props.magiAvailable === true,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.magi,
+      onClick: props.onAddMagi ?? (() => undefined),
+      badgeCount: props.activeMagiRunCount,
     },
   ] as const;
 
@@ -483,6 +503,7 @@ function RightPanelEmptyState(props: {
     return (
       <span className="relative inline-flex shrink-0">
         <Icon className={iconClassName} />
+        {"badgeCount" in action ? <MagiRunCountBadge count={action.badgeCount} /> : null}
       </span>
     );
   };
@@ -620,6 +641,8 @@ function surfaceTitle(
       return "Pull requests";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
+    case "magi":
+      return "Magi";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -650,6 +673,17 @@ function sameOrigin(left: string, right: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Active Magi run count, shown over the Magi launcher entry and tab icon. */
+function MagiRunCountBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="absolute -top-1.5 -right-2 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-3xs font-semibold tabular-nums text-white">
+      <span aria-hidden>{count}</span>
+      <span className="sr-only">{`${count} active Magi ${count === 1 ? "run" : "runs"}`}</span>
+    </span>
+  );
 }
 
 function SurfaceIcon({
@@ -709,6 +743,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "magi":
+      return <Network className="size-3 shrink-0" />;
   }
 }
 
@@ -991,6 +1027,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    {
+      label: "Magi",
+      icon: Network,
+      shortcut: "G",
+      available: props.magiAvailable === true,
+      disabledReason: SURFACE_DISABLED_REASONS.magi,
+      onClick: props.onAddMagi ?? (() => undefined),
+    },
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1241,6 +1285,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           aria-hidden
                         />
                       ) : null}
+                      {surface.kind === "magi" ? (
+                        <MagiRunCountBadge count={props.activeMagiRunCount ?? 0} />
+                      ) : null}
                     </PanelTabCloseButton>
                     {audio === "none" || !audioRuntimeTabId ? null : (
                       <Tooltip>
@@ -1483,6 +1530,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            {...(props.onAddMagi ? { onAddMagi: props.onAddMagi } : {})}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1490,6 +1538,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
+            {...(props.magiAvailable !== undefined ? { magiAvailable: props.magiAvailable } : {})}
+            activeMagiRunCount={props.activeMagiRunCount ?? 0}
           />
         ) : (
           props.children

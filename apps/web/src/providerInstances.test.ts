@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
@@ -132,6 +137,35 @@ describe("isProviderInstancePickerVisible", () => {
 });
 
 describe("applyProviderInstanceSettings", () => {
+  it.each([true, false])(
+    "resolves a Magi picker against the selected project's override of machine enabled=%s",
+    (machineEnabled) => {
+      const instanceId = ProviderInstanceId.make("codex");
+      const projectId = ProjectId.make("magi-project");
+      const entries = deriveProviderInstanceEntries([
+        provider({ provider: ProviderDriverKind.make("codex"), instanceId }),
+      ]);
+      const settings = {
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: machineEnabled },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstances: { [instanceId]: { enabled: !machineEnabled } } },
+        },
+      };
+      expect(applyProviderInstanceSettings(entries, settings, projectId)[0]?.enabled).toBe(
+        !machineEnabled,
+      );
+      expect(applyProviderInstanceSettings(entries, settings, null)[0]?.enabled).toBe(
+        machineEnabled,
+      );
+      expect(
+        applyProviderInstanceSettings(entries, settings, ProjectId.make("other-project"))[0]
+          ?.enabled,
+      ).toBe(machineEnabled);
+      expect(entries[0]?.enabled).toBe(true);
+    },
+  );
   it("uses settings when a streamed snapshot still reports a disabled default as enabled", () => {
     const entries = deriveProviderInstanceEntries([
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),

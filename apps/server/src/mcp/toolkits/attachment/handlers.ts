@@ -11,7 +11,12 @@ import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readThread, unavailable } from "../../threadAccess.ts";
+import {
+  newCommandId,
+  readThread,
+  requireThreadWriteAllowed,
+  unavailable,
+} from "../../threadAccess.ts";
 import { AttachmentToolkit } from "./tools.ts";
 
 export function resolveAttachmentReferences(
@@ -82,6 +87,7 @@ export const layer = McpToolAccess.toLayer(
         (input) =>
           Effect.gen(function* () {
             const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            yield* requireThreadWriteAllowed(projection.thread.id);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
