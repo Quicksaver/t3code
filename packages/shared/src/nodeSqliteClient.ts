@@ -548,7 +548,13 @@ const checkpoints = databases.map((db) => {
       // An attached file can be empty when this worker starts. A read picks
       // up WAL mode once the writer has initialized it; NOOP alone does not.
       if (state.log < 0) {
-        schema.get();
+        try {
+          schema.get();
+        } catch (cause) {
+          // Initializing WAL can briefly lock the archive. Retry on the next check.
+          if (cause.errcode === 5) return state;
+          throw cause;
+        }
         state = frames.get();
       }
       return state;
