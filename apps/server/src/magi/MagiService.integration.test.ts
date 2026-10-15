@@ -12,7 +12,7 @@ import {
   type MagiRecordArbitrationInput,
   type MagiRunId,
   type MagiRunState,
-  type RunId,
+  RunId,
   type MagiStartResult,
   MessageId,
   type ModelSelection,
@@ -41,6 +41,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
@@ -1434,13 +1435,12 @@ describe("MagiService passive delivery", () => {
           (event) => event.type === "message.updated" && event.payload.id === messageId,
         );
         yield* magi.getTurnResult(childCaller, receipt);
-        const stored = yield* storedRun(receipt.runId);
-        const delivery = (stored.protocol as { turnDelivery: { runId: RunId } }).turnDelivery;
+        const deliveryRunId = yield* awaitTurnDelivery(receipt.runId, 1);
         yield* awaitEvent(
           childThreadId,
           (event) =>
             event.type === "turn-item.updated" &&
-            event.payload.runId === delivery.runId &&
+            event.payload.runId === deliveryRunId &&
             event.payload.type === "command_execution",
         );
         expect(task.status).toBe("running");
@@ -1625,13 +1625,12 @@ describe("MagiService passive delivery", () => {
               ownerThreadId,
               (event) => event.type === "message.updated" && event.payload.id === messageId,
             );
-            const stored = yield* storedRun(receipt.runId);
-            const delivery = (stored.protocol as { turnDelivery: { runId: RunId } }).turnDelivery;
+            const deliveryRunId = yield* awaitTurnDelivery(receipt.runId, turnNumber);
             yield* awaitEvent(
               ownerThreadId,
               (event) =>
                 event.type === "turn-item.updated" &&
-                event.payload.runId === delivery.runId &&
+                event.payload.runId === deliveryRunId &&
                 event.payload.type === "command_execution",
             );
             const result = yield* magi.getTurnResult(caller, {
@@ -1736,6 +1735,33 @@ const storedRun = (runId: MagiRunId) =>
     if (Option.isNone(stored)) return yield* Effect.die("The Magi run was not stored.");
     return stored.value;
   }).pipe(Effect.provide(ProjectionMagiRepositoryLive));
+
+// The completion message commits before the service records its delivery run.
+const decodeTurnDelivery = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    turnDelivery: Schema.NullOr(
+      Schema.Struct({ magiTurn: Schema.Number, runId: Schema.NullOr(RunId) }),
+    ),
+  }),
+);
+const awaitTurnDelivery = (runId: MagiRunId, magiTurn: number) =>
+  Effect.flatMap(MagiService, (magi) =>
+    magi.subscribeRunDetail({ runId, includeDiagnostics: false }).pipe(
+      Stream.mapEffect(() =>
+        storedRun(runId).pipe(Effect.flatMap((run) => decodeTurnDelivery(run.protocol))),
+      ),
+      Stream.map(({ turnDelivery }) =>
+        turnDelivery?.magiTurn === magiTurn ? turnDelivery.runId : null,
+      ),
+      Stream.filter((deliveryRunId) => deliveryRunId !== null),
+      Stream.runHead,
+      Effect.flatMap((delivery) =>
+        Option.isSome(delivery)
+          ? Effect.succeed(delivery.value)
+          : Effect.die("The Magi completion delivery was not recorded."),
+      ),
+    ),
+  );
 
 /** Runs `body` against a newly started service over the same database, as after a restart. */
 const afterRestart = <A, E, R>(body: Effect.Effect<A, E, R>) =>
