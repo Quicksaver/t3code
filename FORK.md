@@ -248,6 +248,8 @@ Capability fixtures are one `it.each` case per missing SDK component (Platform-T
 
 The combined SDK-root fixture calls the function-valued remote environment prelude used by the byte-preserving transport. Its helper imports use the SshDeviceScript namespace shared with login-shell and npm fixtures. Windows executes the generated Node capability probes and npm transport cases; the POSIX shell and lifecycle fixture bodies remain unexecuted there.
 
+Capability probing gates AVD enumeration. An unavailable SDK retains iOS support and does not imply `androidDiscoveryIncomplete`; that flag belongs to an attempted AVD listing that failed after Android support was established.
+
 ## Device Discovery Retention
 
 **Worktree branch:** `fix/device-discovery-retention`
