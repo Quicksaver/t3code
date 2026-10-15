@@ -2,7 +2,7 @@
 
 This is the tracked text accessory copy for `fix/preview-background-recording-start`.
 
-The standalone source is `737a84a3028cea1dd7ec468bb3692ae04af27eb0` directly above pinned `base/main` `18656a3402459d9d145bb3fa5767723531b27ac7`. Main composes its trusted-requester acquisition, bounded native warmup, page-frame fallback after NotReadableError, previous-source retirement, and exact-request registration-failure cleanup with the screenshot rendering consumers. Repeated START must not queue a tab-only STOP that can retire replacement capture. The combined Manager fixture retains both sets of VM controls through one import.
+The standalone source is `30193997d0dbcc00058a55aafc1f29ad8fe9ab2a` directly above pinned `base/main` `348f217a853dd4a23d7fa4834dedb05f545c2075`. Main composes its trusted-requester acquisition, bounded native warmup, page-frame fallback after NotReadableError, previous-source retirement, and exact-request registration-failure cleanup with the screenshot rendering consumers. Repeated START must not queue a tab-only STOP that can retire replacement capture. The combined Manager fixture retains both sets of VM controls through one import.
 
 The source branch's ignored BRANCH_DETAILS.md records 204 focused tests and scoped typechecks at that source. Historical Windows minimized-window START/STOP and cancellation, and locked/display-off comparisons below, retain their actual source and condition attribution. Rebuilding main does not refresh ordinary toolbar/MCP routing, fallback rejection, native registration fault injection, guest loss, or OS-state proof. The standalone accessory file is absent; this tracked copy is maintained from current branch context while its historical proof is preserved.
 
