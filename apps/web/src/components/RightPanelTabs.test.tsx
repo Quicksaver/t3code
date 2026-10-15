@@ -205,6 +205,7 @@ describe("RightPanelTabs add-surface actions", () => {
       "pull-request",
       "pull-requests",
       "device",
+      "magi",
     ]);
   });
 
@@ -229,6 +230,31 @@ describe("RightPanelTabs add-surface actions", () => {
 });
 
 describe("surface shortcuts", () => {
+  it.each(["empty-state", "menu"] as const)(
+    "keeps Magi access and its badge independent of Version Control in %s",
+    (placement) => {
+      const onAddMagi = vi.fn();
+      const props = {
+        ...actionProps(),
+        onAddMagi,
+        magiAvailable: true,
+        sourceControlAvailable: false,
+        activeMagiRunCount: 3,
+      };
+      const actions = buildAddSurfaceActions(props, placement);
+      const magi = actions.find((action) => action.id === "magi");
+      expect(actions.at(-1)).toBe(magi);
+      expect(magi?.badgeCount).toBe(3);
+      const shortcut = surfaceShortcutActionForKey(actions, shortcutEvent("g"));
+      expect(shortcut).toBe(magi);
+      shortcut?.onClick();
+      expect(onAddMagi).toHaveBeenCalledOnce();
+      expect(surfaceShortcutActionForKey(actions, shortcutEvent("v"))).toBeNull();
+      const unavailable = buildAddSurfaceActions({ ...props, magiAvailable: false }, placement);
+      expect(surfaceShortcutActionForKey(unavailable, shortcutEvent("g"))).toBeNull();
+    },
+  );
+
   it("matches available surface shortcuts case-insensitively", () => {
     const actions = buildAddSurfaceActions(actionProps(), "menu");
     const sourceControl = actions.find((action) => action.id === "source-control");
