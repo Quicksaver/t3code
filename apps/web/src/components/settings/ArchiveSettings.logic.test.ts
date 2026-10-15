@@ -230,12 +230,18 @@ describe("buildArchivedThreadGroups", () => {
       },
     };
     const search = parseArchivedThreadSearchInput("needle");
-    const groups = (parentArchived: boolean) =>
+    const groups = (
+      parentArchived: boolean,
+      relationshipToParent: "subagent" | "fork" = "subagent",
+    ) =>
       buildArchivedThreadGroups({
         snapshots: [
           makeSnapshot(
             [project],
-            [{ ...parent, archivedAt: parentArchived ? parent.archivedAt : null }, child],
+            [
+              { ...parent, archivedAt: parentArchived ? parent.archivedAt : null },
+              { ...child, lineage: { ...child.lineage, relationshipToParent } },
+            ],
           ),
         ],
         normalizedSearchQuery: search.normalizedQuery,
@@ -245,6 +251,7 @@ describe("buildArchivedThreadGroups", () => {
       });
     expect(groups(true)).toEqual([]);
     expect(groups(false)[0]?.threads.map((thread) => thread.id)).toEqual([child.id]);
+    expect(groups(true, "fork")[0]?.threads.map((thread) => thread.id)).toEqual([child.id]);
   });
 
   it("keeps project order when not searching and sorts threads by archive timestamp", () => {
