@@ -14,6 +14,11 @@ import { act, useEffect, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+vi.mock("../lib/composerDraftUploads", () => ({
+  releaseArchivedComposerDraftUploads: vi.fn(),
+  permanentlyDiscardComposerDraft: vi.fn(),
+}));
+
 const state = await vi.hoisted(async () => {
   const { Atom, AtomRegistry } = await import("effect/reactivity");
   return {

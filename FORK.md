@@ -701,7 +701,7 @@ The upstream thread-action permission and Undo fixtures mock both integrated dra
 
 The current branch preserves archive Undo synchronization: an unarchive receipt is followed by waitForThreadShell before returning to the conversation. Its real-router regression uses a live environment shell so the upstream missing-thread guard remains authoritative during delayed restoration. Integration retains image-only archive cleanup and permanent-delete draft cleanup, with grants and runtime eligibility rechecked by the shared archive coordinator.
 
-The delayed-shell navigation fixture isolates draft cleanup from route behavior; real upload preservation and permanent deletion are covered separately by the integrated composer suites.
+The delayed-shell navigation fixture isolates both archive upload release and permanent draft discard from route behavior. Its mocked composer hook does not implement the store API used by the real cleanup helpers; real upload preservation and permanent deletion remain covered separately by the integrated composer suites.
 
 ## Version Control Panel Work
 
