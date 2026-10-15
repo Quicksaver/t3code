@@ -36,3 +36,5 @@ export class PreviewCaptureFailure extends Schema.TaggedError<PreviewCaptureFail
     return previewCaptureFailureMessage(this);
   }
 }
+
+export type PreviewCaptureFailureEncoded = Schema.Codec.Encoded<typeof PreviewCaptureFailure>;

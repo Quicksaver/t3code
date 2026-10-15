@@ -1,9 +1,30 @@
-import { expect, it } from "vite-plus/test";
-import { PreviewCaptureFailure } from "@t3tools/contracts";
+import { expect, expectTypeOf, it } from "vite-plus/test";
+import {
+  PreviewCaptureFailure,
+  type DesktopPreviewBridge,
+  type DesktopPreviewScreenshotArtifact,
+  type PreviewCaptureFailureEncoded,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { unwrapPreviewCaptureResult } from "./previewCaptureErrors";
+import type { previewBridge } from "./previewBridge";
 
 const encodeCaptureFailure = Schema.encodeSync(PreviewCaptureFailure);
+
+it("keeps raw capture failures encoded and decoded bridge success types exact", () => {
+  expectTypeOf<ReturnType<DesktopPreviewBridge["captureScreenshot"]>>().toEqualTypeOf<
+    Promise<DesktopPreviewScreenshotArtifact | PreviewCaptureFailureEncoded>
+  >();
+  expectTypeOf<ReturnType<DesktopPreviewBridge["recording"]["startScreencast"]>>().toEqualTypeOf<
+    Promise<void | PreviewCaptureFailureEncoded>
+  >();
+  expectTypeOf<ReturnType<NonNullable<typeof previewBridge>["captureScreenshot"]>>().toEqualTypeOf<
+    Promise<DesktopPreviewScreenshotArtifact>
+  >();
+  expectTypeOf<
+    ReturnType<NonNullable<typeof previewBridge>["recording"]["startScreencast"]>
+  >().toEqualTypeOf<Promise<void>>();
+});
 
 it("rejects a plain contextBridge failure with the native capture diagnostic", () => {
   const encoded = encodeCaptureFailure(
