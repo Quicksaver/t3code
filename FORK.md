@@ -274,8 +274,6 @@ vp test run apps/server/src/device/DeviceMultiHost.test.ts apps/server/src/devic
 
 `DeviceMultiHost.test.ts` covers local and SSH retention, stale successful and failed refreshes, readiness ordering, host replacement, and local recovery through Deferred-controlled service tests. Other fixtures cover bounded command output, preserved iOS and physical Android results, and AVD deduplication. Setup-guidance tests cover Android-specific enumeration warnings, unrelated iOS warnings, recovery, and retained Android devices. Historical web captures used labeled fixtures and older guidance; they do not establish current integrated discovery, streaming, native visibility, or separate SSH-settings and Tools flows.
 
-The integrated SSH request keeps its generated shell script in stdin and enables failed-output tail retention beside it. The optional command payload is encoded inside that script, never assigned over the SSH request's stdin. SDK capability validation happens before enumeration, so an adb-only host retains iOS without attempting an Android AVD listing.
-
 ## Pairing Token Navigation
 
 **Worktree branch:** `base/fork`
