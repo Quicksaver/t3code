@@ -11,6 +11,7 @@ import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./s
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
+const itPosix = it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32");
 
 /** Runs the probe as `platform`, macOS by default, after `setup` stubs its SDK environment and filesystem. */
 const probePlatforms = (setup: string, platform = "darwin") => {
@@ -114,9 +115,8 @@ require('node:fs').statSync=(file)=>({isFile:()=>file.replaceAll('\\\\','/').sta
   });
 });
 
-it.effect("prefers ANDROID_SDK_ROOT over an incomplete default SDK in SSH commands", () =>
+itPosix("prefers ANDROID_SDK_ROOT over an incomplete default SDK in SSH commands", () =>
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
     yield* Effect.promise(async () => {
       const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-sdk-root-"));
       try {
@@ -165,9 +165,8 @@ it.effect("prefers ANDROID_SDK_ROOT over an incomplete default SDK in SSH comman
   }),
 );
 
-it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
+itPosix("finds Android Studio Java for a non-interactive SSH session", () =>
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
     yield* Effect.promise(async () => {
       const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-java-"));
       try {
@@ -189,9 +188,8 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   }),
 );
 
-it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
+itPosix("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
     yield* Effect.promise(async () => {
       const value = "quotes ' \" ; $(echo expanded) $HOME\nnext line";
       const result = await exec("sh", ["-c", `printf %s ${quoteRemoteArg(value)}`]);
@@ -201,9 +199,8 @@ it.effect("preserves shell metacharacters and newlines in remote arguments", () 
 );
 
 describe("remote helper lifecycle", () => {
-  it.effect("reuses its own healthy helpers and stops only its own runtime", () =>
+  itPosix("reuses its own healthy helpers and stops only its own runtime", () =>
     Effect.gen(function* () {
-      if ((yield* HostProcess.Platform) === "win32") return;
       yield* Effect.promise(async () => {
         const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-remote-script-"));
         const bin = NodePath.join(home, "bin");
