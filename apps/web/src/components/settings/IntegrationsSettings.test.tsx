@@ -151,6 +151,17 @@ describe("device setup guidance", () => {
       hostStatuses: { local: { status: "ready", androidDiscoveryIncomplete: true } },
     });
     expect(platformSetupStatus(state, "android").message).toContain("may be incomplete");
+    expect(
+      platformSetupStatus(
+        {
+          ...state,
+          hostStatus: "idle",
+          hosts: state.hosts.map((host) => ({ ...host, id: "remote", kind: "ssh" })),
+          hostStatuses: { remote: { status: "ready", androidDiscoveryIncomplete: true } },
+        },
+        "android",
+      ).message,
+    ).toContain("may be incomplete");
     expect(platformSetupStatus(state, "ios").message).toContain("Xcode Settings");
     expect(
       platformSetupStatus(
