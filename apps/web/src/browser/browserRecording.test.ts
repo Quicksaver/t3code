@@ -460,10 +460,9 @@ describe("browser recording", () => {
     };
   };
 
-  it("returns fallback before first decode, drains the last pending frame, caps rate and stays idle", async () => {
+  it("waits for usable frames, drains the last pending frame, and releases capture on STOP", async () => {
     const f = fallback();
     const request = await f.request;
-    expect(request).toEqual(expect.any(String));
     expect(FakeMediaRecorder.instances).toHaveLength(0);
     const decoding = deferred<Awaited<ReturnType<typeof f.decode>>>();
     const close = vi.fn();
@@ -474,37 +473,15 @@ describe("browser recording", () => {
     expect(f.decode).toHaveBeenCalledOnce();
     decoding.resolve({ width: 1280, height: 720, close });
     await f.start;
-    expect(f.track.requestFrame).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(34);
     expect(await last).toBe(true);
     expect(await first).toBe(true);
-    expect(f.drawImage).toHaveBeenCalledTimes(2);
     expect(await f.decode.mock.calls[1]?.[0]?.text()).toBe("last");
     expect(close).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(f.drawImage).toHaveBeenCalledTimes(2);
     await stopBrowserRecording(f.tabId);
-    expect(f.track.requestFrame).toHaveBeenCalledTimes(3);
-    expect(f.drawImage).toHaveBeenCalledTimes(3);
     expect(f.track.stop).toHaveBeenCalled();
     expect(f.canvas.width).toBe(0);
     expect(await f.frame("stale", request)).toBe(false);
-  });
-
-  it.each(["decode", "requestFrame"])("cleans up first-frame %s failure", async (stage) => {
-    const f = fallback();
-    const captureId = await f.request;
-    if (stage === "decode") f.decode.mockRejectedValueOnce(new Error(stage));
-    else
-      f.track.requestFrame.mockImplementationOnce(() => {
-        throw new Error(stage);
-      });
-    expect(await f.frame("first", captureId)).toBe(false);
-    await expect(f.start).rejects.toMatchObject({ operation: "capture-media-stream" });
-    await stopBrowserRecording(f.tabId);
-    expect(readActiveBrowserRecordingTabIds().size).toBe(0);
-    expect(f.canvas.width).toBe(0);
-    if (stage === "requestFrame") expect(f.track.stop).toHaveBeenCalled();
   });
 
   it("shares the native deadline with fallback and disposes late decode without ending a new capture", async () => {

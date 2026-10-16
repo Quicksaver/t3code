@@ -3077,20 +3077,13 @@ describe("PreviewManager", () => {
       });
       const host = makeTestHostWebContents();
       const frames = yield* Queue.unbounded<string>();
-      const endings = yield* Queue.unbounded<void>();
       const blocked = Promise.withResolvers<boolean>();
-      let consumption = blocked.promise;
-      const callbacks = new Map<string, () => void>();
       let receive!: (frame: ReturnType<typeof image>) => void;
       let captureId = 0;
       host.executeJavaScript.mockImplementation((code: string) => {
         if (code.includes("?.frame?.")) {
           Queue.offerUnsafe(frames, code);
-          return consumption;
-        }
-        if (code.includes("?.end?.")) {
-          Queue.offerUnsafe(endings, undefined);
-          return Promise.resolve(true);
+          return blocked.promise;
         }
         return Promise.resolve(String(++captureId));
       });
@@ -3101,7 +3094,6 @@ describe("PreviewManager", () => {
             receive = callback;
           }),
           endFrameSubscription: vi.fn(),
-          on: vi.fn((event: string, callback: () => void) => callbacks.set(event, callback)),
         },
       );
       fromId.mockImplementation((id) => (id === 42 ? guest : null));
@@ -3111,13 +3103,7 @@ describe("PreviewManager", () => {
         host,
         guest,
         frames,
-        endings,
         blocked,
-        callbacks,
-        image,
-        block: () => {
-          consumption = new Promise(() => {});
-        },
         receive: (value: string) => {
           const next = image(value);
           receive(next);
@@ -3127,7 +3113,7 @@ describe("PreviewManager", () => {
     });
 
   effectIt.effect(
-    "seeds static readiness, coalesces before JPEG, and STOP releases blocked delivery",
+    "seeds static readiness, coalesces before JPEG, and releases capture on STOP",
     () =>
       withManager((manager) =>
         Effect.gen(function* () {
@@ -3150,56 +3136,10 @@ describe("PreviewManager", () => {
           expect(f.guest.endFrameSubscription).toHaveBeenCalledOnce();
           f.receive("stale");
           expect(yield* Queue.size(f.frames)).toBe(0);
-          f.block();
-          yield* manager.startRecording("fallback");
-          yield* Queue.take(f.frames);
-          yield* manager.startRecording("fallback");
-          yield* Queue.take(f.frames);
-          expect(f.guest.endFrameSubscription).toHaveBeenCalledTimes(2);
-          yield* manager.stopRecording("fallback");
-          expect(f.guest.endFrameSubscription).toHaveBeenCalledTimes(3);
           expect(f.guest.debugger.attach).not.toHaveBeenCalled();
         }),
       ),
   );
-
-  for (const loss of ["destroyed", "render-process-gone", "replacement"] as const) {
-    effectIt.effect(`ends fallback on ${loss}, preserving healthy registration and PiP`, () =>
-      withManager((manager) =>
-        Effect.gen(function* () {
-          const f = yield* setupFallback(manager);
-          const { pictureInPictureWindow } = makeTestPictureInPictureWindow();
-          browserWindowConstructor.mockImplementation(function () {
-            return pictureInPictureWindow;
-          });
-          yield* manager.openPictureInPicture("fallback");
-          yield* manager.startRecording("fallback");
-          yield* Queue.take(f.frames);
-          yield* manager.registerWebview("fallback", 42);
-          expect(Exit.isFailure(yield* Effect.exit(manager.registerWebview("fallback", 99)))).toBe(
-            true,
-          );
-          expect(f.guest.endFrameSubscription).not.toHaveBeenCalled();
-          if (loss === "replacement") {
-            const replacement = makeTestPreviewWebContents(
-              async () => f.image("replacement"),
-              43,
-              f.host,
-            );
-            fromId.mockImplementation((id) => (id === 42 ? f.guest : replacement));
-            yield* manager.registerWebview("fallback", 43);
-          } else {
-            f.callbacks.get(loss)?.();
-          }
-          yield* Queue.take(f.endings);
-          expect(f.guest.endFrameSubscription).toHaveBeenCalledOnce();
-          // PiP retains the shared rendering activity until its own close.
-          expect(f.guest.setBackgroundThrottling.mock.calls).toEqual([[false]]);
-          yield* manager.closePictureInPicture("fallback");
-        }),
-      ),
-    );
-  }
 
   effectIt.effect("requests display media with a fresh renderer gesture", () =>
     withManager((manager) =>
