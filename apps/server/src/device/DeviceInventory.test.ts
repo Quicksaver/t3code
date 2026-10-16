@@ -41,7 +41,7 @@ const fixture = Effect.fnUntraced(function* (id: string) {
     ),
     platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
     ensureReady,
-    ensureAgentReady: ensureReady,
+    ensureAgentReady: (onPhase) => onPhase("starting").pipe(Effect.andThen(ensureReady)),
     current: Effect.succeed(ready),
     stop: Effect.void,
     stopAgent: Effect.void,
@@ -103,7 +103,21 @@ it.effect.each(hosts)("retains hub inventory on %s through AVD failures and reco
       stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n",
       stderr: "",
     };
-    const recovered = yield* service.retryHost(id);
+    for (const status of ["failed", "starting", "ready"] as const)
+      yield* service.setHostStatus(id, { status });
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<number>();
+    control.pending = Deferred.succeed(started, undefined).pipe(
+      Effect.andThen(Deferred.await(release)),
+    );
+    const retry = yield* Effect.forkChild(service.retryHost(id));
+    yield* Deferred.await(started);
+    expect((yield* service.state).hostStatuses[id]).toEqual({
+      status: "ready",
+      androidDiscoveryIncomplete: true,
+    });
+    yield* Deferred.succeed(release, 200);
+    const recovered = yield* Fiber.join(retry);
     expect(recovered.devices.map((device) => device.id)).toEqual([
       "ios",
       "phone",

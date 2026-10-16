@@ -232,7 +232,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ...(hostId === LOCAL_DEVICE_HOST_ID
               ? { hostStatus: status.status, hostStatusDetail: status.detail }
               : {}),
-            hostStatuses: { ...state.hostStatuses, [hostId]: status },
+            hostStatuses: {
+              ...state.hostStatuses,
+              [hostId]: state.hostStatuses[hostId]?.androidDiscoveryIncomplete
+                ? { ...status, androidDiscoveryIncomplete: true }
+                : status,
+            },
           })),
     );
 
