@@ -1193,11 +1193,18 @@ const make = Effect.gen(function* () {
     // Rejected receipts are permanent. Retry with stable suffixes, reusing the
     // first unused or accepted id so accepted commands never run twice.
     const commandIdFrom = Effect.fnUntraced(function* (derived: CommandId) {
-      for (let retry = 0; ; retry++) {
+      // Leave headroom for process-loss recovery beyond normal outbox retries.
+      const maxCommandIds = 32;
+      for (let retry = 0; retry < maxCommandIds; retry++) {
         const id = retry === 0 ? derived : CommandId.make(`${derived}:retry:${retry}`);
         const receipt = yield* receipts.getByCommandId(id);
         if (Option.isNone(receipt) || receipt.value.status === "accepted") return id;
       }
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: derived,
+        commandType: `thread.${operation}`,
+        cause: `All ${maxCommandIds} subagent lifecycle command IDs were rejected.`,
+      });
     });
     const cascade = Effect.gen(function* () {
       const limit = yield* DispatchModeLimit;

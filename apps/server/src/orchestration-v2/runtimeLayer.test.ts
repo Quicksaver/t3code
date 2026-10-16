@@ -6097,8 +6097,8 @@ describe("subagent lifecycle", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each([2, "archive", "unarchive"] as const)(
-    "replays receipts after rejected ids or already-target %s",
+  it.effect.each([31, 32, "archive", "unarchive"] as const)(
+    "replays lifecycle receipts or reports exhausted rejected ids for %s",
     (scenario) =>
       Effect.gen(function* () {
         const f = yield* fixture;
@@ -6122,6 +6122,16 @@ describe("subagent lifecycle", () => {
             status: "rejected",
             error: "Transient failure",
           });
+        if (rejections === 32) {
+          const error = yield* f.cascade(operation).pipe(Effect.flip);
+          assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+          assert.equal(error.commandId, id(0));
+          assert.equal(error.cause, "All 32 subagent lifecycle command IDs were rejected.");
+          assert.isFalse(yield* f.archived(app));
+          assert.isTrue(yield* f.archived(native));
+          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(id(rejections))));
+          return;
+        }
         yield* f.cascade(operation);
         assert.equal(
           Option.getOrThrow(yield* receipts.getByCommandId(id(rejections))).status,
@@ -6139,27 +6149,5 @@ describe("subagent lifecycle", () => {
         for (const id of [app, grandchild]) assert.equal(yield* f.archived(id), !target);
         assert.isTrue(Option.isNone(yield* receipts.getByCommandId(id(rejections + 1))));
       }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect("preserves healthy sibling progress after a typed child failure", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      yield* f.set(parent, { archivedAt: f.now });
-      const dispatch = f.orchestrator.dispatch;
-      vi.spyOn(f.orchestrator, "dispatch").mockImplementation((command) =>
-        "threadId" in command && command.threadId === app
-          ? Effect.fail(
-              new Orchestrator.OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-              }),
-            )
-          : dispatch(command),
-      );
-      const error = yield* f.cascade("archive").pipe(Effect.flip);
-      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
-      assert.isFalse(yield* f.archived(app));
-      assert.isTrue(yield* f.archived(native));
-    }).pipe(Effect.provide(layerTest)),
   );
 });
