@@ -14,6 +14,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -3068,7 +3069,7 @@ describe("PreviewManager", () => {
     ),
   );
 
-  const setupFallback = (manager: PreviewManager.PreviewManager["Service"]) =>
+  const setupFallback = (manager: PreviewManager.PreviewManager["Service"], onFrame?: () => void) =>
     Effect.gen(function* () {
       const image = (value: string) => ({
         isEmpty: () => false,
@@ -3080,14 +3081,12 @@ describe("PreviewManager", () => {
       const endings = yield* Queue.unbounded<void>();
       const blocked = Promise.withResolvers<boolean>();
       let consumption = blocked.promise;
-      const callbacks = new Map<
-        string,
-        () => Fiber.Fiber<void, PreviewManager.PreviewManagerError>
-      >();
+      const callbacks = new Map<string, () => void>();
       let receive!: (frame: ReturnType<typeof image>) => void;
       let captureId = 0;
       host.executeJavaScript.mockImplementation((code: string) => {
         if (code.includes("?.frame?.")) {
+          onFrame?.();
           Queue.offerUnsafe(frames, code);
           return consumption;
         }
@@ -3095,7 +3094,7 @@ describe("PreviewManager", () => {
           Queue.offerUnsafe(endings, undefined);
           return Promise.resolve(true);
         }
-        return Promise.resolve({ mode: "frame-subscription", captureId: String(++captureId) });
+        return Promise.resolve(String(++captureId));
       });
       const guest = Object.assign(
         makeTestPreviewWebContents(async () => image("static"), 42, host),
@@ -3104,14 +3103,7 @@ describe("PreviewManager", () => {
             receive = callback;
           }),
           endFrameSubscription: vi.fn(),
-          on: vi.fn(
-            (
-              event: string,
-              callback: () => Fiber.Fiber<void, PreviewManager.PreviewManagerError>,
-            ) => {
-              callbacks.set(event, callback);
-            },
-          ),
+          on: vi.fn((event: string, callback: () => void) => callbacks.set(event, callback)),
         },
       );
       fromId.mockImplementation((id) => (id === 42 ? guest : null));
@@ -3173,6 +3165,66 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect(
+    "drains the last frame across scheduler yields without restarting after STOP",
+    () =>
+      Effect.gen(function* () {
+        let injectedCases = 0;
+        for (let boundary = 1; boundary <= 32; boundary++) {
+          let delivery: Fiber.Fiber<void, PreviewManager.PreviewManagerError> | undefined;
+          let steps = 0;
+          let inject: (() => void) | undefined;
+          const scheduler = new Scheduler.MixedScheduler("sync", (run) => {
+            let active = true;
+            queueMicrotask(() => {
+              if (!active) return;
+              const frame = inject;
+              inject = undefined;
+              frame?.();
+              run();
+            });
+            return () => {
+              active = false;
+            };
+          });
+          let lastFrame: (() => void) | undefined;
+          scheduler.shouldYield = (fiber) => {
+            if (fiber !== delivery || ++steps !== boundary) return false;
+            inject = lastFrame;
+            return true;
+          };
+          yield* withManager((manager) =>
+            Effect.gen(function* () {
+              const f = yield* setupFallback(manager, () => {
+                delivery = Fiber.getCurrent();
+              });
+              yield* manager.startRecording("fallback");
+              yield* Queue.take(f.frames);
+              const firstDelivery = delivery!;
+              let injected = false;
+              lastFrame = () => {
+                injected = true;
+                f.receive("last");
+              };
+              steps = 0;
+              f.blocked.resolve(true);
+              yield* Fiber.join(firstDelivery);
+              yield* Effect.yieldNow;
+              const delivered = yield* Queue.clear(f.frames);
+              if (injected) injectedCases++;
+              yield* manager.stopRecording("fallback");
+              expect(delivered).toEqual(
+                injected ? [expect.stringContaining(Buffer.from("last").toString("base64"))] : [],
+              );
+              f.receive("after-stop");
+              expect(yield* Queue.size(f.frames)).toBe(0);
+            }),
+          ).pipe(Effect.provideService(Scheduler.Scheduler, scheduler));
+        }
+        expect(injectedCases).toBeGreaterThan(0);
+      }),
+  );
+
   for (const loss of ["destroyed", "render-process-gone", "replacement"] as const) {
     effectIt.effect(`ends fallback on ${loss}, preserving healthy registration and PiP`, () =>
       withManager((manager) =>
@@ -3199,8 +3251,7 @@ describe("PreviewManager", () => {
             fromId.mockImplementation((id) => (id === 42 ? f.guest : replacement));
             yield* manager.registerWebview("fallback", 43);
           } else {
-            const fiber = f.callbacks.get(loss)?.();
-            if (fiber) yield* Fiber.join(fiber);
+            f.callbacks.get(loss)?.();
           }
           yield* Queue.take(f.endings);
           expect(f.guest.endFrameSubscription).toHaveBeenCalledOnce();

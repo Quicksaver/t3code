@@ -422,7 +422,7 @@ describe("browser recording", () => {
   };
   const fallback = (tabId = "fallback") => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
-    const request = deferred<{ captureId: string; mode: string }>();
+    const request = deferred<string>();
     const track = {
       stop: vi.fn(),
       requestFrame: vi.fn(),
@@ -437,7 +437,7 @@ describe("browser recording", () => {
       captureStream: vi.fn(() => stream),
     };
     vi.stubGlobal("document", { createElement: () => canvas });
-    const decode = vi.fn(async (_blob: Blob) => ({ close: vi.fn() }));
+    const decode = vi.fn(async (_blob: Blob) => ({ width: 1280, height: 720, close: vi.fn() }));
     vi.stubGlobal("createImageBitmap", decode);
     const trigger = Reflect.get(globalThis, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER);
     requestDisplayMediaCapture.mockImplementationOnce(async (id) =>
@@ -446,14 +446,7 @@ describe("browser recording", () => {
     getDisplayMedia.mockRejectedValueOnce(new DOMException("unreadable", "NotReadableError"));
     const start = startBrowserRecording(tabId);
     void start.catch(() => undefined);
-    const frame = (data: string, captureId: string) =>
-      trigger.frame(tabId, captureId, {
-        tabId,
-        width: 1280,
-        height: 720,
-        data: btoa(data),
-        receivedAt: "now",
-      });
+    const frame = (data: string, captureId: string) => trigger.frame(tabId, captureId, btoa(data));
     return {
       tabId,
       request: request.promise,
@@ -470,16 +463,16 @@ describe("browser recording", () => {
   it("returns fallback before first decode, drains the last pending frame, caps rate and stays idle", async () => {
     const f = fallback();
     const request = await f.request;
-    expect(request.mode).toBe("frame-subscription");
+    expect(request).toEqual(expect.any(String));
     expect(FakeMediaRecorder.instances).toHaveLength(0);
     const decoding = deferred<Awaited<ReturnType<typeof f.decode>>>();
     const close = vi.fn();
     f.decode.mockReturnValueOnce(decoding.promise);
-    const first = f.frame("first", request.captureId);
-    void f.frame("discarded", request.captureId);
-    const last = f.frame("last", request.captureId);
+    const first = f.frame("first", request);
+    void f.frame("discarded", request);
+    const last = f.frame("last", request);
     expect(f.decode).toHaveBeenCalledOnce();
-    decoding.resolve({ close });
+    decoding.resolve({ width: 1280, height: 720, close });
     await f.start;
     expect(f.track.requestFrame).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(34);
@@ -495,12 +488,12 @@ describe("browser recording", () => {
     expect(f.drawImage).toHaveBeenCalledTimes(3);
     expect(f.track.stop).toHaveBeenCalled();
     expect(f.canvas.width).toBe(0);
-    expect(await f.frame("stale", request.captureId)).toBe(false);
+    expect(await f.frame("stale", request)).toBe(false);
   });
 
   it.each(["decode", "requestFrame"])("cleans up first-frame %s failure", async (stage) => {
     const f = fallback();
-    const { captureId } = await f.request;
+    const captureId = await f.request;
     if (stage === "decode") f.decode.mockRejectedValueOnce(new Error(stage));
     else
       f.track.requestFrame.mockImplementationOnce(() => {
@@ -525,7 +518,7 @@ describe("browser recording", () => {
     await entered.promise;
     await vi.advanceTimersByTimeAsync(4000);
     native.reject(new DOMException("unreadable", "NotReadableError"));
-    const { captureId } = await f.request;
+    const captureId = await f.request;
     const bitmap = deferred<Awaited<ReturnType<typeof f.decode>>>();
     const close = vi.fn();
     f.decode.mockReturnValueOnce(bitmap.promise);
@@ -534,26 +527,19 @@ describe("browser recording", () => {
     await vi.advanceTimersByTimeAsync(1000);
     await expect(f.start).rejects.toBeInstanceOf(BrowserRecordingCaptureTimeoutError);
     await stopped;
-    getDisplayMedia.mockResolvedValue({ getTracks: () => [], getVideoTracks: () => [] });
-    await startBrowserRecording(f.tabId);
+    const fresh = fallback();
+    const next = await fresh.request;
+    await fresh.frame("fresh", next);
+    await fresh.start;
     expect(f.end(f.tabId, captureId)).toBe(false);
-    bitmap.resolve({ close });
+    bitmap.resolve({ width: 1280, height: 720, close });
     expect(await consuming).toBe(false);
     expect(close).toHaveBeenCalledOnce();
     expect(f.drawImage).not.toHaveBeenCalled();
     expect(readActiveBrowserRecordingTabIds().has(f.tabId)).toBe(true);
+    expect(f.end(f.tabId, next)).toBe(true);
     await stopBrowserRecording(f.tabId);
-  });
-
-  it("ends only the matching capture", async () => {
-    const f = fallback();
-    const { captureId } = await f.request;
-    await f.frame("first", captureId);
-    await f.start;
-    expect(f.end(f.tabId, "old")).toBe(false);
-    expect(f.end(f.tabId, captureId)).toBe(true);
-    await stopBrowserRecording(f.tabId);
-    expect(f.track.stop).toHaveBeenCalled();
+    expect(fresh.track.stop).toHaveBeenCalled();
     expect(readActiveBrowserRecordingTabIds().size).toBe(0);
   });
 

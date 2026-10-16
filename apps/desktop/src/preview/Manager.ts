@@ -147,23 +147,7 @@ const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)})`;
-const isRecordingFrameRequest = Schema.is(
-  Schema.Struct({
-    mode: Schema.Literal("frame-subscription"),
-    captureId: Schema.String,
-  }),
-);
-const encodeRecordingFrame = Schema.encodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({
-      tabId: Schema.String,
-      width: Schema.Number,
-      height: Schema.Number,
-      data: Schema.String,
-      receivedAt: Schema.String,
-    }),
-  ),
-);
+const encodeRecordingFrame = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -3252,17 +3236,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 recordingFrameSubscriptions.get(tabId) !== subscription
               )
                 return;
-              const { width, height } = current.getSize();
-              if (width <= 0 || height <= 0) continue;
-              const frame = {
-                tabId,
-                width,
-                height,
-                data: current.toJPEG(95).toString("base64"),
-                receivedAt: yield* currentIso,
-              };
               // Await decoded consumption before encoding the next latest image.
-              const frameJson = yield* encodeRecordingFrame(frame);
+              const frameJson = yield* encodeRecordingFrame(current.toJPEG(95).toString("base64"));
               const consumed = yield* call("frame", `, ${frameJson}`).pipe(
                 Effect.orElseSucceed(() => false),
               );
@@ -3275,6 +3250,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             Effect.ensuring(
               Effect.sync(() => {
                 delivering = false;
+                if (pending) receive(pending);
               }),
             ),
           ),
@@ -3350,13 +3326,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           () =>
             requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
         );
-        if (isRecordingFrameRequest(captureRequested)) {
+        if (typeof captureRequested === "string") {
           clearPendingRecording(tabId);
           yield* subscribeRecordingPageFrames(
             tabId,
             wc,
             requestWebContents,
-            captureRequested.captureId,
+            captureRequested,
             warmImage,
           );
         } else if (captureRequested !== true) {
