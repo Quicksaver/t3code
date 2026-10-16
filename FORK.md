@@ -798,9 +798,7 @@ Primary file:
 
 **Worktree branch:** `fix/restore-preview-background-screenshots`
 
-Worktree: `C:/Users/Quicksaver/.t3/worktrees/t3code/t3-ea8af355`. Frozen reviewed HEAD: `2e619fae61e66ecd85dd8494a431668920d06af2`.
-
-Human native Screenshot freshness and rendering ownership cleanup are restored and published in open [PR #22335](https://github.com/pingdotgg/t3code/pull/22335). We re-maintain this branch until further maintainer takeover notice. All eight required CI contexts are accepted, five successes and three skips. [CodeRabbit](https://github.com/pingdotgg/t3code/pull/22335#issuecomment-6292834611) reviewed both files at this HEAD with no actionable findings, and Macroscope correctness passed. [Human approval](https://github.com/pingdotgg/t3code/pull/22335#issuecomment-6292575656) remains outstanding; no merge is claimed.
+Worktree: `C:/Users/Quicksaver/.t3/worktrees/t3code/t3-ea8af355`. Published source: `cb74756a6283377d24d0e7d6a1ba3313558d07cf`, directly above `66ee628e0875b2b735b199f42e6151e347833637`. Human native Screenshot freshness and rendering ownership cleanup are restored in open [PR #22335](https://github.com/pingdotgg/t3code/pull/22335). We re-maintain this branch until further takeover notice. All eight required checks are accepted and CodeRabbit's full review covers this exact source with no actionable findings. Human approval remains outstanding.
 
 Complete app human Screenshot UI comparisons used genuine imported history on Windows, macOS and Linux. Windows BEFORE failed hidden, overlapping-hidden and display-off-hidden captures; AFTER saved fresh PNGs. Both macOS revisions saved fresh PNGs in the measured cases, including locked with the display off. Linux Docker/Xvfb with Openbox and software rendering improved from 5/8 to 8/8 fresh PNGs. Linux physical display sleep/lock, hardware GPU, Wayland and installed AppImage behavior remain unverified. The [Windows/macOS proof](https://a78jhjubak.ufs.sh/f/I453M2Lveob9q0WglAFGC4MSykUPb9LBiREZdDrxIuOpeYA6), [Linux proof](https://a78jhjubak.ufs.sh/f/I453M2Lveob9qyMdfcFGC4MSykUPb9LBiREZdDrxIuOpeYA6) and PR retain the measured results and limits.
 
