@@ -3253,6 +3253,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             Effect.ensuring(
               Effect.sync(() => {
                 delivering = false;
+                // Keep the final frame draining if scheduling yields before this finalizer.
                 if (pending) receive(pending);
               }),
             ),
