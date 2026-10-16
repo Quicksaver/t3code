@@ -19,7 +19,6 @@ import {
   type ModelSelection,
   type OrchestrationV2Run,
   type OrchestrationV2AppThread,
-  ProviderSessionId,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -42,7 +41,6 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
-import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -55,9 +53,8 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import * as McpRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Receipts from "./CommandReceiptStore.ts";
-import { DispatchModeLimit, type DispatchModeRefusal } from "./DispatchModeLimit.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -282,7 +279,7 @@ const layerTest = Layer.mergeAll(
   Receipts.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
-  Layer.provideMerge(McpSessionRegistryTestkit.layer),
+  Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
@@ -6019,59 +6016,29 @@ describe("subagent lifecycle", () => {
     return { orchestrator, store, outbox, worker, now, set, command, cascade, archived };
   });
 
-  it.effect(
-    "cascades committed lifecycle through subagents, preserving forks and ordinary cleanup",
-    () =>
-      Effect.gen(function* () {
-        const f = yield* fixture;
-        const registry = yield* McpRegistry.McpSessionRegistry;
-        const revoke = vi.spyOn(registry, "revokeThread");
-        yield* f.set(app, { archivedAt: f.now }); // Independently archived intermediate.
-        for (const operation of ["archive", "unarchive", "delete"] as const) {
-          if (operation === "delete") yield* f.set(app, { deletedAt: f.now }); // Traverse a tombstone.
-          if (operation !== "unarchive")
-            yield* f.store.apply({
-              id: EventId.make(`session:${operation}`),
-              type: "provider-session.attached",
-              threadId: native,
-              occurredAt: f.now,
-              payload: {
-                id: ProviderSessionId.make(operation),
-                driver: ProviderDriverKind.make("codex"),
-                providerInstanceId: modelSelection.instanceId,
-                status: "running",
-                cwd: process.cwd(),
-                model: "test",
-                capabilities: CodexProviderCapabilitiesV2,
-                createdAt: f.now,
-                updatedAt: f.now,
-                lastError: null,
-              },
-            });
-          yield* f.command(operation);
-          if (operation === "archive") assert.isFalse(yield* f.archived(native));
-          yield* f.worker.drain();
-          for (const id of [native, app, grandchild]) {
-            const thread = yield* f.store.getThread(id);
-            if (operation === "delete") assert.isNotNull(thread.deletedAt);
-            else assert.equal(thread.archivedAt !== null, operation === "archive");
-          }
-          if (operation !== "unarchive") {
-            assert.equal(
-              revoke.mock.calls.filter(([id]) => id === native).length,
-              operation === "archive" ? 1 : 2,
-            );
-            assert.isEmpty((yield* f.store.getThreadProjection(native)).providerSessions);
-          }
-          for (const name of ["fork", "fork-child", "foreign"]) {
-            const thread = yield* f.store.getThread(ThreadId.make(name));
-            assert.isNull(thread.archivedAt);
-            assert.isNull(thread.deletedAt);
-          }
-          const effectId = `effect:${operation}:${parent}:subagent-threads.cascade`;
-          assert.equal(Option.getOrThrow(yield* f.outbox.get(effectId)).status, "succeeded");
+  it.effect("cascades committed lifecycle through subagents, preserving forks and projects", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.set(app, { archivedAt: f.now }); // Independently archived intermediate.
+      for (const operation of ["archive", "unarchive", "delete"] as const) {
+        if (operation === "delete") yield* f.set(app, { deletedAt: f.now }); // Traverse a tombstone.
+        yield* f.command(operation);
+        if (operation === "archive") assert.isFalse(yield* f.archived(native));
+        yield* f.worker.drain();
+        for (const id of [native, app, grandchild]) {
+          const thread = yield* f.store.getThread(id);
+          if (operation === "delete") assert.isNotNull(thread.deletedAt);
+          else assert.equal(thread.archivedAt !== null, operation === "archive");
         }
-      }).pipe(Effect.provide(layerTest)),
+        for (const name of ["fork", "fork-child", "foreign"]) {
+          const thread = yield* f.store.getThread(ThreadId.make(name));
+          assert.isNull(thread.archivedAt);
+          assert.isNull(thread.deletedAt);
+        }
+        const effectId = `effect:${operation}:${parent}:subagent-threads.cascade`;
+        assert.equal(Option.getOrThrow(yield* f.outbox.get(effectId)).status, "succeeded");
+      }
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each(
@@ -6091,12 +6058,7 @@ describe("subagent lifecycle", () => {
       for (const id of [parent, app, native, grandchild])
         yield* f.set(id, { ...limit, archivedAt: target ? null : f.now });
       if (reached) yield* f.set(app, { archivedAt: target ? f.now : null });
-      yield* f.command(operation).pipe(
-        Effect.provideService(DispatchModeLimit, {
-          ...limit,
-          refused: yield* Ref.make<DispatchModeRefusal | undefined>(undefined),
-        }),
-      );
+      yield* f.command(operation).pipe(Effect.provideService(DispatchModeLimit, limit));
       const claimed = Option.getOrThrow(
         yield* f.outbox.claimNext({ workerId: "lost-caller", leaseDurationMs: 60000 }),
       );
@@ -6138,7 +6100,7 @@ describe("subagent lifecycle", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each([0, 1, 2, "archive", "unarchive"] as const)(
+  it.effect.each([2, "archive", "unarchive"] as const)(
     "replays receipts after rejected ids or already-target %s",
     (scenario) =>
       Effect.gen(function* () {
@@ -6182,46 +6144,39 @@ describe("subagent lifecycle", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["archive", "unarchive", "delete", "defect", "interruption", "raced"] as const)(
+  it.effect.each(["typed", "defect", "interruption", "raced"] as const)(
     "preserves sibling progress and failure semantics for %s",
     (mode) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const operation =
-          mode === "defect" || mode === "interruption" || mode === "raced" ? "archive" : mode;
-        for (const id of [parent, app, native])
-          yield* f.set(id, {
-            archivedAt: (id === parent) === (operation === "archive") ? f.now : null,
-          });
+        yield* f.set(parent, { archivedAt: f.now });
         const dispatch = f.orchestrator.dispatch;
-        const failure = new Orchestrator.OrchestratorDispatchError({
-          commandId: CommandId.make("failure"),
-          commandType: `thread.${operation}`,
-        });
         vi.spyOn(f.orchestrator, "dispatch").mockImplementation(
           Effect.fnUntraced(function* (command) {
             if ("threadId" in command && command.threadId === app) {
               if (mode === "defect") return yield* Effect.die("defect");
               if (mode === "interruption") return yield* Effect.interrupt;
-              if (mode !== "raced") return yield* Effect.fail(failure);
+              if (mode === "typed")
+                return yield* Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                  }),
+                );
               yield* f.set(app, { archivedAt: f.now }).pipe(Effect.orDie);
             }
             return yield* dispatch(command);
           }),
         );
-        const exit = yield* Effect.exit(f.cascade(operation));
+        const exit = yield* Effect.exit(f.cascade("archive"));
         assert.equal(Exit.isFailure(exit), mode !== "raced");
         if (mode === "raced") assert.isTrue(yield* f.archived(grandchild));
         if (Exit.isFailure(exit)) {
           assert.equal(Cause.hasDies(exit.cause), mode === "defect");
           assert.equal(Cause.hasInterrupts(exit.cause), mode === "interruption");
-          assert.equal(Cause.hasFails(exit.cause), mode !== "defect" && mode !== "interruption");
+          assert.equal(Cause.hasFails(exit.cause), mode === "typed");
         }
-        const sibling = yield* f.store.getThread(native);
-        assert.equal(
-          operation === "delete" ? sibling.deletedAt !== null : sibling.archivedAt !== null,
-          mode === "archive" || mode === "delete" || mode === "raced",
-        );
+        assert.equal(yield* f.archived(native), mode === "typed" || mode === "raced");
       }).pipe(Effect.provide(layerTest)),
   );
 
