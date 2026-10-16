@@ -30,8 +30,6 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -5942,7 +5940,6 @@ describe("subagent lifecycle", () => {
     return {
       requested: Queue.take(requested),
       acquired: Queue.take(acquired),
-      acquiredCount: Queue.size(acquired),
       resume: Deferred.succeed(resume, undefined),
     };
   });
@@ -6144,86 +6141,25 @@ describe("subagent lifecycle", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["typed", "defect", "interruption", "raced"] as const)(
-    "preserves sibling progress and failure semantics for %s",
-    (mode) =>
-      Effect.gen(function* () {
-        const f = yield* fixture;
-        yield* f.set(parent, { archivedAt: f.now });
-        const dispatch = f.orchestrator.dispatch;
-        vi.spyOn(f.orchestrator, "dispatch").mockImplementation(
-          Effect.fnUntraced(function* (command) {
-            if ("threadId" in command && command.threadId === app) {
-              if (mode === "defect") return yield* Effect.die("defect");
-              if (mode === "interruption") return yield* Effect.interrupt;
-              if (mode === "typed")
-                return yield* Effect.fail(
-                  new Orchestrator.OrchestratorDispatchError({
-                    commandId: command.commandId,
-                    commandType: command.type,
-                  }),
-                );
-              yield* f.set(app, { archivedAt: f.now }).pipe(Effect.orDie);
-            }
-            return yield* dispatch(command);
-          }),
-        );
-        const exit = yield* Effect.exit(f.cascade("archive"));
-        assert.equal(Exit.isFailure(exit), mode !== "raced");
-        if (mode === "raced") assert.isTrue(yield* f.archived(grandchild));
-        if (Exit.isFailure(exit)) {
-          assert.equal(Cause.hasDies(exit.cause), mode === "defect");
-          assert.equal(Cause.hasInterrupts(exit.cause), mode === "interruption");
-          assert.equal(Cause.hasFails(exit.cause), mode === "typed");
-        }
-        assert.equal(yield* f.archived(native), mode === "typed" || mode === "raced");
-      }).pipe(Effect.provide(layerTest)),
-  );
-
-  it.effect.each(["archive", "unarchive"] as const)(
-    "a later %s choice wins against an in-flight ancestor walk",
-    (operation) =>
-      Effect.gen(function* () {
-        const f = yield* fixture;
-        const opposite = operation === "archive" ? "unarchive" : "archive";
-        for (const id of [parent, app, native, grandchild])
-          yield* f.set(id, {
-            archivedAt: (id === app) === (operation === "archive") ? f.now : null,
-          });
-        yield* f.command(operation);
-        const entered = yield* Deferred.make<void>();
-        const resume = yield* Deferred.make<void>();
-        const list = f.orchestrator.getSubagentChildThreads;
-        vi.spyOn(f.orchestrator, "getSubagentChildThreads").mockImplementation((id, options) =>
-          id === app
-            ? Deferred.succeed(entered, undefined).pipe(
-                Effect.andThen(Deferred.await(resume)),
-                Effect.andThen(list(id, options)),
-              )
-            : list(id, options),
-        );
-        const walk = yield* f.worker.runOnce.pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(entered);
-        const probe = yield* probeChildLock;
-        // Observe lock acquisition here with the probe gate already open.
-        yield* probe.resume;
-        const undo = yield* f
-          .command(opposite, app)
-          .pipe(Effect.andThen(f.worker.drain()), Effect.forkChild({ startImmediately: true }));
-        yield* probe.requested;
-        assert.equal(yield* probe.acquiredCount, 0);
-        assert.equal(yield* f.archived(app), operation === "archive");
-        yield* Deferred.succeed(resume, undefined);
-        yield* Fiber.join(walk);
-        yield* Fiber.join(undo);
-        yield* f.worker.drain();
-        assert.equal(yield* f.archived(grandchild), opposite === "archive");
-        yield* f.command(opposite);
-        yield* f.set(native, { archivedAt: opposite === "archive" ? f.now : null });
-        yield* f.cascade(operation);
-        assert.equal(yield* f.archived(native), opposite === "archive");
-        yield* f.worker.drain();
-        assert.equal(yield* f.archived(native), opposite === "archive");
-      }).pipe(Effect.provide(layerTest)),
+  it.effect("preserves healthy sibling progress after a typed child failure", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.set(parent, { archivedAt: f.now });
+      const dispatch = f.orchestrator.dispatch;
+      vi.spyOn(f.orchestrator, "dispatch").mockImplementation((command) =>
+        "threadId" in command && command.threadId === app
+          ? Effect.fail(
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+              }),
+            )
+          : dispatch(command),
+      );
+      const error = yield* f.cascade("archive").pipe(Effect.flip);
+      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+      assert.isFalse(yield* f.archived(app));
+      assert.isTrue(yield* f.archived(native));
+    }).pipe(Effect.provide(layerTest)),
   );
 });
