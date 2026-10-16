@@ -132,6 +132,7 @@ const ZOOM_EPSILON = 0.001;
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
+const RECORDING_FALLBACK_JPEG_QUALITY = 85;
 /**
  * Cold guests can reject capturePage with UnknownVizError or never settle it.
  * Bound each attempt so snapshots release control even when Chromium stalls.
@@ -3237,7 +3238,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               )
                 return;
               // Await decoded consumption before encoding the next latest image.
-              const frameJson = yield* encodeRecordingFrame(current.toJPEG(95).toString("base64"));
+              const frameJson = yield* encodeRecordingFrame(
+                current.toJPEG(RECORDING_FALLBACK_JPEG_QUALITY).toString("base64"),
+              );
               const consumed = yield* call("frame", `, ${frameJson}`).pipe(
                 Effect.orElseSucceed(() => false),
               );
