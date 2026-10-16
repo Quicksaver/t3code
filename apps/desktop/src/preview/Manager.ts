@@ -372,7 +372,13 @@ interface ManagedListeners {
   readonly webContents: Electron.WebContents;
 }
 
-type FrameCaptureConsumer = "picture-in-picture" | "recording" | symbol;
+type FrameCaptureConsumer =
+  | "picture-in-picture"
+  | "recording"
+  | { readonly kind: "still-image" | "agent-screenshot" };
+
+const needsUnthrottledGuest = (consumer: FrameCaptureConsumer) =>
+  typeof consumer === "string" || consumer.kind === "still-image";
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -704,7 +710,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const current = sessions.get(tabId);
       if (
         !current ||
-        ![...current.consumers].some((consumer) => typeof consumer === "string") ||
+        ![...current.consumers].some(needsUnthrottledGuest) ||
         current.unthrottledWebContentsIds.has(wc.id)
       ) {
         return Effect.succeed([undefined, sessions] as const);
@@ -761,6 +767,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const consumers = new Set(current.consumers);
         consumers.delete(consumer);
         if (consumers.size > 0) {
+          const unthrottledWebContentsIds = [...consumers].some(needsUnthrottledGuest)
+            ? current.unthrottledWebContentsIds
+            : new Set<number>();
+          if (unthrottledWebContentsIds !== current.unthrottledWebContentsIds)
+            yield* restoreFrameCaptureWebContentsBackgroundThrottling(
+              current.unthrottledWebContentsIds,
+            );
           return [
             consumer === "picture-in-picture" ? current.scope : undefined,
             replaceMap(sessions, (copy) => {
@@ -768,6 +781,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 ...current,
                 scope: consumer === "picture-in-picture" ? null : current.scope,
                 consumers,
+                unthrottledWebContentsIds,
                 lastPictureInPictureFingerprint:
                   consumer === "picture-in-picture"
                     ? null
@@ -2310,7 +2324,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     wc: Electron.WebContents,
     capture: (signal: AbortSignal) => Promise<unknown>,
   ) {
-    const consumer = Symbol("agent-screenshot");
+    const consumer = { kind: "agent-screenshot" } as const;
     const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     const ready = yield* Deferred.make<void>();
     return yield* Effect.acquireUseRelease(
@@ -2452,7 +2466,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      capturePageWithRetry(
+      captureStillImage(
         {
           operation: "captureScreenshot.capturePage",
           tabId,
@@ -2498,6 +2512,100 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       sizeBytes: data.byteLength,
       createdAt,
     };
+  });
+
+  const captureStillImage = Effect.fn("PreviewManager.captureStillImage")(function* (
+    errorContext: PreviewOperationContext,
+    tabId: string,
+    wc: Electron.WebContents,
+  ) {
+    const consumer = { kind: "still-image" } as const;
+    return yield* Effect.acquireUseRelease(
+      startFrameCapture(tabId, consumer),
+      () =>
+        Effect.gen(function* () {
+          // A DOM mutation can precede its compositor frame even in a shown
+          // window. Keep the original guest rendering through the next paint;
+          // a hidden guest otherwise returns old pixels or never completes.
+          const probe = Effect.fn("PreviewManager.probeStillImagePaint")(function* (
+            send: (
+              method: string,
+              params?: Record<string, unknown>,
+            ) => Effect.Effect<unknown, PreviewOperationError>,
+          ) {
+            // CDP executes against the current document without Electron's
+            // did-stop-loading gate. Isolate scheduling globals from page code.
+            const tree = (yield* send("Page.getFrameTree")) as
+              | { frameTree?: { frame?: { id?: string } } }
+              | undefined;
+            const frameId = tree?.frameTree?.frame?.id;
+            if (typeof frameId !== "string")
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint frame is unavailable."),
+              });
+            const world = (yield* send("Page.createIsolatedWorld", {
+              frameId,
+              worldName: "t3-preview-still-image",
+            })) as { executionContextId?: number } | undefined;
+            if (typeof world?.executionContextId !== "number")
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint context is unavailable."),
+              });
+            const response = (yield* send("Runtime.evaluate", {
+              // Settle and release scheduled work when only timers keep running.
+              // The outer deadline still bounds a frozen renderer.
+              expression: `new Promise(resolve => { let frame; const timer = setTimeout(() => { cancelAnimationFrame(frame); resolve(false); }, ${CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS}); frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { clearTimeout(timer); resolve(true); }); }); })`,
+              contextId: world.executionContextId,
+              awaitPromise: true,
+              returnByValue: true,
+            })) as { result?: { value?: unknown }; exceptionDetails?: unknown } | undefined;
+            if (response?.exceptionDetails || response?.result?.value !== true)
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint boundary was not confirmed."),
+              });
+          });
+          const paintReady = Effect.gen(function* () {
+            // Only use an existing owned session; never attach or displace
+            // another debugger to obtain a screenshot.
+            const control = (yield* SynchronizedRef.get(controlSessionsRef)).get(wc.id);
+            if (!control)
+              return yield* new PreviewOperationError({
+                ...errorContext,
+                cause: new Error("The preview paint session is unavailable."),
+              });
+            return yield* probe((method, params) =>
+              attemptPromise(errorContext, () => control.debugger.sendCommand(method, params)),
+            );
+          }).pipe(
+            Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "Preview paint readiness was not confirmed; capturing available pixels with mutation freshness unconfirmed.",
+                { tabId, webContentsId: wc.id, error },
+              ),
+            ),
+          );
+          // Minimized guests can suspend frames even with throttling disabled.
+          // A native capture can resume them; discard its pixels and read again
+          // after the bounded paint probe.
+          const warmup = capturePageWithRetry(errorContext, tabId, wc).pipe(
+            Effect.catchTags({
+              PreviewOperationError: (error) =>
+                Effect.logWarning("Preview warmup capture failed; continuing with final capture.", {
+                  tabId,
+                  webContentsId: wc.id,
+                  error,
+                }),
+            }),
+          );
+          yield* Effect.all([paintReady, warmup], { concurrency: 2, discard: true });
+          return yield* capturePageWithRetry(errorContext, tabId, wc);
+        }),
+      () => stopFrameCapture(tabId, consumer),
+    );
   });
 
   const capturePreviewFrame = Effect.fn("PreviewManager.capturePreviewFrame")(function* (
@@ -2661,7 +2769,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (current.consumers.has(consumer)) {
               return [false, sessions] as const;
             }
-            if (typeof consumer === "string" && !current.unthrottledWebContentsIds.has(wc.id)) {
+            if (needsUnthrottledGuest(consumer) && !current.unthrottledWebContentsIds.has(wc.id)) {
               yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false);
             }
             let scope = current.scope;
@@ -2678,7 +2786,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   consumers: new Set([...current.consumers, consumer]),
                   unthrottledWebContentsIds: new Set([
                     ...current.unthrottledWebContentsIds,
-                    ...(typeof consumer === "string" ? [wc.id] : []),
+                    ...(needsUnthrottledGuest(consumer) ? [wc.id] : []),
                   ]),
                 });
               }),
@@ -2688,7 +2796,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             yield* setFrameCaptureBackgroundThrottling(false);
           }
           // Agent screenshots need presentation, not a page visibility override.
-          if (typeof consumer === "string") {
+          if (needsUnthrottledGuest(consumer)) {
             yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
               Effect.onError(() =>
                 sessions.size === 0
@@ -2708,7 +2816,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               copy.set(tabId, {
                 scope,
                 consumers: new Set([consumer]),
-                unthrottledWebContentsIds: new Set(typeof consumer === "string" ? [wc.id] : []),
+                unthrottledWebContentsIds: new Set(needsUnthrottledGuest(consumer) ? [wc.id] : []),
                 lastPictureInPictureFingerprint: null,
               });
             }),
