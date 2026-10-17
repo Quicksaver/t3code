@@ -75,6 +75,7 @@ type ThreadGitHeaderActionItems = {
   readonly terminal: HeaderItem;
   readonly files: HeaderItem;
   readonly git: HeaderItem;
+  readonly more: HeaderItems;
 };
 type QuickActionIcon =
   | "arrow.down.circle"
@@ -96,6 +97,7 @@ export type ThreadGitMenuProps = {
 };
 
 type ThreadGitControlsProps = ThreadGitMenuProps & {
+  readonly onOpenMagi?: () => void;
   readonly auxiliaryPaneControl?: {
     readonly accessibilityLabel: string;
     readonly onPress: () => void;
@@ -278,6 +280,36 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
   return useMemo(
     () => ({
+      more: props.onOpenMagi
+        ? [
+            {
+              accessibilityLabel: "More actions",
+              icon: { name: "ellipsis", type: "sfSymbol" },
+              identifier: "thread-right-more",
+              type: "menu",
+              menu: {
+                items: [
+                  {
+                    label: "Open terminal",
+                    disabled: !props.canOpenTerminal,
+                    onPress: () => props.onOpenTerminal(null),
+                    type: "action",
+                  },
+                  {
+                    label: "Open git controls",
+                    onPress: model.openGitInspector,
+                    type: "action",
+                  },
+                  {
+                    label: "Open magi",
+                    onPress: props.onOpenMagi,
+                    type: "action",
+                  },
+                ],
+              },
+            },
+          ]
+        : [],
       terminal: {
         accessibilityLabel: "Open terminal",
         disabled: !props.canOpenTerminal,
@@ -424,6 +456,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       props.gitStatus,
       props.onMergeBack,
       props.onOpenNewTerminal,
+      props.onOpenMagi,
       props.onOpenTerminal,
       props.onRunProjectScript,
       props.projectScripts,
@@ -435,7 +468,13 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.git,
+        actionItems.files,
+        actionItems.terminal,
+        ...actionItems.more,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -443,7 +482,13 @@ export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): Hea
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
   return useMemo(
-    () => [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems,
+    () =>
+      [
+        actionItems.files,
+        actionItems.git,
+        actionItems.terminal,
+        ...actionItems.more,
+      ] as HeaderItems,
     [actionItems],
   );
 }
@@ -533,6 +578,22 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         />
       ) : null}
       {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {props.onOpenMagi ? (
+        <Toolbar.Menu accessibilityLabel="More actions" icon="ellipsis">
+          <Toolbar.MenuAction
+            disabled={!props.canOpenTerminal}
+            onPress={() => props.onOpenTerminal(null)}
+          >
+            Open terminal
+          </Toolbar.MenuAction>
+          <Toolbar.MenuAction onPress={model.openGitInspector}>
+            Open git controls
+          </Toolbar.MenuAction>
+          <Toolbar.MenuAction onPress={props.onOpenMagi}>
+            Open magi
+          </Toolbar.MenuAction>
+        </Toolbar.Menu>
+      ) : null}
     </Toolbar>
   );
 }

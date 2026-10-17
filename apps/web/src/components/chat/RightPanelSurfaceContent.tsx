@@ -22,6 +22,7 @@ import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
+import { MagiPanel } from "../magi/MagiPanel";
 
 const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
@@ -77,10 +78,34 @@ export function RightPanelSurfaceContent(props: {
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
+  readonly magi: Omit<
+    Parameters<typeof MagiPanel>[0],
+    "environmentId" | "threadId" | "isVisible" | "revealRun"
+  > | null;
+  readonly serverConfigKnown: boolean;
 }) {
   const { surface, threadRef, visible } = props;
   if (surface === null) return null;
   switch (surface.kind) {
+    case "magi":
+      return props.magi ? (
+        <MagiPanel
+          {...props.magi}
+          key={scopedThreadKey(threadRef)}
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          isVisible={visible}
+          revealRun={
+            surface.revealRunId !== undefined && surface.revealRequestId !== undefined
+              ? { runId: surface.revealRunId, requestId: surface.revealRequestId }
+              : undefined
+          }
+        />
+      ) : props.serverConfigKnown ? (
+        <p className="p-5 text-sm text-muted-foreground">
+          Magi is not available for this conversation.
+        </p>
+      ) : null;
     case "preview":
       return (
         <Suspense fallback={null}>

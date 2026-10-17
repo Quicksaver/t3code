@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -79,6 +80,9 @@ it.effect("attributes a launched thread's first message to the calling thread", 
         },
       }),
       Layer.mock(Project.ProjectService)({}),
+      Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+        requireToolAllowed: () => Effect.void,
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       NodeServices.layer,
@@ -151,6 +155,9 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         },
       }),
       Layer.mock(Project.ProjectService)({}),
+      Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+        requireToolAllowed: () => Effect.void,
+      }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
@@ -313,6 +320,9 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     ServerSettings.layerTest(),
     NodeCrypto.layer,
+    Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+      requireToolAllowed: () => Effect.die("OAuth clients have no participant lineage."),
+    }),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",

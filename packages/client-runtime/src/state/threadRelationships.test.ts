@@ -13,6 +13,102 @@ import {
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  it("retains a Magi participant's link back to its owner", () => {
+    const owner = ThreadId.make("owner");
+    const participant = ThreadId.make("thread:delegated-task:magi%3Arun%3Amodel%3Aparticipant");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: participant,
+          status: "running",
+          lineage: { parentThreadId: owner, relationshipToParent: "subagent" },
+        },
+      ] as never,
+      projection: {
+        thread: { id: participant },
+        subagents: [],
+        contextTransfers: [
+          {
+            type: "subagent_spawn",
+            sourceThreadId: owner,
+            targetThreadId: participant,
+            status: "consumed",
+          },
+          {
+            type: "subagent_result",
+            sourceThreadId: participant,
+            targetThreadId: owner,
+            status: "consumed",
+          },
+        ],
+      } as never,
+    });
+    expect(immediateThreadRelationships(graph, participant).map((row) => row.threadId)).toEqual([
+      owner,
+    ]);
+  });
+  it.each(["running", "completed", "failed"])(
+    "hides %s Magi participants from shell and task relationships while retaining ordinary subagents",
+    (status) => {
+      const owner = ThreadId.make("owner");
+      const participant = ThreadId.make(
+        "thread:delegated-task:magi%3Ac4c38f53-d297-4c5d-84c1-e0423025bd64%3Aastra%3Aparticipant",
+      );
+      const ordinary = ThreadId.make("thread:delegated-task:ordinary-review");
+      const graph = deriveThreadRelationshipGraph({
+        threads: [
+          {
+            id: participant,
+            status,
+            lineage: { parentThreadId: owner, relationshipToParent: "subagent" },
+          },
+          {
+            id: ordinary,
+            status,
+            lineage: { parentThreadId: owner, relationshipToParent: "subagent" },
+          },
+        ] as never,
+        projection: {
+          thread: { id: owner },
+          subagents: [
+            { childThreadId: participant, status },
+            { childThreadId: ordinary, status },
+          ],
+          contextTransfers: [
+            {
+              type: "subagent_spawn",
+              sourceThreadId: owner,
+              targetThreadId: participant,
+              status: "consumed",
+            },
+            {
+              type: "subagent_result",
+              sourceThreadId: participant,
+              targetThreadId: owner,
+              status: "consumed",
+            },
+            {
+              type: "subagent_spawn",
+              sourceThreadId: owner,
+              targetThreadId: ordinary,
+              status: "consumed",
+            },
+            {
+              type: "subagent_result",
+              sourceThreadId: ordinary,
+              targetThreadId: owner,
+              status: "consumed",
+            },
+          ],
+        } as never,
+      });
+      expect(immediateThreadRelationships(graph, owner).map((row) => row.threadId)).toEqual([
+        ordinary,
+      ]);
+      expect(relatedThreadIds(graph, owner)).toEqual([ordinary]);
+      expect(walkThreadRelationships(graph, owner).map((row) => row.threadId)).toEqual([ordinary]);
+    },
+  );
   it.each([
     ["running", "completed"],
     ["completed", "running"],

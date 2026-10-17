@@ -656,6 +656,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   allowPromptInjectedEffort = true,
   planModeEnabled,
   triggerClassName,
+  triggerAriaLabel,
   isComposerOwned,
   size = "sm",
   hidden = false,
@@ -663,6 +664,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
+    triggerAriaLabel?: string;
     size?: ComposerControlSize;
     hidden?: boolean;
     disabled?: boolean;
@@ -717,7 +719,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               render={
                 <ComposerControl
                   disabled={disabled}
-                  aria-label={triggerLabel}
+                  aria-label={triggerAriaLabel ?? triggerLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
                   size={size}
                   className={cn(

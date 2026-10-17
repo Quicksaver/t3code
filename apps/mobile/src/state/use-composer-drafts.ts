@@ -7,6 +7,7 @@ import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   ForwardCompatibleArray,
   OrchestrationMessageContext,
+  MagiRunConfig as MagiRunConfigSchema,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProjectId as ProjectIdSchema,
   ProviderInteractionMode as ProviderInteractionModeSchema,
@@ -15,6 +16,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
+  type MagiRunConfig,
   type ProviderInteractionMode,
   type ProviderOptionSelection,
   type RuntimeMode,
@@ -330,6 +332,12 @@ export interface ComposerDraft {
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
+  readonly magiArm?: MagiRunConfig;
+  /**
+   * Set on new-task drafts only. The project is stored here rather than in
+   * the key so a project can hold any number of drafts and a draft can be
+   * retargeted to another project without changing identity.
+   */
   readonly project?: ComposerDraftProject;
 }
 
@@ -390,6 +398,7 @@ const ComposerDraftSchema = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
   project: Schema.optional(ComposerDraftProjectSchema),
+  magiArm: Schema.optional(MagiRunConfigSchema),
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
@@ -554,7 +563,8 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
     draft.modelSelection === undefined &&
     draft.runtimeMode === undefined &&
     draft.interactionMode === undefined &&
-    draft.workspaceSelection === undefined
+    draft.workspaceSelection === undefined &&
+    draft.magiArm === undefined
   );
 }
 
@@ -1455,6 +1465,16 @@ export function updateComposerDraftSettings(
   });
 }
 
+export function setComposerDraftMagiArm(draftKey: string, config: MagiRunConfig | null): void {
+  updateComposerDrafts((current) => {
+    const existing = normalizeDraft(current[draftKey]);
+    const { magiArm: _magiArm, ...withoutMagiArm } = existing;
+    const draft: ComposerDraft =
+      config === null ? withoutMagiArm : { ...withoutMagiArm, magiArm: config };
+    return withComposerDraft(current, draftKey, draft);
+  });
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
@@ -1470,6 +1490,7 @@ export function clearComposerDraftContentState(
   const {
     importedShareIds: _importedShareIds,
     context: _context,
+    magiArm: _magiArm,
     modelSelection,
     workspaceSelection,
     project: _project,
@@ -1819,7 +1840,11 @@ export function retargetNewTaskDraft(
     ) {
       return current;
     }
-    const { workspaceSelection: _workspaceSelection, ...retained } = normalizeDraft(existing);
+    const {
+      workspaceSelection: _workspaceSelection,
+      magiArm,
+      ...retained
+    } = normalizeDraft(existing);
     // Pending uploads live on one server. Crossing environments keeps the
     // local bytes (the upload worker re-sends them to the new environment)
     // but drops the old stamp, so it cannot pin the source environment's
@@ -1830,10 +1855,13 @@ export function retargetNewTaskDraft(
         ? stripAttachmentUploadReference(attachment)
         : attachment,
     );
+    // A Magi arm names provider instances of its environment, so it cannot follow the draft out.
+    const sameEnvironment = stamp?.environmentId === project.environmentId;
     return {
       ...current,
       [draftKey]: {
         ...retained,
+        ...(sameEnvironment && magiArm !== undefined ? { magiArm } : {}),
         attachments,
         project: {
           environmentId: project.environmentId,

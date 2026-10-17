@@ -34,6 +34,7 @@ import {
 
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as MagiParticipantPolicy from "../../magi/MagiParticipantPolicy.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
@@ -80,6 +81,10 @@ import {
   resolveT3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+
+const oauthParticipantPolicy = Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+  requireToolAllowed: () => Effect.die("OAuth clients have no participant lineage."),
+});
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
@@ -171,6 +176,7 @@ it.effect("checks capability through the production registration", () =>
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
@@ -212,6 +218,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -325,6 +332,7 @@ it.effect("returns invalid parameter errors through the production registration"
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -350,6 +358,7 @@ it.effect("keeps unexpected handler defects private through the production regis
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -468,6 +477,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -528,6 +538,7 @@ it.effect("a read-only client reads threads and is refused every write before it
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -581,6 +592,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -620,6 +632,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -695,6 +708,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
     }).pipe(
       Effect.provide(
         layerOrchestratorToolkit.pipe(
+          Layer.provide(oauthParticipantPolicy),
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
@@ -799,6 +813,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
+        Layer.provide(oauthParticipantPolicy),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -869,6 +884,7 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
   }).pipe(
     Effect.provide(
       McpHttpServer.layerAttachmentToolkit.pipe(
+        Layer.provide(Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({})),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(ServerSecretStore.layer),

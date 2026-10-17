@@ -250,6 +250,7 @@ import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.lo
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { useDeviceState } from "~/state/device";
+import { useMagiRunHistory } from "./magi/useMagiRunHistory";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
@@ -1202,6 +1203,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerInteractionMode = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
   );
+  const composerMagiArm = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.magiArm ?? null,
+  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -1220,6 +1224,7 @@ export default function ChatView(props: ChatViewProps) {
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftMagiArm = useComposerDraftStore((store) => store.setMagiArm);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -2121,6 +2126,16 @@ export default function ChatView(props: ChatViewProps) {
     (providerEnvironmentId === undefined
       ? undefined
       : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS;
+  const magiSupported = serverConfig?.environment.capabilities.magi === true;
+  const magiAvailable = magiSupported && (isServerThread || isLocalDraftThread);
+  const magiRunHistory = useMagiRunHistory(
+    magiSupported && isServerThread ? activeThreadRef : null,
+  );
+  // The history also lists subagents' runs; the timeline shows this conversation's own.
+  const latestMagiRun =
+    magiRunHistory.history?.runs.find((run) => run.rootThreadId === activeThreadRef?.threadId) ??
+    null;
+  const activeMagiRunCount = magiRunHistory.history?.activeRunCount ?? 0;
   const selectedProviderByThreadId = composerActiveProvider ?? null;
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
@@ -2526,6 +2541,7 @@ export default function ChatView(props: ChatViewProps) {
         latestRun,
         providerThreads: serverProjection.providerThreads,
         turnItems: serverProjection.turnItems,
+        pendingMagiRunId: serverProjection.thread.pendingMagiRunId,
         activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
         runs: serverProjection.runs,
         pullRequests: serverProjection.thread.pullRequests,
@@ -3643,6 +3659,10 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);
+  const addMagiSurface = () => {
+    if (!activeThreadRef || (!isServerThread && !isLocalDraftThread)) return;
+    useRightPanelStore.getState().open(activeThreadRef, "magi");
+  };
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const activeProjectRepository = sourceControlRepositorySelector(
@@ -6065,6 +6085,7 @@ export default function ChatView(props: ChatViewProps) {
       );
       return;
     }
+    const magiArmSnapshot = composerMagiArm;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,
@@ -6337,11 +6358,18 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
-    const multipleTargets: Array<{
-      readonly selection: ModelSelection;
-      readonly text: string;
-      readonly interactionMode: ProviderInteractionMode;
-    }> = [];
+    // A Magi arm starts one conversation; a fan-out would silently drop it.
+    if (multipleModelSelections !== null && magiArmSnapshot) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Magi is armed",
+          description: "Disarm Magi or choose a single model before sending.",
+        }),
+      );
+      return;
+    }
+    const multipleTargets = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
         (entry) => entry.instanceId === selection.instanceId,
@@ -6867,6 +6895,7 @@ export default function ChatView(props: ChatViewProps) {
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
+                    ...(magiArmSnapshot ? { magiArm: magiArmSnapshot } : {}),
                   }
                 : {}),
               ...(baseBranchForWorktree
@@ -6961,6 +6990,7 @@ export default function ChatView(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         setKeepFullHistory(routeThreadKey, false);
+        if (magiArmSnapshot) setComposerDraftMagiArm(composerDraftTarget, null);
         clearUsageLimitsFor(routeThreadKey);
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
@@ -7655,6 +7685,21 @@ export default function ChatView(props: ChatViewProps) {
 
   const rightPanelContent = activeThreadRef ? (
     <RightPanelSurfaceContent
+      serverConfigKnown={serverConfig !== null}
+      magi={magiAvailable ? {
+        projectId: activeProject?.id ?? null,
+        history: magiRunHistory.history,
+        historyLoading: magiRunHistory.loading,
+        historyFailed: magiRunHistory.failed,
+        providers: providerStatuses,
+        settings,
+        readiness: {
+          activeTurn: isWorking,
+          pendingApproval: pendingApprovals.length > 0,
+          pendingUserInput: pendingUserInputs.length > 0,
+          submissionInFlight: isSendBusy,
+        },
+      } : null}
       surface={renderedRightPanelSurface}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
@@ -7938,6 +7983,8 @@ export default function ChatView(props: ChatViewProps) {
                     </>
                   )
                 }
+                latestMagiRun={paintOnlyDisplayedTimeline ? null : latestMagiRun}
+                {...(!paintOnlyDisplayedTimeline ? { onOpenMagi: addMagiSurface } : {})}
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 runs={paintOnlyDisplayedTimeline ? [] : (serverProjection?.runs ?? [])}
@@ -8493,11 +8540,14 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
+          onAddMagi={addMagiSurface}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          magiAvailable={magiAvailable}
+          activeMagiRunCount={activeMagiRunCount}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -8548,11 +8598,14 @@ export default function ChatView(props: ChatViewProps) {
             onAddDevice={addDeviceSurfaceStable}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
+            onAddMagi={addMagiSurface}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
+            magiAvailable={magiAvailable}
+            activeMagiRunCount={activeMagiRunCount}
           >
             {rightPanelContent}
           </RightPanelTabs>

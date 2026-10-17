@@ -4,6 +4,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { isMagiParticipantThreadId } from "@t3tools/contracts";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
 
@@ -68,7 +69,15 @@ export function deriveThreadRelationshipGraph(input: {
       nodes.set(threadId, { threadId, thread: null, missing: true });
     }
   };
+  const hiddenParticipant = (threadId: ThreadId) =>
+    isMagiParticipantThreadId(threadId) && threadId !== input.projection?.thread.id;
   const addEdge = (edge: ThreadRelationshipEdge) => {
+    // Spawning and returning participant evidence also creates transfer links to the owner.
+    if (
+      hiddenParticipant(edge.targetThreadId) ||
+      (edge.kind === "transfer" && hiddenParticipant(edge.sourceThreadId))
+    )
+      return;
     ensureNode(edge.sourceThreadId);
     ensureNode(edge.targetThreadId);
     edgesByKey.set(

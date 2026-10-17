@@ -2,6 +2,7 @@ import {
   TurnItemId,
   NodeId,
   MessageId,
+  MagiRunId,
   ProviderInstanceId,
   ProviderThreadId,
   ProviderSessionId,
@@ -54,6 +55,26 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("keeps a completed provider turn idle while Magi still owns work", () => {
+    const projection = {
+      ...v2Projection,
+      thread: { ...v2Projection.thread, pendingMagiRunId: MagiRunId.make("panel") },
+      runs: [run("owner", 1, "completed")],
+    };
+    expect(deriveThreadRuntime(projection)).toMatchObject({ status: "idle", activeRunId: null });
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        thread: { ...projection.thread, pendingMagiRunId: null },
+      }),
+    ).toMatchObject({ status: "completed" });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "magi:panel", kind: "monitor", description: "Waiting on Magi" },
+      ]),
+    ).toMatchObject({ title: "Waiting on Magi", waiting: true });
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {

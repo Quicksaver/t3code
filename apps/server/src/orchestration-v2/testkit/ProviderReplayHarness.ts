@@ -453,6 +453,7 @@ export function layerWithRegistry<Error>(
         CommandPolicy.layer,
         layerContextHandoffServiceProvided,
         layerPersistence,
+        layerDatabase,
         layerProvidedRegistry,
         layerContinuationRequests,
         layerRuntime,

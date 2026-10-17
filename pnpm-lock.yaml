@@ -1139,6 +1139,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@noble/hashes':
+        specifier: 'catalog:'
+        version: 1.8.0
       effect:
         specifier: 4.0.5
         version: 4.0.5

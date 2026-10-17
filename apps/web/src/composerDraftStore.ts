@@ -7,6 +7,7 @@ import {
   defaultInstanceIdForDriver,
   EnvironmentId,
   ModelSelection,
+  MagiRunConfig,
   ProjectId,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -36,6 +37,7 @@ import {
 import * as Schema from "effect/Schema";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
@@ -89,6 +91,7 @@ const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 const isThreadContextRecord = Schema.is(ThreadContextRecord);
 const isSnapShotSource = Schema.is(SnapShotSource);
 const isPreviewAnnotationPayload = Schema.is(PreviewAnnotationPayloadSchema);
+const decodeMagiRunConfig = Schema.decodeUnknownOption(MagiRunConfig);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 9;
@@ -240,6 +243,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   modelSelectionExplicit: Schema.optionalKey(Schema.Boolean),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  magiArm: Schema.optionalKey(MagiRunConfig),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -363,6 +367,8 @@ export interface ComposerThreadDraftState {
   modelSelectionExplicit?: boolean;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  /** Unsent first-message Magi arm; promoted with the bootstrap command. */
+  magiArm: MagiRunConfig | null;
 }
 
 export function composerDraftHasUserContent(
@@ -379,7 +385,8 @@ export function composerDraftHasUserContent(
     draft.terminalContexts.length > 0 ||
     draft.previewAnnotations.length > 0 ||
     draft.reviewComments.length > 0 ||
-    draft.threadContexts.length > 0
+    draft.threadContexts.length > 0 ||
+    draft.magiArm !== null
   );
 }
 
@@ -528,6 +535,7 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setMagiArm: (threadRef: ComposerThreadTarget, config: MagiRunConfig | null) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => boolean;
   addImages: (
     threadRef: ComposerThreadTarget,
@@ -663,6 +671,16 @@ function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelect
   } as DeepMutable<ModelSelection>;
 }
 
+function cloneMagiRunConfig(config: MagiRunConfig): DeepMutable<MagiRunConfig> {
+  return {
+    ...config,
+    participants: config.participants.map((participant) => ({
+      ...participant,
+      modelSelection: cloneModelSelection(participant.modelSelection),
+    })),
+  };
+}
+
 function compactModelSelectionByProvider(
   selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
 ): DeepMutable<Record<ProviderInstanceId, ModelSelection>> {
@@ -756,6 +774,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  magiArm: null,
 });
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
@@ -773,6 +792,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    magiArm: null,
   };
 }
 
@@ -867,7 +887,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.magiArm === null
   );
 }
 
@@ -1802,6 +1823,8 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    // An arm that no longer decodes is dropped rather than restored half-valid.
+    const magiArm = Option.getOrNull(decodeMagiRunConfig(draftCandidate.magiArm));
     const contextIds = new Map<string, string>();
     for (const [kind, entries] of [
       ["image", attachments],
@@ -1891,7 +1914,8 @@ function normalizePersistedDraftsByThreadId(
       threadContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      magiArm === null
     ) {
       continue;
     }
@@ -1924,6 +1948,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(magiArm ? { magiArm: cloneMagiRunConfig(magiArm) } : {}),
     };
   }
 
@@ -1938,7 +1963,8 @@ function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraf
     (draft.terminalContexts?.length ?? 0) > 0 ||
     (draft.previewAnnotations?.length ?? 0) > 0 ||
     (draft.reviewComments?.length ?? 0) > 0 ||
-    (draft.threadContexts?.length ?? 0) > 0
+    (draft.threadContexts?.length ?? 0) > 0 ||
+    draft.magiArm !== undefined
   );
 }
 
@@ -2019,7 +2045,8 @@ export function partializeComposerDraftStoreState(
       draft.threadContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.magiArm === null
     ) {
       continue;
     }
@@ -2083,6 +2110,7 @@ export function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.magiArm ? { magiArm: cloneMagiRunConfig(draft.magiArm) } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2351,6 +2379,7 @@ function toHydratedThreadDraft(
     ...(persistedDraft.modelSelectionExplicit ? { modelSelectionExplicit: true } : {}),
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    magiArm: persistedDraft.magiArm ?? null,
   };
 }
 
@@ -3173,6 +3202,22 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
+        setMagiArm: (threadRef, config) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) return;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && config === null) return state;
+            const nextDraft: ComposerThreadDraftState = {
+              ...(existing ?? createEmptyThreadDraft()),
+              magiArm: config,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
         addImage: (threadRef, image) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           const threadId = resolveComposerThreadId(get(), threadRef);
@@ -3949,6 +3994,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               previewAnnotations: [],
               reviewComments: [],
               threadContexts: [],
+              // The Magi arm is panel state, not composer content: slash commands and failed
+              // sends keep it, and ChatView clears it once a launch carries it.
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

@@ -10,6 +10,7 @@ export interface AppBarAction {
   readonly disabled?: boolean;
   readonly loading?: boolean;
   readonly selected?: boolean;
+  readonly overflowOnly?: boolean;
   readonly tintColor?: ColorValue;
 }
 

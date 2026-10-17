@@ -7,12 +7,17 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
-import { WS_METHODS } from "./rpc.ts";
+import { MAGI_WS_METHODS, WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  [MAGI_WS_METHODS.updateSettings]: AuthSettingsWriteScope,
+  [MAGI_WS_METHODS.resetSettings]: AuthSettingsWriteScope,
+  [MAGI_WS_METHODS.armThread]: AuthOrchestrationOperateScope,
+  [MAGI_WS_METHODS.disarmThread]: AuthOrchestrationOperateScope,
+
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

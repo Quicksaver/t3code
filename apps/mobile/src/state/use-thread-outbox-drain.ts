@@ -77,6 +77,7 @@ import {
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
   updateComposerDraftSettings,
+  setComposerDraftMagiArm,
   waitForComposerDraftsLoaded,
 } from "./use-composer-drafts";
 import { useAtomCommand } from "./use-atom-command";
@@ -362,6 +363,10 @@ export async function recoverEditedCreationAfterDelivery(
       kept.attachments.filter((attachment) => !existingAttachmentIds.has(attachment.id)),
       { allowOverflow: true },
     );
+    // Only settings the queued message actually carries: spreading explicit
+    // undefined would clear choices the user already made on the draft. The
+    // delivered creation already consumed any Magi arm, and an existing
+    // thread's arm lives on the server, so the arm is not handed back.
     updateComposerDraftSettings(draftKey, {
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
       ...(kept.runtimeMode !== undefined ? { runtimeMode: kept.runtimeMode } : {}),
@@ -453,6 +458,7 @@ export async function restoreRejectedQueuedMessage(
       await undoComposerDraftMerge(draftKey, originalDraft, mergedDraft);
       return "deferred";
     }
+    if (queuedMessage.magiArm) setComposerDraftMagiArm(draftKey, queuedMessage.magiArm);
     updateComposerDraftSettings(draftKey, {
       ...(queuedMessage.modelSelection ? { modelSelection: queuedMessage.modelSelection } : {}),
       ...(queuedMessage.runtimeMode ? { runtimeMode: queuedMessage.runtimeMode } : {}),
@@ -1037,6 +1043,7 @@ export function useThreadOutboxDrain(): void {
           worktreePath: workspace.worktreePath,
           startFromOrigin: workspace.startFromOrigin ?? false,
           worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
+          ...(queuedMessage.magiArm ? { magiArm: queuedMessage.magiArm } : {}),
         }),
       });
       if (AsyncResult.isFailure(deliveryResult) && !hasAccess()) return true;

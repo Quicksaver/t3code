@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   type OrchestrationV2PendingBackgroundTask,
+  MagiRunId,
+  RunId,
   ProviderInstanceId,
   ProviderThreadId,
 } from "@t3tools/contracts";
@@ -86,6 +88,30 @@ describe("derivePendingBackgroundWork", () => {
       turnItems: [],
     });
     expect(tasks).toEqual([{ taskId: "roster-item", kind: "subagent", providerInstanceId: owner }]);
+  });
+
+  it("keeps Magi waiting between provider turns and releases it when the run ends", () => {
+    const input = {
+      latestRun: { id: RunId.make("owner-turn"), ordinal: 1, status: "completed" as const },
+      providerThreads: [],
+      turnItems: [],
+    };
+    const tasks = derivePendingBackgroundWork({
+      ...input,
+      pendingMagiRunId: MagiRunId.make("panel"),
+    });
+    expect(tasks).toEqual([
+      { taskId: "magi:panel", description: "Waiting on Magi", kind: "monitor" },
+    ]);
+    expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+    expect(derivePendingBackgroundWork({ ...input, pendingMagiRunId: null })).toEqual([]);
+    expect(
+      derivePendingBackgroundWork({
+        ...input,
+        pendingMagiRunId: MagiRunId.make("panel"),
+        hasActiveRun: true,
+      }),
+    ).toEqual([]);
   });
 
   it("returns empty while the latest run is not settled", () => {

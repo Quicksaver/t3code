@@ -65,6 +65,7 @@ import {
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
+import { MagiPanelSheet } from "./MagiPanelSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
@@ -359,6 +360,7 @@ function ThreadRouteContent(
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
     () => (props.renderInspector ? { routeThreadIdentity, mode: "route" } : null),
   );
+  const [magiVisible, setMagiVisible] = useState(false);
   const inspectorMode = (() => {
     if (inspectorSelection?.routeThreadIdentity === routeThreadIdentity) {
       if (inspectorSelection.mode === "files" && selectedThreadCwd === null) {
@@ -412,6 +414,9 @@ function ThreadRouteContent(
     }, [props.renderInspector]),
   );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const magiSupported = serverConfig?.environment.capabilities.magi === true;
+  const handleOpenMagi = useCallback(() => setMagiVisible(true), []);
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
@@ -956,7 +961,7 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+
   const renderThreadRouteBody = () => (
     <>
       <GitActionProgressOverlay
@@ -1080,9 +1085,25 @@ function ThreadRouteContent(
         onOpenGitInspector={handleOpenGitInspector}
         onOpenFilesInspector={handleOpenFilesInspector}
         onReturnToThread={props.onReturnToThread}
+        onOpenMagi={magiSupported ? handleOpenMagi : undefined}
       />
 
       {renderThreadRouteBody()}
+      {magiSupported ? (
+        <MagiPanelSheet
+          key={scopedThreadKey(selectedThread.environmentId, selectedThread.id)}
+          visible={magiVisible}
+          environmentId={selectedThread.environmentId}
+          threadId={selectedThread.id}
+          projectId={selectedThread.projectId}
+          readiness={{
+            activeTurn: composer.activeThreadBusy,
+            pendingApproval: requests.activePendingApproval !== null,
+            pendingUserInput: requests.activePendingUserInput !== null,
+          }}
+          onClose={() => setMagiVisible(false)}
+        />
+      ) : null}
     </>
   );
 }

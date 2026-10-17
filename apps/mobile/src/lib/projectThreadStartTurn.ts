@@ -5,6 +5,7 @@ import {
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationMessageContext,
+  type MagiRunConfig,
   type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
@@ -32,6 +33,7 @@ export interface ProjectThreadStartTurnSpec {
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
   readonly worktreeBranchName: string;
+  readonly magiArm?: MagiRunConfig;
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
@@ -74,6 +76,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
             runSetupScript: true,
           }
         : {}),
+      ...(spec.magiArm ? { magiArm: spec.magiArm } : {}),
     },
     createdAt: spec.createdAt,
   };

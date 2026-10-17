@@ -552,6 +552,34 @@ describe("mobile model options", () => {
       } as unknown as ServerConfig;
     }
 
+    it.each([true, false])(
+      "changes Magi choices with the selected project while retaining the saved selection (machine enabled=%s)",
+      (machineEnabled) => {
+        const settings: ServerSettings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: machineEnabled },
+          },
+          projectSettingsOverrides: {
+            [projectId]: { providerInstances: { [instanceId]: { enabled: !machineEnabled } } },
+          },
+        };
+        const config = configWith(settings);
+        const selection = { instanceId, model: "model-a" };
+        expect(buildModelOptions(config, null, undefined, projectId)).toHaveLength(
+          machineEnabled ? 0 : 1,
+        );
+        expect(buildModelOptions(config, null, undefined, null)).toHaveLength(
+          machineEnabled ? 1 : 0,
+        );
+        expect(buildModelOptions(config, selection, undefined, projectId)[0]?.selection).toEqual(
+          selection,
+        );
+        expect(isModelSelectionUnavailable(config, selection, projectId)).toBe(machineEnabled);
+        expect(selection).toEqual({ instanceId, model: "model-a" });
+      },
+    );
+
     it("words a project's own turn-off apart from missing setup", () => {
       const settings: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,

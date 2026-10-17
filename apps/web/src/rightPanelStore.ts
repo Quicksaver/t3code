@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type MagiRunId, type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -21,6 +21,7 @@ const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "pull-requests",
+  "magi",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -77,7 +78,15 @@ export type RightPanelSurface =
       number: number;
       url?: string;
     }
-  | { id: "pull-requests"; kind: "pull-requests" };
+  /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
+  | { id: "pull-requests"; kind: "pull-requests" }
+  | {
+      id: "magi";
+      kind: "magi";
+      /** A run to expand, requested again by bumping `revealRequestId`. Session-only. */
+      revealRunId?: MagiRunId;
+      revealRequestId?: number;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -141,6 +150,8 @@ interface RightPanelStoreState {
     folderTrail: string,
     keepSource?: boolean,
   ) => void;
+  /** Opens the Magi surface with one run expanded. */
+  openMagiRun: (ref: ScopedThreadRef, runId: MagiRunId) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -214,6 +225,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "magi":
+      return { id: "magi", kind };
   }
 };
 
@@ -457,6 +470,8 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       const { folderTrail: _invalid, ...rest } = surface;
                       surface = rest;
                     }
+                    // A run reveal is a one-time request, not a reload target.
+                    if (surface.kind === "magi") return [singletonSurface("magi")];
                     if (surface.kind === "file") {
                       const revealLine =
                         typeof surface.revealLine === "number" &&
@@ -744,6 +759,29 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [surface];
             });
             return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
+          }),
+        ),
+      openMagiRun: (ref, runId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const existing = current.surfaces.find(
+              (surface): surface is Extract<RightPanelSurface, { kind: "magi" }> =>
+                surface.kind === "magi",
+            );
+            const surface: RightPanelSurface = {
+              id: "magi",
+              kind: "magi",
+              revealRunId: runId,
+              revealRequestId: (existing?.revealRequestId ?? 0) + 1,
+            };
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: existing
+                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                : [...current.surfaces, surface],
+            };
           }),
         ),
       openAttachment: (ref, attachment) =>
