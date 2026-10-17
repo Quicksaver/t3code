@@ -263,6 +263,7 @@ it("lists the conversation's own Magi runs and opens one expanded in the Magi pa
   expect(text()).not.toContain("Delegate review");
   expect(text()).not.toContain("Magi participant");
   expect(text()).toContain("Ordinary worker");
+  expect(text()).toContain("Lineage · 1 running");
 
   await click(byLabel("Magi run: Plan check, Consensus reached"));
   expect(

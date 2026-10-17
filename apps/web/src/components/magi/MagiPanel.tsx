@@ -1161,8 +1161,14 @@ export function MagiPanel(props: {
    */
   const enqueueArmCommand = (
     nextConfig: MagiRunConfig | null,
-    editVersion = nextConfig === null ? null : armConfigAdoption.beginWrite(),
+    requestedEditVersion?: number | null,
   ): Promise<boolean> => {
+    const editVersion =
+      requestedEditVersion === undefined
+        ? nextConfig === null
+          ? null
+          : armConfigAdoption.beginWrite()
+        : requestedEditVersion;
     const generation = armSyncGenerationRef.current;
     const execute = async () => {
       if (generation !== armSyncGenerationRef.current) return false;
