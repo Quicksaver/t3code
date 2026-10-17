@@ -108,7 +108,7 @@ import * as Fiber from "effect/Fiber";
 
 import type { McpThreadCaller } from "../mcp/McpInvocationContext.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { isNativeMaintenanceCommand } from "../orchestration-v2/Orchestrator.ts";
+import { isNativeMaintenanceCommand } from "../orchestration-v2/CommandPolicy.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { subagentResultForRun } from "@t3tools/provider-core/server/subagentProjection";

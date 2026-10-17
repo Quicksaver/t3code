@@ -17,6 +17,7 @@ import {
   type AcpRegistryUrlAuthAction,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
+  type ServerProvider,
   type ProjectId,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
@@ -87,12 +88,7 @@ import {
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
-import {
-  PolicyTooltip,
-  SettingResetButton,
-  SettingsRow,
-  SettingsSection,
-} from "./settingsLayout";
+import { PolicyTooltip, SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { buildProviderInstanceOverridePatch } from "./ProviderSettingsPanel.logic";
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {

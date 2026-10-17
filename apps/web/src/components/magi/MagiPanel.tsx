@@ -56,8 +56,9 @@ import {
   Trash2,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { magiEnvironment } from "~/state/magi";
 import { environmentThreadDetails, threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -290,15 +291,9 @@ function ParticipantPendingApproval(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const threadRef = useMemo(
-    () => scopeThreadRef(props.environmentId, props.threadId),
-    [props.environmentId, props.threadId],
-  );
+  const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const pendingRequests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(threadRef));
-  const approvals = useMemo(
-    () => derivePendingApprovals(pendingRequests?.approvals ?? []),
-    [pendingRequests],
-  );
+  const approvals = derivePendingApprovals(pendingRequests?.approvals ?? []);
   const active = approvals[0] ?? null;
   const [responding, setResponding] = useState(false);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
@@ -1076,12 +1071,12 @@ export function MagiPanel(props: {
     readonly cursors: ReadonlyArray<string>;
   } | null>(null);
   const armRevisionRef = useRef(0);
-  const armReconcilePendingRef = useRef(false);
+  const processedArmReconcileRequestRef = useRef(0);
   const armSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingArmConfigRef = useRef<{ config: MagiRunConfig; editVersion: number } | null>(null);
   const armSyncGenerationRef = useRef(0);
   const armReconcileIntentRef = useRef(0);
-  const armReconcileLifetimeRef = useRef(0);
+  const armReconcileLifetimeRef = useRef<object>({});
   const armSyncChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const flushArmSyncRef = useRef(() => {});
   const consumedActiveRunRef = useRef<MagiRunId | null>(null);
@@ -1106,18 +1101,22 @@ export function MagiPanel(props: {
       appAtomRegistry.get(magiEnvironment.disarmThread.permissionAtom(props.environmentId)));
 
   /** Drops the debounced update and every queued arm write that has not started yet. */
-  const cancelPendingArmSync = useCallback(() => {
+  const cancelPendingArmSync = useStableCallback(() => {
     if (armSyncTimerRef.current) clearTimeout(armSyncTimerRef.current);
     armSyncTimerRef.current = null;
     pendingArmConfigRef.current = null;
     armSyncGenerationRef.current += 1;
     armConfigAdoption.cancelPendingWrite();
-  }, [armConfigAdoption]);
+  });
   useEffect(() => {
-    armReconcileLifetimeRef.current += 1;
+    armReconcileLifetimeRef.current = {
+      isDraft,
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+    };
     armConfigAdoption.reset();
     return () => {
-      armReconcileLifetimeRef.current += 1;
+      armReconcileLifetimeRef.current = {};
     };
   }, [armConfigAdoption, isDraft, props.environmentId, props.threadId]);
   useEffect(() => {
@@ -1133,7 +1132,6 @@ export function MagiPanel(props: {
         intent === armReconcileIntentRef.current &&
         lifetime === armReconcileLifetimeRef.current,
       () => {
-        armReconcilePendingRef.current = true;
         setArmReconcileRequest((request) => request + 1);
         appAtomRegistry.refresh(
           magiEnvironment.arm({
@@ -1154,7 +1152,6 @@ export function MagiPanel(props: {
       setArmError(error instanceof Error && error.message ? error.message : fallbackMessage);
     }
     cancelPendingArmSync();
-    armReconcilePendingRef.current = true;
     setArmReconcileRequest((request) => request + 1);
     appAtomRegistry.refresh(magiEnvironment.arm(armTarget));
   };
@@ -1216,56 +1213,54 @@ export function MagiPanel(props: {
   });
   useEffect(() => () => flushArmSyncRef.current(), []);
 
+  if (config === null && options && settings) {
+    setConfig(normalizeMagiPanelConfig(props.draftArm ?? initialMagiConfig(options, settings)));
+    setArmed(props.draftArm !== null && props.draftArm !== undefined);
+  }
+  const adoptServerArm = useEffectEvent(
+    (snapshot: typeof serverArm, loaded: boolean, draft: boolean, reconcileRequest: number) => {
+      if (draft || !loaded) return;
+      const reconcile = reconcileRequest !== processedArmReconcileRequestRef.current;
+      processedArmReconcileRequestRef.current = reconcileRequest;
+      if (snapshot === null) {
+        armRevisionRef.current = 0;
+        setArmed(false);
+      } else if (reconcile || snapshot.revision !== armRevisionRef.current) {
+        const adopted = armConfigAdoption.adopt(snapshot.config);
+        if (adopted !== null) setConfig(normalizeMagiPanelConfig(adopted));
+        armRevisionRef.current = snapshot.revision;
+        setArmed(true);
+      }
+    },
+  );
   useEffect(() => {
-    if (config === null && options && settings) {
-      setConfig(normalizeMagiPanelConfig(props.draftArm ?? initialMagiConfig(options, settings)));
-      setArmed(props.draftArm !== null && props.draftArm !== undefined);
-    }
-  }, [config, options, props.draftArm, settings]);
-  useEffect(() => {
-    if (props.onDraftArmChange || !serverArmLoaded) return;
-    const reconcile = armReconcilePendingRef.current;
-    armReconcilePendingRef.current = false;
-    if (serverArm === null) {
-      armRevisionRef.current = 0;
-      setArmed(false);
-    } else if (reconcile || serverArm.revision !== armRevisionRef.current) {
-      const adopted = armConfigAdoption.adopt(serverArm.config);
-      if (adopted !== null) setConfig(normalizeMagiPanelConfig(adopted));
-      armRevisionRef.current = serverArm.revision;
-      setArmed(true);
-    }
-  }, [
-    armConfigAdoption,
-    armReconcileRequest,
-    canMutateArm,
-    props.onDraftArmChange,
-    serverArm,
-    serverArmLoaded,
-  ]);
-  useEffect(() => {
-    if (!config) return;
-    setTurnLimitSliderIndex((currentIndex) =>
-      magiTurnLimitSliderIndex(config.magiTurnLimit, currentIndex),
-    );
-  }, [config?.magiTurnLimit]);
+    // oxlint-disable-next-line react/set-state-in-effect -- Server revisions and rejected writes must reconcile after commit, outside render and pending command callbacks.
+    adoptServerArm(serverArm, serverArmLoaded, isDraft, armReconcileRequest);
+  }, [armReconcileRequest, isDraft, serverArm, serverArmLoaded]);
+  const nextTurnLimitSliderIndex = config
+    ? magiTurnLimitSliderIndex(config.magiTurnLimit, turnLimitSliderIndex)
+    : turnLimitSliderIndex;
+  if (nextTurnLimitSliderIndex !== turnLimitSliderIndex) {
+    setTurnLimitSliderIndex(nextTurnLimitSliderIndex);
+  }
 
   // The history also lists subagents' runs; only this conversation's own runs consume its arm,
   // block arming, or expand automatically.
   const ownActiveRunId = ownActiveMagiRun(history?.runs ?? [], props.threadId)?.runId ?? null;
   const preferredAutomaticRunId =
     preferredMagiRunForAutomaticExpansion(history?.runs ?? [], props.threadId)?.runId ?? null;
+  const onDraftArmChange = props.onDraftArmChange;
   useEffect(() => {
     if (!ownActiveRunId || consumedActiveRunRef.current === ownActiveRunId) return;
     consumedActiveRunRef.current = ownActiveRunId;
     cancelPendingArmSync();
     armRevisionRef.current = 0;
     setArmed(false);
-    props.onDraftArmChange?.(null);
+    onDraftArmChange?.(null);
     appAtomRegistry.refresh(magiEnvironment.arm(armTarget));
     appAtomRegistry.refresh(magiEnvironment.settings(target));
     appAtomRegistry.refresh(magiEnvironment.options(optionsTarget));
-  }, [ownActiveRunId, props.onDraftArmChange]);
+  }, [ownActiveRunId, onDraftArmChange, cancelPendingArmSync, armTarget, target, optionsTarget]);
   const revealRunId = props.revealRun?.runId ?? null;
   const revealRequestId = props.revealRun?.requestId ?? null;
   useEffect(() => {
@@ -1307,6 +1302,8 @@ export function MagiPanel(props: {
     preferredAutomaticRunId,
     props.historyLoading,
     props.isVisible,
+    props.onDraftArmChange,
+    armTarget,
     revealRequestId,
     revealRunId,
   ]);
@@ -1317,11 +1314,8 @@ export function MagiPanel(props: {
       ?.scrollIntoView({ block: "start" });
   }, [revealedRun]);
 
-  const duplicates = useMemo(
-    () => exactDuplicateMagiParticipantIds(config?.participants ?? []),
-    [config?.participants],
-  );
-  const validationIssues = useMemo(() => (config ? validateMagiRoster(config) : []), [config]);
+  const duplicates = exactDuplicateMagiParticipantIds(config?.participants ?? []);
+  const validationIssues = config ? validateMagiRoster(config) : [];
   const thresholdWarning =
     validationIssues.find((issue) => issue.reason === "draw-capable-threshold")?.message ?? null;
   const validationError =
@@ -1331,21 +1325,14 @@ export function MagiPanel(props: {
     ownActiveRun: ownActiveRunId !== null,
   });
   const weightSummary = config ? magiWeightSummary(config) : null;
-  const instanceEntries = useMemo(
-    () =>
-      sortProviderInstanceEntries(
-        applyProviderInstanceSettings(
-          deriveProviderInstanceEntries(props.providers),
-          props.settings,
-          props.projectId,
-        ),
-      ),
-    [props.providers, props.settings, props.projectId],
+  const instanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(props.providers),
+      props.settings,
+      props.projectId,
+    ),
   );
-  const modelOptionsByInstance = useMemo(
-    () => getCustomModelOptionsByInstance(props.settings, props.providers),
-    [props.providers, props.settings],
-  );
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(props.settings, props.providers);
 
   const syncArmedConfig = (next: MagiRunConfig) => {
     if (!armed || !canMutateArmNow()) return;
@@ -1372,11 +1359,11 @@ export function MagiPanel(props: {
       void enqueueArmCommand(next, editVersion);
     }, 250);
   };
-  const updateConfig = (next: MagiRunConfig) => {
+  const updateConfig = useStableCallback((next: MagiRunConfig) => {
     armConfigAdoption.markEdited();
     setConfig(next);
     syncArmedConfig(next);
-  };
+  });
   const replaceParticipant = (
     participantId: string,
     update: (

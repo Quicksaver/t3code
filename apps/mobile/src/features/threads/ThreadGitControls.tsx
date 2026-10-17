@@ -589,9 +589,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           <Toolbar.MenuAction onPress={model.openGitInspector}>
             Open git controls
           </Toolbar.MenuAction>
-          <Toolbar.MenuAction onPress={props.onOpenMagi}>
-            Open magi
-          </Toolbar.MenuAction>
+          <Toolbar.MenuAction onPress={props.onOpenMagi}>Open magi</Toolbar.MenuAction>
         </Toolbar.Menu>
       ) : null}
     </Toolbar>

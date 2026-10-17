@@ -3,7 +3,6 @@ import type { MagiListRunsResult, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useMemo } from "react";
 
 import { magiEnvironment } from "~/state/magi";
 
@@ -20,16 +19,13 @@ export function useMagiRunHistory(threadRef: ScopedThreadRef | null): {
   readonly loading: boolean;
   readonly failed: boolean;
 } {
-  const target = useMemo(
-    () =>
-      threadRef === null
-        ? null
-        : {
-            environmentId: threadRef.environmentId,
-            input: { rootThreadId: threadRef.threadId, limit: MAGI_THREAD_RUNS_LIMIT },
-          },
-    [threadRef],
-  );
+  const target =
+    threadRef === null
+      ? null
+      : {
+          environmentId: threadRef.environmentId,
+          input: { rootThreadId: threadRef.threadId, limit: MAGI_THREAD_RUNS_LIMIT },
+        };
   const result = useAtomValue(
     target === null ? IDLE_THREAD_RUNS_ATOM : magiEnvironment.threadRuns(target),
   );

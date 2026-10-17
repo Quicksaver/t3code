@@ -6369,7 +6369,11 @@ export default function ChatView(props: ChatViewProps) {
       );
       return;
     }
-    const multipleTargets = [];
+    const multipleTargets: Array<{
+      readonly selection: ModelSelection;
+      readonly text: string;
+      readonly interactionMode: ProviderInteractionMode;
+    }> = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
         (entry) => entry.instanceId === selection.instanceId,
@@ -7686,20 +7690,31 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelContent = activeThreadRef ? (
     <RightPanelSurfaceContent
       serverConfigKnown={serverConfig !== null}
-      magi={magiAvailable ? {
-        projectId: activeProject?.id ?? null,
-        history: magiRunHistory.history,
-        historyLoading: magiRunHistory.loading,
-        historyFailed: magiRunHistory.failed,
-        providers: providerStatuses,
-        settings,
-        readiness: {
-          activeTurn: isWorking,
-          pendingApproval: pendingApprovals.length > 0,
-          pendingUserInput: pendingUserInputs.length > 0,
-          submissionInFlight: isSendBusy,
-        },
-      } : null}
+      magi={
+        magiAvailable
+          ? {
+              projectId: activeProject?.id ?? null,
+              history: magiRunHistory.history,
+              historyLoading: magiRunHistory.loading,
+              historyFailed: magiRunHistory.failed,
+              providers: providerStatuses,
+              settings,
+              readiness: {
+                activeTurn: isWorking,
+                pendingApproval: pendingApprovals.length > 0,
+                pendingUserInput: pendingUserInputs.length > 0,
+                submissionInFlight: isSendBusy,
+              },
+              ...(isLocalDraftThread
+                ? {
+                    draftArm: composerMagiArm,
+                    onDraftArmChange: (config) =>
+                      setComposerDraftMagiArm(composerDraftTarget, config),
+                  }
+                : {}),
+            }
+          : null
+      }
       surface={renderedRightPanelSurface}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}

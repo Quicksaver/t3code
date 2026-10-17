@@ -1844,7 +1844,6 @@ const seedRunState = (
       .pipe(Effect.orDie);
   }).pipe(Effect.provide(ProjectionMagiRepositoryLive));
 
-/** The run as stored. */
 const storedRun = (runId: MagiRunId) =>
   Effect.gen(function* () {
     const stored = yield* (yield* ProjectionMagiRepository).getRun(runId).pipe(Effect.orDie);

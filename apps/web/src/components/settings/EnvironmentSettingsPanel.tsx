@@ -6,7 +6,7 @@ import {
   type EnvironmentId,
   type ExecutionEnvironmentPlatformOs,
 } from "@t3tools/contracts";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import { usePrimarySessionState } from "../../environments/primary";
@@ -327,10 +327,7 @@ export function EnvironmentSettingsPanel({
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
-  const options = useMemo(
-    () => buildEnvironmentOptions(environments, primaryEnvironmentId, environmentIds),
-    [environments, primaryEnvironmentId, environmentIds],
-  );
+  const options = buildEnvironmentOptions(environments, primaryEnvironmentId, environmentIds);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     targetEnvironmentId ?? primaryEnvironmentId,
   );
@@ -356,11 +353,9 @@ export function EnvironmentSettingsPanel({
     searchPlatform,
   });
 
-  useEffect(() => {
-    if (searchableEnvironmentId !== undefined) {
-      setSelectedEnvironmentId(searchableEnvironmentId);
-    }
-  }, [searchableEnvironmentId]);
+  if (searchableEnvironmentId !== undefined && searchableEnvironmentId !== selectedEnvironmentId) {
+    setSelectedEnvironmentId(searchableEnvironmentId);
+  }
   const environmentTabs = scoped ? null : (
     <EnvironmentTabs
       environments={options}

@@ -940,19 +940,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // produce a new context value, so the Magi slots in mounted rows do not re-render per event.
   const hasMagiRun = latestMagiRun !== null;
   const magiStartedAt = latestMagiRun?.startedAt ?? null;
-  const magiPlacement = useMemo(
-    () => (hasMagiRun ? resolveMagiActivityPlacement(rows, magiStartedAt) : null),
-    [hasMagiRun, magiStartedAt, rows],
-  );
+  const magiPlacement = hasMagiRun ? resolveMagiActivityPlacement(rows, magiStartedAt) : null;
   const magiRowId = magiPlacement?.rowId ?? null;
   const magiPosition = magiPlacement?.position ?? null;
-  const magiActivity = useMemo<MagiTimelineActivityState | null>(
-    () =>
-      latestMagiRun === null || magiRowId === null || magiPosition === null
-        ? null
-        : { run: latestMagiRun, rowId: magiRowId, position: magiPosition, onOpen: onOpenMagi },
-    [latestMagiRun, magiPosition, magiRowId, onOpenMagi],
-  );
+  const magiActivity =
+    latestMagiRun === null || magiRowId === null || magiPosition === null
+      ? null
+      : { run: latestMagiRun, rowId: magiRowId, position: magiPosition, onOpen: onOpenMagi };
   const minimapItems = deriveTimelineMinimapItems(rows);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false

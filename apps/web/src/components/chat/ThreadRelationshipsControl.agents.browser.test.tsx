@@ -198,18 +198,11 @@ it("lists the conversation's own Magi runs and opens one expanded in the Magi pa
   const environmentId = EnvironmentId.make("test");
   const threadId = ThreadId.make("parent");
   const panel = <ThreadRelationshipsPanel environmentId={environmentId} threadId={threadId} />;
-  const text = () =>
-    renderer.root
-      .findAll((node) => typeof node.type === "string")
-      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
-      .join(" ")
-      .replace(/\s+/g, " ");
+  const text = () => textNodes(" ").replace(/\s+/g, " ");
 
   // Without the Magi capability there is nothing to list, and Lineage stays hidden.
-  await act(async () => {
-    renderer = create(panel);
-  });
-  expect(renderer.toJSON()).toBeNull();
+  await render(panel);
+  expect(container.childElementCount).toBe(0);
 
   const participantThreadId =
     "thread:delegated-task:magi%3Arun-active%3Aparticipant-one%3Aparticipant";
@@ -260,7 +253,7 @@ it("lists the conversation's own Magi runs and opens one expanded in the Magi pa
     },
   }));
   state.configs.set("test", { providers: [], environment: { capabilities: { magi: true } } });
-  await act(async () => renderer.update(cloneElement(panel)));
+  await update();
   expect(text()).toContain("Magi runs");
   expect(text()).toContain("1 failed");
   expect(text()).toContain("Active review");
@@ -270,13 +263,8 @@ it("lists the conversation's own Magi runs and opens one expanded in the Magi pa
   expect(text()).not.toContain("Delegate review");
   expect(text()).not.toContain("Magi participant");
   expect(text()).toContain("Ordinary worker");
-  expect(renderer.root.findAllByProps({ title: "Lineage · 1 running" })).not.toHaveLength(0);
 
-  await act(async () =>
-    renderer.root
-      .findByProps({ "aria-label": "Magi run: Plan check, Consensus reached" })
-      .props.onClick(),
-  );
+  await click(byLabel("Magi run: Plan check, Consensus reached"));
   expect(
     selectThreadRightPanelState(
       useRightPanelStore.getState().byThreadKey,

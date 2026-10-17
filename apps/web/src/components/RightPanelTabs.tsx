@@ -1340,7 +1340,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
                     }
                     previewUrl={favicon.url}
-                    activeMagiRunCount={surface.kind === "magi" ? (props.activeMagiRunCount ?? 0) : 0}
+                    activeMagiRunCount={
+                      surface.kind === "magi" ? (props.activeMagiRunCount ?? 0) : 0
+                    }
                     previewCapturedUrl={favicon.capturedUrl}
                     theme={resolvedTheme}
                     environmentId={props.environmentId}
