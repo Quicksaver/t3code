@@ -175,7 +175,7 @@ layer("069_MagiProjections", (it) => {
       assert.notProperty(cleaned.detail, "activity");
       assert.notProperty(cleaned.detail, "magiTurns");
       const ledgerAfter =
-        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 63 ORDER BY migration_id`;
+        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 68 ORDER BY migration_id`;
       assert.deepStrictEqual(ledgerAfter, ledgerBefore);
     }).pipe(Effect.provide(Layer.fresh(NodeSqliteClient.layer({ filename: ":memory:" })))),
   );

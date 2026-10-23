@@ -7,18 +7,18 @@ import { requireMagiCaller } from "./caller.ts";
 import { MagiToolkit } from "./tools.ts";
 
 /** Every Magi tool acts for the calling conversation, identified by its MCP credential. */
-const withCaller = <A, E>(
+const withCaller = Effect.fn("magi.tool-call")(function* <A, E>(
   tool: string,
   effect: (
     magi: MagiServiceShape,
     caller: McpInvocationContext.McpThreadCaller,
   ) => Effect.Effect<A, E>,
-) =>
-  Effect.gen(function* () {
-    const caller = yield* requireMagiCaller(tool);
-    const magi = yield* MagiService;
-    return yield* effect(magi, caller);
-  }).pipe(Effect.withSpan("magi.tool-call", { attributes: { "magi.tool": tool } }));
+) {
+  yield* Effect.annotateCurrentSpan("magi.tool", tool);
+  const caller = yield* requireMagiCaller(tool);
+  const magi = yield* MagiService;
+  return yield* effect(magi, caller);
+});
 
 export const MagiToolkitHandlersLive = McpToolAccess.toLayer(MagiToolkit, {
   magi_control_run: McpToolAccess.actsAsCaller((input) =>

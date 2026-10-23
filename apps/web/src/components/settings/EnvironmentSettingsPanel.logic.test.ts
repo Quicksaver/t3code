@@ -1,5 +1,6 @@
 import {
   AuthProvidersManageScope,
+  EnvironmentId,
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,

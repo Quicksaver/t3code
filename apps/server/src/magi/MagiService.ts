@@ -446,10 +446,8 @@ export interface MagiPromptCapacityOutcome {
   readonly exceeded: boolean;
 }
 
-export const resolveMagiPromptCapacity = (
-  input: MagiPromptCapacityInput,
-): Effect.Effect<MagiPromptCapacityOutcome> =>
-  Effect.gen(function* () {
+export const resolveMagiPromptCapacity = Effect.fn("MagiService.resolveMagiPromptCapacity")(
+  function* (input: MagiPromptCapacityInput): Effect.fn.Return<MagiPromptCapacityOutcome> {
     let usage = input.usage;
     let dispatchPrompt: MagiPromptCapacityOutcome["dispatchPrompt"] = "full";
     let contextCompressed = false;
@@ -480,7 +478,8 @@ export const resolveMagiPromptCapacity = (
       }
     }
     return { usage, dispatchPrompt, contextCompressed, exceeded: false };
-  });
+  },
+);
 
 export type MagiOperationLock = <A, E, R>(
   key: string,
@@ -750,43 +749,42 @@ export const makeMagiService = Effect.gen(function* () {
       Effect.catchIf(MagiParticipantPolicy.isMagiThreadNotFound, () => Effect.succeedNone),
     );
 
-  const resolveConversationContext = (
+  const resolveConversationContext = Effect.fn("MagiService.resolveConversationContext")(function* (
     caller: Pick<MagiCaller, "threadId" | "providerInstanceId">,
-  ) =>
-    Effect.gen(function* () {
-      const records = yield* readThreadRecords(caller.threadId, ["runs", "messages"]).pipe(
-        Effect.mapError(() =>
-          validation(
-            "invalid-protocol-state",
-            "Could not read this conversation's state; retry the Magi call.",
-          ),
-        ),
-      );
-      if (Option.isNone(records)) {
-        return yield* validation("invalid-protocol-state", "The conversation no longer exists.");
-      }
-      const projection = records.value;
-      if (projection.thread.deletedAt !== null) {
-        return yield* validation("invalid-protocol-state", "The conversation no longer exists.");
-      }
-      const currentRun = projection.runs
-        .filter(ThreadManagement.isActiveRun)
-        .filter((run) => run.providerInstanceId === caller.providerInstanceId)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-      if (currentRun === undefined || currentRun.rootNodeId === null) {
-        return yield* validation(
+  ) {
+    const records = yield* readThreadRecords(caller.threadId, ["runs", "messages"]).pipe(
+      Effect.mapError(() =>
+        validation(
           "invalid-protocol-state",
-          "Magi tools require an active run in this conversation.",
-        );
-      }
-      return {
-        thread: projection.thread,
-        currentRun: { ...currentRun, rootNodeId: currentRun.rootNodeId },
-        initiatingInstruction:
-          projection.messages.find((message) => message.id === currentRun.userMessageId)?.text ??
-          null,
-      } satisfies MagiConversationContext;
-    });
+          "Could not read this conversation's state; retry the Magi call.",
+        ),
+      ),
+    );
+    if (Option.isNone(records)) {
+      return yield* validation("invalid-protocol-state", "The conversation no longer exists.");
+    }
+    const projection = records.value;
+    if (projection.thread.deletedAt !== null) {
+      return yield* validation("invalid-protocol-state", "The conversation no longer exists.");
+    }
+    const currentRun = projection.runs
+      .filter(ThreadManagement.isActiveRun)
+      .filter((run) => run.providerInstanceId === caller.providerInstanceId)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    if (currentRun === undefined || currentRun.rootNodeId === null) {
+      return yield* validation(
+        "invalid-protocol-state",
+        "Magi tools require an active run in this conversation.",
+      );
+    }
+    return {
+      thread: projection.thread,
+      currentRun: { ...currentRun, rootNodeId: currentRun.rootNodeId },
+      initiatingInstruction:
+        projection.messages.find((message) => message.id === currentRun.userMessageId)?.text ??
+        null,
+    } satisfies MagiConversationContext;
+  });
 
   const loadRunToolItems = (root: MagiConversationContext) =>
     threads
@@ -802,21 +800,22 @@ export const makeMagiService = Effect.gen(function* () {
         ),
       );
 
-  const listContextActivities = (caller: MagiCaller) =>
-    Effect.gen(function* () {
-      const root = yield* resolveConversationContext(caller);
-      const items = yield* loadRunToolItems(root);
-      return { activities: listMagiContextActivities(items) };
-    });
+  const listContextActivities = Effect.fn("MagiService.listContextActivities")(function* (
+    caller: MagiCaller,
+  ) {
+    const root = yield* resolveConversationContext(caller);
+    const items = yield* loadRunToolItems(root);
+    return { activities: listMagiContextActivities(items) };
+  });
 
   /** Snapshots selected results and addresses them to every participant of the run. */
-  const resolveAndStoreContextArtifacts = (input: {
-    readonly root: MagiConversationContext;
-    readonly activityIds: ReadonlyArray<TurnItemId>;
-    readonly run: PersistedMagiRun;
-    readonly magiTurn: number;
-  }) =>
-    Effect.gen(function* () {
+  const resolveAndStoreContextArtifacts = Effect.fn("MagiService.resolveAndStoreContextArtifacts")(
+    function* (input: {
+      readonly root: MagiConversationContext;
+      readonly activityIds: ReadonlyArray<TurnItemId>;
+      readonly run: PersistedMagiRun;
+      readonly magiTurn: number;
+    }) {
       if (input.activityIds.length === 0) return [];
       const resolved = yield* resolveMagiContextActivities({
         items: yield* loadRunToolItems(input.root),
@@ -835,7 +834,8 @@ export const makeMagiService = Effect.gen(function* () {
         })
         .pipe(Effect.orDie);
       return resolved.references;
-    });
+    },
+  );
 
   const readContextArtifacts: MagiServiceShape["readContextArtifacts"] = (caller, input) =>
     repository
@@ -864,8 +864,8 @@ export const makeMagiService = Effect.gen(function* () {
 
   const nowMeasuredAt = nowIso;
 
-  const readParticipantUsage = (threadId: ThreadId) =>
-    Effect.gen(function* () {
+  const readParticipantUsage = Effect.fn("MagiService.readParticipantUsage")(
+    function* (threadId: ThreadId) {
       const records = yield* threads.getThreadRecords(threadId, ["providerThreads"]);
       const providerThread =
         records.providerThreads.find(
@@ -881,7 +881,9 @@ export const makeMagiService = Effect.gen(function* () {
         },
         automatic: snapshot.compactsAutomatically === true,
       } satisfies ParticipantUsage;
-    }).pipe(Effect.orElseSucceed(() => null));
+    },
+    Effect.orElseSucceed(() => null),
+  );
 
   const readRunTokens = (threadId: ThreadId, runIds: ReadonlyArray<RunId>) =>
     threads.getThreadRecords(threadId, ["runs", "attempts", "providerTurns"], { runIds }).pipe(
@@ -949,7 +951,7 @@ export const makeMagiService = Effect.gen(function* () {
    * Starts one participant turn: the first turn creates the participant as a delegated child of
    * the owner's current run; later turns, retries, and repairs continue the same child thread.
    */
-  const startParticipantTurn = (input: {
+  const startParticipantTurn = Effect.fn("MagiService.startParticipantTurn")(function* (input: {
     readonly owner: MagiConversationContext;
     readonly runId: MagiRunId;
     readonly member: ProtocolMember;
@@ -957,72 +959,71 @@ export const makeMagiService = Effect.gen(function* () {
     readonly stage: "turn" | "retry" | "repair" | "compact";
     readonly text: string;
     readonly providerInstances: MagiGetOptionsResult["providerInstances"];
-  }) =>
-    Effect.gen(function* () {
-      if (input.magiTurn === 1 && input.stage === "turn") {
-        const commandId = participantCommandId(input.runId, input.member.participant.participantId);
-        const result = yield* threads.dispatch({
-          type: "delegated_task.request",
-          createdBy: "system",
-          creationSource: "server",
-          commandId,
-          parentThreadId: input.owner.thread.id,
-          parentRunId: input.owner.currentRun.id,
-          parentNodeId: input.owner.currentRun.rootNodeId,
-          task: input.text,
-          title: `Magi: ${participantLabel(input.member)}`,
-          modelSelection: participantDispatchModelSelection(
-            input.member.participant.modelSelection,
-            input.providerInstances,
-          ),
-          runtimeMode: input.owner.thread.runtimeMode,
-          interactionMode: input.owner.thread.interactionMode,
-          completionWake: "settled_only",
-        });
-        // Magi collects participant results itself; the owner's run is never woken by them.
-        const task = result.storedEvents.find(
-          (stored) =>
-            stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
-        );
-        if (task?.event.type === "subagent.updated") {
-          yield* threads
-            .dispatch({
-              type: "delegated_task.completion-delivery.dispose",
-              commandId: CommandId.make(`${commandId}:dispose`),
-              parentThreadId: input.owner.thread.id,
-              taskId: task.event.payload.id,
-            })
-            .pipe(Effect.ignore);
-        }
-        const childRun = result.storedEvents.find(
-          (stored) =>
-            (stored.event.type === "run.created" || stored.event.type === "run.updated") &&
-            stored.event.threadId === input.member.threadId,
-        );
-        if (childRun?.event.type !== "run.created" && childRun?.event.type !== "run.updated") {
-          return yield* Effect.fail("participant-run-missing" as const);
-        }
-        return { runId: childRun.event.payload.id, sequence: result.sequence };
-      }
-      const key = participantTurnKey({
-        runId: input.runId,
-        magiTurn: input.magiTurn,
-        participantId: input.member.participant.participantId,
-        stage: input.stage,
-      });
-      const sent = yield* threads.sendToThread({
-        projectId: input.owner.thread.projectId,
-        commandId: CommandId.make(key),
-        threadId: input.member.threadId,
-        messageId: MessageId.make(key),
-        text: input.text,
-        attachments: [],
-        mode: "queue",
+  }) {
+    if (input.magiTurn === 1 && input.stage === "turn") {
+      const commandId = participantCommandId(input.runId, input.member.participant.participantId);
+      const result = yield* threads.dispatch({
+        type: "delegated_task.request",
         createdBy: "system",
         creationSource: "server",
+        commandId,
+        parentThreadId: input.owner.thread.id,
+        parentRunId: input.owner.currentRun.id,
+        parentNodeId: input.owner.currentRun.rootNodeId,
+        task: input.text,
+        title: `Magi: ${participantLabel(input.member)}`,
+        modelSelection: participantDispatchModelSelection(
+          input.member.participant.modelSelection,
+          input.providerInstances,
+        ),
+        runtimeMode: input.owner.thread.runtimeMode,
+        interactionMode: input.owner.thread.interactionMode,
+        completionWake: "settled_only",
       });
-      return { runId: sent.run.id, sequence: sent.dispatch.sequence };
+      // Magi collects participant results itself; the owner's run is never woken by them.
+      const task = result.storedEvents.find(
+        (stored) =>
+          stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
+      );
+      if (task?.event.type === "subagent.updated") {
+        yield* threads
+          .dispatch({
+            type: "delegated_task.completion-delivery.dispose",
+            commandId: CommandId.make(`${commandId}:dispose`),
+            parentThreadId: input.owner.thread.id,
+            taskId: task.event.payload.id,
+          })
+          .pipe(Effect.ignore);
+      }
+      const childRun = result.storedEvents.find(
+        (stored) =>
+          (stored.event.type === "run.created" || stored.event.type === "run.updated") &&
+          stored.event.threadId === input.member.threadId,
+      );
+      if (childRun?.event.type !== "run.created" && childRun?.event.type !== "run.updated") {
+        return yield* Effect.fail("participant-run-missing" as const);
+      }
+      return { runId: childRun.event.payload.id, sequence: result.sequence };
+    }
+    const key = participantTurnKey({
+      runId: input.runId,
+      magiTurn: input.magiTurn,
+      participantId: input.member.participant.participantId,
+      stage: input.stage,
     });
+    const sent = yield* threads.sendToThread({
+      projectId: input.owner.thread.projectId,
+      commandId: CommandId.make(key),
+      threadId: input.member.threadId,
+      messageId: MessageId.make(key),
+      text: input.text,
+      attachments: [],
+      mode: "queue",
+      createdBy: "system",
+      creationSource: "server",
+    });
+    return { runId: sent.run.id, sequence: sent.dispatch.sequence };
+  });
 
   const interruptParticipantRun = (input: {
     readonly owner: Pick<MagiConversationContext, "thread">;
@@ -1057,7 +1058,7 @@ export const makeMagiService = Effect.gen(function* () {
         ),
       );
 
-  const runParticipant = (input: {
+  const runParticipant = Effect.fn("MagiService.runParticipant")(function* (input: {
     readonly owner: MagiConversationContext;
     readonly runId: MagiRunId;
     readonly source: MagiRunSource;
@@ -1079,268 +1080,269 @@ export const makeMagiService = Effect.gen(function* () {
     readonly terminalProposalDigest: ReadonlyArray<MagiTerminalProposalDigestEntry>;
     readonly cancellation: Deferred.Deferred<void>;
     readonly providerInstances: MagiGetOptionsResult["providerInstances"];
-  }): Effect.Effect<MagiParticipantSettlement, never> =>
-    Effect.gen(function* () {
-      const startedAt = yield* Clock.currentTimeMillis;
-      const participantId = input.member.participant.participantId;
-      const participantThreadId = input.member.threadId;
-      const failed = (
-        failureClass: string,
-        counts: {
-          readonly retryCount?: number;
-          readonly providerAttempts?: number;
-          readonly contextCompressed?: boolean;
-        } = {},
-      ) =>
-        Effect.map(Clock.currentTimeMillis, (now): MagiParticipantSettlement => ({
-          participantId,
-          participantThreadId,
-          participantRunId: null,
-          rawText: "",
-          parsed: null,
-          parseMode: "raw",
-          state: "failed",
-          durationMs: now - startedAt,
-          inputTokens: null,
-          outputTokens: null,
-          retryCount: counts.retryCount ?? 0,
-          providerAttempts: counts.providerAttempts ?? 0,
-          structuralRepairCount: 0,
-          reconstructed: false,
-          failureClass,
-          contextCompressed: counts.contextCompressed ?? false,
-        }));
-      const providerFiber = yield* Effect.gen(function* () {
-        yield* input.onStateChange("running");
-        const promptInput = {
+  }): Effect.fn.Return<MagiParticipantSettlement, never> {
+    const startedAt = yield* Clock.currentTimeMillis;
+    const participantId = input.member.participant.participantId;
+    const participantThreadId = input.member.threadId;
+    const failed = (
+      failureClass: string,
+      counts: {
+        readonly retryCount?: number;
+        readonly providerAttempts?: number;
+        readonly contextCompressed?: boolean;
+      } = {},
+    ) =>
+      Effect.map(Clock.currentTimeMillis, (now): MagiParticipantSettlement => ({
+        participantId,
+        participantThreadId,
+        participantRunId: null,
+        rawText: "",
+        parsed: null,
+        parseMode: "raw",
+        state: "failed",
+        durationMs: now - startedAt,
+        inputTokens: null,
+        outputTokens: null,
+        retryCount: counts.retryCount ?? 0,
+        providerAttempts: counts.providerAttempts ?? 0,
+        structuralRepairCount: 0,
+        reconstructed: false,
+        failureClass,
+        contextCompressed: counts.contextCompressed ?? false,
+      }));
+    const providerFiber = yield* Effect.gen(function* () {
+      yield* input.onStateChange("running");
+      const promptInput = {
+        runId: input.runId,
+        source: input.source,
+        initiatingInstruction: input.initiatingInstruction,
+        objective: input.objective,
+        magiTurn: input.magiTurn,
+        participant: input.member.participant,
+        candidate: input.candidate,
+        recordedActions: input.recordedActions,
+        unresolvedDisagreements: input.unresolvedDisagreements,
+        activities: input.activities,
+        priorSettlements: input.priorSettlements,
+        priorArbitration: input.priorArbitration,
+        activeProposals: input.activeProposals,
+        activeDecisionSets: input.activeDecisionSets,
+        terminalProposals: input.terminalProposals,
+        terminalProposalDigest: input.terminalProposalDigest,
+      };
+      const prompt = buildMagiParticipantPrompt(promptInput);
+      const compressedPrompt = buildMagiParticipantPrompt({
+        ...promptInput,
+        priorSettlements: input.priorSettlements.map((settlement) => ({
+          ...settlement,
+          rawText:
+            settlement.parsed === null
+              ? "[Free-form peer evidence compressed by T3; inspect the durable transcript for the original.]"
+              : settlement.rawText,
+        })),
+      });
+      let providerAttempts = 0;
+      const dispatchedRunIds: Array<RunId> = [];
+      const dispatch = Effect.fn("MagiService.dispatch")(function* (
+        text: string,
+        stage: "turn" | "retry" | "repair" | "compact",
+      ) {
+        providerAttempts += 1;
+        const started = yield* startParticipantTurn({
+          owner: input.owner,
           runId: input.runId,
-          source: input.source,
-          initiatingInstruction: input.initiatingInstruction,
-          objective: input.objective,
+          member: input.member,
           magiTurn: input.magiTurn,
-          participant: input.member.participant,
-          candidate: input.candidate,
-          recordedActions: input.recordedActions,
-          unresolvedDisagreements: input.unresolvedDisagreements,
-          activities: input.activities,
-          priorSettlements: input.priorSettlements,
-          priorArbitration: input.priorArbitration,
-          activeProposals: input.activeProposals,
-          activeDecisionSets: input.activeDecisionSets,
-          terminalProposals: input.terminalProposals,
-          terminalProposalDigest: input.terminalProposalDigest,
-        };
-        const prompt = buildMagiParticipantPrompt(promptInput);
-        const compressedPrompt = buildMagiParticipantPrompt({
-          ...promptInput,
-          priorSettlements: input.priorSettlements.map((settlement) => ({
-            ...settlement,
-            rawText:
-              settlement.parsed === null
-                ? "[Free-form peer evidence compressed by T3; inspect the durable transcript for the original.]"
-                : settlement.rawText,
-          })),
-        });
-        let providerAttempts = 0;
-        const dispatchedRunIds: Array<RunId> = [];
-        const dispatch = (text: string, stage: "turn" | "retry" | "repair" | "compact") =>
-          Effect.gen(function* () {
-            providerAttempts += 1;
-            const started = yield* startParticipantTurn({
-              owner: input.owner,
+          stage,
+          text,
+          providerInstances: input.providerInstances,
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Magi participant turn could not start.", {
               runId: input.runId,
-              member: input.member,
-              magiTurn: input.magiTurn,
-              stage,
-              text,
-              providerInstances: input.providerInstances,
-            }).pipe(
-              Effect.tapError((error) =>
-                Effect.logWarning("Magi participant turn could not start.", {
-                  runId: input.runId,
-                  participantThreadId,
-                  stage,
-                  error,
-                }),
-              ),
-              Effect.option,
-            );
-            if (Option.isNone(started)) return Option.none();
-            dispatchedRunIds.push(started.value.runId);
-            const run = yield* awaitRunTerminal(
               participantThreadId,
-              started.value.runId,
-              started.value.sequence,
-            );
-            const rawText = Option.isSome(run)
-              ? yield* readRunText(participantThreadId, run.value)
-              : "";
-            return Option.some({ runId: started.value.runId, run, rawText });
-          });
-
-        // Participant history belongs to the participant's harness. Only when the next request
-        // would not fit and the harness does not compact on its own is compaction requested.
-        const usageBefore =
-          input.magiTurn === 1 ? null : yield* readParticipantUsage(participantThreadId);
-        const promptTokens = (value: string) => Math.ceil(value.length / 4);
-        const capacity = yield* resolveMagiPromptCapacity({
-          usage: usageBefore?.usage ?? null,
-          fullPromptTokens: promptTokens(prompt),
-          compressedPromptTokens: promptTokens(compressedPrompt),
-          historyCompaction:
-            usageBefore === null
-              ? undefined
-              : usageBefore.automatic
-                ? "automatic-native"
-                : "explicit-native",
-          compact: dispatch("/compact", "compact").pipe(
-            Effect.map(
-              (result) =>
-                Option.isSome(result) &&
-                Option.isSome(result.value.run) &&
-                result.value.run.value.status === "completed",
-            ),
+              stage,
+              error,
+            }),
           ),
-          readUsage: readParticipantUsage(participantThreadId).pipe(
-            Effect.map((usage) => usage?.usage ?? null),
-          ),
-        });
-        const dispatchPrompt = capacity.dispatchPrompt === "compressed" ? compressedPrompt : prompt;
-        const contextCompressed = capacity.contextCompressed || dispatchPrompt !== prompt;
-        if (capacity.exceeded) {
-          return yield* failed("context-window-exceeded", { contextCompressed });
-        }
-        let attempt = yield* dispatch(dispatchPrompt, "turn");
-        let retryCount = 0;
-        let structuralRepairCount = 0;
-        // Retry a turn that could not start or that ended unsuccessfully. A run whose outcome is
-        // unknown may still be working, so it is never retried alongside itself.
-        const transientFailure = Option.isNone(attempt)
-          ? input.magiTurn !== 1
-          : Option.isSome(attempt.value.run) && attempt.value.run.value.status !== "completed";
-        if (transientFailure) {
-          retryCount = 1;
-          attempt = yield* dispatch(dispatchPrompt, "retry");
-        }
-        if (Option.isNone(attempt)) {
-          return yield* failed("turn-start-failed", { retryCount, providerAttempts });
-        }
-        let result = attempt.value;
-        let parsed = parseMagiParticipantResponse(result.rawText);
-        if (
-          Option.isSome(result.run) &&
-          result.run.value.status === "completed" &&
-          parsed.parsed === null
-        ) {
-          retryCount += 1;
-          structuralRepairCount = 1;
-          const repaired = yield* dispatch(
-            `Your last Magi response could not be decoded with the required schema. Preserve its substantive assessment, justify your ballot with at least one rationale entry, and return only one JSON object matching this schema:\n${encodeUnknownJson(MAGI_PARTICIPANT_OUTPUT_SCHEMA)}\n\nYour preceding response:\n${result.rawText.slice(0, 24_000)}`,
-            "repair",
-          );
-          if (Option.isSome(repaired)) {
-            result = repaired.value;
-            parsed = parseMagiParticipantResponse(result.rawText);
-          }
-        }
-        const completed = Option.isSome(result.run) && result.run.value.status === "completed";
-        const tokens = yield* readRunTokens(participantThreadId, dispatchedRunIds);
-        return {
-          participantId,
+          Effect.option,
+        );
+        if (Option.isNone(started)) return Option.none();
+        dispatchedRunIds.push(started.value.runId);
+        const run = yield* awaitRunTerminal(
           participantThreadId,
-          participantRunId: result.runId,
-          rawText: result.rawText,
-          parsed: parsed.parsed,
-          parseMode: parsed.parseMode,
-          state: completed ? "settled" : "failed",
-          durationMs: (yield* Clock.currentTimeMillis) - startedAt,
-          inputTokens: tokens.inputTokens,
-          outputTokens: tokens.outputTokens,
-          retryCount,
-          providerAttempts,
-          structuralRepairCount,
-          reconstructed: false,
-          failureClass: completed
-            ? null
-            : Option.isNone(result.run)
-              ? "turn-event-unavailable"
-              : `provider-${result.run.value.status}`,
-          contextCompressed,
-        } satisfies MagiParticipantSettlement;
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError("Magi participant failed unexpectedly", cause).pipe(
-            Effect.andThen(failed("unexpected")),
+          started.value.runId,
+          started.value.sequence,
+        );
+        const rawText = Option.isSome(run)
+          ? yield* readRunText(participantThreadId, run.value)
+          : "";
+        return Option.some({ runId: started.value.runId, run, rawText });
+      });
+
+      // Participant history belongs to the participant's harness. Only when the next request
+      // would not fit and the harness does not compact on its own is compaction requested.
+      const usageBefore =
+        input.magiTurn === 1 ? null : yield* readParticipantUsage(participantThreadId);
+      const promptTokens = (value: string) => Math.ceil(value.length / 4);
+      const capacity = yield* resolveMagiPromptCapacity({
+        usage: usageBefore?.usage ?? null,
+        fullPromptTokens: promptTokens(prompt),
+        compressedPromptTokens: promptTokens(compressedPrompt),
+        historyCompaction:
+          usageBefore === null
+            ? undefined
+            : usageBefore.automatic
+              ? "automatic-native"
+              : "explicit-native",
+        compact: dispatch("/compact", "compact").pipe(
+          Effect.map(
+            (result) =>
+              Option.isSome(result) &&
+              Option.isSome(result.value.run) &&
+              result.value.run.value.status === "completed",
           ),
         ),
-        // A child of the deliberation, so it ends with the deliberation and the service.
-        Effect.forkChild,
-      );
-      return yield* Effect.raceFirst(
-        Fiber.join(providerFiber),
-        Effect.gen(function* () {
-          yield* Deferred.await(input.cancellation);
-          yield* Fiber.interrupt(providerFiber).pipe(Effect.forkDetach);
-          yield* interruptParticipantRun({
-            owner: input.owner,
-            runId: input.runId,
-            member: input.member,
-            magiTurn: input.magiTurn,
-          });
-          return cancelledMagiParticipantSettlement({
-            participantId,
-            participantThreadId,
-            durationMs: (yield* Clock.currentTimeMillis) - startedAt,
-          });
-        }),
-      );
-    });
-
-  const interruptParticipants = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      const owner = yield* threads
-        .getThreadRecords(run.detail.summary.rootThreadId, [])
-        .pipe(Effect.option);
-      if (Option.isNone(owner)) return true;
-      const protocol = asProtocol(run.protocol);
-      const results = yield* Effect.forEach(
-        protocol.members,
-        (member) =>
-          interruptParticipantRun({
-            owner: owner.value,
-            runId: run.detail.summary.runId,
-            member,
-            magiTurn: protocol.turns.length + 1,
-          }),
-        { concurrency: MAGI_PARTICIPANT_TURN_CONCURRENCY },
-      );
-      return results.every(Boolean);
-    });
-
-  const syncOwnerWaiting = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, []).pipe(
-        Effect.orDie,
-      );
-      if (Option.isNone(owner) || owner.value.thread.deletedAt !== null) return;
-      const state = run.detail.summary.state;
-      const pendingMagiRunId =
-        isMagiRunTerminal(state) ||
-        state === "paused" ||
-        state === "awaiting-main-approval" ||
-        state === "awaiting-main-input"
+        readUsage: readParticipantUsage(participantThreadId).pipe(
+          Effect.map((usage) => usage?.usage ?? null),
+        ),
+      });
+      const dispatchPrompt = capacity.dispatchPrompt === "compressed" ? compressedPrompt : prompt;
+      const contextCompressed = capacity.contextCompressed || dispatchPrompt !== prompt;
+      if (capacity.exceeded) {
+        return yield* failed("context-window-exceeded", { contextCompressed });
+      }
+      let attempt = yield* dispatch(dispatchPrompt, "turn");
+      let retryCount = 0;
+      let structuralRepairCount = 0;
+      // Retry a turn that could not start or that ended unsuccessfully. A run whose outcome is
+      // unknown may still be working, so it is never retried alongside itself.
+      const transientFailure = Option.isNone(attempt)
+        ? input.magiTurn !== 1
+        : Option.isSome(attempt.value.run) && attempt.value.run.value.status !== "completed";
+      if (transientFailure) {
+        retryCount = 1;
+        attempt = yield* dispatch(dispatchPrompt, "retry");
+      }
+      if (Option.isNone(attempt)) {
+        return yield* failed("turn-start-failed", { retryCount, providerAttempts });
+      }
+      let result = attempt.value;
+      let parsed = parseMagiParticipantResponse(result.rawText);
+      if (
+        Option.isSome(result.run) &&
+        result.run.value.status === "completed" &&
+        parsed.parsed === null
+      ) {
+        retryCount += 1;
+        structuralRepairCount = 1;
+        const repaired = yield* dispatch(
+          `Your last Magi response could not be decoded with the required schema. Preserve its substantive assessment, justify your ballot with at least one rationale entry, and return only one JSON object matching this schema:\n${encodeUnknownJson(MAGI_PARTICIPANT_OUTPUT_SCHEMA)}\n\nYour preceding response:\n${result.rawText.slice(0, 24_000)}`,
+          "repair",
+        );
+        if (Option.isSome(repaired)) {
+          result = repaired.value;
+          parsed = parseMagiParticipantResponse(result.rawText);
+        }
+      }
+      const completed = Option.isSome(result.run) && result.run.value.status === "completed";
+      const tokens = yield* readRunTokens(participantThreadId, dispatchedRunIds);
+      return {
+        participantId,
+        participantThreadId,
+        participantRunId: result.runId,
+        rawText: result.rawText,
+        parsed: parsed.parsed,
+        parseMode: parsed.parseMode,
+        state: completed ? "settled" : "failed",
+        durationMs: (yield* Clock.currentTimeMillis) - startedAt,
+        inputTokens: tokens.inputTokens,
+        outputTokens: tokens.outputTokens,
+        retryCount,
+        providerAttempts,
+        structuralRepairCount,
+        reconstructed: false,
+        failureClass: completed
           ? null
-          : run.detail.summary.runId;
-      if ((owner.value.thread.pendingMagiRunId ?? null) === pendingMagiRunId) return;
-      yield* threads
-        .dispatch({
-          type: "thread.magi-work.set",
-          commandId: CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
-          threadId: owner.value.thread.id,
-          pendingMagiRunId,
-        })
-        .pipe(Effect.orDie);
-    });
+          : Option.isNone(result.run)
+            ? "turn-event-unavailable"
+            : `provider-${result.run.value.status}`,
+        contextCompressed,
+      } satisfies MagiParticipantSettlement;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Magi participant failed unexpectedly", cause).pipe(
+          Effect.andThen(failed("unexpected")),
+        ),
+      ),
+      // A child of the deliberation, so it ends with the deliberation and the service.
+      Effect.forkChild,
+    );
+    return yield* Effect.raceFirst(
+      Fiber.join(providerFiber),
+      Effect.gen(function* () {
+        yield* Deferred.await(input.cancellation);
+        yield* Fiber.interrupt(providerFiber).pipe(Effect.forkDetach);
+        yield* interruptParticipantRun({
+          owner: input.owner,
+          runId: input.runId,
+          member: input.member,
+          magiTurn: input.magiTurn,
+        });
+        return cancelledMagiParticipantSettlement({
+          participantId,
+          participantThreadId,
+          durationMs: (yield* Clock.currentTimeMillis) - startedAt,
+        });
+      }),
+    );
+  });
+
+  const interruptParticipants = Effect.fn("MagiService.interruptParticipants")(function* (
+    run: PersistedMagiRun,
+  ) {
+    const owner = yield* threads
+      .getThreadRecords(run.detail.summary.rootThreadId, [])
+      .pipe(Effect.option);
+    if (Option.isNone(owner)) return true;
+    const protocol = asProtocol(run.protocol);
+    const results = yield* Effect.forEach(
+      protocol.members,
+      (member) =>
+        interruptParticipantRun({
+          owner: owner.value,
+          runId: run.detail.summary.runId,
+          member,
+          magiTurn: protocol.turns.length + 1,
+        }),
+      { concurrency: MAGI_PARTICIPANT_TURN_CONCURRENCY },
+    );
+    return results.every(Boolean);
+  });
+
+  const syncOwnerWaiting = Effect.fn("MagiService.syncOwnerWaiting")(function* (
+    run: PersistedMagiRun,
+  ) {
+    const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, []).pipe(Effect.orDie);
+    if (Option.isNone(owner) || owner.value.thread.deletedAt !== null) return;
+    const state = run.detail.summary.state;
+    const pendingMagiRunId =
+      isMagiRunTerminal(state) ||
+      state === "paused" ||
+      state === "awaiting-main-approval" ||
+      state === "awaiting-main-input"
+        ? null
+        : run.detail.summary.runId;
+    if ((owner.value.thread.pendingMagiRunId ?? null) === pendingMagiRunId) return;
+    yield* threads
+      .dispatch({
+        type: "thread.magi-work.set",
+        commandId: CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie)),
+        threadId: owner.value.thread.id,
+        pendingMagiRunId,
+      })
+      .pipe(Effect.orDie);
+  });
 
   const persist = (run: PersistedMagiRun) =>
     repository.putRun(run).pipe(
@@ -1477,414 +1479,279 @@ export const makeMagiService = Effect.gen(function* () {
   });
 
   /** Called under the run lock. Stable command ids repair a crash between enqueue and persistence. */
-  const deliverReadyTurn = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      const protocol = asProtocol(run.protocol);
-      const delivery = protocol.turnDelivery;
-      if (
-        (run.detail.summary.state !== "awaiting-arbitration" &&
-          run.detail.summary.state !== "failed") ||
-        delivery?.state !== "pending"
-      ) {
-        return;
-      }
-      const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, []).pipe(
-        Effect.orDie,
-      );
-      if (
-        Option.isNone(owner) ||
-        owner.value.thread.archivedAt !== null ||
-        owner.value.thread.deletedAt !== null
-      )
-        return;
-      const key = `magi:${run.detail.summary.runId}:${delivery.magiTurn}:completion${delivery.generation ? `:${delivery.generation}` : ""}`;
-      const sent = yield* threads
-        .sendToThread({
-          projectId: owner.value.thread.projectId,
-          commandId: CommandId.make(key),
-          messageId: MessageId.make(key),
-          threadId: owner.value.thread.id,
-          notification: {
-            source: { kind: "system" },
-            outcome: run.detail.summary.state === "failed" ? "failed" : "completed",
-            summary:
-              run.detail.summary.state === "failed"
-                ? `Magi panel turn ${delivery.magiTurn} failed`
-                : `Magi panel turn ${delivery.magiTurn} complete`,
-          },
-          text:
+  const deliverReadyTurn = Effect.fn("MagiService.deliverReadyTurn")(function* (
+    run: PersistedMagiRun,
+  ) {
+    const protocol = asProtocol(run.protocol);
+    const delivery = protocol.turnDelivery;
+    if (
+      (run.detail.summary.state !== "awaiting-arbitration" &&
+        run.detail.summary.state !== "failed") ||
+      delivery?.state !== "pending"
+    ) {
+      return;
+    }
+    const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, []).pipe(Effect.orDie);
+    if (
+      Option.isNone(owner) ||
+      owner.value.thread.archivedAt !== null ||
+      owner.value.thread.deletedAt !== null
+    )
+      return;
+    const key = `magi:${run.detail.summary.runId}:${delivery.magiTurn}:completion${delivery.generation ? `:${delivery.generation}` : ""}`;
+    const sent = yield* threads
+      .sendToThread({
+        projectId: owner.value.thread.projectId,
+        commandId: CommandId.make(key),
+        messageId: MessageId.make(key),
+        threadId: owner.value.thread.id,
+        notification: {
+          source: { kind: "system" },
+          outcome: run.detail.summary.state === "failed" ? "failed" : "completed",
+          summary:
             run.detail.summary.state === "failed"
-              ? `Magi run "${run.detail.summary.runId}" failed during panel turn ${delivery.magiTurn}. Read magi_recover_run_context and report the failure. Do not arbitrate missing evidence or replay actions.`
-              : `Magi panel turn ${delivery.magiTurn} is complete. Call magi_get_turn_result with runId "${run.detail.summary.runId}" and magiTurn ${delivery.magiTurn}, then magi_record_arbitration before any user-facing response. Follow the current user instructions; completion grants no additional authority. If this turn was already arbitrated or the run was paused or stopped, do not repeat it.`,
-          attachments: [],
-          mode: "queue",
-          createdBy: "agent",
-          creationSource: "server",
-        })
-        .pipe(Effect.orDie);
-      yield* persist({
-        ...run,
-        mainRunId: sent.run.id,
-        updatedAt: yield* nowIso,
-        protocol: {
-          ...protocol,
-          turnDelivery: { ...delivery, state: "queued", runId: sent.run.id },
-        } satisfies MagiProtocolState,
-      });
+              ? `Magi panel turn ${delivery.magiTurn} failed`
+              : `Magi panel turn ${delivery.magiTurn} complete`,
+        },
+        text:
+          run.detail.summary.state === "failed"
+            ? `Magi run "${run.detail.summary.runId}" failed during panel turn ${delivery.magiTurn}. Read magi_recover_run_context and report the failure. Do not arbitrate missing evidence or replay actions.`
+            : `Magi panel turn ${delivery.magiTurn} is complete. Call magi_get_turn_result with runId "${run.detail.summary.runId}" and magiTurn ${delivery.magiTurn}, then magi_record_arbitration before any user-facing response. Follow the current user instructions; completion grants no additional authority. If this turn was already arbitrated or the run was paused or stopped, do not repeat it.`,
+        attachments: [],
+        mode: "queue",
+        createdBy: "agent",
+        creationSource: "server",
+      })
+      .pipe(Effect.orDie);
+    yield* persist({
+      ...run,
+      mainRunId: sent.run.id,
+      updatedAt: yield* nowIso,
+      protocol: {
+        ...protocol,
+        turnDelivery: { ...delivery, state: "queued", runId: sent.run.id },
+      } satisfies MagiProtocolState,
     });
+  });
 
   /** Withdraw an unstarted completion when control changes; resume may offer it again. */
-  const withdrawTurnDelivery = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      const protocol = asProtocol(run.protocol);
-      const delivery = protocol.turnDelivery;
-      if (delivery?.state !== "queued" || delivery.runId === null) return protocol;
-      const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, ["runs"]).pipe(
-        Effect.orDie,
-      );
-      if (Option.isNone(owner)) return protocol;
-      const notification = owner.value.runs.find((entry) => entry.id === delivery.runId);
-      if (
-        !notification ||
-        !["queued", "cancelled", "interrupted", "failed"].includes(notification.status)
-      )
-        return protocol;
-      if (notification.status === "queued")
-        yield* threads
-          .dispatch({
-            type: "queued-run.cancel",
-            commandId: CommandId.make(
-              `magi:${run.detail.summary.runId}:withdraw:${delivery.runId}`,
-            ),
-            threadId: run.detail.summary.rootThreadId,
-            runId: delivery.runId,
-          })
-          .pipe(Effect.orDie);
-      return {
-        ...protocol,
-        turnDelivery: {
-          ...delivery,
-          state: "pending" as const,
-          runId: null,
-          generation: (delivery.generation ?? 0) + 1,
-        },
-      };
-    });
+  const withdrawTurnDelivery = Effect.fn("MagiService.withdrawTurnDelivery")(function* (
+    run: PersistedMagiRun,
+  ) {
+    const protocol = asProtocol(run.protocol);
+    const delivery = protocol.turnDelivery;
+    if (delivery?.state !== "queued" || delivery.runId === null) return protocol;
+    const owner = yield* readThreadRecords(run.detail.summary.rootThreadId, ["runs"]).pipe(
+      Effect.orDie,
+    );
+    if (Option.isNone(owner)) return protocol;
+    const notification = owner.value.runs.find((entry) => entry.id === delivery.runId);
+    if (
+      !notification ||
+      !["queued", "cancelled", "interrupted", "failed"].includes(notification.status)
+    )
+      return protocol;
+    if (notification.status === "queued")
+      yield* threads
+        .dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`magi:${run.detail.summary.runId}:withdraw:${delivery.runId}`),
+          threadId: run.detail.summary.rootThreadId,
+          runId: delivery.runId,
+        })
+        .pipe(Effect.orDie);
+    return {
+      ...protocol,
+      turnDelivery: {
+        ...delivery,
+        state: "pending" as const,
+        runId: null,
+        generation: (delivery.generation ?? 0) + 1,
+      },
+    };
+  });
 
   /**
    * Handles the driving owner run ending while the owner still owes the next Magi call. The first
    * time, a control message continues the protocol in a new owner turn; after that, the run fails
    * as a protocol failure. Call under the run lock with the latest run.
    */
-  const continueAfterOwnerRunEnded = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      const protocol = asProtocol(run.protocol);
-      const { runId, rootThreadId, state } = run.detail.summary;
-      if (protocol.controlContinuationRunId === null) {
-        const owner = yield* readThreadRecords(rootThreadId, []).pipe(
-          Effect.orElseSucceed(() => Option.none()),
-        );
-        const continuationRunId = Option.isNone(owner)
-          ? Option.none<RunId>()
-          : yield* threads
-              .sendToThread({
-                projectId: owner.value.thread.projectId,
-                commandId: CommandId.make(`magi:${runId}:control-continuation`),
-                threadId: rootThreadId,
-                messageId: MessageId.make(`magi:${runId}:control-continuation`),
-                notification: {
-                  source: { kind: "system" },
-                  outcome: "updated",
-                  summary: "Magi arbitration continued",
-                },
-                text: magiControlContinuationPrompt(runId, state),
-                attachments: [],
-                mode: "queue",
-                createdBy: "agent",
-                creationSource: "server",
-              })
-              .pipe(
-                Effect.map((sent) => Option.some(sent.run.id)),
-                Effect.catchCause((cause) =>
-                  Effect.logError("Magi could not continue the owner's protocol.", cause).pipe(
-                    Effect.as(Option.none<RunId>()),
-                  ),
+  const continueAfterOwnerRunEnded = Effect.fn("MagiService.continueAfterOwnerRunEnded")(function* (
+    run: PersistedMagiRun,
+  ) {
+    const protocol = asProtocol(run.protocol);
+    const { runId, rootThreadId, state } = run.detail.summary;
+    if (protocol.controlContinuationRunId === null) {
+      const owner = yield* readThreadRecords(rootThreadId, []).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+      );
+      const continuationRunId = Option.isNone(owner)
+        ? Option.none<RunId>()
+        : yield* threads
+            .sendToThread({
+              projectId: owner.value.thread.projectId,
+              commandId: CommandId.make(`magi:${runId}:control-continuation`),
+              threadId: rootThreadId,
+              messageId: MessageId.make(`magi:${runId}:control-continuation`),
+              notification: {
+                source: { kind: "system" },
+                outcome: "updated",
+                summary: "Magi arbitration continued",
+              },
+              text: magiControlContinuationPrompt(runId, state),
+              attachments: [],
+              mode: "queue",
+              createdBy: "agent",
+              creationSource: "server",
+            })
+            .pipe(
+              Effect.map((sent) => Option.some(sent.run.id)),
+              Effect.catchCause((cause) =>
+                Effect.logError("Magi could not continue the owner's protocol.", cause).pipe(
+                  Effect.as(Option.none<RunId>()),
                 ),
-              );
-        if (Option.isSome(continuationRunId)) {
-          yield* persist({
-            ...run,
-            mainRunId: continuationRunId.value,
-            updatedAt: yield* nowIso,
-            protocol: {
-              ...protocol,
-              controlContinuationRunId: continuationRunId.value,
-            } satisfies MagiProtocolState,
-          });
-          return;
-        }
+              ),
+            );
+      if (Option.isSome(continuationRunId)) {
+        yield* persist({
+          ...run,
+          mainRunId: continuationRunId.value,
+          updatedAt: yield* nowIso,
+          protocol: {
+            ...protocol,
+            controlContinuationRunId: continuationRunId.value,
+          } satisfies MagiProtocolState,
+        });
+        return;
       }
-      const updatedAt = yield* nowIso;
-      const failed: PersistedMagiRun = {
-        ...run,
-        updatedAt,
-        detail: {
-          ...run.detail,
-          summary: { ...run.detail.summary, state: "failed", completedAt: updatedAt },
-        },
-      };
-      yield* persist(failed);
-      yield* increment(magiRunsTotal, {
-        source: run.detail.summary.source,
-        phase: "terminal",
-        outcome: "failed",
-        consensusTurn: null,
-        limitExhausted: false,
-      });
-      yield* cleanupTerminalRun(failed);
+    }
+    const updatedAt = yield* nowIso;
+    const failed: PersistedMagiRun = {
+      ...run,
+      updatedAt,
+      detail: {
+        ...run.detail,
+        summary: { ...run.detail.summary, state: "failed", completedAt: updatedAt },
+      },
+    };
+    yield* persist(failed);
+    yield* increment(magiRunsTotal, {
+      source: run.detail.summary.source,
+      phase: "terminal",
+      outcome: "failed",
+      consensusTurn: null,
+      limitExhausted: false,
     });
+    yield* cleanupTerminalRun(failed);
+  });
 
   /** Fans out one claimed Magi turn, then records its settlements under the run lock. */
-  const executeDeliberation = (input: {
+  const executeDeliberation = Effect.fn("MagiService.executeDeliberation")(function* (input: {
     readonly run: PersistedMagiRun;
     readonly root: MagiConversationContext;
     readonly magiTurn: number;
     readonly activities: ReadonlyArray<MagiActivityReference>;
     readonly cancellation: Deferred.Deferred<void>;
     readonly providerInstances: MagiGetOptionsResult["providerInstances"];
-  }) =>
-    Effect.gen(function* () {
-      const { run, root, magiTurn, activities, cancellation } = input;
-      const runId = run.detail.summary.runId;
-      const protocol = asProtocol(run.protocol);
-      const priorTurn = protocol.turns.at(-1);
-      const candidate = priorTurn?.arbitration?.candidate ?? null;
-      const unresolvedDisagreements = priorTurn?.arbitration?.disagreements ?? [];
-      const recordedActions = protocol.actions;
-      const publishMemberState = (
-        participantId: MagiParticipantDraft["participantId"],
-        state: MagiMemberState,
-      ) =>
-        withRunLock(
-          runId,
-          Effect.gen(function* () {
-            const latest = yield* repository.getRun(runId).pipe(Effect.orDie);
-            if (Option.isNone(latest) || isMagiRunTerminal(latest.value.detail.summary.state))
-              return;
-            const latestProtocol = asProtocol(latest.value.protocol);
-            yield* persist({
-              ...latest.value,
-              detail: {
-                ...latest.value.detail,
-                participants: latest.value.detail.participants.map((participant) =>
-                  participant.participantId === participantId
-                    ? { ...participant, state }
-                    : participant,
-                ),
-              },
-              protocol: {
-                ...latestProtocol,
-                members: latestProtocol.members.map((member) =>
-                  member.participant.participantId === participantId
-                    ? { ...member, state }
-                    : member,
-                ),
-              } satisfies MagiProtocolState,
-              updatedAt: yield* nowIso,
-            });
-          }),
-        );
-      const currentActiveProposals = activeMagiProposals(protocol.proposals);
-      const currentActiveDecisionSets = activeMagiDecisionSets(protocol.decisionSets);
-      const settlements = yield* Effect.forEach(
-        protocol.members,
-        (member) =>
-          runParticipant({
-            owner: root,
-            runId,
-            source: run.detail.summary.source,
-            initiatingInstruction: run.initiatingInstruction,
-            objective: run.focusedObjective,
-            config: run.detail.config,
-            member,
-            magiTurn,
-            candidate,
-            recordedActions,
-            unresolvedDisagreements,
-            activities,
-            onStateChange: (state) =>
-              publishMemberState(member.participant.participantId, state).pipe(Effect.ignore),
-            priorSettlements: priorTurn?.settlements ?? [],
-            priorArbitration: priorTurn?.arbitration ?? null,
-            activeProposals: currentActiveProposals,
-            activeDecisionSets: currentActiveDecisionSets,
-            terminalProposals: terminalMagiProposals(protocol.proposals),
-            terminalProposalDigest: protocol.terminalProposalDigest,
-            cancellation,
-            providerInstances: input.providerInstances,
-          }).pipe(
-            Effect.withSpan("magi.participant", {
-              attributes: {
-                "magi.run_id": runId,
-                "magi.participant_id": member.participant.participantId,
-                "provider.instance_id": member.participant.modelSelection.instanceId,
-              },
-            }),
-            Effect.tap((settlement) =>
-              publishMemberState(settlement.participantId, settlement.state),
-            ),
-          ),
-        { concurrency: MAGI_PARTICIPANT_TURN_CONCURRENCY },
-      );
-      const totalWeight = calculateMagiThreshold(
-        run.detail.config.participants,
-        run.detail.config.consensusThresholdPercent,
-      );
-      const candidateFingerprint =
-        candidate === null ? null : magiCandidateFingerprint(candidate, recordedActions);
-      return yield* withRunLock(
+  }) {
+    const { run, root, magiTurn, activities, cancellation } = input;
+    const runId = run.detail.summary.runId;
+    const protocol = asProtocol(run.protocol);
+    const priorTurn = protocol.turns.at(-1);
+    const candidate = priorTurn?.arbitration?.candidate ?? null;
+    const unresolvedDisagreements = priorTurn?.arbitration?.disagreements ?? [];
+    const recordedActions = protocol.actions;
+    const publishMemberState = (
+      participantId: MagiParticipantDraft["participantId"],
+      state: MagiMemberState,
+    ) =>
+      withRunLock(
         runId,
         Effect.gen(function* () {
           const latest = yield* repository.getRun(runId).pipe(Effect.orDie);
-          const cancellationRequested = Option.isSome(yield* Deferred.poll(cancellation));
-          if (Option.isNone(latest) && !cancellationRequested) {
-            return yield* validation("invalid-protocol-state", deletedRootMagiValidationMessage);
-          }
-          if (
-            cancellationRequested ||
-            Option.isNone(latest) ||
-            isMagiRunTerminal(latest.value.detail.summary.state)
-          ) {
-            return {
-              runId,
-              magiTurn,
-              candidateFingerprint,
-              participants: projectMagiParticipantEvidenceList(settlements),
-              totalWeight: totalWeight.totalWeight,
-              requiredWeight: totalWeight.requiredWeight,
-              thresholdReachable: false,
-              pendingProposalIds: [],
-              controlInstructions: `${MAGI_ARBITRATOR_RESULT_PROTOCOL}\n\n${
-                cancellationRequested ||
-                Option.isNone(latest) ||
-                latest.value.detail.summary.state === "cancelled"
-                  ? "The user cancelled this Magi run. Acknowledge the cancellation and finish the main turn. Do not deliberate, retry, or arbitrate it again."
-                  : `This Magi run ended with state ${latest.value.detail.summary.state}. Report that terminal state and make no further Magi calls for this run.`
-              }`,
-            } satisfies MagiDeliberationResult;
-          }
-          const latestRun = latest.value;
-          const latestProtocol = asProtocol(latestRun.protocol);
-          const proposals = collectMagiProposals(
-            runId,
-            magiTurn,
-            settlements,
-            latestProtocol.proposals,
-          );
-          const proposalOutcomes = calculateMagiProposalOutcomes({
-            magiTurn,
-            proposals,
-            participants: run.detail.config.participants,
-            settlements,
-            requiredWeight: totalWeight.requiredWeight,
-          });
-          // A pause during the fan-out holds; resuming it continues with arbitration.
-          const pausedState = MAGI_PAUSE_STATES.has(latestRun.detail.summary.state)
-            ? latestRun.detail.summary.state
-            : null;
-          const state: MagiRunState = pausedState ?? "awaiting-arbitration";
-          const nextProtocol: MagiProtocolState = {
-            ...latestProtocol,
-            pendingContextArtifacts: [],
-            members: latestProtocol.members.map((member) => ({
-              ...member,
-              state: latestMagiMemberState(
-                member.participant.participantId,
-                member.state,
-                settlements,
-              ),
-            })),
-            proposals,
-            turns: [
-              ...latestProtocol.turns,
-              { magiTurn, candidate, settlements, arbitration: null, activities },
-            ],
-            stateBeforePause:
-              pausedState === null ? latestProtocol.stateBeforePause : "awaiting-arbitration",
-          };
-          const next = {
-            ...latestRun,
+          if (Option.isNone(latest) || isMagiRunTerminal(latest.value.detail.summary.state)) return;
+          const latestProtocol = asProtocol(latest.value.protocol);
+          yield* persist({
+            ...latest.value,
             detail: {
-              ...latestRun.detail,
-              summary: { ...latestRun.detail.summary, state, completedMagiTurns: magiTurn },
-
-              settlements: [...latestRun.detail.settlements, ...settlements],
-              participants: latestRun.detail.participants.map((participant) => ({
-                ...participant,
-                state: latestMagiMemberState(
-                  participant.participantId,
-                  participant.state,
-                  settlements,
-                ),
-              })),
-              candidate,
-              actions: recordedActions,
+              ...latest.value.detail,
+              participants: latest.value.detail.participants.map((participant) =>
+                participant.participantId === participantId
+                  ? { ...participant, state }
+                  : participant,
+              ),
             },
-            protocol: nextProtocol,
+            protocol: {
+              ...latestProtocol,
+              members: latestProtocol.members.map((member) =>
+                member.participant.participantId === participantId ? { ...member, state } : member,
+              ),
+            } satisfies MagiProtocolState,
             updatedAt: yield* nowIso,
-          } satisfies PersistedMagiRun;
-          yield* persist(next);
-          yield* increment(magiTurnsTotal, { source: run.detail.summary.source });
-          yield* Effect.forEach(settlements, (settlement) =>
-            Effect.all(
-              [
-                increment(magiParticipantTurnsTotal, {
-                  state: settlement.state,
-                  parseMode: settlement.parseMode,
-                  failureClass: settlement.failureClass,
-                  retryCount: settlement.retryCount,
-                  contextCompressed: settlement.contextCompressed,
-                }),
-                Metric.update(
-                  Metric.withAttributes(
-                    magiParticipantTurnDuration,
-                    metricAttributes({ state: settlement.state }),
-                  ),
-                  Duration.millis(settlement.durationMs),
-                ),
-                settlement.inputTokens === null
-                  ? Effect.void
-                  : increment(
-                      magiParticipantTokensTotal,
-                      { direction: "input" },
-                      settlement.inputTokens,
-                    ),
-                settlement.outputTokens === null
-                  ? Effect.void
-                  : increment(
-                      magiParticipantTokensTotal,
-                      { direction: "output" },
-                      settlement.outputTokens,
-                    ),
-              ],
-              { discard: true },
-            ),
-          );
-          if (asProtocol(next.protocol).turnDelivery !== null) {
-            yield* deliverReadyTurn(next);
-          } else if (state === "awaiting-arbitration" && next.mainRunId !== null) {
-            const drivingRun = yield* readTerminalRun(
-              next.detail.summary.rootThreadId,
-              next.mainRunId,
-            );
-            if (Option.isSome(drivingRun) && drivingRun.value.status === "completed") {
-              yield* continueAfterOwnerRunEnded(next).pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logError("Magi could not continue after the owner's turn ended.", cause),
-                ),
-              );
-            }
-          }
+          });
+        }),
+      );
+    const currentActiveProposals = activeMagiProposals(protocol.proposals);
+    const currentActiveDecisionSets = activeMagiDecisionSets(protocol.decisionSets);
+    const settlements = yield* Effect.forEach(
+      protocol.members,
+      (member) =>
+        runParticipant({
+          owner: root,
+          runId,
+          source: run.detail.summary.source,
+          initiatingInstruction: run.initiatingInstruction,
+          objective: run.focusedObjective,
+          config: run.detail.config,
+          member,
+          magiTurn,
+          candidate,
+          recordedActions,
+          unresolvedDisagreements,
+          activities,
+          onStateChange: (state) =>
+            publishMemberState(member.participant.participantId, state).pipe(Effect.ignore),
+          priorSettlements: priorTurn?.settlements ?? [],
+          priorArbitration: priorTurn?.arbitration ?? null,
+          activeProposals: currentActiveProposals,
+          activeDecisionSets: currentActiveDecisionSets,
+          terminalProposals: terminalMagiProposals(protocol.proposals),
+          terminalProposalDigest: protocol.terminalProposalDigest,
+          cancellation,
+          providerInstances: input.providerInstances,
+        }).pipe(
+          Effect.withSpan("magi.participant", {
+            attributes: {
+              "magi.run_id": runId,
+              "magi.participant_id": member.participant.participantId,
+              "provider.instance_id": member.participant.modelSelection.instanceId,
+            },
+          }),
+          Effect.tap((settlement) =>
+            publishMemberState(settlement.participantId, settlement.state),
+          ),
+        ),
+      { concurrency: MAGI_PARTICIPANT_TURN_CONCURRENCY },
+    );
+    const totalWeight = calculateMagiThreshold(
+      run.detail.config.participants,
+      run.detail.config.consensusThresholdPercent,
+    );
+    const candidateFingerprint =
+      candidate === null ? null : magiCandidateFingerprint(candidate, recordedActions);
+    return yield* withRunLock(
+      runId,
+      Effect.gen(function* () {
+        const latest = yield* repository.getRun(runId).pipe(Effect.orDie);
+        const cancellationRequested = Option.isSome(yield* Deferred.poll(cancellation));
+        if (Option.isNone(latest) && !cancellationRequested) {
+          return yield* validation("invalid-protocol-state", deletedRootMagiValidationMessage);
+        }
+        if (
+          cancellationRequested ||
+          Option.isNone(latest) ||
+          isMagiRunTerminal(latest.value.detail.summary.state)
+        ) {
           return {
             runId,
             magiTurn,
@@ -1892,16 +1759,146 @@ export const makeMagiService = Effect.gen(function* () {
             participants: projectMagiParticipantEvidenceList(settlements),
             totalWeight: totalWeight.totalWeight,
             requiredWeight: totalWeight.requiredWeight,
-            thresholdReachable:
-              settledMagiWeight(run.detail.config, settlements) >= totalWeight.requiredWeight,
-            pendingProposalIds: proposalOutcomes
-              .filter((outcome) => outcome.pending)
-              .map((outcome) => outcome.proposalId),
-            controlInstructions: arbitratorResultInstructions(run),
+            thresholdReachable: false,
+            pendingProposalIds: [],
+            controlInstructions: `${MAGI_ARBITRATOR_RESULT_PROTOCOL}\n\n${
+              cancellationRequested ||
+              Option.isNone(latest) ||
+              latest.value.detail.summary.state === "cancelled"
+                ? "The user cancelled this Magi run. Acknowledge the cancellation and finish the main turn. Do not deliberate, retry, or arbitrate it again."
+                : `This Magi run ended with state ${latest.value.detail.summary.state}. Report that terminal state and make no further Magi calls for this run.`
+            }`,
           } satisfies MagiDeliberationResult;
-        }),
-      );
-    });
+        }
+        const latestRun = latest.value;
+        const latestProtocol = asProtocol(latestRun.protocol);
+        const proposals = collectMagiProposals(
+          runId,
+          magiTurn,
+          settlements,
+          latestProtocol.proposals,
+        );
+        const proposalOutcomes = calculateMagiProposalOutcomes({
+          magiTurn,
+          proposals,
+          participants: run.detail.config.participants,
+          settlements,
+          requiredWeight: totalWeight.requiredWeight,
+        });
+        // A pause during the fan-out holds; resuming it continues with arbitration.
+        const pausedState = MAGI_PAUSE_STATES.has(latestRun.detail.summary.state)
+          ? latestRun.detail.summary.state
+          : null;
+        const state: MagiRunState = pausedState ?? "awaiting-arbitration";
+        const nextProtocol: MagiProtocolState = {
+          ...latestProtocol,
+          pendingContextArtifacts: [],
+          members: latestProtocol.members.map((member) => ({
+            ...member,
+            state: latestMagiMemberState(
+              member.participant.participantId,
+              member.state,
+              settlements,
+            ),
+          })),
+          proposals,
+          turns: [
+            ...latestProtocol.turns,
+            { magiTurn, candidate, settlements, arbitration: null, activities },
+          ],
+          stateBeforePause:
+            pausedState === null ? latestProtocol.stateBeforePause : "awaiting-arbitration",
+        };
+        const next = {
+          ...latestRun,
+          detail: {
+            ...latestRun.detail,
+            summary: { ...latestRun.detail.summary, state, completedMagiTurns: magiTurn },
+
+            settlements: [...latestRun.detail.settlements, ...settlements],
+            participants: latestRun.detail.participants.map((participant) => ({
+              ...participant,
+              state: latestMagiMemberState(
+                participant.participantId,
+                participant.state,
+                settlements,
+              ),
+            })),
+            candidate,
+            actions: recordedActions,
+          },
+          protocol: nextProtocol,
+          updatedAt: yield* nowIso,
+        } satisfies PersistedMagiRun;
+        yield* persist(next);
+        yield* increment(magiTurnsTotal, { source: run.detail.summary.source });
+        yield* Effect.forEach(settlements, (settlement) =>
+          Effect.all(
+            [
+              increment(magiParticipantTurnsTotal, {
+                state: settlement.state,
+                parseMode: settlement.parseMode,
+                failureClass: settlement.failureClass,
+                retryCount: settlement.retryCount,
+                contextCompressed: settlement.contextCompressed,
+              }),
+              Metric.update(
+                Metric.withAttributes(
+                  magiParticipantTurnDuration,
+                  metricAttributes({ state: settlement.state }),
+                ),
+                Duration.millis(settlement.durationMs),
+              ),
+              settlement.inputTokens === null
+                ? Effect.void
+                : increment(
+                    magiParticipantTokensTotal,
+                    { direction: "input" },
+                    settlement.inputTokens,
+                  ),
+              settlement.outputTokens === null
+                ? Effect.void
+                : increment(
+                    magiParticipantTokensTotal,
+                    { direction: "output" },
+                    settlement.outputTokens,
+                  ),
+            ],
+            { discard: true },
+          ),
+        );
+        if (asProtocol(next.protocol).turnDelivery !== null) {
+          yield* deliverReadyTurn(next);
+        } else if (state === "awaiting-arbitration" && next.mainRunId !== null) {
+          const drivingRun = yield* readTerminalRun(
+            next.detail.summary.rootThreadId,
+            next.mainRunId,
+          );
+          if (Option.isSome(drivingRun) && drivingRun.value.status === "completed") {
+            yield* continueAfterOwnerRunEnded(next).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logError("Magi could not continue after the owner's turn ended.", cause),
+              ),
+            );
+          }
+        }
+        return {
+          runId,
+          magiTurn,
+          candidateFingerprint,
+          participants: projectMagiParticipantEvidenceList(settlements),
+          totalWeight: totalWeight.totalWeight,
+          requiredWeight: totalWeight.requiredWeight,
+          thresholdReachable:
+            settledMagiWeight(run.detail.config, settlements) >= totalWeight.requiredWeight,
+          pendingProposalIds: proposalOutcomes
+            .filter((outcome) => outcome.pending)
+            .map((outcome) => outcome.proposalId),
+          controlInstructions: arbitratorResultInstructions(run),
+        } satisfies MagiDeliberationResult;
+      }),
+    );
+  });
 
   /**
    * Performs one Magi turn. The turn is claimed under the run lock by moving the run from
@@ -1909,144 +1906,143 @@ export const makeMagiService = Effect.gen(function* () {
    * published for any retried call that waits on it. Turn 1 also claims a run that an owner pause
    * reached between creation and the claim, keeping the pause as a mid-turn pause is kept.
    */
-  const runDeliberation = (input: {
+  const runDeliberation = Effect.fn("MagiService.runDeliberation")(function* (input: {
     readonly runId: MagiRunId;
     readonly request: MagiDeliberateInput;
     readonly caller: MagiCaller;
     readonly providerInstances: MagiGetOptionsResult["providerInstances"];
     /** Turn 1 starts from the new run's `deliberating`; later turns from `awaiting-next-turn`. */
     readonly expectedState: MagiRunState;
-  }) =>
-    Effect.gen(function* () {
-      const runId = input.runId;
-      yield* Effect.annotateCurrentSpan({ "magi.run_id": runId });
-      const cancellation = yield* getRunCancellation(runId);
-      const claim = yield* withRunLock(
-        runId,
-        Effect.gen(function* () {
-          const latest = yield* repository.getRun(runId).pipe(Effect.orDie);
-          const cancellationRequested = Option.isSome(yield* Deferred.poll(cancellation));
-          if (Option.isNone(latest)) {
-            yield* Deferred.succeed(cancellation, undefined).pipe(Effect.ignore);
-            return yield* validation("invalid-protocol-state", deletedRootMagiValidationMessage);
-          }
-          const run = latest.value;
-          if (
-            !shouldPersistMagiDeliberationContext(run.detail.summary.state, cancellationRequested)
-          ) {
-            yield* Deferred.succeed(cancellation, undefined).pipe(Effect.ignore);
-            return {
-              _tag: "stopped" as const,
-              result: stoppedDeliberationResult(run, cancellationRequested),
-            };
-          }
-          const protocol = asProtocol(run.protocol);
-          const heldPause =
-            input.expectedState === "deliberating" &&
-            MAGI_PAUSE_STATES.has(run.detail.summary.state) &&
-            protocol.stateBeforePause === "deliberating";
-          if (run.detail.summary.state !== input.expectedState && !heldPause) {
-            return yield* validation(
-              "invalid-protocol-state",
-              "Magi is not awaiting another deliberation.",
-            );
-          }
-          const claimedState = heldPause ? run.detail.summary.state : "deliberating";
-          const root = yield* resolveConversationContext(input.caller);
-          const magiTurn = protocol.turns.length + 1;
-          const activities =
-            protocol.pendingContextArtifacts.length > 0
-              ? protocol.pendingContextArtifacts
-              : yield* resolveAndStoreContextArtifacts({
-                  root,
-                  activityIds: input.request.contextActivityIds,
-                  run,
-                  magiTurn,
-                });
-          const claimed: PersistedMagiRun = {
-            ...run,
-            mainRunId: root.currentRun.id,
-            updatedAt: yield* nowIso,
-            protocol: {
-              ...protocol,
-              pendingContextArtifacts: activities,
-              turnDelivery: { magiTurn, state: "pending", runId: null },
-              controlContinuationRunId: null,
-              members: protocol.members.map((member) => ({
-                ...member,
-                state: "pending" as const,
-              })),
-            } satisfies MagiProtocolState,
-            detail: {
-              ...run.detail,
-              summary: { ...run.detail.summary, state: claimedState },
-
-              participants: run.detail.participants.map((participant) => ({
-                ...participant,
-                state: "pending" as const,
-              })),
-            },
+  }) {
+    const runId = input.runId;
+    yield* Effect.annotateCurrentSpan({ "magi.run_id": runId });
+    const cancellation = yield* getRunCancellation(runId);
+    const claim = yield* withRunLock(
+      runId,
+      Effect.gen(function* () {
+        const latest = yield* repository.getRun(runId).pipe(Effect.orDie);
+        const cancellationRequested = Option.isSome(yield* Deferred.poll(cancellation));
+        if (Option.isNone(latest)) {
+          yield* Deferred.succeed(cancellation, undefined).pipe(Effect.ignore);
+          return yield* validation("invalid-protocol-state", deletedRootMagiValidationMessage);
+        }
+        const run = latest.value;
+        if (
+          !shouldPersistMagiDeliberationContext(run.detail.summary.state, cancellationRequested)
+        ) {
+          yield* Deferred.succeed(cancellation, undefined).pipe(Effect.ignore);
+          return {
+            _tag: "stopped" as const,
+            result: stoppedDeliberationResult(run, cancellationRequested),
           };
-          yield* persist(claimed);
-          yield* Ref.update(liveDeliberations, (current) => new Map(current).set(runId, magiTurn));
-          return { _tag: "claimed" as const, run: claimed, root, magiTurn, activities };
+        }
+        const protocol = asProtocol(run.protocol);
+        const heldPause =
+          input.expectedState === "deliberating" &&
+          MAGI_PAUSE_STATES.has(run.detail.summary.state) &&
+          protocol.stateBeforePause === "deliberating";
+        if (run.detail.summary.state !== input.expectedState && !heldPause) {
+          return yield* validation(
+            "invalid-protocol-state",
+            "Magi is not awaiting another deliberation.",
+          );
+        }
+        const claimedState = heldPause ? run.detail.summary.state : "deliberating";
+        const root = yield* resolveConversationContext(input.caller);
+        const magiTurn = protocol.turns.length + 1;
+        const activities =
+          protocol.pendingContextArtifacts.length > 0
+            ? protocol.pendingContextArtifacts
+            : yield* resolveAndStoreContextArtifacts({
+                root,
+                activityIds: input.request.contextActivityIds,
+                run,
+                magiTurn,
+              });
+        const claimed: PersistedMagiRun = {
+          ...run,
+          mainRunId: root.currentRun.id,
+          updatedAt: yield* nowIso,
+          protocol: {
+            ...protocol,
+            pendingContextArtifacts: activities,
+            turnDelivery: { magiTurn, state: "pending", runId: null },
+            controlContinuationRunId: null,
+            members: protocol.members.map((member) => ({
+              ...member,
+              state: "pending" as const,
+            })),
+          } satisfies MagiProtocolState,
+          detail: {
+            ...run.detail,
+            summary: { ...run.detail.summary, state: claimedState },
+
+            participants: run.detail.participants.map((participant) => ({
+              ...participant,
+              state: "pending" as const,
+            })),
+          },
+        };
+        yield* persist(claimed);
+        yield* Ref.update(liveDeliberations, (current) => new Map(current).set(runId, magiTurn));
+        return { _tag: "claimed" as const, run: claimed, root, magiTurn, activities };
+      }),
+    );
+    if (claim._tag === "stopped") {
+      const stopped = yield* requireRun(runId, input.caller);
+      return deliberationReceipt(stopped, Math.max(1, asProtocol(stopped.protocol).turns.length));
+    }
+    yield* executeDeliberation({
+      run: claim.run,
+      root: claim.root,
+      magiTurn: claim.magiTurn,
+      activities: claim.activities,
+      cancellation,
+      providerInstances: input.providerInstances,
+    }).pipe(
+      Effect.onExit(() =>
+        Ref.update(liveDeliberations, (current) => {
+          if (current.get(runId) !== claim.magiTurn) return current;
+          const next = new Map(current);
+          next.delete(runId);
+          return next;
         }),
-      );
-      if (claim._tag === "stopped") {
-        const stopped = yield* requireRun(runId, input.caller);
-        return deliberationReceipt(stopped, Math.max(1, asProtocol(stopped.protocol).turns.length));
-      }
-      yield* executeDeliberation({
-        run: claim.run,
-        root: claim.root,
-        magiTurn: claim.magiTurn,
-        activities: claim.activities,
-        cancellation,
-        providerInstances: input.providerInstances,
-      }).pipe(
-        Effect.onExit(() =>
-          Ref.update(liveDeliberations, (current) => {
-            if (current.get(runId) !== claim.magiTurn) return current;
-            const next = new Map(current);
-            next.delete(runId);
-            return next;
-          }),
-        ),
-        Effect.catchCause((cause) =>
-          Effect.gen(function* () {
-            yield* Effect.logError("Magi deliberation failed.", cause);
-            yield* withRunLock(
-              runId,
-              Effect.gen(function* () {
-                const stored = yield* repository.getRun(runId).pipe(Effect.orDie);
-                if (Option.isNone(stored) || isMagiRunTerminal(stored.value.detail.summary.state))
-                  return;
-                const latest = stored.value;
-                // An enqueue failure leaves the complete evidence pending for startup recovery.
-                if (latest.detail.summary.state === "awaiting-arbitration") return;
-                const updatedAt = yield* nowIso;
-                const failed: PersistedMagiRun = {
-                  ...latest,
-                  updatedAt,
-                  detail: {
-                    ...latest.detail,
-                    summary: { ...latest.detail.summary, state: "failed", completedAt: updatedAt },
-                  },
-                };
-                yield* persist(failed);
-                yield* cleanupTerminalRun(failed);
-                yield* deliverReadyTurn(failed);
-              }),
-            );
-          }),
-        ),
-        Effect.forkIn(serviceScope),
-      );
-      return deliberationReceipt(claim.run, claim.magiTurn);
-    });
+      ),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("Magi deliberation failed.", cause);
+          yield* withRunLock(
+            runId,
+            Effect.gen(function* () {
+              const stored = yield* repository.getRun(runId).pipe(Effect.orDie);
+              if (Option.isNone(stored) || isMagiRunTerminal(stored.value.detail.summary.state))
+                return;
+              const latest = stored.value;
+              // An enqueue failure leaves the complete evidence pending for startup recovery.
+              if (latest.detail.summary.state === "awaiting-arbitration") return;
+              const updatedAt = yield* nowIso;
+              const failed: PersistedMagiRun = {
+                ...latest,
+                updatedAt,
+                detail: {
+                  ...latest.detail,
+                  summary: { ...latest.detail.summary, state: "failed", completedAt: updatedAt },
+                },
+              };
+              yield* persist(failed);
+              yield* cleanupTerminalRun(failed);
+              yield* deliverReadyTurn(failed);
+            }),
+          );
+        }),
+      ),
+      Effect.forkIn(serviceScope),
+    );
+    return deliberationReceipt(claim.run, claim.magiTurn);
+  });
 
   /** Creates a run and its turn-1 evidence; the caller then deliberates turn 1. */
-  const createRun = (input: {
+  const createRun = Effect.fn("MagiService.createRun")(function* (input: {
     readonly root: MagiConversationContext;
     readonly config: MagiRunConfig;
     readonly source: MagiRunSource;
@@ -2054,104 +2050,103 @@ export const makeMagiService = Effect.gen(function* () {
     readonly initiatingReferenceId: string | null;
     readonly initiatingInstruction: string;
     readonly contextActivityIds: ReadonlyArray<TurnItemId>;
-  }) =>
-    Effect.gen(function* () {
-      const rootThreadId = input.root.thread.id;
-      const issues = validateMagiRoster(input.config);
-      if (issues[0]) return yield* validation("invalid-config", issues[0].message, "config");
-      const settings = yield* readSettings;
-      if (Option.isSome(yield* repository.findActiveRun(rootThreadId).pipe(Effect.orDie))) {
-        return yield* validation("magi-run-active", "This thread already has an active Magi run.");
-      }
-      const providerInstances = yield* validateParticipantAvailability(
-        input.config.participants,
-        input.root.thread.projectId,
-      );
-      const runId = MagiRunId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
-      const startedAt = yield* nowIso;
-      // Participant thread ids derive from their creation commands, so evidence can be
-      // addressed to each participant before its conversation exists.
-      const members = input.config.participants.map(
-        (participant) =>
-          ({
-            participant,
-            threadId: IdAllocator.derive.delegatedTaskThread({
-              commandId: participantCommandId(runId, participant.participantId),
-            }),
-            state: "pending" as const,
-          }) satisfies ProtocolMember,
-      );
-      const threshold = calculateMagiThreshold(
-        input.config.participants,
-        input.config.consensusThresholdPercent,
-      );
-      const detail: MagiRunDetail = {
-        summary: {
-          runId,
-          rootThreadId,
-          source: input.source,
-          state: "deliberating",
-          completedMagiTurns: 0,
-          startedAt,
-          completedAt: null,
-        },
-        config: input.config,
-        totalWeight: threshold.totalWeight,
-        requiredWeight: threshold.requiredWeight,
+  }) {
+    const rootThreadId = input.root.thread.id;
+    const issues = validateMagiRoster(input.config);
+    if (issues[0]) return yield* validation("invalid-config", issues[0].message, "config");
+    const settings = yield* readSettings;
+    if (Option.isSome(yield* repository.findActiveRun(rootThreadId).pipe(Effect.orDie))) {
+      return yield* validation("magi-run-active", "This thread already has an active Magi run.");
+    }
+    const providerInstances = yield* validateParticipantAvailability(
+      input.config.participants,
+      input.root.thread.projectId,
+    );
+    const runId = MagiRunId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+    const startedAt = yield* nowIso;
+    // Participant thread ids derive from their creation commands, so evidence can be
+    // addressed to each participant before its conversation exists.
+    const members = input.config.participants.map(
+      (participant) =>
+        ({
+          participant,
+          threadId: IdAllocator.derive.delegatedTaskThread({
+            commandId: participantCommandId(runId, participant.participantId),
+          }),
+          state: "pending" as const,
+        }) satisfies ProtocolMember,
+    );
+    const threshold = calculateMagiThreshold(
+      input.config.participants,
+      input.config.consensusThresholdPercent,
+    );
+    const detail: MagiRunDetail = {
+      summary: {
+        runId,
+        rootThreadId,
+        source: input.source,
+        state: "deliberating",
+        completedMagiTurns: 0,
+        startedAt,
+        completedAt: null,
+      },
+      config: input.config,
+      totalWeight: threshold.totalWeight,
+      requiredWeight: threshold.requiredWeight,
 
-        participants: members.map((member) => ({
-          participantId: member.participant.participantId,
-          modelSelection: member.participant.modelSelection,
-          weight: member.participant.weight,
-          state: member.state,
-          childThreadId: member.threadId,
-        })),
-        settlements: [],
-        candidate: null,
+      participants: members.map((member) => ({
+        participantId: member.participant.participantId,
+        modelSelection: member.participant.modelSelection,
+        weight: member.participant.weight,
+        state: member.state,
+        childThreadId: member.threadId,
+      })),
+      settlements: [],
+      candidate: null,
+      actions: [],
+      issuedActionBatch: null,
+    };
+    const created: PersistedMagiRun = {
+      detail,
+      initiatingReferenceId: input.initiatingReferenceId,
+      initiatingInstruction: input.initiatingInstruction,
+      focusedObjective: input.objective,
+      arbitratorPrompt: settings.arbitratorPrompt,
+      protocol: {
+        members,
+        turns: [],
+        pendingContextArtifacts: [],
+        proposals: [],
+        terminalProposalDigest: [],
+        decisionSets: [],
         actions: [],
-        issuedActionBatch: null,
-      };
-      const created: PersistedMagiRun = {
-        detail,
-        initiatingReferenceId: input.initiatingReferenceId,
-        initiatingInstruction: input.initiatingInstruction,
-        focusedObjective: input.objective,
-        arbitratorPrompt: settings.arbitratorPrompt,
-        protocol: {
-          members,
-          turns: [],
-          pendingContextArtifacts: [],
-          proposals: [],
-          terminalProposalDigest: [],
-          decisionSets: [],
-          actions: [],
-          reconciliations: [],
-          stateBeforePause: null,
-          cleanupPending: false,
-          controlContinuationRunId: null,
-          turnDelivery: null,
-          pendingBatch: null,
-        } satisfies MagiProtocolState,
-        updatedAt: startedAt,
-        mainRunId: input.root.currentRun.id,
-      };
-      const activities = yield* resolveAndStoreContextArtifacts({
-        root: input.root,
-        activityIds: input.contextActivityIds,
-        run: created,
-        magiTurn: 1,
-      });
-      const persisted: PersistedMagiRun = {
-        ...created,
-        protocol: {
-          ...asProtocol(created.protocol),
-          pendingContextArtifacts: activities,
-        } satisfies MagiProtocolState,
-      };
-      yield* persist(persisted);
-      yield* increment(magiRunsTotal, { source: input.source, phase: "started" });
-      return { run: persisted, providerInstances };
+        reconciliations: [],
+        stateBeforePause: null,
+        cleanupPending: false,
+        controlContinuationRunId: null,
+        turnDelivery: null,
+        pendingBatch: null,
+      } satisfies MagiProtocolState,
+      updatedAt: startedAt,
+      mainRunId: input.root.currentRun.id,
+    };
+    const activities = yield* resolveAndStoreContextArtifacts({
+      root: input.root,
+      activityIds: input.contextActivityIds,
+      run: created,
+      magiTurn: 1,
     });
+    const persisted: PersistedMagiRun = {
+      ...created,
+      protocol: {
+        ...asProtocol(created.protocol),
+        pendingContextArtifacts: activities,
+      } satisfies MagiProtocolState,
+    };
+    yield* persist(persisted);
+    yield* increment(magiRunsTotal, { source: input.source, phase: "started" });
+    return { run: persisted, providerInstances };
+  });
 
   const startFromTool = (caller: MagiCaller, rawInput: typeof MagiStartInput.Encoded) =>
     inService(
@@ -2281,36 +2276,38 @@ export const makeMagiService = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const deliberate = (caller: MagiCaller, input: MagiDeliberateInput) =>
-    Effect.gen(function* () {
-      const run = yield* requireRun(input.runId, caller);
-      if (run.detail.summary.state === "awaiting-arbitration") {
-        return deliberationReceipt(run, asProtocol(run.protocol).turns.at(-1)!.magiTurn);
-      }
-      if (run.detail.summary.state === "deliberating") {
-        // A retried call, for example after its tool call was cancelled, gets the turn in flight.
-        const live = (yield* Ref.get(liveDeliberations)).get(input.runId);
-        if (live !== undefined) return deliberationReceipt(run, live);
-      }
-      if (run.detail.summary.state !== "awaiting-next-turn")
-        return yield* validation(
-          "invalid-protocol-state",
-          "Magi is not awaiting another deliberation.",
-        );
-      const providerInstances = yield* validateParticipantAvailability(
-        run.detail.config.participants,
-        yield* resolveCallerProject(caller),
+  const deliberate = Effect.fn("MagiService.deliberate")(function* (
+    caller: MagiCaller,
+    input: MagiDeliberateInput,
+  ) {
+    const run = yield* requireRun(input.runId, caller);
+    if (run.detail.summary.state === "awaiting-arbitration") {
+      return deliberationReceipt(run, asProtocol(run.protocol).turns.at(-1)!.magiTurn);
+    }
+    if (run.detail.summary.state === "deliberating") {
+      // A retried call, for example after its tool call was cancelled, gets the turn in flight.
+      const live = (yield* Ref.get(liveDeliberations)).get(input.runId);
+      if (live !== undefined) return deliberationReceipt(run, live);
+    }
+    if (run.detail.summary.state !== "awaiting-next-turn")
+      return yield* validation(
+        "invalid-protocol-state",
+        "Magi is not awaiting another deliberation.",
       );
-      return yield* inService(
-        runDeliberation({
-          runId: input.runId,
-          request: input,
-          caller,
-          providerInstances,
-          expectedState: "awaiting-next-turn",
-        }),
-      );
-    });
+    const providerInstances = yield* validateParticipantAvailability(
+      run.detail.config.participants,
+      yield* resolveCallerProject(caller),
+    );
+    return yield* inService(
+      runDeliberation({
+        runId: input.runId,
+        request: input,
+        caller,
+        providerInstances,
+        expectedState: "awaiting-next-turn",
+      }),
+    );
+  });
 
   const recordArbitration = (threadId: MagiCaller, input: MagiRecordArbitrationInput) =>
     withRunLock(
@@ -2931,67 +2928,66 @@ export const makeMagiService = Effect.gen(function* () {
       }),
     );
 
-  const cancelRun = (runId: MagiRunId) =>
-    Effect.gen(function* () {
-      // Wake an in-flight deliberation before waiting for its serialization
-      // lock. Otherwise cancellation would wait behind the participant work it
-      // is intended to interrupt.
-      yield* signalRunCancellation(runId);
-      yield* withRunLock(
-        runId,
-        Effect.gen(function* () {
-          const run = yield* requireRun(runId);
-          if (isMagiRunTerminal(run.detail.summary.state)) {
-            yield* clearRunCancellation(runId);
-            return;
-          }
-          const updatedAt = yield* nowIso;
-          const protocol = yield* withdrawTurnDelivery(run);
-          yield* persist({
-            ...run,
-            updatedAt,
-            protocol: {
-              ...protocol,
-              members: protocol.members.map((member) => ({
-                ...member,
-                state: cancelMagiMemberState(member.state),
-              })),
-            },
-            detail: {
-              ...run.detail,
-              summary: { ...run.detail.summary, state: "cancelled", completedAt: updatedAt },
+  const cancelRun = Effect.fn("MagiService.cancelRun")(function* (runId: MagiRunId) {
+    // Wake an in-flight deliberation before waiting for its serialization
+    // lock. Otherwise cancellation would wait behind the participant work it
+    // is intended to interrupt.
+    yield* signalRunCancellation(runId);
+    yield* withRunLock(
+      runId,
+      Effect.gen(function* () {
+        const run = yield* requireRun(runId);
+        if (isMagiRunTerminal(run.detail.summary.state)) {
+          yield* clearRunCancellation(runId);
+          return;
+        }
+        const updatedAt = yield* nowIso;
+        const protocol = yield* withdrawTurnDelivery(run);
+        yield* persist({
+          ...run,
+          updatedAt,
+          protocol: {
+            ...protocol,
+            members: protocol.members.map((member) => ({
+              ...member,
+              state: cancelMagiMemberState(member.state),
+            })),
+          },
+          detail: {
+            ...run.detail,
+            summary: { ...run.detail.summary, state: "cancelled", completedAt: updatedAt },
 
-              participants: run.detail.participants.map((participant) => ({
-                ...participant,
-                state: cancelMagiMemberState(participant.state),
-              })),
-            },
-          });
-          yield* increment(magiRunsTotal, {
-            source: run.detail.summary.source,
-            phase: "terminal",
-            outcome: "cancelled",
-            consensusTurn: null,
-            limitExhausted: false,
-          });
-          yield* cleanupTerminalRun({
-            ...run,
-            updatedAt,
-            protocol: {
-              ...protocol,
-              members: protocol.members.map((member) => ({
-                ...member,
-                state: cancelMagiMemberState(member.state),
-              })),
-            },
-            detail: {
-              ...run.detail,
-              summary: { ...run.detail.summary, state: "cancelled", completedAt: updatedAt },
-            },
-          });
-        }),
-      );
-    });
+            participants: run.detail.participants.map((participant) => ({
+              ...participant,
+              state: cancelMagiMemberState(participant.state),
+            })),
+          },
+        });
+        yield* increment(magiRunsTotal, {
+          source: run.detail.summary.source,
+          phase: "terminal",
+          outcome: "cancelled",
+          consensusTurn: null,
+          limitExhausted: false,
+        });
+        yield* cleanupTerminalRun({
+          ...run,
+          updatedAt,
+          protocol: {
+            ...protocol,
+            members: protocol.members.map((member) => ({
+              ...member,
+              state: cancelMagiMemberState(member.state),
+            })),
+          },
+          detail: {
+            ...run.detail,
+            summary: { ...run.detail.summary, state: "cancelled", completedAt: updatedAt },
+          },
+        });
+      }),
+    );
+  });
   const controlRun = Effect.fn("MagiService.controlRun")(function* (
     threadId: MagiCaller,
     input: MagiControlRunInput,
@@ -3097,99 +3093,105 @@ export const makeMagiService = Effect.gen(function* () {
         return latestTurnResult(run, turn);
       }),
     );
-  const getTerminalProposals = (threadId: MagiCaller, input: MagiGetTerminalProposalsInput) =>
-    Effect.gen(function* () {
-      const run = yield* requireRun(input.runId, threadId);
-      const protocol = asProtocol(run.protocol);
-      const terminalProposals = terminalMagiProposals(protocol.proposals);
-      const page = pageMagiTerminalProposals({
-        terminalProposals,
-        persistedDigest: protocol.terminalProposalDigest,
-        scope: input.scope,
-        offset: input.offset,
-        limit: input.limit,
-      });
-      return {
-        runId: input.runId,
-        terminalProposalCount: terminalProposals.length,
-        missingDigestCount: page.missingDigestCount,
-        persistedDigestEntryCount: protocol.terminalProposalDigest.length,
-        proposals: page.proposals,
-        nextOffset: page.nextOffset,
-        persistedDigest: input.includePersistedDigest ? protocol.terminalProposalDigest : null,
-      } satisfies MagiGetTerminalProposalsResult;
+  const getTerminalProposals = Effect.fn("MagiService.getTerminalProposals")(function* (
+    threadId: MagiCaller,
+    input: MagiGetTerminalProposalsInput,
+  ) {
+    const run = yield* requireRun(input.runId, threadId);
+    const protocol = asProtocol(run.protocol);
+    const terminalProposals = terminalMagiProposals(protocol.proposals);
+    const page = pageMagiTerminalProposals({
+      terminalProposals,
+      persistedDigest: protocol.terminalProposalDigest,
+      scope: input.scope,
+      offset: input.offset,
+      limit: input.limit,
     });
-  const recoverTurnResult = (threadId: MagiCaller, input: MagiRecoverTurnResultInput) =>
-    Effect.gen(function* () {
-      const run = yield* requireRun(input.runId, threadId);
-      const turn = asProtocol(run.protocol).turns.find(
-        (candidate) => candidate.magiTurn === input.magiTurn,
+    return {
+      runId: input.runId,
+      terminalProposalCount: terminalProposals.length,
+      missingDigestCount: page.missingDigestCount,
+      persistedDigestEntryCount: protocol.terminalProposalDigest.length,
+      proposals: page.proposals,
+      nextOffset: page.nextOffset,
+      persistedDigest: input.includePersistedDigest ? protocol.terminalProposalDigest : null,
+    } satisfies MagiGetTerminalProposalsResult;
+  });
+  const recoverTurnResult = Effect.fn("MagiService.recoverTurnResult")(function* (
+    threadId: MagiCaller,
+    input: MagiRecoverTurnResultInput,
+  ) {
+    const run = yield* requireRun(input.runId, threadId);
+    const turn = asProtocol(run.protocol).turns.find(
+      (candidate) => candidate.magiTurn === input.magiTurn,
+    );
+    if (!turn) {
+      return yield* validation(
+        "foreign-turn",
+        "The requested Magi turn does not exist in this run.",
+        "magiTurn",
       );
-      if (!turn) {
-        return yield* validation(
-          "foreign-turn",
-          "The requested Magi turn does not exist in this run.",
-          "magiTurn",
-        );
-      }
-      const settlement = turn.settlements[input.participantIndex];
-      if (!settlement) {
-        return yield* validation(
-          "invalid-protocol-state",
-          `participantIndex must be between 0 and ${Math.max(0, turn.settlements.length - 1)}.`,
-          "participantIndex",
-        );
-      }
-      return {
-        runId: input.runId,
-        magiTurn: input.magiTurn,
-        participantCount: turn.settlements.length,
-        participantIndex: input.participantIndex,
-        participant: projectMagiParticipantEvidence(settlement, input.representation),
-        nextParticipantIndex:
-          input.participantIndex + 1 < turn.settlements.length ? input.participantIndex + 1 : null,
-      } satisfies MagiRecoverTurnResult;
-    });
-  const recoverRunContext = (threadId: MagiCaller, input: MagiRecoverRunContextInput) =>
-    Effect.gen(function* () {
-      const run = yield* requireRun(input.runId, threadId);
-      const protocol = asProtocol(run.protocol);
-      const turn = protocol.turns.at(-1);
-      const candidate = turn?.arbitration?.candidate ?? turn?.candidate ?? run.detail.candidate;
-      const threshold = calculateMagiThreshold(
-        run.detail.config.participants,
-        run.detail.config.consensusThresholdPercent,
+    }
+    const settlement = turn.settlements[input.participantIndex];
+    if (!settlement) {
+      return yield* validation(
+        "invalid-protocol-state",
+        `participantIndex must be between 0 and ${Math.max(0, turn.settlements.length - 1)}.`,
+        "participantIndex",
       );
-      const settledWeight = settledMagiWeight(run.detail.config, turn?.settlements ?? []);
-      const pendingProposals = activeMagiProposals(protocol.proposals);
-      const continuation = recoverMagiRunContextContinuation(
-        run.detail.summary.state,
-        run.detail.issuedActionBatch,
-      );
-      return {
-        runId: input.runId,
-        state: run.detail.summary.state,
-        completedMagiTurns: run.detail.summary.completedMagiTurns,
-        latestMagiTurn: turn?.magiTurn ?? null,
-        participantIds: run.detail.config.participants.map(
-          (participant) => participant.participantId,
-        ),
-        totalWeight: threshold.totalWeight,
-        requiredWeight: threshold.requiredWeight,
-        thresholdReachable: settledWeight >= threshold.requiredWeight,
-        candidate,
-        candidateFingerprint:
-          candidate === null ? null : magiCandidateFingerprint(candidate, protocol.actions),
-        recordedActions: protocol.actions,
-        issuedActionBatch: continuation.issuedActionBatch,
-        unresolvedDisagreements: turn?.arbitration?.disagreements ?? [],
-        pendingProposalIds: pendingProposals.map((proposal) => proposal.proposalId),
-        pendingProposals,
-        activeDecisionSets: activeMagiDecisionSets(protocol.decisionSets),
-        nextRequiredTool: continuation.nextRequiredTool,
-        controlInstructions: arbitratorResultInstructions(run),
-      } satisfies MagiRecoverRunContextResult;
-    });
+    }
+    return {
+      runId: input.runId,
+      magiTurn: input.magiTurn,
+      participantCount: turn.settlements.length,
+      participantIndex: input.participantIndex,
+      participant: projectMagiParticipantEvidence(settlement, input.representation),
+      nextParticipantIndex:
+        input.participantIndex + 1 < turn.settlements.length ? input.participantIndex + 1 : null,
+    } satisfies MagiRecoverTurnResult;
+  });
+  const recoverRunContext = Effect.fn("MagiService.recoverRunContext")(function* (
+    threadId: MagiCaller,
+    input: MagiRecoverRunContextInput,
+  ) {
+    const run = yield* requireRun(input.runId, threadId);
+    const protocol = asProtocol(run.protocol);
+    const turn = protocol.turns.at(-1);
+    const candidate = turn?.arbitration?.candidate ?? turn?.candidate ?? run.detail.candidate;
+    const threshold = calculateMagiThreshold(
+      run.detail.config.participants,
+      run.detail.config.consensusThresholdPercent,
+    );
+    const settledWeight = settledMagiWeight(run.detail.config, turn?.settlements ?? []);
+    const pendingProposals = activeMagiProposals(protocol.proposals);
+    const continuation = recoverMagiRunContextContinuation(
+      run.detail.summary.state,
+      run.detail.issuedActionBatch,
+    );
+    return {
+      runId: input.runId,
+      state: run.detail.summary.state,
+      completedMagiTurns: run.detail.summary.completedMagiTurns,
+      latestMagiTurn: turn?.magiTurn ?? null,
+      participantIds: run.detail.config.participants.map(
+        (participant) => participant.participantId,
+      ),
+      totalWeight: threshold.totalWeight,
+      requiredWeight: threshold.requiredWeight,
+      thresholdReachable: settledWeight >= threshold.requiredWeight,
+      candidate,
+      candidateFingerprint:
+        candidate === null ? null : magiCandidateFingerprint(candidate, protocol.actions),
+      recordedActions: protocol.actions,
+      issuedActionBatch: continuation.issuedActionBatch,
+      unresolvedDisagreements: turn?.arbitration?.disagreements ?? [],
+      pendingProposalIds: pendingProposals.map((proposal) => proposal.proposalId),
+      pendingProposals,
+      activeDecisionSets: activeMagiDecisionSets(protocol.decisionSets),
+      nextRequiredTool: continuation.nextRequiredTool,
+      controlInstructions: arbitratorResultInstructions(run),
+    } satisfies MagiRecoverRunContextResult;
+  });
   const service: MagiServiceShape = {
     getOptions,
     getOptionsForCaller,
@@ -3336,83 +3338,83 @@ export const makeMagiService = Effect.gen(function* () {
    * Applies the end of a driving owner run that finished while the server was down, whose
    * `run.updated` event no live handler saw, exactly as the live handler would have.
    */
-  const recoverOwnerRunEnded = (run: PersistedMagiRun) =>
-    Effect.gen(function* () {
-      if (
-        asProtocol(run.protocol).turnDelivery?.state === "pending" &&
-        run.detail.summary.state === "awaiting-arbitration"
-      ) {
-        yield* withRunLock(
-          run.detail.summary.runId,
-          Effect.gen(function* () {
-            yield* deliverReadyTurn(yield* requireRun(run.detail.summary.runId));
-          }),
-        );
-        return;
-      }
-      const { rootThreadId } = run.detail.summary;
-      if (run.mainRunId === null) return;
-      const drivingRun = yield* readTerminalRun(rootThreadId, run.mainRunId);
-      if (Option.isNone(drivingRun)) return;
-      const { status } = drivingRun.value;
-      if (status === "completed") {
-        yield* applyOwnerRunCompleted(rootThreadId, run.mainRunId);
-      } else if (status === "failed" || status === "interrupted" || status === "cancelled") {
-        yield* applyOwnerLifecycle(rootThreadId, run.mainRunId, "turn.aborted");
-      }
-    });
+  const recoverOwnerRunEnded = Effect.fn("MagiService.recoverOwnerRunEnded")(function* (
+    run: PersistedMagiRun,
+  ) {
+    if (
+      asProtocol(run.protocol).turnDelivery?.state === "pending" &&
+      run.detail.summary.state === "awaiting-arbitration"
+    ) {
+      yield* withRunLock(
+        run.detail.summary.runId,
+        Effect.gen(function* () {
+          yield* deliverReadyTurn(yield* requireRun(run.detail.summary.runId));
+        }),
+      );
+      return;
+    }
+    const { rootThreadId } = run.detail.summary;
+    if (run.mainRunId === null) return;
+    const drivingRun = yield* readTerminalRun(rootThreadId, run.mainRunId);
+    if (Option.isNone(drivingRun)) return;
+    const { status } = drivingRun.value;
+    if (status === "completed") {
+      yield* applyOwnerRunCompleted(rootThreadId, run.mainRunId);
+    } else if (status === "failed" || status === "interrupted" || status === "cancelled") {
+      yield* applyOwnerLifecycle(rootThreadId, run.mainRunId, "turn.aborted");
+    }
+  });
 
   /** Participant conversations share their owner's archive and deletion lifecycle. */
-  const cascadeOwnerLifecycle = (
+  const cascadeOwnerLifecycle = Effect.fn("MagiService.cascadeOwnerLifecycle")(function* (
     ownerThreadId: ThreadId,
     type: "thread.archived" | "thread.unarchived" | "thread.deleted",
     eventId: string,
-  ) =>
-    Effect.gen(function* () {
-      const runs = yield* repository.listRunsByOwner(ownerThreadId).pipe(Effect.orDie);
-      if (runs.length === 0) return;
-      if (type === "thread.deleted") {
-        yield* Effect.forEach(
-          runs.filter((run) => !isMagiRunTerminal(run.detail.summary.state)),
-          (run) => cancelRun(run.detail.summary.runId).pipe(Effect.ignore),
-          { discard: true },
-        );
-      }
-      const command =
-        type === "thread.deleted"
-          ? "thread.delete"
-          : type === "thread.archived"
-            ? "thread.archive"
-            : "thread.unarchive";
+  ) {
+    const runs = yield* repository.listRunsByOwner(ownerThreadId).pipe(Effect.orDie);
+    if (runs.length === 0) return;
+    if (type === "thread.deleted") {
       yield* Effect.forEach(
-        runs.flatMap((run) => asProtocol(run.protocol).members),
-        (member) =>
-          threads
-            .dispatch({
-              type: command,
-              commandId: CommandId.make(`magi:${command}:${member.threadId}:${eventId}`),
-              threadId: member.threadId,
-            })
-            .pipe(Effect.ignore),
+        runs.filter((run) => !isMagiRunTerminal(run.detail.summary.state)),
+        (run) => cancelRun(run.detail.summary.runId).pipe(Effect.ignore),
         { discard: true },
       );
-      if (type === "thread.deleted") {
-        yield* repository.deleteByOwnerThreadId(ownerThreadId).pipe(Effect.orDie);
-      }
-      if (type === "thread.unarchived") {
-        yield* Effect.forEach(
-          runs,
-          (run) =>
-            withRunLock(
-              run.detail.summary.runId,
-              Effect.gen(function* () {
-                yield* deliverReadyTurn(yield* requireRun(run.detail.summary.runId));
-              }),
-            ),
-          { discard: true },
-        );
-      }
-    });
+    }
+    const command =
+      type === "thread.deleted"
+        ? "thread.delete"
+        : type === "thread.archived"
+          ? "thread.archive"
+          : "thread.unarchive";
+    yield* Effect.forEach(
+      runs.flatMap((run) => asProtocol(run.protocol).members),
+      (member) =>
+        threads
+          .dispatch({
+            type: command,
+            commandId: CommandId.make(`magi:${command}:${member.threadId}:${eventId}`),
+            threadId: member.threadId,
+          })
+          .pipe(Effect.ignore),
+      { discard: true },
+    );
+    if (type === "thread.deleted") {
+      yield* repository.deleteByOwnerThreadId(ownerThreadId).pipe(Effect.orDie);
+    }
+    if (type === "thread.unarchived") {
+      yield* Effect.forEach(
+        runs,
+        (run) =>
+          withRunLock(
+            run.detail.summary.runId,
+            Effect.gen(function* () {
+              yield* deliverReadyTurn(yield* requireRun(run.detail.summary.runId));
+            }),
+          ),
+        { discard: true },
+      );
+    }
+  });
 
   const handleLifecycleEvent = (event: Stream.Success<typeof threads.streamDomainEvents>) => {
     // A settled provider turn may never emit another terminal event after Stop.

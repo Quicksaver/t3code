@@ -195,7 +195,8 @@ const dependenciesFor = (caller: ThreadId, calls: Array<string>) =>
       list: () => Effect.succeed({ tasks: scheduledTasks }),
       runNow: ({ id }) => {
         calls.push(`run_scheduled_task_now:${id}`);
-        return Effect.succeed({ task: scheduledTasks.find((task) => task.id === id)! });
+        const task = scheduledTasks.find((task) => task.id === id)!;
+        return Effect.succeed({ task, threadId: task.threadId });
       },
     }),
     Layer.mock(ThreadSearch.ThreadSearch)({}),
