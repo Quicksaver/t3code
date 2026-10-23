@@ -76,10 +76,8 @@ it("opens and updates panel presence without a render-phase loop", async () => {
   await expect
     .element(screen.getByRole("region", { name: "Panel" }))
     .toHaveTextContent("No available surface");
-  await screen.getByRole("button", { name: "Open Version Control" }).click();
-  await expect
-    .element(screen.getByRole("region", { name: "Panel" }))
-    .toHaveTextContent("No available surface");
   await screen.getByRole("button", { name: "Toggle panel" }).click();
+  await expect.element(screen.getByRole("region", { name: "Panel" })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Open Version Control" }).click();
   await expect.element(screen.getByRole("region", { name: "Panel" })).not.toBeInTheDocument();
 });
