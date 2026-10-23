@@ -22,6 +22,7 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthTerminalOperateScope,
+  MAGI_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   AuthTerminalReadScope,
   type AuthEnvironmentScope,
@@ -84,6 +85,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetDatabaseStorage]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverUpdateSettings]: AuthSettingsWriteScope,
+
+  [MAGI_WS_METHODS.getSettings]: AuthOrchestrationReadScope,
   [WS_METHODS.serverSearchAcpRegistry]: AuthOrchestrationReadScope,
   [WS_METHODS.serverPrepareAcpRegistryAgent]: AuthProvidersManageScope,
   [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: AuthProvidersManageScope,

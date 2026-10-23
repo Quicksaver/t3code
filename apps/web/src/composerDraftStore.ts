@@ -90,6 +90,7 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+import { removeLegacyMagiDraftConfiguration } from "@t3tools/client-runtime/state/magi";
 
 const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -133,7 +134,11 @@ const composerPersistStorage: PersistStorage<ComposerPersistState> = {
     if (typeof raw !== "string") {
       return null;
     }
-    return JSON.parse(raw) as StorageValue<ComposerPersistState>;
+    const parsed = JSON.parse(raw) as StorageValue<ComposerPersistState>;
+    if (removeLegacyMagiDraftConfiguration(parsed)) {
+      composerDebouncedStorage.setItem(name, parsed);
+    }
+    return parsed;
   },
   setItem: (name, value) => composerDebouncedStorage.setItem(name, value),
   removeItem: (name) => composerDebouncedStorage.removeItem(name),

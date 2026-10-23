@@ -1,0 +1,165 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  AuthOrchestrationOperateScope,
+  sessionGrantsScope,
+  type SessionGrantInput,
+  type AuthEnvironmentScope,
+  type EnvironmentId,
+  type ExecutionEnvironmentPlatformOs,
+} from "@t3tools/contracts";
+
+export interface EnvironmentOptionLike {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+export function isEnvironmentSettingsAvailable(input: {
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly hasServerConfig: boolean;
+}): boolean {
+  return input.connectionPhase === "connected" && input.hasServerConfig;
+}
+
+export function buildEnvironmentOptions<T extends EnvironmentOptionLike>(
+  environments: ReadonlyArray<T>,
+  primaryEnvironmentId: EnvironmentId | null,
+  environmentIds?: readonly EnvironmentId[],
+): ReadonlyArray<T> {
+  const allowed = environmentIds ? new Set(environmentIds) : null;
+  return environments
+    .filter((environment) => !allowed || allowed.has(environment.environmentId))
+    .toSorted((left, right) => {
+      const leftIsPrimary = left.environmentId === primaryEnvironmentId;
+      const rightIsPrimary = right.environmentId === primaryEnvironmentId;
+      if (leftIsPrimary !== rightIsPrimary) {
+        return leftIsPrimary ? -1 : 1;
+      }
+      return (
+        left.label.localeCompare(right.label) ||
+        String(left.environmentId).localeCompare(String(right.environmentId))
+      );
+    });
+}
+
+export function resolveSelectedEnvironmentId(
+  environments: ReadonlyArray<EnvironmentOptionLike>,
+  selectedEnvironmentId: EnvironmentId | null,
+  primaryEnvironmentId: EnvironmentId | null,
+): EnvironmentId | null {
+  if (
+    selectedEnvironmentId !== null &&
+    environments.some((environment) => environment.environmentId === selectedEnvironmentId)
+  ) {
+    return selectedEnvironmentId;
+  }
+  if (
+    primaryEnvironmentId !== null &&
+    environments.some((environment) => environment.environmentId === primaryEnvironmentId)
+  ) {
+    return primaryEnvironmentId;
+  }
+  return environments[0]?.environmentId ?? null;
+}
+
+interface SearchableEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  readonly serverConfig: {
+    readonly environment: { readonly platform: { readonly os: ExecutionEnvironmentPlatformOs } };
+  } | null;
+}
+
+/** Search may choose a device only when the settings route is not explicitly scoped. */
+export function resolveSettingsSearchEnvironmentId(input: {
+  readonly environments: ReadonlyArray<SearchableEnvironment>;
+  readonly selectedEnvironmentId: EnvironmentId | null | undefined;
+  readonly scoped: boolean;
+  readonly searchTargetId: string | null;
+  readonly searchTargetIds: ReadonlyArray<string>;
+  readonly searchPlatform: ExecutionEnvironmentPlatformOs | undefined;
+}): EnvironmentId | undefined {
+  if (
+    input.scoped ||
+    input.searchTargetId === null ||
+    !input.searchTargetIds.includes(input.searchTargetId)
+  ) {
+    return undefined;
+  }
+  const matchesSearch = (environment: SearchableEnvironment) =>
+    (input.searchPlatform === undefined ||
+      environment.serverConfig?.environment.platform.os === input.searchPlatform) &&
+    isEnvironmentSettingsAvailable({
+      connectionPhase: environment.connection.phase,
+      hasServerConfig: environment.serverConfig !== null,
+    });
+  const selected = input.environments.find(
+    (environment) => environment.environmentId === input.selectedEnvironmentId,
+  );
+  if (selected && matchesSearch(selected)) return undefined;
+  return input.environments.find(matchesSearch)?.environmentId;
+}
+
+export type EnvironmentSettingsAccess =
+  | { readonly kind: "editable" }
+  | { readonly kind: "loading"; readonly reason: "config" | "permissions" }
+  | { readonly kind: "read-only" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "error" };
+
+export type EnvironmentOperateAccess = "granted" | "denied" | "pending";
+
+function resolveSessionOperateAccess(input: {
+  readonly session: SessionGrantInput | null;
+  readonly isPending: boolean;
+  readonly hasError: boolean;
+  readonly requiredScope?: AuthEnvironmentScope;
+}): EnvironmentOperateAccess {
+  if (input.hasError) return "denied";
+  if (input.session === null) return input.isPending ? "pending" : "denied";
+  return sessionGrantsScope(input.session, input.requiredScope ?? AuthOrchestrationOperateScope)
+    ? "granted"
+    : "denied";
+}
+
+export function resolvePrimaryOperateAccess(input: {
+  readonly isPrimary: boolean;
+  readonly hasDesktopBridge: boolean;
+  readonly session: SessionGrantInput | null;
+  readonly isPending: boolean;
+  readonly hasError: boolean;
+  readonly requiredScope?: AuthEnvironmentScope;
+}): EnvironmentOperateAccess {
+  return resolveSessionOperateAccess(input);
+}
+
+export function resolveRemoteOperateAccess(input: {
+  readonly session: SessionGrantInput | null;
+  readonly isPending: boolean;
+  readonly hasError: boolean;
+  readonly requiredScope?: AuthEnvironmentScope;
+}): EnvironmentOperateAccess {
+  return resolveSessionOperateAccess(input);
+}
+
+export function classifyEnvironmentSettingsAccess(input: {
+  readonly connectionPhase: EnvironmentConnectionPhase;
+  readonly hasServerConfig: boolean;
+  readonly operateAccess: EnvironmentOperateAccess;
+}): EnvironmentSettingsAccess {
+  if (input.connectionPhase === "error") {
+    return { kind: "error" };
+  }
+  if (input.connectionPhase !== "connected") {
+    return { kind: "unavailable" };
+  }
+  if (!input.hasServerConfig) {
+    return { kind: "loading", reason: "config" };
+  }
+  if (input.operateAccess === "pending") {
+    return { kind: "loading", reason: "permissions" };
+  }
+  if (input.operateAccess === "denied") {
+    return { kind: "read-only" };
+  }
+  return { kind: "editable" };
+}

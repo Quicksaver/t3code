@@ -1916,6 +1916,38 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("removes obsolete Magi selections from disk on hydration without losing drafts", async () => {
+    const draft = {
+      ...DRAFT,
+      text: "Keep my project writing preferences and personality discussion",
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+    };
+    const saved = {
+      schemaVersion: 1,
+      drafts: { "environment-1:thread-1": draft },
+      signedOutDrafts: {
+        account: { drafts: { archived: draft }, queuedMessages: [] },
+      },
+    };
+    const legacy = { participants: [{ personalityId: "legacy" }] };
+    composerDraftFileMocks.setDocument({
+      ...saved,
+      drafts: { "environment-1:thread-1": { ...draft, magiArm: legacy } },
+      signedOutDrafts: {
+        account: { drafts: { archived: { ...draft, magiArm: legacy } }, queuedMessages: [] },
+      },
+    });
+
+    ensureComposerDraftsLoaded();
+    await waitForComposerDraftsLoaded();
+
+    expect(JSON.parse(composerDraftFileMocks.getDocument())).toEqual(saved);
+    expect(appAtomRegistry.get(composerDraftsAtom)["environment-1:thread-1"]).toEqual(draft);
+    expect(appAtomRegistry.get(composerCloudDraftsAtom).signedOut.account?.drafts.archived).toEqual(
+      draft,
+    );
+  });
+
   it("flush waits for pending hydration instead of clobbering disk", async () => {
     vi.useFakeTimers();
     composerDraftFileMocks.setDocument({

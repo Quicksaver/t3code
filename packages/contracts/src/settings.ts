@@ -31,6 +31,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { DEFAULT_MAGI_SETTINGS, MagiSettings, MagiSettingsPatch } from "./magi.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -1317,6 +1318,7 @@ export const ServerSettings = Schema.Struct({
   usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  magi: MagiSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAGI_SETTINGS))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1620,6 +1622,7 @@ export const ServerSettingsPatch = Schema.Struct({
    * secret is removed from the secret store.
    */
   sourceControlHosts: Schema.optionalKey(Schema.Record(Schema.String, SourceControlHostSettings)),
+  magi: Schema.optionalKey(MagiSettingsPatch),
   // Whole-map replacement for the new instance config. Patching individual
   // entries is intentionally out of scope: the map is small, and partial
   // patches risk leaving driver-specific config in a half-merged state.

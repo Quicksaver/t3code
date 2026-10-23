@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2PendingBackgroundTask,
+  MagiRunId,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
@@ -240,6 +241,7 @@ export function derivePendingBackgroundWork(input: {
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
+  readonly pendingMagiRunId?: MagiRunId | null | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -251,7 +253,7 @@ export function derivePendingBackgroundWork(input: {
     return [];
   }
   if (input.latestRun == null) {
-    return pullRequestWatchTasks(input.pullRequests);
+    return [...pullRequestWatchTasks(input.pullRequests), ...magiTasks(input.pendingMagiRunId)];
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -291,8 +293,15 @@ export function derivePendingBackgroundWork(input: {
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
+  for (const task of magiTasks(input.pendingMagiRunId)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
+}
+
+function magiTasks(runId: MagiRunId | null | undefined): Array<PendingBackgroundWorkTask> {
+  return runId == null
+    ? []
+    : [{ taskId: `magi:${runId}`, description: "Waiting on Magi", kind: "monitor" }];
 }
 
 function pullRequestWatchTasks(

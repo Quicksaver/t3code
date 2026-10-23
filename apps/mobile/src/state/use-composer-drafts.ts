@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { removeLegacyMagiDraftConfiguration } from "@t3tools/client-runtime/state/magi";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
@@ -693,7 +694,14 @@ async function loadPersistedComposerState(): Promise<
     operation = "read";
     const raw = await file.text();
     operation = "decode";
-    return decodePersistedComposerState(JSON.parse(raw) as unknown);
+    const parsed: unknown = JSON.parse(raw);
+    const changed = removeLegacyMagiDraftConfiguration(parsed);
+    const decoded = decodePersistedComposerState(parsed);
+    if (changed) {
+      operation = "write";
+      await writeFileAtomically(file, JSON.stringify(parsed));
+    }
+    return decoded;
   } catch (cause) {
     throw new ComposerDraftPersistenceError({
       operation,

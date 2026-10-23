@@ -107,6 +107,8 @@ import Migration0084 from "./Migrations/067_WebhookDedupe.ts";
 
 import Migration0085 from "./Migrations/068_ShellStopRequestIndex.ts";
 
+import Migration0086 from "./Migrations/086_MagiAgentOnly.ts";
+
 /**
  * Migration loader with all migrations defined inline.
  *
@@ -207,6 +209,7 @@ export const migrationEntries = [
   [83, "RepairClientSettlementTimestamps", Migration0083],
   [84, "WebhookDedupe", Migration0084],
   [85, "ShellStopRequestIndex", Migration0085],
+  [86, "MagiAgentOnly", Migration0086],
 ] as const;
 
 /** The last migration id recorded by published fork builds before orchestration V2. */

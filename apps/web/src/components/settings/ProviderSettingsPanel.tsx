@@ -1,4 +1,3 @@
-import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
@@ -7,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
-import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -19,11 +17,10 @@ import {
   type AcpRegistryUrlAuthAction,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
+  type ServerProvider,
   type ProjectId,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
-  type ServerProvider,
-  resolveEnvironmentMachineKind,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -38,7 +35,6 @@ import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
@@ -47,28 +43,16 @@ import {
   useToggleEnvironmentModelFavorite,
 } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  type EnvironmentPresentation,
-} from "../../state/environments";
 import {
   EMPTY_SERVER_PROVIDERS,
   providersIgnoringCheckedAtAtom,
   serverEnvironment,
 } from "../../state/server";
-import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
-import {
-  ConnectionStatusDot,
-  connectionPhaseDotClassName,
-  connectionPhasePingClassName,
-} from "../ConnectionStatusDot";
 import {
   isProviderSettingsUpdateCandidate,
   isProviderUpdateActive,
@@ -77,26 +61,16 @@ import {
 import { ProviderUpdatesAction } from "../ProviderUpdatesAction";
 import { Button } from "../ui/button";
 import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "../ui/empty";
-import {
   NumberField,
   NumberFieldDecrement,
   NumberFieldGroup,
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
-import { ScrollArea } from "../ui/scroll-area";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
-import { ExpandableText } from "./ExpandableText";
+import { EnvironmentSettingsPanel } from "./EnvironmentSettingsPanel";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
@@ -105,6 +79,8 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
+import { SettingsGroup } from "./SettingsGroup";
+import { SettingsListDetail } from "./SettingsListDetail";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -112,24 +88,8 @@ import {
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
-import {
-  PolicyTooltip,
-  SettingResetButton,
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-  useSettingsSearchTargetId,
-} from "./settingsLayout";
-import {
-  buildProviderEnvironmentOptions,
-  buildProviderInstanceOverridePatch,
-  classifyProviderEnvironmentAccess,
-  isProviderSettingsEnvironmentAvailable,
-  type ProviderEnvironmentAccess,
-  type ProviderOperateAccess,
-  resolveRemoteOperateAccess,
-  resolveSelectedProviderEnvironmentId,
-} from "./ProviderSettingsPanel.logic";
+import { PolicyTooltip, SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import { buildProviderInstanceOverridePatch } from "./ProviderSettingsPanel.logic";
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
   const currentSet = new Set(current);
@@ -191,98 +151,6 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
   );
 }
 
-function providerEnvironmentDetail(environment: EnvironmentPresentation): string {
-  if (environment.entry.target._tag === "PrimaryConnectionTarget") return "Primary device";
-  if (environment.relayManaged) return "T3 Connect";
-  if (environment.entry.target._tag === "SshConnectionTarget") return "SSH";
-  if (isDesktopLocalConnectionTarget(environment.entry.target)) return "Local device";
-  return environment.displayUrl ?? "Remote device";
-}
-
-const providerCardHeightClassName =
-  "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
-
-function ProviderSettingsPlaceholder({
-  deviceTabs,
-  icon,
-  title,
-  description,
-  children,
-}: {
-  readonly deviceTabs?: ReactNode;
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly description: string;
-  readonly children?: ReactNode;
-}) {
-  return (
-    <SettingsSection {...searchableSetting("providers")} variant="plain">
-      {deviceTabs ? (
-        <div className="flex min-h-11 min-w-0 items-center px-3 sm:px-4">{deviceTabs}</div>
-      ) : null}
-      <SettingsGroup
-        divided={false}
-        className={cn(
-          providerCardHeightClassName,
-          "scrollbar-gutter-both flex overflow-x-hidden overflow-y-auto",
-        )}
-      >
-        <Empty>
-          <EmptyMedia variant="icon">{icon}</EmptyMedia>
-          <EmptyHeader>
-            <EmptyTitle>{title}</EmptyTitle>
-            <EmptyDescription>{description}</EmptyDescription>
-          </EmptyHeader>
-          {children ? <EmptyContent className="max-w-xl">{children}</EmptyContent> : null}
-        </Empty>
-      </SettingsGroup>
-    </SettingsSection>
-  );
-}
-
-function EnvironmentUnavailablePlaceholder({
-  environment,
-  access,
-  deviceTabs,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly access: Exclude<ProviderEnvironmentAccess, { kind: "editable" | "read-only" }>;
-  readonly deviceTabs?: ReactNode;
-}) {
-  const isLoading = access.kind === "loading";
-  const title = isLoading
-    ? "Loading provider settings"
-    : access.kind === "error"
-      ? "Could not connect to this device"
-      : "Provider settings are unavailable";
-  const description = isLoading
-    ? access.reason === "permissions"
-      ? "Checking what this session is allowed to change."
-      : `Waiting for ${environment.label}'s configuration.`
-    : connectionStatusTitle(environment.connection);
-  const error = isLoading ? null : environment.connection.error;
-  // No spinner: this state can persist indefinitely for a wedged device, and a
-  // continuously repainting animation would run the whole time.
-  return (
-    <ProviderSettingsPlaceholder
-      deviceTabs={deviceTabs}
-      icon={
-        <EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(environment.serverConfig)} />
-      }
-      title={title}
-      description={description}
-    >
-      {error ? (
-        <ExpandableText
-          key={environment.environmentId}
-          text={error}
-          className="w-full text-left font-mono text-xs leading-relaxed text-muted-foreground"
-        />
-      ) : null}
-    </ProviderSettingsPlaceholder>
-  );
-}
-
 interface ProviderSettingsTarget {
   readonly environmentId?: EnvironmentId;
   readonly instanceId?: ProviderInstanceId;
@@ -293,260 +161,36 @@ interface ProviderSettingsTarget {
 
 export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
   return (
-    <SettingsPageContainer className="@container/providers gap-8">
-      <ProviderSettingsPanelContent
-        key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
-        {...target}
-      />
-    </SettingsPageContainer>
-  );
-}
-
-function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
-  const { environments, isReady } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const searchTargetId = useSettingsSearchTargetId();
-  const options = buildProviderEnvironmentOptions(
-    environments,
-    primaryEnvironmentId,
-    target.environmentIds,
-  );
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
-    target.environmentId ?? primaryEnvironmentId,
-  );
-  const targetEnvironmentMissing =
-    target.environmentId !== undefined &&
-    selectedEnvironmentId === target.environmentId &&
-    !options.some((environment) => environment.environmentId === target.environmentId);
-  const effectiveEnvironmentId =
-    target.scoped || targetEnvironmentMissing
-      ? target.environmentId
-      : resolveSelectedProviderEnvironmentId(options, selectedEnvironmentId, primaryEnvironmentId);
-  const selectedEnvironment =
-    options.find((environment) => environment.environmentId === effectiveEnvironmentId) ?? null;
-  const selectedEnvironmentCanRenderSettings =
-    selectedEnvironment !== null &&
-    isProviderSettingsEnvironmentAvailable({
-      connectionPhase: selectedEnvironment.connection.phase,
-      hasServerConfig: selectedEnvironment.serverConfig !== null,
-    });
-  const searchableEnvironmentId = options.find((environment) =>
-    isProviderSettingsEnvironmentAvailable({
-      connectionPhase: environment.connection.phase,
-      hasServerConfig: environment.serverConfig !== null,
-    }),
-  )?.environmentId;
-  const searchableCursorEnvironmentId = options.find(
-    (environment) =>
-      environment.serverConfig?.environment.platform.os === "darwin" &&
-      isProviderSettingsEnvironmentAvailable({
-        connectionPhase: environment.connection.phase,
-        hasServerConfig: true,
-      }),
-  )?.environmentId;
-  // A search jump to a setting the selected device cannot show switches to one that can.
-  let searchRedirectEnvironmentId: EnvironmentId | undefined;
-  {
-    if (
-      !target.scoped &&
-      searchTargetId === searchableSetting("cursor-keychain-usage").id &&
-      (!selectedEnvironmentCanRenderSettings ||
-        selectedEnvironment?.serverConfig?.environment.platform.os !== "darwin") &&
-      searchableCursorEnvironmentId !== undefined
-    ) {
-      searchRedirectEnvironmentId = searchableCursorEnvironmentId;
-    } else if (
-      !target.scoped &&
-      (searchTargetId === searchableSetting("provider-health-check-interval").id ||
-        searchTargetId === searchableSetting("usage-providers").id) &&
-      !selectedEnvironmentCanRenderSettings &&
-      searchableEnvironmentId !== undefined
-    ) {
-      searchRedirectEnvironmentId = searchableEnvironmentId;
-    }
-  }
-  if (
-    searchRedirectEnvironmentId !== undefined &&
-    searchRedirectEnvironmentId !== selectedEnvironmentId
-  ) {
-    setSelectedEnvironmentId(searchRedirectEnvironmentId);
-  }
-  const onlyPrimaryDevice =
-    options.length === 1 && options[0]?.entry.target._tag === "PrimaryConnectionTarget";
-  const deviceTabs =
-    !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
-      <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">
-        <ToggleGroup
-          aria-label="Devices"
-          variant="segmented"
-          className="my-2"
-          value={effectiveEnvironmentId ? [effectiveEnvironmentId] : []}
-          onValueChange={(next) => {
-            const environment = options.find((option) => option.environmentId === next[0]);
-            if (environment) setSelectedEnvironmentId(environment.environmentId);
-          }}
-        >
-          {options.map((environment) => {
-            const machine = resolveEnvironmentMachineKind(environment.serverConfig);
-            const detail = providerEnvironmentDetail(environment);
-            const statusText = connectionStatusTitle(environment.connection);
-            return (
-              <Tooltip key={environment.environmentId}>
-                <TooltipTrigger
-                  render={
-                    <Toggle value={environment.environmentId}>
-                      <EnvironmentMachineIcon
-                        kind={machine}
-                        className="size-3.5 shrink-0"
-                        aria-hidden
-                      />
-                      <span className="max-w-40 truncate">{environment.label}</span>
-                      {environment.connection.phase !== "connected" ? (
-                        <ConnectionStatusDot
-                          dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
-                          pingClassName={connectionPhasePingClassName(environment.connection.phase)}
-                        />
-                      ) : null}
-                      <span className="sr-only">
-                        {detail}, {statusText}
-                      </span>
-                    </Toggle>
-                  }
-                />
-                <TooltipPopup side="top">
-                  {detail} · {statusText}
-                </TooltipPopup>
-              </Tooltip>
-            );
-          })}
-        </ToggleGroup>
-      </ScrollArea>
-    ) : null;
-
-  return (
-    <>
-      {targetEnvironmentMissing ? (
-        <ProviderSettingsPlaceholder
-          deviceTabs={deviceTabs}
-          icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
-          title="Device unavailable"
-          description="Reconnect this device to set up its provider, or select another device."
-        />
-      ) : null}
-      {options.length === 0 && !targetEnvironmentMissing ? (
-        <ProviderSettingsPlaceholder
-          icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
-          title={isReady ? "No connected devices" : "Loading devices"}
-          description={
-            isReady
-              ? "Connect an execution environment before configuring providers."
-              : "Reading connected execution environments."
-          }
-        />
-      ) : null}
-
-      {selectedEnvironment ? (
-        <SelectedEnvironmentProviderSettings
-          key={selectedEnvironment.environmentId}
-          environment={selectedEnvironment}
-          deviceTabs={deviceTabs}
+    <EnvironmentSettingsPanel
+      key={`${target.environmentId ?? ""}:${target.instanceId ?? ""}`}
+      title="Providers"
+      requiredScope={AuthProvidersManageScope}
+      scoped={target.scoped === true}
+      {...(target.environmentIds === undefined ? {} : { environmentIds: target.environmentIds })}
+      emptyDescription="Connect an execution environment before configuring providers."
+      searchTargetIds={[
+        searchableSetting("provider-health-check-interval").id,
+        searchableSetting("usage-providers").id,
+        searchableSetting("cursor-keychain-usage").id,
+      ]}
+      searchTargetPlatforms={{ [searchableSetting("cursor-keychain-usage").id]: "darwin" }}
+      {...(target.environmentId === undefined ? {} : { targetEnvironmentId: target.environmentId })}
+      targetUnavailableDescription="Reconnect this device to set up its provider, or select another device."
+      placeholderSectionId={searchableSetting("providers").id}
+      renderEnvironment={(props) => (
+        <EnvironmentProviderSettings
+          environmentId={props.environmentId}
+          environmentLabel={props.environmentLabel}
+          readOnly={props.readOnly}
+          environmentTabs={props.environmentTabs}
           targetInstanceId={
-            target.environmentId === undefined ||
-            selectedEnvironment.environmentId === target.environmentId
+            target.environmentId === undefined || props.environmentId === target.environmentId
               ? target.instanceId
               : undefined
           }
           projectIds={target.projectIds ?? []}
         />
-      ) : null}
-    </>
-  );
-}
-
-function SelectedEnvironmentProviderSettings({
-  environment,
-  deviceTabs,
-  targetInstanceId,
-  projectIds,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly deviceTabs?: ReactNode;
-  readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectIds: readonly ProjectId[];
-}) {
-  return (
-    <RemoteSessionGatedProviderSettings
-      environment={environment}
-      deviceTabs={deviceTabs}
-      targetInstanceId={targetInstanceId}
-      projectIds={projectIds}
-    />
-  );
-}
-
-function RemoteSessionGatedProviderSettings({
-  environment,
-  deviceTabs,
-  targetInstanceId,
-  projectIds,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly deviceTabs?: ReactNode;
-  readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectIds: readonly ProjectId[];
-}) {
-  const sessionState = useEnvironmentSessionState(environment.environmentId);
-  const operateAccess = resolveRemoteOperateAccess({
-    session: sessionState.data,
-    isPending: sessionState.isPending,
-    hasError: sessionState.hasError,
-  });
-  return (
-    <AccessGatedProviderSettings
-      environment={environment}
-      operateAccess={operateAccess}
-      deviceTabs={deviceTabs}
-      targetInstanceId={targetInstanceId}
-      projectIds={projectIds}
-    />
-  );
-}
-
-function AccessGatedProviderSettings({
-  environment,
-  operateAccess,
-  deviceTabs,
-  targetInstanceId,
-  projectIds,
-}: {
-  readonly environment: EnvironmentPresentation;
-  readonly operateAccess: ProviderOperateAccess;
-  readonly deviceTabs?: ReactNode;
-  readonly targetInstanceId?: ProviderInstanceId | undefined;
-  readonly projectIds: readonly ProjectId[];
-}) {
-  const access = classifyProviderEnvironmentAccess({
-    connectionPhase: environment.connection.phase,
-    hasServerConfig: environment.serverConfig !== null,
-    operateAccess,
-  });
-  if (access.kind !== "editable" && access.kind !== "read-only") {
-    return (
-      <EnvironmentUnavailablePlaceholder
-        environment={environment}
-        access={access}
-        deviceTabs={deviceTabs}
-      />
-    );
-  }
-  return (
-    <EnvironmentProviderSettings
-      environmentId={environment.environmentId}
-      environmentLabel={environment.label}
-      readOnly={access.kind === "read-only"}
-      deviceTabs={deviceTabs}
-      targetInstanceId={targetInstanceId}
-      projectIds={projectIds}
+      )}
     />
   );
 }
@@ -558,13 +202,13 @@ export function EnvironmentProviderSettings({
   environmentId,
   environmentLabel,
   readOnly = false,
-  deviceTabs,
+  environmentTabs,
   targetInstanceId,
   projectIds = NO_PROJECT_IDS,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
-  readonly deviceTabs?: ReactNode;
+  readonly environmentTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
   readonly projectIds?: readonly ProjectId[];
   readonly readOnly?: boolean;
@@ -990,25 +634,6 @@ export function EnvironmentProviderSettings({
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"
-        titleAction={
-          !readOnly ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost-muted"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider"
-                  >
-                    <PlusIcon />
-                  </Button>
-                }
-              />
-              <TooltipPopup side="top">Add provider</TooltipPopup>
-            </Tooltip>
-          ) : null
-        }
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
@@ -1039,60 +664,53 @@ export function EnvironmentProviderSettings({
           </div>
         }
       >
-        {deviceTabs ? (
-          <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
+        {environmentTabs ? (
+          <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">
+            {environmentTabs}
+          </div>
         ) : null}
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
               title="Limited permissions"
-              description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
+              description={`This session can view ${environmentLabel}'s providers, but its credential does not allow changing their configuration.`}
             />
           </SettingsGroup>
         ) : null}
-        <SettingsGroup
-          divided={false}
-          className={cn(
-            providerCardHeightClassName,
-            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
-          )}
-        >
-          <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
-            <ScrollArea
-              scrollFade
-              chainVerticalScroll
-              className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
-            >
-              <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
-                {!readOnly ? (
-                  <button
-                    type="button"
-                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
-                    onClick={() => setIsAddInstanceDialogOpen(true)}
-                  >
-                    <PlusIcon className="size-4 shrink-0" />
-                    Add provider
-                  </button>
-                ) : null}
-              </div>
-            </ScrollArea>
-          </div>
-
-          <div className="min-w-0 @min-[48rem]/providers:min-h-0">
-            {selectedRow ? (
-              <ScrollArea scrollFade chainVerticalScroll className="@min-[48rem]/providers:h-full">
-                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
-              </ScrollArea>
+        <SettingsListDetail
+          listLabel="Provider"
+          controlLabel="On"
+          items={
+            <>
+              {rows.map((row) => (
+                <div key={row.instanceId} className="p-1">
+                  {renderProviderInstance(row, "list")}
+                </div>
+              ))}
+              {!readOnly ? (
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                  onClick={() => setIsAddInstanceDialogOpen(true)}
+                >
+                  <PlusIcon className="size-4 shrink-0" />
+                  Add provider
+                </button>
+              ) : null}
+            </>
+          }
+          detail={
+            selectedRow ? (
+              <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">
                 {targetInstanceMissing
                   ? "This provider instance is no longer available on this device."
                   : "No providers configured."}
               </div>
-            )}
-          </div>
-        </SettingsGroup>
+            )
+          }
+        />
       </SettingsSection>
 
       <UsageProviderSettings
@@ -1105,6 +723,7 @@ export function EnvironmentProviderSettings({
       />
 
       <SettingsSection title="Advanced">
+        {/* Only the write controls go inert; the title and its policy tooltip stay readable. */}
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
@@ -1117,7 +736,7 @@ export function EnvironmentProviderSettings({
               </PolicyTooltip>
             </span>
           }
-          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+          description="Refresh availability, versions, auth state, and models in the background. 0 seconds turns background checks off."
           resetAction={
             providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
               <span

@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
+  MagiRunId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2AppThread,
@@ -45,6 +46,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     branch: "feature/source",
     worktreePath: "/tmp/source-worktree",
     activeProviderThreadId: ProviderThreadId.make("provider-thread:fork-snoozed-source"),
+    pendingMagiRunId: MagiRunId.make("magi:source"),
     lineage: {
       parentThreadId: null,
       relationshipToParent: null,
@@ -146,6 +148,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     assert.equal(result.targetThread.branch, sourceThread.branch);
     assert.equal(result.targetThread.worktreePath, sourceThread.worktreePath);
     assert.isNull(result.targetThread.activeProviderThreadId);
+    assert.isNull(result.targetThread.pendingMagiRunId);
     assert.deepEqual(result.targetThread.lineage, {
       parentThreadId: sourceThreadId,
       relationshipToParent: "fork",
