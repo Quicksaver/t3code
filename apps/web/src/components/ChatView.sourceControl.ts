@@ -12,6 +12,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
+import { useStableCallback } from "../hooks/useStableCallback";
 
 import type { ComposerThreadTarget, DraftId } from "../composerDraftStore";
 import {
@@ -365,7 +366,8 @@ export function createSourceControlServerMetadataUpdateQueue() {
   };
 }
 
-export function buildSourceControlRightPanelSurfaceState(
+// The retained panel value must come from an immutable hook result for compiler memoization.
+export function useSourceControlRightPanelSurfaceState(
   input: SourceControlRightPanelSurfaceInput,
 ): SourceControlRightPanelSurfaceState {
   const {
@@ -388,10 +390,10 @@ export function buildSourceControlRightPanelSurfaceState(
       sourceControlAvailable,
       surfaces: rightPanelSurfaces,
     }))();
-  const addSourceControlSurface = () => {
+  const addSourceControlSurface = useStableCallback(() => {
     if (!activeThreadRef || !sourceControlAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "source-control");
-  };
+  });
 
   return {
     addSourceControlSurface,

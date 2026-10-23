@@ -6,7 +6,7 @@ import {
   resolveThreadErrorDismissAction,
   resolveThreadErrorPresentation,
   resolveSourceControlPanelTarget,
-  buildSourceControlRightPanelSurfaceState,
+  useSourceControlRightPanelSurfaceState,
   useSourceControlThreadMetadataRouting,
 } from "./ChatView.sourceControl";
 import { useThreadRefs } from "../state/entities";
@@ -1102,7 +1102,7 @@ export default function ChatView(props: ChatViewProps) {
     sourceControlAvailable,
     visibleActiveRightPanelSurface,
     visibleRightPanelSurfaces,
-  } = buildSourceControlRightPanelSurfaceState({
+  } = useSourceControlRightPanelSurfaceState({
     activeRightPanelSurface: storeActiveRightPanelSurface,
     activeThreadRef,
     gitCwd,
