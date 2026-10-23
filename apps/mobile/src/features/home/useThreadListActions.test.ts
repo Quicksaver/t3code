@@ -148,7 +148,7 @@ vi.mock("../../state/threads", () => ({
 }));
 
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
-import { useThreadListActions } from "./useThreadListActions";
+import { useArchivedThreadListActions, useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");

@@ -133,7 +133,10 @@ function threadActionKey(thread: Pick<EnvironmentThreadShell, "environmentId" | 
   return JSON.stringify([thread.environmentId, thread.id]);
 }
 
-async function runWithThreadActionCleanup<T>(action: () => Promise<T>, cleanup: () => void): Promise<T> {
+async function runWithThreadActionCleanup<T>(
+  action: () => Promise<T>,
+  cleanup: () => void,
+): Promise<T> {
   try {
     return await action();
   } finally {
@@ -151,29 +154,30 @@ function useThreadActionExecutor() {
   const inFlightThreadKeys = useRef(new Set<string>());
 
   const executeAction = async (
-      action: ThreadListAction,
-      thread: EnvironmentThreadShell,
-      options: ThreadActionOptions = {},
-    ): Promise<ThreadListActionResult> => {
-      const key = threadActionKey(thread);
-      if (inFlightThreadKeys.current.has(key)) {
-        return "skipped";
-      }
+    action: ThreadListAction,
+    thread: EnvironmentThreadShell,
+    options: ThreadActionOptions = {},
+  ): Promise<ThreadListActionResult> => {
+    const key = threadActionKey(thread);
+    if (inFlightThreadKeys.current.has(key)) {
+      return "skipped";
+    }
 
-      inFlightThreadKeys.current.add(key);
-      const fail = (message: string): ThreadListActionResult => {
-        if (options.reportFailure !== false) {
-          Dialog.alert(actionFailureTitle(action), message);
-        }
-        options.onFailure?.(message);
-        return "failed";
-      };
-      if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-        inFlightThreadKeys.current.delete(key);
-        return fail("This connection cannot change threads.");
+    inFlightThreadKeys.current.add(key);
+    const fail = (message: string): ThreadListActionResult => {
+      if (options.reportFailure !== false) {
+        Dialog.alert(actionFailureTitle(action), message);
       }
-      selectionHaptic();
-      const result = await runWithThreadActionCleanup(async () => {
+      options.onFailure?.(message);
+      return "failed";
+    };
+    if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
+      inFlightThreadKeys.current.delete(key);
+      return fail("This connection cannot change threads.");
+    }
+    selectionHaptic();
+    const result = await runWithThreadActionCleanup(
+      async () => {
         if (
           (action === "settle" || action === "unsettle") &&
           !environmentSupportsSettlement(thread.environmentId)
@@ -228,8 +232,10 @@ function useThreadActionExecutor() {
           refreshArchivedThreadsForEnvironment(thread.environmentId);
         }
         return "succeeded";
-      }, () => inFlightThreadKeys.current.delete(key));
-      return result;
+      },
+      () => inFlightThreadKeys.current.delete(key),
+    );
+    return result;
   };
 
   return executeAction;
@@ -238,7 +244,10 @@ function useThreadActionExecutor() {
 // A plain function, not a hook: a `use*` function that calls no hooks is skipped by
 // the compiler, so the delete handler it returned was a new closure every render.
 function confirmThreadDeletion(
-  executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<ThreadListActionResult>,
+  executeAction: (
+    action: ThreadListAction,
+    thread: EnvironmentThreadShell,
+  ) => Promise<ThreadListActionResult>,
   thread: EnvironmentThreadShell,
 ) {
   if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
@@ -346,11 +355,14 @@ export function useThreadListActions(): {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
     let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
-    const succeeded = (await executeAction("settle", thread, { onStarted: () => {
-      ThreadUndo.invalidate("pin", key);
-      ThreadUndo.invalidate("snooze", key);
-      claim = ThreadUndo.begin("settle", key);
-    } })) === "succeeded";
+    const succeeded =
+      (await executeAction("settle", thread, {
+        onStarted: () => {
+          ThreadUndo.invalidate("pin", key);
+          ThreadUndo.invalidate("snooze", key);
+          claim = ThreadUndo.begin("settle", key);
+        },
+      })) === "succeeded";
     if (claim) {
       if (succeeded) offerUndo(thread, "Settled", claim, plan);
       else claim.finish();
@@ -360,10 +372,11 @@ export function useThreadListActions(): {
   const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
     if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
-    if (snoozeInFlightThreadKeys.current.has(key)) {
+    const reservationKey = threadActionKey(thread);
+    if (snoozeInFlightThreadKeys.current.has(reservationKey)) {
       return false;
     }
-    snoozeInFlightThreadKeys.current.add(key);
+    snoozeInFlightThreadKeys.current.add(reservationKey);
     const succeeded = await (async () => {
       if (!environmentSupportsSnooze(thread.environmentId)) {
         Dialog.alert(
@@ -412,16 +425,17 @@ export function useThreadListActions(): {
       offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
       return true;
     })();
-    snoozeInFlightThreadKeys.current.delete(key);
+    snoozeInFlightThreadKeys.current.delete(reservationKey);
     return succeeded;
   };
   const unsnoozeThread = async (thread: EnvironmentThreadShell) => {
     if (!checkThreadOperationPermission(thread, "Could not wake thread")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
-    if (snoozeInFlightThreadKeys.current.has(key)) {
+    const reservationKey = threadActionKey(thread);
+    if (snoozeInFlightThreadKeys.current.has(reservationKey)) {
       return false;
     }
-    snoozeInFlightThreadKeys.current.add(key);
+    snoozeInFlightThreadKeys.current.add(reservationKey);
     const succeeded = await (async () => {
       if (!environmentSupportsSnooze(thread.environmentId)) {
         Dialog.alert(
@@ -454,7 +468,7 @@ export function useThreadListActions(): {
       }
       return true;
     })();
-    snoozeInFlightThreadKeys.current.delete(key);
+    snoozeInFlightThreadKeys.current.delete(reservationKey);
     return succeeded;
   };
   const unsettleThread = async (thread: EnvironmentThreadShell) =>
@@ -571,7 +585,7 @@ export function useThreadListActions(): {
   };
   const regenerateThreadTitle = async (thread: EnvironmentThreadShell) => {
     if (!checkThreadOperationPermission(thread, "Could not regenerate title")) return false;
-    const key = scopedThreadKey(thread.environmentId, thread.id);
+    const key = threadActionKey(thread);
     if (thread.titleRegeneration != null || titleRegenerationInFlightThreadKeys.current.has(key)) {
       return false;
     }
@@ -818,11 +832,19 @@ export function useThreadListActions(): {
 }
 
 export function useArchivedThreadListActions(): {
-  readonly unarchiveThread: (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => Promise<ThreadListActionResult>;
-  readonly deleteThread: (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => Promise<ThreadListActionResult>;
+  readonly unarchiveThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<ThreadListActionResult>;
+  readonly deleteThread: (
+    thread: EnvironmentThreadShell,
+    options?: ThreadActionOptions,
+  ) => Promise<ThreadListActionResult>;
 } {
   const executeAction = useThreadActionExecutor();
-  const unarchiveThread = (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => executeAction("unarchive", thread, options);
-  const deleteThread = (thread: EnvironmentThreadShell, options?: ThreadActionOptions) => executeAction("delete", thread, options);
+  const unarchiveThread = (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+    executeAction("unarchive", thread, options);
+  const deleteThread = (thread: EnvironmentThreadShell, options?: ThreadActionOptions) =>
+    executeAction("delete", thread, options);
   return { unarchiveThread, deleteThread };
 }
