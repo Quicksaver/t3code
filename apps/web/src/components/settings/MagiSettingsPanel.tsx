@@ -117,7 +117,7 @@ export function EnvironmentMagiSettings({
     createMagiSettingsAutosave({
       delayMs: 400,
       schedule: (run, delayMs) => setTimeout(run, delayMs),
-      clear: clearTimeout,
+      clear: (timer) => clearTimeout(timer),
       save: async (value: string) => {
         const result = await update({
           environmentId,
