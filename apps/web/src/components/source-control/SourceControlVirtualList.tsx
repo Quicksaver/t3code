@@ -6,7 +6,7 @@ import {
   type VirtualizerOptions,
   type VirtualItem,
 } from "@tanstack/react-virtual";
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
@@ -46,6 +46,7 @@ function createVirtualList() {
       };
     },
     mount: () => virtualizer._didMount(),
+    commit: () => virtualizer._willUpdate(),
     update: (options: Partial<VirtualizerOptions<HTMLElement, HTMLDivElement>>) => {
       virtualizer.setOptions({ ...virtualizer.options, ...options });
       virtualizer._willUpdate();
@@ -90,18 +91,23 @@ function SourceControlVirtualListContent<T>({
     () => listRef.current?.closest<HTMLElement>("[data-source-control-section-content]") ?? null,
   );
   const [list] = useState(createVirtualList);
-  const snapshot = useSyncExternalStore(list.subscribe, list.getSnapshot, list.getSnapshot);
+  const [snapshot, setSnapshot] = useState(list.getSnapshot);
+  useLayoutEffect(() => list.subscribe(() => setSnapshot(list.getSnapshot())), [list]);
   useLayoutEffect(() => list.mount(), [list]);
   useLayoutEffect(() => {
     list.update({
       count: items.length,
       enabled: true,
       getScrollElement,
+      // Attaching a nested list must start from the shared viewport's current position.
       initialOffset: () => getScrollElement()?.scrollTop ?? 0,
       getItemKey,
       scrollMargin,
     });
   }, [list, items.length, getScrollElement, getItemKey, scrollMargin]);
+  useLayoutEffect(() => {
+    list.commit();
+  });
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -133,7 +139,7 @@ function SourceControlVirtualListContent<T>({
         .filter((row) => row.index < items.length)
         .map((row) => (
           <div
-            key={row.key}
+            key={getItemKey(row.index)}
             data-index={row.index}
             ref={list.measureElement}
             className="absolute left-0 top-0 w-full pb-0.5"
