@@ -545,7 +545,7 @@ export default function ChatView(props: ChatViewProps) {
   })() as MessagesTimelineHistoryControls | undefined;
   const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
   // Queued messages have no turn item until their run starts, so the
-  // turn-item-derived set alone can never retire their optimistic rows â€”
+  // turn-item-derived set alone can never retire their optimistic rows —
   // cancelling such a run would leave a phantom "pending" queue row behind.
   const serverAcknowledgedUserMessageIds = (() => {
     const ids = new Set(committedServerMessageIds);
@@ -935,7 +935,7 @@ export default function ChatView(props: ChatViewProps) {
   const timelineAnchorMessageId = timelineAnchor.messageId;
   // LegendList sizes the anchored end-space filler for the geometry at anchor
   // time and never recomputes it, so a lingering anchor leaves stale filler
-  // height behind the composer â€” phantom scroll range on threads whose content
+  // height behind the composer — phantom scroll range on threads whose content
   // fits.
   const anchorRunSettled = (() => {
     if (timelineAnchorMessageId === null) return false;

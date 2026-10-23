@@ -318,7 +318,7 @@ function SidebarThreadTooltip({
             />
             <div className="min-w-0 truncate text-foreground/75">
               {showInstanceBadge && providerEntry
-                ? `${modelLabel} Â· ${providerEntry.displayName}`
+                ? `${modelLabel} · ${providerEntry.displayName}`
                 : modelLabel}
             </div>
           </div>
@@ -413,7 +413,7 @@ function SnoozeMenuButton(props: {
             if (choice) onSnooze(choice);
           }}
         >
-          Customâ€¦
+          Custom…
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -1470,7 +1470,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     +{formatDiffCount(diff.insertions)}
                   </span>{" "}
                   <span className="text-diff-deletion-foreground">
-                    âˆ’{formatDiffCount(diff.deletions)}
+                    −{formatDiffCount(diff.deletions)}
                   </span>
                 </span>
               ) : null}
