@@ -6335,36 +6335,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     // Cold archived threads no longer have the child rows their shells derive
     // from, so their frozen summary supplies those fields.
-    const withColdShellSummaries = (
+    const withColdShellSummaries = Effect.fn("ProjectionStore.withColdShellSummaries")(function* (
       shells: ReadonlyArray<OrchestrationV2ThreadShell>,
       snapshotRows?: ReadonlyArray<{ readonly thread_id: string; readonly shell_json: string }>,
-    ) =>
-      Effect.gen(function* () {
-        if (shells.length === 0) return shells;
-        const rows =
-          snapshotRows ??
-          (yield* sql<{ readonly thread_id: string; readonly shell_json: string }>`
+    ) {
+      if (shells.length === 0) return shells;
+      const rows =
+        snapshotRows ??
+        (yield* sql<{ readonly thread_id: string; readonly shell_json: string }>`
           SELECT thread_id, shell_json FROM thread_archive_manifests
           WHERE status IN ('moving', 'cold') AND shell_json IS NOT NULL
             ${shells.length === 1 ? sql`AND thread_id = ${shells[0]!.id}` : sql``}
         `);
-        if (rows.length === 0) return shells;
-        const summaries = new Map(rows.map((row) => [row.thread_id, row.shell_json] as const));
-        return yield* Effect.forEach(shells, (shell) => {
-          const summary = summaries.get(shell.id);
-          if (summary === undefined) return Effect.succeed(shell);
-          return decodeColdShell(summary).pipe(
-            Effect.map((frozen) => {
-              const derived: Partial<OrchestrationV2ThreadShell> = {};
-              for (const field of COLD_SHELL_DERIVED_FIELDS) {
-                Object.assign(derived, { [field]: frozen[field] });
-              }
-              return { ...shell, ...derived };
-            }),
-            Effect.orElseSucceed(() => shell),
-          );
-        });
+      if (rows.length === 0) return shells;
+      const summaries = new Map(rows.map((row) => [row.thread_id, row.shell_json] as const));
+      return yield* Effect.forEach(shells, (shell) => {
+        const summary = summaries.get(shell.id);
+        if (summary === undefined) return Effect.succeed(shell);
+        return decodeColdShell(summary).pipe(
+          Effect.map((frozen) => {
+            const derived: Partial<OrchestrationV2ThreadShell> = {};
+            for (const field of COLD_SHELL_DERIVED_FIELDS) {
+              Object.assign(derived, { [field]: frozen[field] });
+            }
+            return { ...shell, ...derived };
+          }),
+          Effect.orElseSucceed(() => shell),
+        );
       });
+    });
 
     const shellSnapshotReadError = (cause: unknown) =>
       new ProjectionStoreReadError({ threadId: ThreadId.make("thread:shell"), cause });
