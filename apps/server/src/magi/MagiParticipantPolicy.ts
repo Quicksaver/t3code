@@ -106,23 +106,24 @@ const make = Effect.gen(function* () {
       Effect.catchIf(isMagiThreadNotFound, () => Effect.succeedNone, Effect.die),
     );
 
-  const subagentLineage: MagiParticipantPolicyShape["subagentLineage"] = (thread) =>
-    Effect.gen(function* () {
-      const chain = [thread.id];
-      let lineage = thread.lineage;
-      // Forks are independent conversations and end the walk.
-      while (
-        lineage.relationshipToParent === "subagent" &&
-        lineage.parentThreadId !== null &&
-        !chain.includes(lineage.parentThreadId)
-      ) {
-        const parent = yield* readThread(lineage.parentThreadId);
-        if (Option.isNone(parent)) break;
-        chain.push(parent.value.thread.id);
-        lineage = parent.value.thread.lineage;
-      }
-      return chain;
-    });
+  const subagentLineage: MagiParticipantPolicyShape["subagentLineage"] = Effect.fn(
+    "MagiParticipantPolicy.subagentLineage",
+  )(function* (thread: OrchestrationV2AppThread) {
+    const chain = [thread.id];
+    let lineage = thread.lineage;
+    // Forks are independent conversations and end the walk.
+    while (
+      lineage.relationshipToParent === "subagent" &&
+      lineage.parentThreadId !== null &&
+      !chain.includes(lineage.parentThreadId)
+    ) {
+      const parent = yield* readThread(lineage.parentThreadId);
+      if (Option.isNone(parent)) break;
+      chain.push(parent.value.thread.id);
+      lineage = parent.value.thread.lineage;
+    }
+    return chain;
+  });
 
   const lineageOf = (threadId: ThreadId) =>
     readThread(threadId).pipe(
@@ -133,8 +134,8 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const decide: MagiParticipantPolicyShape["decide"] = (input) =>
-    Effect.gen(function* () {
+  const decide: MagiParticipantPolicyShape["decide"] = Effect.fn("MagiParticipantPolicy.decide")(
+    function* (input: Parameters<MagiParticipantPolicyShape["decide"]>[0]) {
       const callerLineage = yield* lineageOf(input.callerThreadId);
       const participants = yield* repository
         .findParticipantThreads(callerLineage)
@@ -148,7 +149,8 @@ const make = Effect.gen(function* () {
         participantThreadIds: new Set(participants),
         ...(targetLineage === undefined ? {} : { targetLineage }),
       });
-    });
+    },
+  );
 
   const requireToolAllowed: MagiParticipantPolicyShape["requireToolAllowed"] = (input) =>
     decide(input).pipe(

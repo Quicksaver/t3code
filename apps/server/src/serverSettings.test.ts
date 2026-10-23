@@ -1246,7 +1246,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           assert.propertyVal(
             redacted.providerInstances[instanceId]?.config,
             "apiKey",
-            apiKey ? "â€¢â€¢â€¢â€¢â€¢â€¢" : "",
+            apiKey ? "••••••" : "",
           );
         }
 

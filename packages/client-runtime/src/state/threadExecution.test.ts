@@ -26,6 +26,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  presentPendingBackgroundWork,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 

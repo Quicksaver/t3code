@@ -104,113 +104,115 @@ export const listMagiContextActivities = (
  * Validates selected ids against the caller's current run and snapshots each complete item.
  * The snapshot is the artifact participants read; later item updates cannot change it.
  */
-export const resolveMagiContextActivities = (input: {
+export const resolveMagiContextActivities = Effect.fn(
+  "MagiContextAssembler.resolveMagiContextActivities",
+)(function* (input: {
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
   readonly currentRunId: RunId;
   readonly activityIds: ReadonlyArray<TurnItemId>;
   readonly runId: MagiRunId;
   readonly magiTurn: number;
-}): Effect.Effect<
+}): Effect.fn.Return<
   {
     readonly references: ReadonlyArray<MagiActivityReference>;
     readonly artifacts: ReadonlyArray<MagiContextArtifactRecord>;
   },
   MagiValidationError
-> =>
-  Effect.gen(function* () {
-    const seen = new Set<string>();
-    const references: Array<MagiActivityReference> = [];
-    const artifacts: Array<MagiContextArtifactRecord> = [];
-    for (const activityId of input.activityIds) {
-      if (seen.has(activityId)) {
-        return yield* validation(
-          "duplicate-activity",
-          `Activity ${activityId} was referenced twice.`,
-        );
-      }
-      seen.add(activityId);
-      const item = input.items.find((candidate) => candidate.id === activityId);
-      if (!item) {
-        return yield* validation(
-          "unknown-activity",
-          `Activity ${activityId} does not exist in this conversation.`,
-        );
-      }
-      if (item.runId !== input.currentRunId) {
-        return yield* validation(
-          "foreign-activity",
-          `Activity ${activityId} is not from this conversation's current run.`,
-        );
-      }
-      if (!isEvidenceItem(item)) {
-        return yield* validation(
-          "invalid-protocol-state",
-          `Activity ${activityId} is not a tool result.`,
-        );
-      }
-      if (!isFinal(item)) {
-        return yield* validation(
-          "unfinished-activity",
-          `Activity ${activityId} has not finished yet.`,
-        );
-      }
-      const byteLength = magiContextResultByteLength(item);
-      if (byteLength > MAGI_MAX_CONTEXT_ACTIVITY_BYTES) {
-        return yield* validation(
-          "oversized-activity",
-          `Activity ${activityId} is ${byteLength} bytes; the maximum is ${MAGI_MAX_CONTEXT_ACTIVITY_BYTES} bytes. Create semantically focused smaller tool results and submit their activity ids instead.`,
-        );
-      }
-      const reference: MagiActivityReference = {
-        artifactId: magiContextArtifactId(input.runId, input.magiTurn, activityId),
-        activityId,
-        runId: input.currentRunId,
-        kind: itemKind(item),
-        summary: itemSummary(item),
-        byteLength,
-      };
-      references.push(reference);
-      artifacts.push({
-        manifest: {
-          artifactId: reference.artifactId,
-          sourceActivityId: reference.activityId,
-          sourceRunId: reference.runId,
-          kind: reference.kind,
-          summary: reference.summary,
-          byteLength,
-        },
-        result: item,
-      });
+> {
+  const seen = new Set<string>();
+  const references: Array<MagiActivityReference> = [];
+  const artifacts: Array<MagiContextArtifactRecord> = [];
+  for (const activityId of input.activityIds) {
+    if (seen.has(activityId)) {
+      return yield* validation(
+        "duplicate-activity",
+        `Activity ${activityId} was referenced twice.`,
+      );
     }
-    return { references, artifacts };
-  });
+    seen.add(activityId);
+    const item = input.items.find((candidate) => candidate.id === activityId);
+    if (!item) {
+      return yield* validation(
+        "unknown-activity",
+        `Activity ${activityId} does not exist in this conversation.`,
+      );
+    }
+    if (item.runId !== input.currentRunId) {
+      return yield* validation(
+        "foreign-activity",
+        `Activity ${activityId} is not from this conversation's current run.`,
+      );
+    }
+    if (!isEvidenceItem(item)) {
+      return yield* validation(
+        "invalid-protocol-state",
+        `Activity ${activityId} is not a tool result.`,
+      );
+    }
+    if (!isFinal(item)) {
+      return yield* validation(
+        "unfinished-activity",
+        `Activity ${activityId} has not finished yet.`,
+      );
+    }
+    const byteLength = magiContextResultByteLength(item);
+    if (byteLength > MAGI_MAX_CONTEXT_ACTIVITY_BYTES) {
+      return yield* validation(
+        "oversized-activity",
+        `Activity ${activityId} is ${byteLength} bytes; the maximum is ${MAGI_MAX_CONTEXT_ACTIVITY_BYTES} bytes. Create semantically focused smaller tool results and submit their activity ids instead.`,
+      );
+    }
+    const reference: MagiActivityReference = {
+      artifactId: magiContextArtifactId(input.runId, input.magiTurn, activityId),
+      activityId,
+      runId: input.currentRunId,
+      kind: itemKind(item),
+      summary: itemSummary(item),
+      byteLength,
+    };
+    references.push(reference);
+    artifacts.push({
+      manifest: {
+        artifactId: reference.artifactId,
+        sourceActivityId: reference.activityId,
+        sourceRunId: reference.runId,
+        kind: reference.kind,
+        summary: reference.summary,
+        byteLength,
+      },
+      result: item,
+    });
+  }
+  return { references, artifacts };
+});
 
 /** Orders the caller's granted artifacts as requested; ids it was not granted are unknown. */
-export const orderMagiContextArtifacts = (input: {
+export const orderMagiContextArtifacts = Effect.fn(
+  "MagiContextAssembler.orderMagiContextArtifacts",
+)(function* (input: {
   readonly granted: ReadonlyArray<MagiContextArtifactRecord>;
   readonly artifactIds: ReadonlyArray<ContextArtifactId>;
-}): Effect.Effect<ContextReadResult, MagiValidationError> =>
-  Effect.gen(function* () {
-    const seen = new Set<string>();
-    const artifacts: Array<ContextReadResult["artifacts"][number]> = [];
-    for (const artifactId of input.artifactIds) {
-      if (seen.has(artifactId)) {
-        return yield* validation(
-          "duplicate-activity",
-          "Each context artifact id may be requested only once per read.",
-          "artifactIds",
-        );
-      }
-      seen.add(artifactId);
-      const granted = input.granted.find((record) => record.manifest.artifactId === artifactId);
-      if (!granted) {
-        return yield* validation(
-          "unknown-activity",
-          `Context artifact ${artifactId} is not addressed to this conversation.`,
-          "artifactIds",
-        );
-      }
-      artifacts.push({ artifact: granted.manifest, result: granted.result });
+}): Effect.fn.Return<ContextReadResult, MagiValidationError> {
+  const seen = new Set<string>();
+  const artifacts: Array<ContextReadResult["artifacts"][number]> = [];
+  for (const artifactId of input.artifactIds) {
+    if (seen.has(artifactId)) {
+      return yield* validation(
+        "duplicate-activity",
+        "Each context artifact id may be requested only once per read.",
+        "artifactIds",
+      );
     }
-    return { artifacts };
-  });
+    seen.add(artifactId);
+    const granted = input.granted.find((record) => record.manifest.artifactId === artifactId);
+    if (!granted) {
+      return yield* validation(
+        "unknown-activity",
+        `Context artifact ${artifactId} is not addressed to this conversation.`,
+        "artifactIds",
+      );
+    }
+    artifacts.push({ artifact: granted.manifest, result: granted.result });
+  }
+  return { artifacts };
+});
