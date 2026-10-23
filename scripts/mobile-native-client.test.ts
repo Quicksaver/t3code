@@ -5,8 +5,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { NativeClientError, prebuildAndroid, buildNativeClient, ensureClient,
-  NativeClientWorktree, prepareNativeClient, type NativeClientRecord,
+import {
+  NativeClientError,
+  prebuildAndroid,
+  buildNativeClient,
+  ensureClient,
+  NativeClientWorktree,
+  prepareNativeClient,
+  type NativeClientRecord,
 } from "./mobile-native-client.ts";
 
 const caches = [".gradle/history", "app/.cxx/object"];

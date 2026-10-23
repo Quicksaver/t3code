@@ -1582,7 +1582,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
-
   it.effect("signs Windows builds with signtool on Windows and the jsign hook elsewhere", () =>
     Effect.gen(function* () {
       const signedWinConfig = (hostPlatform: string) =>

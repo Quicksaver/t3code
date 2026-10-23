@@ -41,9 +41,12 @@ const makeEnvironment = (
 describe("DesktopEnvironment", () => {
   it.effect("resolves an explicit isolated desktop profile", () =>
     Effect.gen(function* () {
-      const environment = yield* makeEnvironment({}, {
-        T3CODE_DESKTOP_USER_DATA_DIR: " /tmp/t3/userdata/electron ",
-      });
+      const environment = yield* makeEnvironment(
+        {},
+        {
+          T3CODE_DESKTOP_USER_DATA_DIR: " /tmp/t3/userdata/electron ",
+        },
+      );
       assert.deepEqual(environment.desktopUserDataDir, Option.some("/tmp/t3/userdata/electron"));
     }),
   );

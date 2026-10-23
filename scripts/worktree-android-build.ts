@@ -5,6 +5,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
 import * as NodeURL from "node:url";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+
+import { prebuildAndroid } from "./mobile-native-client.ts";
 
 import {
   assertShortAndroidNativePaths,
@@ -204,11 +208,19 @@ export const configureAndroidCmakeStaging = async (
 /** Apply main's native ABI policy to generated builds without editing the target branch. */
 export const configureAndroidNativeAbi = async (worktree: string): Promise<void> => {
   const android = NodePath.join(worktree, "apps", "mobile", "android");
-  const source = new URL("../apps/mobile/plugins/react-native-abi.gradle", import.meta.url);
-  await NodeFSP.copyFile(source, NodePath.join(android, "t3-react-native-abi.gradle"));
   const rootGradle = NodePath.join(android, "build.gradle");
   const contents = await NodeFSP.readFile(rootGradle, "utf8");
   const applyScript = 'apply from: file("t3-react-native-abi.gradle")';
+  // Current targets get their React Native ABI policy from upstream's Expo plugin.
+  if (contents.includes("// Added by withAndroidFbjniVersion:")) {
+    if (contents.includes(applyScript)) {
+      await NodeFSP.writeFile(rootGradle, contents.replaceAll(applyScript, ""));
+    }
+    await NodeFSP.rm(NodePath.join(android, "t3-react-native-abi.gradle"), { force: true });
+    return;
+  }
+  const source = new URL("../apps/mobile/plugins/react-native-abi.gradle", import.meta.url);
+  await NodeFSP.copyFile(source, NodePath.join(android, "t3-react-native-abi.gradle"));
   if (!contents.includes(applyScript)) {
     await NodeFSP.writeFile(rootGradle, `${contents.trimEnd()}\n\n${applyScript}\n`);
   }
@@ -352,19 +364,24 @@ const createOperations = (worktree: string, device: string): AndroidBuildOperati
         env: ANDROID_INSTALL_ENV,
       }),
     prebuild: async () =>
-      runChecked(
-        "Expo clean prebuild",
-        NodeProcess.execPath,
-        [
-          await resolveExpoCliFromMobile(worktree),
-          "prebuild",
-          "--clean",
-          "--platform",
-          "android",
-          "--no-install",
-        ],
-        { cwd: mobileRoot, env: expoEnvironment },
-      ),
+      prebuildAndroid(
+        mobileRoot,
+        Effect.tryPromise(async () =>
+          runChecked(
+            "Expo clean prebuild",
+            NodeProcess.execPath,
+            [
+              await resolveExpoCliFromMobile(worktree),
+              "prebuild",
+              "--clean",
+              "--platform",
+              "android",
+              "--no-install",
+            ],
+            { cwd: mobileRoot, env: expoEnvironment },
+          ),
+        ),
+      ).pipe(Effect.provide(NodeServices.layer), Effect.runPromise),
     configureNativeStaging: async () => {
       await configureAndroidCmakeStaging(worktree);
       await configureAndroidNativeAbi(worktree);

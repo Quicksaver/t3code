@@ -326,9 +326,7 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   const output: NodeJS.ProcessEnv = {
     ...baseEnv,
     PORT: String(webPort),
-    VITE_DEV_SERVER_URL:
-      devUrl?.toString() ??
-      `http://${DEV_LOOPBACK_HOST}:${webPort}`,
+    VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://${DEV_LOOPBACK_HOST}:${webPort}`,
   };
 
   if (configuredBaseDir !== undefined) {

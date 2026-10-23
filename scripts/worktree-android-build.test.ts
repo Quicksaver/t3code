@@ -74,7 +74,7 @@ describe("worktree-android-build", () => {
     }
   });
 
-  it("refreshes the shared ABI policy without duplicating Gradle setup or editing source files", async () => {
+  it("refreshes the shared ABI fallback for targets without the upstream plugin", async () => {
     const worktree = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-android-abi-"));
     const android = NodePath.join(worktree, "apps", "mobile", "android");
     const rootGradle = NodePath.join(android, "build.gradle");
@@ -94,6 +94,31 @@ describe("worktree-android-build", () => {
           "utf8",
         ),
       );
+    } finally {
+      await NodeFSP.rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  it("defers to the target's upstream ABI policy and removes a previous fallback", async () => {
+    const worktree = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-upstream-abi-"));
+    const android = NodePath.join(worktree, "apps", "mobile", "android");
+    const rootGradle = NodePath.join(android, "build.gradle");
+    const policy = NodePath.join(android, "t3-react-native-abi.gradle");
+    const upstream =
+      "// Added by withAndroidFbjniVersion: keep fbjni on the version React Native ships against.\nallprojects { configurations.all { resolutionStrategy.force 'com.facebook.fbjni:fbjni:0.7.0' } }\n";
+    try {
+      await NodeFSP.mkdir(android, { recursive: true });
+      await NodeFSP.writeFile(
+        rootGradle,
+        `${upstream}\napply from: file("t3-react-native-abi.gradle")`,
+      );
+      await NodeFSP.writeFile(policy, "// previous fallback");
+      await configureAndroidNativeAbi(worktree);
+      const configured = await NodeFSP.readFile(rootGradle, "utf8");
+      expect(configured).toBe(`${upstream}\n`);
+      await expect(NodeFSP.stat(policy)).rejects.toMatchObject({ code: "ENOENT" });
+      await configureAndroidNativeAbi(worktree);
+      expect(await NodeFSP.readFile(rootGradle, "utf8")).toBe(configured);
     } finally {
       await NodeFSP.rm(worktree, { recursive: true, force: true });
     }

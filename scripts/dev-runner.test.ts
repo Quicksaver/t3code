@@ -1,13 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
-// @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
 import * as NodeFS from "node:fs";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
@@ -101,23 +97,32 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     }
   });
 
-
   describe("createDevRunnerEnv", () => {
-
     it.effect.each(["dev", "dev:server", "dev:desktop"] as const)(
-      "keeps IPv4 development URLs and profile isolation in %s mode", (mode) =>
+      "keeps IPv4 development URLs and profile isolation in %s mode",
+      (mode) =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const env = yield* createDevRunnerEnv({
-            mode, baseEnv: { T3CODE_DESKTOP_USER_DATA_DIR: "inherited-profile" },
-            serverOffset: 0, webOffset: 0, t3Home: "/tmp/isolated-t3",
-            browser: undefined, autoBootstrapProjectFromCwd: undefined,
-            logWebSocketEvents: undefined, host: undefined, port: undefined, devUrl: undefined,
+            mode,
+            baseEnv: { T3CODE_DESKTOP_USER_DATA_DIR: "inherited-profile" },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: "/tmp/isolated-t3",
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
           });
           assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
           assert.equal(env.VITE_HTTP_URL, mode === "dev" ? undefined : "http://127.0.0.1:13773");
           assert.equal(env.VITE_WS_URL, mode === "dev" ? undefined : "ws://127.0.0.1:13773");
-          assert.equal(env.T3CODE_DESKTOP_USER_DATA_DIR, mode === "dev:desktop" ? path.resolve("/tmp/isolated-t3/userdata/electron") : undefined);
+          assert.equal(
+            env.T3CODE_DESKTOP_USER_DATA_DIR,
+            mode === "dev:desktop" ? path.resolve("/tmp/isolated-t3/userdata/electron") : undefined,
+          );
         }),
     );
 

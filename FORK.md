@@ -6,7 +6,7 @@
 
 ## Upstream Baseline
 
-The selected control boundary is `13aa882c22d584de5388dfce3b3ca413387ba059`. The active branch records below reflect completed source updates and PR assessments against that boundary. Local feature heads whose associated PRs are closed remain local rebuild inputs; a closed PR is not an inactive-branch marker.
+The selected control boundary is `66ee628e0875b2b735b199f42e6151e347833637`. Each branch record retains its own source and verification boundary. Local feature heads whose associated PRs are closed remain local rebuild inputs; a closed PR is not an inactive-branch marker.
 
 The fork integration boundary is the attached `base/main` control branch, with its Windows worktree at `E:\Projects\t3code.worktrees\base-main`. It advances only by fast-forward to the selected `upstream/main` commit. Each worktree update squashes the assigned branch, including `base/fork`, on its old upstream base, then rebases it onto that control commit while preserving upstream tracking. The completed branch carries one combined customization commit, in addition to follow-up fixes and documentation, directly above the control commit, or equals it if no customizations remain. Customization commits stay on their assigned branches.
 
@@ -94,8 +94,6 @@ Upstream seeds `statev2.sqlite` once by copying `state.sqlite`, ledger included,
 
 **Worktree branch:** `base/fork`
 
-The current local customization head before documentation reconciliation is `6afc328ec75ffd8d83b29d820b933f8f470a39c7`. Associated fork PR #2 remains closed and unmerged; publication and babysitting were skipped without pushing this local source. Focused automated proof and HIGH review reached 18/18 approval. Two Windows test failures were reproduced by executed same-host controls; no integrated UI or native installer execution is claimed.
-
 The compatibility implementations and focused regression tests live in `base/fork`, so rebuilding `main` carries them forward before feature branches are integrated.
 
 Historical V1 `thread.created` payloads with `parentRelation.kind = "subagent"` need no fork decoder. `apps/server/src/persistence/OrchestrationEventStore.ts` decodes only project events and version-2 thread events. The upstream legacy importer builds V2 conversations from projection tables, and compaction removes imported V1 rows without decoding their payloads.
@@ -180,11 +178,11 @@ vp test run packages/shared/src/devProxy.test.ts
 
 Mobile verification uses upstream's Device panel and the exact AgentDevice command and target arguments returned by `device_open`. Host-local mobile leases still cover native preparation, device interaction, Metro/backend lifetime, and teardown. Concurrent jobs select distinct devices and test their assigned checkout or exact-source remote snapshot.
 
-`mobile-native-client.ts ensure` owns native compatibility records and build selection. On Windows it resolves the selected emulator serial to an AVD name, then delegates the complete build to `worktree-android-build.ts`. The wrapper preserves the ordered install, clean prebuild, short CMake staging, hoisted dependency preparation, direct Expo build, and one bounded Ninja retry. Worktree-owned API 36 AVDs remain reusable and are opened through the Device panel.
+`mobile-native-client.ts ensure` owns native compatibility records and build selection. On Windows it resolves the selected emulator serial to an AVD name, then delegates the complete build to `worktree-android-build.ts`. The wrapper preserves the ordered install, clean prebuild, short CMake staging, hoisted dependency preparation, direct Expo build, and one bounded Ninja retry. Its clean prebuild uses upstream's `prebuildAndroid` helper to retain Gradle and native caches without preserving generated app build output. Worktree-owned API 36 AVDs remain reusable and are opened through the Device panel.
 
 On iOS, the native-client helper owns the simulator build/install and scoped temporary DerivedData. The Device panel owns streaming and screenshots. Pair through the mobile skill's deep-link helper; this avoids keyboard-layout changes to a typed host URL. On Windows the returned AgentDevice command is upstream's `.cmd` shim, which `cmd.exe` runs by re-parsing the whole command line, so an unquoted `&` in a deep-link query ends the command early; no batch-file change can prevent that. The pairing helper and any `&`-bearing argument therefore run the `agent-device-launcher.mjs` beside the shim with `node` instead. Close owned AgentDevice sessions and Device panels before releasing leases, and remove temporary source worktrees afterward.
 
-Android native builds constrain fbjni to the installed React Native catalog exposed by Expo, so a library's wildcard cannot select a binary incompatible with React Native's packaged C++ runtime. The policy contains no dependency version and follows catalog upgrades automatically. The Expo plugin applies it to normal and distribution builds; main's Windows wrapper copies the same policy into each target's generated Android project without modifying that feature branch. Native-client compatibility fingerprints include the wrapper's policy so an older APK cannot be reused after the policy changes.
+Android native builds use upstream's `withAndroidFbjniVersion.cjs` Expo plugin and its React Native version guard. The Windows wrapper detects that generated policy and removes any earlier fork fallback instead of adding a second ABI constraint. For older targets without the upstream plugin, the wrapper retains its catalog-derived Gradle fallback without changing target source. Native-client compatibility fingerprints include the fallback policy. The fork's former Expo ABI plugin is redundant and has been removed.
 
 Expo Widgets 58.0.20 supplies Windows drive-letter and UNC resolution through `path.win32.isAbsolute` and real-path handling for the layout-registry script entrypoint. Keep its upstream iOS widget patch; Windows builds need no fork resolver patch, entrypoint patch, or installed-package rewrite in `scripts/worktree-android-build.ts`.
 
