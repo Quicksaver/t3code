@@ -68,11 +68,15 @@ it("opens and updates panel presence without a render-phase loop", async () => {
   using _store = { [Symbol.dispose]: () => useRightPanelStore.setState(previous, true) };
   useRightPanelStore.setState({ byThreadKey: {} });
   await using screen = await render(<PanelPresenceFixture supported />);
-  await screen.getByRole("button", { name: "Toggle panel" }).click();
+  await screen.getByRole("button", { name: "Open Version Control" }).click();
   await expect
     .element(screen.getByRole("region", { name: "Panel" }))
     .toHaveTextContent("source-control");
   await screen.rerender(<PanelPresenceFixture supported={false} />);
+  await expect
+    .element(screen.getByRole("region", { name: "Panel" }))
+    .toHaveTextContent("No available surface");
+  await screen.getByRole("button", { name: "Open Version Control" }).click();
   await expect
     .element(screen.getByRole("region", { name: "Panel" }))
     .toHaveTextContent("No available surface");
