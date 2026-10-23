@@ -362,7 +362,7 @@ describe("worktree-runtime-slot", () => {
     const lockPath = `${stateFilePath}.lock`;
     await NodeFSP.mkdir(lockPath);
     await NodeFSP.writeFile(NodePath.join(lockPath, "owner"), "abandoned");
-    const staleAt = new Date(Date.now() - 1_000);
+    const staleAt = new Date("2000-01-01T00:00:00.000Z");
     await NodeFSP.utimes(lockPath, staleAt, staleAt);
 
     await manager.acquire("desktop", "/worktrees/recovered", "recovered-request");

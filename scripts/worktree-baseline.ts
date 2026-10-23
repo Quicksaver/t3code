@@ -23,6 +23,7 @@ const INFRASTRUCTURE_FAILURE_PATTERNS = [
   /ELIFECYCLE.*137/i,
   /JavaScript heap out of memory/i,
 ] as const;
+// oxlint-disable-next-line no-control-regex -- Failure signatures omit terminal ANSI escape sequences.
 const ANSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const WINDOWS_COMMAND_PROCESSOR = NodeProcess.env.ComSpec ?? "cmd.exe";
 

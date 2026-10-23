@@ -30,14 +30,6 @@ const makeGate = () => {
   return { open, promise };
 };
 
-const waitFor = async (predicate: () => boolean): Promise<void> => {
-  for (let attempts = 0; attempts < 100; attempts += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 2));
-  }
-  throw new Error("Condition was not reached.");
-};
-
 const isPayload = (value: unknown): value is { readonly result: string } =>
   typeof value === "object" &&
   value !== null &&
@@ -57,8 +49,10 @@ describe("worktree-baseline", () => {
     const cacheFilePath = makeCachePath();
     const gate = makeGate();
     let producerCalls = 0;
+    const producerStarted = makeGate();
     const create = async () => {
       producerCalls += 1;
+      producerStarted.open();
       await gate.promise;
       return { result: "baseline" } as const;
     };
@@ -76,7 +70,7 @@ describe("worktree-baseline", () => {
       pollIntervalMs: 2,
     });
 
-    await waitFor(() => producerCalls === 1);
+    await producerStarted.promise;
     gate.open();
 
     await expect(Promise.all([first, second])).resolves.toEqual([
@@ -102,20 +96,20 @@ describe("worktree-baseline", () => {
     const gate = makeGate();
     const reclaimPath = `${cacheFilePath}.lock.reclaim`;
     const reclamationChecks: boolean[] = [];
-    let producerStarted = false;
-    let waiterStarted = false;
+    const producerStarted = makeGate();
+    const waiterStarted = makeGate();
     const producer = ensureSingleFlightCache({
       cacheFilePath,
       isCachedValue: isPayload,
       create: async () => {
-        producerStarted = true;
+        producerStarted.open();
         await gate.promise;
         return { result: "baseline" };
       },
     });
     const pending = [producer];
     try {
-      await waitFor(() => producerStarted);
+      await producerStarted.promise;
       const waiter = ensureSingleFlightCache({
         cacheFilePath,
         isCachedValue: isPayload,
@@ -126,7 +120,7 @@ describe("worktree-baseline", () => {
         },
         logger: {
           log: () => {
-            waiterStarted = true;
+            waiterStarted.open();
           },
         },
         create: async () => {
@@ -134,7 +128,7 @@ describe("worktree-baseline", () => {
         },
       });
       pending.push(waiter);
-      await waitFor(() => waiterStarted);
+      await waiterStarted.promise;
       expect(reclamationChecks.length).toBeGreaterThan(0);
       expect(reclamationChecks).not.toContain(true);
     } finally {
@@ -177,20 +171,20 @@ describe("worktree-baseline", () => {
     const secondPath = makeCachePath();
     const lockPath = `${firstPath}.lock`;
     const gate = makeGate();
-    let firstStarted = false;
-    let secondWaiting = false;
+    const firstStarted = makeGate();
+    const secondWaiting = makeGate();
     let secondStarted = false;
     const first = ensureSingleFlightCache({
       cacheFilePath: firstPath,
       lockPath,
       isCachedValue: isPayload,
       create: async () => {
-        firstStarted = true;
+        firstStarted.open();
         await gate.promise;
         return { result: "first failed" };
       },
     });
-    await waitFor(() => firstStarted);
+    await firstStarted.promise;
     const second = ensureSingleFlightCache({
       cacheFilePath: secondPath,
       lockPath,
@@ -198,7 +192,7 @@ describe("worktree-baseline", () => {
       pollIntervalMs: 2,
       logger: {
         log: () => {
-          secondWaiting = true;
+          secondWaiting.open();
         },
       },
       create: async () => {
@@ -206,7 +200,7 @@ describe("worktree-baseline", () => {
         return { result: "second passed" };
       },
     });
-    await waitFor(() => secondWaiting);
+    await secondWaiting.promise;
     expect(secondStarted).toBe(false);
     gate.open();
     await expect(Promise.all([first, second])).resolves.toEqual([
