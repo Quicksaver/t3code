@@ -14,6 +14,7 @@ import {
   isNinjaDirtyManifestFailure,
   removeScopedAndroidCmakeState,
   resolveExpoCliFromMobile,
+  prebuildAndroidWithCaches,
 } from "./worktree-android-build.ts";
 
 const result = (exitCode: number, ninjaManifestDirty = false) => ({
@@ -99,28 +100,46 @@ describe("worktree-android-build", () => {
     }
   });
 
-  it("defers to the target's upstream ABI policy and removes a previous fallback", async () => {
+  it("adds no fallback when the target already has upstream's ABI policy", async () => {
     const worktree = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-upstream-abi-"));
     const android = NodePath.join(worktree, "apps", "mobile", "android");
     const rootGradle = NodePath.join(android, "build.gradle");
     const policy = NodePath.join(android, "t3-react-native-abi.gradle");
     const upstream =
-      "// Added by withAndroidFbjniVersion: keep fbjni on the version React Native ships against.\nallprojects { configurations.all { resolutionStrategy.force 'com.facebook.fbjni:fbjni:0.7.0' } }\n";
+      "// withAndroidFbjniVersion\nallprojects { configurations.all { resolutionStrategy.force 'com.facebook.fbjni:fbjni:0.7.0' } }\n";
     try {
       await NodeFSP.mkdir(android, { recursive: true });
-      await NodeFSP.writeFile(
-        rootGradle,
-        `${upstream}\napply from: file("t3-react-native-abi.gradle")`,
-      );
-      await NodeFSP.writeFile(policy, "// previous fallback");
+      await NodeFSP.writeFile(rootGradle, upstream);
       await configureAndroidNativeAbi(worktree);
       const configured = await NodeFSP.readFile(rootGradle, "utf8");
-      expect(configured).toBe(`${upstream}\n`);
+      expect(configured).toBe(upstream);
       await expect(NodeFSP.stat(policy)).rejects.toMatchObject({ code: "ENOENT" });
       await configureAndroidNativeAbi(worktree);
       expect(await NodeFSP.readFile(rootGradle, "utf8")).toBe(configured);
     } finally {
       await NodeFSP.rm(worktree, { recursive: true, force: true });
+    }
+  });
+
+  it("restores prebuild caches and preserves the original failure diagnostics", async () => {
+    const mobile = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-prebuild-error-"));
+    const android = NodePath.join(mobile, "android");
+    const cache = NodePath.join(android, ".gradle", "history");
+    const failure = new Error("Expo clean prebuild failed with exit code 1.\nNative diagnostic");
+    try {
+      await NodeFSP.mkdir(NodePath.dirname(cache), { recursive: true });
+      await NodeFSP.writeFile(cache, "cached");
+      await expect(
+        prebuildAndroidWithCaches(mobile, async () => {
+          await NodeFSP.rm(android, { recursive: true });
+          await NodeFSP.mkdir(android);
+          throw failure;
+        }),
+      ).rejects.toBe(failure);
+      expect(await NodeFSP.readFile(cache, "utf8")).toBe("cached");
+      expect(await NodeFSP.readdir(mobile)).toEqual(["android"]);
+    } finally {
+      await NodeFSP.rm(mobile, { recursive: true, force: true });
     }
   });
 

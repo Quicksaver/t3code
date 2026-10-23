@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - Tests exercise standalone filesystem coordination.
+// @effect-diagnostics nodeBuiltinImport:off - Tests exercise standalone filesystem coordination.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";

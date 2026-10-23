@@ -222,7 +222,7 @@ const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: N
     ?.split("=")[1];
   if (!hash || !/^[a-f0-9]{40,64}$/.test(hash))
     return yield* new NativeClientError({ message: "Expo did not return a native fingerprint." });
-  // Main's Windows build policy also applies to branches that do not contain its Expo plugin.
+  // The Windows wrapper applies this fallback to targets without upstream's fbjni plugin.
   if (platform === "android" && (yield* HostProcess.Platform) === "win32") {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
