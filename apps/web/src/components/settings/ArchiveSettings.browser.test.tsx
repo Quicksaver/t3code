@@ -337,7 +337,7 @@ describe("ArchivedThreadsPanel", () => {
       },
     ];
     await using screen = await renderArchive();
-    await screen.getByRole("textbox", { name: "Search archived conversations" }).fill("Archived");
+    await screen.getByRole("searchbox", { name: "Search archived conversations" }).fill("Archived");
     expect(screen.container.textContent?.match(/just now/g)).toHaveLength(2);
 
     await act(() => vi.advanceTimersByTime(60_000));
