@@ -206,6 +206,7 @@ it.effect("retries a partial project deletion without repeating child events or 
           [firstThreadId, "preview.cleanup"],
           [firstThreadId, "scheduled-tasks.cleanup"],
           [firstThreadId, "terminal.cleanup"],
+          [firstThreadId, "thread.storage-purge"],
         ],
       );
 
@@ -255,6 +256,12 @@ it.effect("retries a partial project deletion without repeating child events or 
               thread_id: threadId,
               command_id: expectedCommandId,
               effect_type: "terminal.cleanup",
+            },
+            {
+              effect_id: `effect:${expectedCommandId}:thread.storage-purge`,
+              thread_id: threadId,
+              command_id: expectedCommandId,
+              effect_type: "thread.storage-purge",
             },
           ],
         );

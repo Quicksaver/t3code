@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 
 /**
  * Live command output.
@@ -139,6 +140,7 @@ function setBounded<V>(
 export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const coldStorage = yield* ThreadColdStorage.ThreadColdStorage;
   // Insertion order doubles as recency: every write re-inserts its entry.
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
@@ -249,7 +251,7 @@ export const make = Effect.gen(function* () {
             ),
             Effect.forkScoped,
           );
-        const item = yield* projections.getTurnItem(target);
+        const item = yield* coldStorage.withHot(target.threadId, projections.getTurnItem(target));
         // Only command rows have output; anything else would hold a subscription open forever.
         if (item === null || item.type !== "command_execution") {
           return yield* new OrchestrationV2CommandOutputError({

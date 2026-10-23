@@ -72,8 +72,12 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) {
-    const item = yield* orchestrator
-      .getTurnItem({ threadId: input.threadId, itemId: input.itemId })
+    // The stored item, not the wire projection, so the reference is intact.
+    const item = yield* threadManagement
+      .withThreadReadable(
+        input.threadId,
+        orchestrator.getTurnItem({ threadId: input.threadId, itemId: input.itemId }),
+      )
       .pipe(Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)));
     const app: McpAppReference | undefined =
       item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
