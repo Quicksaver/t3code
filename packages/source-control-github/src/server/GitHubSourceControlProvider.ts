@@ -67,6 +67,7 @@ import {
   PullRequestByNumber,
   PullRequestNode,
   PullRequestsByHead,
+  RepositoryPullRequests,
 } from "./sourceControlProvider.graphql.ts";
 
 /**
@@ -82,6 +83,17 @@ const LenientPullRequestsByHead = GraphQL.query(PullRequestsByHead.name, {
     repository: Schema.NullOr(
       Schema.Struct({
         pullRequests: Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.Unknown)) }),
+      }),
+    ),
+  }),
+});
+const LenientRepositoryPullRequests = GraphQL.query(RepositoryPullRequests.name, {
+  document: RepositoryPullRequests.template!,
+  variables: RepositoryPullRequests.variables,
+  result: Schema.Struct({
+    repository: Schema.NullOr(
+      Schema.Struct({
+        history: Schema.Struct({ nodes: Schema.NullOr(Schema.Array(Schema.Unknown)) }),
       }),
     ),
   }),
@@ -368,6 +380,13 @@ function repositoryCloneUrls(
 }
 
 const decodeViewerLogin = decodeJsonResult(Schema.Struct({ login: TrimmedNonEmptyString }));
+const decodeCommitAuthor = decodeJsonResult(
+  Schema.Struct({
+    author: Schema.NullOr(
+      Schema.Struct({ avatar_url: Schema.optional(Schema.NullOr(Schema.String)) }),
+    ),
+  }),
+);
 
 type PullRequestListState = "open" | "closed" | "merged" | "all";
 
@@ -505,9 +524,11 @@ export const make = Effect.gen(function* () {
   );
 
   const client = yield* GraphQLClient.make(
-    GraphQLGroup.make(LenientPullRequestsByHead, PullRequestByNumber).middleware(
-      GitHubGraphQlClient.GitHubGraphQlAuth,
-    ),
+    GraphQLGroup.make(
+      LenientPullRequestsByHead,
+      PullRequestByNumber,
+      LenientRepositoryPullRequests,
+    ).middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
   ).pipe(Effect.provide(GitHubGraphQlClient.layer));
 
   /**
@@ -530,6 +551,49 @@ export const make = Effect.gen(function* () {
 
   const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
+
+  // History and avatars belong to the selected remote, not gh's default PR repository.
+  const panelRepository = (input: {
+    readonly cwd: string;
+    readonly context?: SourceControlProvider.SourceControlProviderContext;
+  }) => {
+    if (!input.context) return resolveRepository(input);
+    const remote = normalizeGitRemoteUrl(input.context.remoteUrl);
+    const locator = parseGitHubRepositorySelector(
+      remote.slice(remote.indexOf("/") + 1),
+      contextHost(input.context) ?? "github.com",
+    );
+    return locator === null
+      ? Effect.fail(failure("The selected GitHub repository could not be resolved."))
+      : Effect.succeed(locator);
+  };
+
+  const listRepositoryHistory = Effect.fn("GitHubSourceControlProvider.listRepositoryHistory")(
+    function* (
+      input: Parameters<
+        SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"]
+      >[0],
+      allowReserve: boolean,
+    ) {
+      const locator = yield* panelRepository(input);
+      const decoded = yield* graphqlRead(
+        { host: locator.host, operation: "listRepositoryHistory", allowReserve },
+        "GitHub returned an invalid change request list.",
+        client.RepositoryPullRequests({
+          owner: locator.owner,
+          name: locator.name,
+          states: GRAPHQL_STATES[input.state],
+          limit: Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 100),
+        }),
+      );
+      if (decoded.repository === null) return yield* notFound("The repository could not be read.");
+      return (decoded.repository.history.nodes ?? []).flatMap((entry) => {
+        const node = Option.getOrNull(decodePullRequestNode(entry));
+        const record = node === null ? null : toPullRequestRecord(node);
+        return record === null ? [] : [record];
+      });
+    },
+  );
 
   /**
    * Head lookups to one host under one credential share aliased documents: the resolver batches by
@@ -905,20 +969,42 @@ export const make = Effect.gen(function* () {
     listChangeRequests: (input) =>
       (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
         Effect.flatMap((allowReserve) =>
-          listByHead({
-            cwd: input.cwd,
-            headSelector: input.headSelector,
-            state: input.state,
-            limit: input.limit ?? (input.state === "open" ? 1 : 20),
-            host: contextHost(input.context),
-            context: input.context,
-            allowReserve,
-          }),
+          input.headSelector
+            ? listByHead({
+                cwd: input.cwd,
+                headSelector: input.headSelector,
+                state: input.state,
+                limit: input.limit ?? (input.state === "open" ? 1 : 20),
+                host: contextHost(input.context),
+                context: input.context,
+                allowReserve,
+              })
+            : listRepositoryHistory(input, allowReserve),
         ),
         Effect.map((records) => records.map(toChangeRequest)),
         Effect.mapError(
-          providerError("listChangeRequests", input.cwd, { reference: input.headSelector }),
+          providerError(
+            "listChangeRequests",
+            input.cwd,
+            input.headSelector === undefined ? {} : { reference: input.headSelector },
+          ),
         ),
+      ),
+    getCommitAvatarUrl: (input) =>
+      Effect.gen(function* () {
+        const locator = yield* panelRepository(input);
+        const response = yield* rest({
+          host: locator.host,
+          operation: "getCommitAvatarUrl",
+          path: `repos/${locator.owner}/${locator.name}/commits/${encodeURIComponent(input.sha)}`,
+        });
+        const decoded = decodeCommitAuthor(response.body);
+        if (Result.isFailure(decoded)) {
+          return yield* failure("GitHub returned an invalid commit author.", decoded.failure);
+        }
+        return decoded.success.author?.avatar_url?.trim() || null;
+      }).pipe(
+        Effect.mapError(providerError("getCommitAvatarUrl", input.cwd, { reference: input.sha })),
       ),
     getChangeRequest: (input) =>
       readPullRequest({ ...input, host: contextHost(input.context) }).pipe(

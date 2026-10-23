@@ -83,7 +83,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
-  /** Absent on servers from before inline context shipped, which drop the records and forward
+  /** Server exposes the Version Control panel's `vcs.panel.*` APIs. Absent on servers from
+      before the panel shipped, so clients must not probe them. */
+  sourceControlPanel: Schema.optionalKey(Schema.Boolean),
+  /** Server understands canonical inline context links plus their message context records.
+      Absent on servers from before inline context shipped, which drop the records and forward  /** Absent on servers from before inline context shipped, which drop the records and forward
       the links as literal text -- so a client must serialize context the legacy way for them. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   requiredWorktreeBootstrap: Schema.optionalKey(Schema.Boolean),

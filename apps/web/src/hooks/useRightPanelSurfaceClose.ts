@@ -1,10 +1,10 @@
-import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
-import { terminalEnvironment } from "../state/terminal";
 import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
+  type EnvironmentId,
 } from "@t3tools/contracts";
+import { terminalEnvironment } from "../state/terminal";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
@@ -13,6 +13,7 @@ import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
+  terminalTargetThreadRef,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -34,7 +35,6 @@ export function useRightPanelSurfaceClose(input: {
   readonly terminalLabelsById: ReadonlyMap<string, string>;
 }) {
   const { threadRef, terminalLabelsById } = input;
-  const closeRemoteTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const canOperatePreview = useEnvironmentScope(
     threadRef?.environmentId ?? null,
@@ -42,6 +42,7 @@ export function useRightPanelSurfaceClose(input: {
   );
   const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
@@ -62,24 +63,19 @@ export function useRightPanelSurfaceClose(input: {
     if (
       surface.kind === "terminal" &&
       readEnvironmentScope(
-        surface.actionTarget?.environmentId ?? ref.environmentId,
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? ref.environmentId,
         AuthTerminalOperateScope,
       )
     ) {
       for (const terminalId of surface.terminalIds) {
-        if (surface.actionTarget) {
-          void closeRemoteTerminal({
-            environmentId: surface.actionTarget.environmentId,
-            input: {
-              threadId: projectActionThreadId(surface.actionTarget),
-              terminalId,
-              deleteHistory: true,
-            },
+        const destination = terminalTargetThreadRef(ref, surface.target);
+        storeCloseTerminal(destination, terminalId);
+        if (surface.target)
+          void closeTerminal({
+            environmentId: destination.environmentId,
+            input: { threadId: destination.threadId, terminalId, deleteHistory: true },
           });
-        } else {
-          storeCloseTerminal(ref, terminalId);
-          terminalActions.closeTerminalSession(terminalId);
-        }
+        else terminalActions.closeTerminalSession(terminalId);
       }
     }
   };
@@ -137,7 +133,7 @@ export function useRightPanelSurfaceClose(input: {
     if (
       surface.kind !== "terminal" ||
       !readEnvironmentScope(
-        surface.actionTarget?.environmentId ?? threadRef.environmentId,
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId,
         AuthTerminalOperateScope,
       )
     ) {
@@ -146,13 +142,12 @@ export function useRightPanelSurfaceClose(input: {
     }
     const otherLabels = surface.terminalIds
       .filter((terminalId) => terminalId !== surface.activeTerminalId)
-      .map((id) => surface.actionTarget?.label ?? labelFor(id));
-    void confirmTerminalClose([
-      surface.actionTarget?.label ?? labelFor(surface.activeTerminalId),
-      ...otherLabels,
-    ]).then((confirmed) => {
-      if (confirmed) finishClose([surface]);
-    });
+      .map(labelFor);
+    void confirmTerminalClose([labelFor(surface.activeTerminalId), ...otherLabels]).then(
+      (confirmed) => {
+        if (confirmed) finishClose([surface]);
+      },
+    );
   });
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
     closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),

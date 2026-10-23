@@ -1,4 +1,6 @@
+import { mergePanelChangeGroups, panelBranchPushTargetSha } from "./sourceControl.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import type { VcsPanelSnapshotResult, VcsRef } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -168,4 +170,148 @@ it("keeps a GitLab identity's whole path, because a nested group is part of the 
     name: "service",
   });
   expect(selector).toBe("group/subgroup/service");
+});
+
+describe("mergePanelChangeGroups", () => {
+  it("sums staged and unstaged stats for the same path", () => {
+    expect(
+      mergePanelChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 2,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          kind: "unstaged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 3,
+              deletions: 4,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/file.ts",
+        originalPath: null,
+        status: "modified",
+        insertions: 5,
+        deletions: 5,
+        hasStagedChanges: true,
+        hasUnstagedChanges: true,
+        hasConflicts: false,
+      },
+    ]);
+  });
+
+  it("preserves status precedence and conflict flags when merging paths", () => {
+    expect(
+      mergePanelChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 1,
+              deletions: 0,
+            },
+          ],
+        },
+        {
+          kind: "conflicts",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "conflicted",
+              insertions: 0,
+              deletions: 2,
+            },
+            {
+              path: "src/áudio.ts",
+              originalPath: null,
+              status: "added",
+              insertions: 3,
+              deletions: 0,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/áudio.ts",
+        originalPath: null,
+        status: "added",
+        insertions: 3,
+        deletions: 0,
+        hasStagedChanges: false,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+      {
+        path: "src/cafe.ts",
+        originalPath: null,
+        status: "conflicted",
+        insertions: 1,
+        deletions: 2,
+        hasStagedChanges: true,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+    ]);
+  });
+});
+
+describe("panelBranchPushTargetSha", () => {
+  const featureSha = "1".repeat(40);
+  const forkSha = "2".repeat(40);
+  const remote = (name: string, sha: string): VcsPanelSnapshotResult["remotes"][number] => ({
+    name,
+    fetchUrl: null,
+    pushUrl: null,
+    provider: null,
+    branches: [
+      { name: "feature", fullRefName: `${name}/feature`, isDefaultRemoteHead: false, sha },
+    ],
+  });
+  const snapshot = {
+    status: { hasUpstream: false },
+    remotes: [remote("origin", featureSha), remote("fork", forkSha)],
+  } as unknown as VcsPanelSnapshotResult;
+  const branch: VcsRef = {
+    name: "feature",
+    current: false,
+    isDefault: false,
+    worktreePath: null,
+    upstreamName: "origin/feature",
+    upstreamRemoteName: "origin",
+  };
+
+  it("reads the same-name upstream tip the snapshot showed", () => {
+    expect(panelBranchPushTargetSha(branch, snapshot)).toBe(featureSha);
+  });
+
+  it("reads the chosen publish remote's same-name branch", () => {
+    expect(panelBranchPushTargetSha(branch, snapshot, "fork")).toBe(forkSha);
+  });
+
+  it("returns nothing without a known push target", () => {
+    expect(
+      panelBranchPushTargetSha({ ...branch, upstreamName: "origin/main" }, snapshot),
+    ).toBeUndefined();
+    expect(panelBranchPushTargetSha(branch, snapshot, "missing")).toBeUndefined();
+  });
 });

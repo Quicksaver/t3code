@@ -17,6 +17,24 @@ const COLLISION_PADDING = 5;
 
 const TooltipProvider = TooltipPrimitive.Provider;
 
+type TooltipProps<Payload> = TooltipPrimitive.Root.Props<Payload> & {
+  preserveOnNestedTriggerHover?: boolean;
+};
+
+function hasHoveredNestedTooltipTrigger(parentTrigger: Element | null, target: EventTarget | null) {
+  if (!parentTrigger) return false;
+  if (!target || typeof (target as Element).closest !== "function") {
+    return parentTrigger.querySelector('[data-slot="tooltip-trigger"]:hover') !== null;
+  }
+  const nestedTrigger = (target as Element).closest<HTMLElement>('[data-slot="tooltip-trigger"]');
+  return (
+    nestedTrigger !== null &&
+    nestedTrigger !== parentTrigger &&
+    parentTrigger.contains(nestedTrigger) &&
+    nestedTrigger.matches(":hover")
+  );
+}
+
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
 // Context values are frozen to the compiler, so consumers update the hovered
@@ -61,21 +79,37 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
   );
 }
 
-function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
+function Tooltip<Payload>({
+  preserveOnNestedTriggerHover = false,
+  ...props
+}: TooltipProps<Payload>) {
+  const triggerRef = useRef<Element | null>(null);
   const tracker = use(TooltipScrollContext);
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;
   useEffect(() => () => tracker?.release(actionsRef), [actionsRef, tracker]);
 
-  if (!tracker) return <TooltipPrimitive.Root {...props} />;
+  if (!tracker && !preserveOnNestedTriggerHover) return <TooltipPrimitive.Root {...props} />;
   return (
     <TooltipHoverContext value={actionsRef}>
       <TooltipPrimitive.Root
         {...props}
         actionsRef={actionsRef}
         onOpenChange={(open, details) => {
+          if (open && details.trigger) triggerRef.current = details.trigger;
+          if (
+            !open &&
+            preserveOnNestedTriggerHover &&
+            hasHoveredNestedTooltipTrigger(triggerRef.current, details.event.target)
+          ) {
+            details.cancel();
+            return;
+          }
           props.onOpenChange?.(open, details);
-          if (!open && !details.isCanceled) tracker.release(actionsRef);
+          if (!open && !details.isCanceled) {
+            triggerRef.current = null;
+            tracker?.release(actionsRef);
+          }
         }}
       />
     </TooltipHoverContext>
@@ -116,6 +150,14 @@ function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
     />
   );
 }
+type TooltipPopupProps = TooltipPrimitive.Popup.Props & {
+  align?: TooltipPrimitive.Positioner.Props["align"];
+  side?: TooltipPrimitive.Positioner.Props["side"];
+  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
+  /** `code` renders monospace content that breaks anywhere, for paths and commands. */
+  variant?: "default" | "glass" | "code";
+  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
+};
 
 function TooltipPopup({
   className,
@@ -126,13 +168,7 @@ function TooltipPopup({
   anchor,
   children,
   ...props
-}: TooltipPrimitive.Popup.Props & {
-  align?: TooltipPrimitive.Positioner.Props["align"];
-  side?: TooltipPrimitive.Positioner.Props["side"];
-  sideOffset?: TooltipPrimitive.Positioner.Props["sideOffset"];
-  variant?: "default" | "glass" | "code";
-  anchor?: TooltipPrimitive.Positioner.Props["anchor"];
-}) {
+}: TooltipPopupProps) {
   return (
     <TooltipPrimitive.Portal>
       <TooltipPositioner align={align} anchor={anchor} side={side} sideOffset={sideOffset}>
@@ -162,4 +198,11 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea };
+export {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipScrollDismissArea,
+  hasHoveredNestedTooltipTrigger,
+};

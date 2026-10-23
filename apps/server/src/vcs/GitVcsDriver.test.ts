@@ -1,3 +1,4 @@
+import { ChildProcessSpawner } from "effect/process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -1017,3 +1018,46 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("GitVcsDriver applies subcommand-aware default timeouts", () => {
+  const calls: VcsProcess.VcsProcessInput[] = [];
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    yield* driver.execute({ operation: "test.status", cwd: "/repo", args: ["status"] });
+    yield* driver.execute({ operation: "test.fetch", cwd: "/repo", args: ["fetch", "origin"] });
+    yield* driver.execute({ operation: "test.push", cwd: "/repo", args: ["push", "origin"] });
+    yield* driver.execute({ operation: "test.pull", cwd: "/repo", args: ["pull", "--ff-only"] });
+    yield* driver.execute({
+      operation: "test.explicit",
+      cwd: "/repo",
+      args: ["fetch", "origin"],
+      timeoutMs: 5_000,
+    });
+
+    assert.deepStrictEqual(
+      calls.map((call) => call.timeoutMs),
+      [30_000, 300_000, 300_000, 300_000, 5_000],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return {
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
+            }),
+        }),
+      ),
+    ),
+  );
+});

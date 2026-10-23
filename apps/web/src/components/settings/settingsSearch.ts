@@ -820,6 +820,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "git-fetch-interval",
     title: "Git fetch interval",
     to: "/settings/source-control",
+    // Discovery-dependent controls live inside collapsible VCS rows. The
+    // section is the stable destination even when Git has not been detected.
+    targetId: "source-control",
     searchTerms: [
       "automatic remote branch refresh background credentials security keys seconds off",
     ],
@@ -845,6 +848,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
+  {
+    id: "all-remotes-fetch-interval",
+    title: "Version Control all remotes interval",
+    to: "/settings/source-control",
+    targetId: "source-control",
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "commit-author-avatars",
+    title: "Commit author avatars",
+    to: "/settings/source-control",
+    // Provider rows are discovery-dependent and may be collapsed.
+    targetId: "source-control",
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
   {
     id: "source-control-writing-style",
     title: "Source control writing style",

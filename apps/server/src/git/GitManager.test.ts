@@ -1,3 +1,12 @@
+import * as GitHubSourceControlProvider from "@t3tools/source-control-github/server/GitHubSourceControlProvider";
+import * as Redacted from "effect/Redacted";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitHubRequestPolicy from "@t3tools/source-control-github/server/GitHubRequestPolicy";
+import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
+import { TestClock } from "effect/testing";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
@@ -64,7 +73,10 @@ import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
 } from "@t3tools/source-control-forgejo/server/forgejoPullRequests";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -603,8 +615,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
               args: [
                 "pr",
                 "list",
-                "--head",
-                input.headSelector,
+                ...(input.headSelector === undefined ? [] : ["--head", input.headSelector]),
                 "--state",
                 "open",
                 "--limit",
@@ -627,8 +638,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
               args: [
                 "pr",
                 "list",
-                "--head",
-                input.headSelector,
+                ...(input.headSelector === undefined ? [] : ["--head", input.headSelector]),
                 "--state",
                 input.state,
                 "--limit",
@@ -699,6 +709,7 @@ function createGitHubProviderWithFakeGh(scenario: FakeGhScenario = {}): {
           cwd: input.cwd,
           args: ["repo", "view", input.repository, "--json", "nameWithOwner,url,sshUrl"],
         }).pipe(Effect.map((result) => JSON.parse(result.stdout))),
+      getCommitAvatarUrl: () => Effect.succeed(null),
       createRepository: (input) =>
         Effect.fail(fail(input.cwd, `Unexpected repository create: ${input.repository}`)),
       checkoutChangeRequest: (input) =>
@@ -743,6 +754,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -842,7 +854,21 @@ function makeManager(input?: {
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+          resolve: () =>
+            Effect.succeed(
+              input?.sourceControlContext
+                ? {
+                    ...provider,
+                    listChangeRequests: (request) =>
+                      provider.listChangeRequests({
+                        ...request,
+                        ...(input.sourceControlContext
+                          ? { context: input.sourceControlContext }
+                          : {}),
+                      }),
+                  }
+                : provider,
+            ),
           discover: Effect.succeed([]),
         }),
       ),
@@ -1224,6 +1250,221 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         updatedAt: "2026-04-08T15:00:00.000Z",
       });
     }),
+  );
+
+  it.effect(
+    "automatic branch PR discovery lets gh select the target instead of forcing origin",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/upstream-pr"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/upstream-pr"]);
+        const { manager, ghCalls } = yield* makeManager({
+          sourceControlContext: {
+            provider: {
+              kind: SourceControlProviderKind.make("github"),
+              name: "GitHub",
+              baseUrl: "https://github.com",
+            },
+            remoteName: "origin",
+            remoteUrl: "https://github.com/my-fork/t3code.git",
+          },
+          ghScenario: {
+            prListSequence: [
+              encodeCliJson([
+                {
+                  number: 12712,
+                  title: "PR in the upstream repository",
+                  url: "https://github.com/pingdotgg/t3code/pull/12712",
+                  baseRefName: "main",
+                  headRefName: "feature/upstream-pr",
+                  state: "OPEN",
+                  updatedAt: "2026-09-28T12:00:00Z",
+                },
+              ]),
+            ],
+          },
+        });
+        const first = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/upstream-pr",
+        });
+        const second = yield* manager.branchPullRequest({
+          cwd: repoDir,
+          branch: "feature/upstream-pr",
+        });
+        expect(first).toMatchObject({
+          number: 12712,
+          repositoryKey: "github.com/pingdotgg/t3code",
+        });
+        expect(second).toEqual(first);
+        const lookups = ghCalls.filter((call) => call.startsWith("pr list "));
+        expect(lookups).toHaveLength(1);
+        expect(lookups[0]).toContain("--head feature/upstream-pr");
+        expect(lookups[0]).not.toContain("--repo");
+      }),
+  );
+
+  it.effect("automatic branch PR discovery batches concurrent heads on the context's host", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branches = ["feature/a", "feature/b"];
+      for (const branch of branches) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      const remoteUrl = "git@enterprise.test:acme/web.git";
+      yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "origin", remoteUrl, remoteDir);
+
+      const ghCommands: Array<ReadonlyArray<string>> = [];
+      const headDocuments: Array<{ host: string | undefined; heads: unknown[] }> = [];
+      const gitHubCliHost = TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git") {
+              if (input.args[0] !== "remote") {
+                return Effect.succeed({
+                  ...fakeGhOutput(""),
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                });
+              }
+              return Effect.succeed(
+                fakeGhOutput(`origin\t${remoteUrl} (fetch)\norigin\t${remoteUrl} (push)\n`),
+              );
+            }
+            ghCommands.push(input.args);
+            return Effect.succeed({
+              ...fakeGhOutput(""),
+              exitCode: ChildProcessSpawner.ExitCode(1),
+            });
+          },
+        },
+      });
+      const apiLayer = Layer.mock(GitHubRest.GitHubRest)({
+        rest: () =>
+          Effect.succeed({
+            status: 200,
+            headers: {},
+            body: encodeCliJson({ fork: false }),
+            truncated: false,
+            invalidUtf8: false,
+          }),
+      });
+      const graphql = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const sent =
+            request.body._tag === "Uint8Array"
+              ? (JSON.parse(new TextDecoder().decode(request.body.body)) as {
+                  variables: Record<string, unknown>;
+                })
+              : { variables: {} };
+          const prefixes = [
+            ...new Set(Object.keys(sent.variables).flatMap((key) => /^_\d+_/.exec(key) ?? [])),
+          ];
+          const lookups = prefixes.length ? prefixes : [""];
+          headDocuments.push({
+            host: new URL(request.url).host,
+            heads: lookups.map((prefix) => sent.variables[`${prefix}head`]).toSorted(),
+          });
+          const data = Object.fromEntries(
+            lookups.map((prefix) => {
+              const headRefName = String(sent.variables[`${prefix}head`]);
+              const number = branches.indexOf(headRefName) + 1;
+              return [
+                `${prefix}repository`,
+                {
+                  pullRequests: {
+                    nodes: [
+                      {
+                        number,
+                        title: `PR for ${headRefName}`,
+                        url: `https://enterprise.test/acme/web/pull/${number}`,
+                        baseRefName: "main",
+                        headRefName,
+                        headRefOid: "a".repeat(40),
+                        state: "OPEN",
+                        isDraft: false,
+                        mergedAt: null,
+                        closedAt: null,
+                        updatedAt: "2026-10-01T00:00:00Z",
+                        isCrossRepository: false,
+                        headRepository: { name: "web", nameWithOwner: "acme/web" },
+                        headRepositoryOwner: { __typename: "User", login: "acme" },
+                      },
+                    ],
+                  },
+                },
+              ];
+            }),
+          );
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeCliJson({ data }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      );
+      const policy = GitHubRequestPolicy.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(GitHubCredentials.GitHubCredentials, {
+              get: (host) =>
+                Effect.succeed({
+                  host,
+                  token: Redacted.make("token"),
+                  source: "gh" as const,
+                  fingerprint: `${host}:token`,
+                }),
+              invalidate: () => Effect.void,
+            }),
+            GitHubQuota.layer,
+            SourceControlRateLimit.layer,
+          ),
+        ),
+      );
+      const provider = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            gitHubCliHost,
+            apiLayer,
+            policy,
+            Layer.succeed(HttpClient.HttpClient, graphql),
+            Layer.succeed(HostProcess.Environment, {}),
+            NodeServices.layer,
+          ),
+        ),
+      );
+      const { manager } = yield* makeManager({
+        sourceControlProvider: provider,
+        sourceControlContext: {
+          provider: {
+            kind: SourceControlProviderKind.make("github"),
+            name: "GitHub Enterprise",
+            baseUrl: "https://enterprise.test",
+          },
+          remoteName: "origin",
+          remoteUrl,
+        },
+      });
+
+      const pullRequests = yield* Effect.forEach(
+        branches,
+        (branch) => manager.branchPullRequest({ cwd: repoDir, branch }),
+        { concurrency: "unbounded" },
+      );
+
+      expect(pullRequests.map((pr) => pr?.number)).toEqual([1, 2]);
+      expect(headDocuments).toEqual([{ host: "enterprise.test", heads: branches }]);
+      expect(ghCommands.filter((args) => args[0] === "pr")).toEqual([]);
+      // The head lookup window runs on the real clock.
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("branch PR lookup uses the saved name after the local branch is deleted", () =>
@@ -5410,6 +5651,86 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           label: "Creating pull request...",
         }),
       ]);
+    }),
+  );
+  it.effect("status can omit provider-backed PR lookup while retaining remote sync state", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/panel-status"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/panel-status"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 19,
+                title: "Panel PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/19",
+                baseRefName: "main",
+                headRefName: "feature/panel-status",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir }, { includePullRequest: false });
+
+      expect(status.hasUpstream).toBe(true);
+      expect(status.aheadCount).toBe(0);
+      expect(status.behindCount).toBe(0);
+      expect(status.pr).toBeNull();
+      expect(ghCalls).toHaveLength(0);
+    }),
+  );
+
+  it.effect("PR-less remote status reads through its own cache until invalidated", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/panel-cache"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/panel-cache"]);
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 21,
+                title: "Panel cache PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/21",
+                baseRefName: "main",
+                headRefName: "feature/panel-cache",
+              },
+            ]),
+          ],
+        },
+      });
+      const readSyncState = manager.remoteStatus({ cwd: repoDir }, { includePullRequest: false });
+
+      expect((yield* readSyncState)?.aheadCount).toBe(0);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "panel.txt"), "panel\n");
+      yield* runGit(repoDir, ["add", "panel.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Panel change"]);
+      expect((yield* readSyncState)?.aheadCount).toBe(0);
+      expect(ghCalls).toHaveLength(0);
+
+      yield* manager.invalidateRemoteStatus(repoDir);
+      expect(yield* readSyncState).toMatchObject({ aheadCount: 1, pr: null });
+      expect(ghCalls).toHaveLength(0);
+      // A PR-less read never stands in for a caller that wants the PR.
+      expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(21);
     }),
   );
 });

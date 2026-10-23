@@ -74,7 +74,7 @@ export function remoteProjectActionGroups(input: {
 }
 
 // Terminals need a stable destination-owned namespace even when that project has no threads.
-export function projectActionThreadId(destination: ProjectActionDestination) {
+export function projectActionThreadId(destination: Pick<ProjectActionDestination, "projectId">) {
   return ThreadId.make(`project-actions:${destination.projectId}`);
 }
 

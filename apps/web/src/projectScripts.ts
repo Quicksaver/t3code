@@ -3,6 +3,9 @@ import {
   SCRIPT_RUN_COMMAND_PATTERN,
   type KeybindingCommand,
   type ProjectScript,
+  type EnvironmentId,
+  type ProjectId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
@@ -103,4 +106,34 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
   const regular = scripts.find((script) => !script.runOnWorktreeCreate && !script.runOnSettle);
   return regular ?? scripts.find((script) => !script.runOnSettle) ?? null;
+}
+
+/** Build the patch from the destination server, including when its project id is also used locally. */
+export function buildProjectScriptSettingsPatch(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly scripts: readonly ProjectScript[];
+  readonly environments: ReadonlyMap<
+    string,
+    {
+      readonly serverConfig: {
+        readonly environment: {
+          readonly capabilities: { readonly projectSettingsOverrides?: boolean };
+        };
+        readonly settings: Pick<ServerSettings, "projectSettingsOverrides">;
+      } | null;
+    }
+  >;
+}) {
+  const config = input.environments.get(input.environmentId)?.serverConfig;
+  return config?.environment.capabilities.projectSettingsOverrides === true
+    ? {
+        projectSettingsOverrides: {
+          [input.projectId]: {
+            ...config.settings.projectSettingsOverrides[input.projectId],
+            defaultProjectScripts: input.scripts,
+          },
+        },
+      }
+    : { projectScriptOverrides: { [input.projectId]: input.scripts } };
 }

@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   launchProjectAction,
+  projectActionThreadId,
   remoteProjectActionGroups,
   type RemoteProjectActionGroup,
 } from "@t3tools/client-runtime/project-actions";
@@ -68,9 +69,10 @@ export function RemoteProjectActionItems(props: {
     }
     useRightPanelStore.getState().openTerminal(threadRef, terminalId, {
       environmentId: group.environmentId,
-      environmentLabel: group.environmentLabel,
+      threadId: projectActionThreadId(group),
       projectId: group.projectId,
-      projectCwd: group.projectCwd,
+      cwd: group.projectCwd,
+      worktreePath: null,
       label: `${script.name} · ${group.environmentLabel}`,
     });
   };
