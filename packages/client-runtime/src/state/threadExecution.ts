@@ -282,6 +282,16 @@ export function threadRuntimeHasInterruptibleRun(
   );
 }
 
+export function threadHasInterruptibleWork(
+  runtime: ThreadStructureRuntime | null | undefined,
+  pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+): boolean {
+  return (
+    threadRuntimeHasInterruptibleRun(runtime) ||
+    backgroundWorkHoldsCompletion(pendingBackgroundTasks)
+  );
+}
+
 type BackgroundWorkKind = OrchestrationV2PendingBackgroundTask["kind"];
 
 const BACKGROUND_WORK_KINDS: Record<

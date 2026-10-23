@@ -27,6 +27,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   presentPendingBackgroundWork,
+  threadHasInterruptibleWork,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -71,6 +72,19 @@ describe("thread execution presentation", () => {
         { taskId: "magi:panel", kind: "monitor", description: "Waiting on Magi" },
       ]),
     ).toBeNull();
+    expect(
+      threadHasInterruptibleWork(deriveThreadRuntime(projection), [
+        { taskId: "magi:panel", kind: "monitor", description: "Waiting on Magi" },
+      ]),
+    ).toBe(true);
+    expect(threadHasInterruptibleWork(deriveThreadRuntime(projection), [])).toBe(false);
+  });
+
+  it("allows Stop for completion-holding work without treating commands as held work", () => {
+    expect(threadHasInterruptibleWork(null, [{ taskId: "child", kind: "subagent" }])).toBe(true);
+    expect(threadHasInterruptibleWork(null, [{ taskId: "watch", kind: "monitor" }])).toBe(true);
+    expect(threadHasInterruptibleWork(null, [{ taskId: "shell", kind: "command" }])).toBe(false);
+    expect(threadHasInterruptibleWork(null, [])).toBe(false);
   });
 
   it("presents ordinary subagents, monitors and commands while Magi holds its owner", () => {
@@ -249,6 +263,7 @@ describe("thread execution presentation", () => {
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+    expect(threadHasInterruptibleWork(runtime, [])).toBe(true);
   });
 
   it("marks an open run whose provider turn already ended", () => {
@@ -318,6 +333,7 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+    expect(threadHasInterruptibleWork(runtime, [])).toBe(false);
   });
 });
 
