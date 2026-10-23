@@ -14,15 +14,29 @@ import { observeResize } from "~/lib/observeResize";
 // Publish measurements as an external-store snapshot so the compiler never caches the mutable instance.
 function createVirtualList() {
   const listeners = new Set<() => void>();
-  let snapshot: { readonly rows: readonly VirtualItem[]; readonly height: number } = {
+  let snapshot: {
+    readonly rows: readonly VirtualItem[];
+    readonly height: number;
+    readonly count: number;
+    readonly getItemKey: VirtualizerOptions<HTMLElement, HTMLDivElement>["getItemKey"] | null;
+  } = {
     rows: [],
     height: 0,
+    count: 0,
+    getItemKey: null,
   };
   const publish = () => {
     const rows = virtualizer.getVirtualItems();
     const height = virtualizer.getTotalSize();
-    if (snapshot.rows === rows && snapshot.height === height) return;
-    snapshot = { rows, height };
+    const { count, getItemKey } = virtualizer.options;
+    if (
+      snapshot.rows === rows &&
+      snapshot.height === height &&
+      snapshot.count === count &&
+      snapshot.getItemKey === getItemKey
+    )
+      return;
+    snapshot = { rows, height, count, getItemKey };
     for (const listener of listeners) listener();
   };
   const virtualizer = new Virtualizer<HTMLElement, HTMLDivElement>({
@@ -86,7 +100,7 @@ function SourceControlVirtualListContent<T>({
   readonly getItemKey: (index: number) => string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  const [scrollMargin, setScrollMargin] = useState(0);
+  const [scrollMargin, setScrollMargin] = useState<number | null>(null);
   const getScrollElement = useStableCallback(
     () => listRef.current?.closest<HTMLElement>("[data-source-control-section-content]") ?? null,
   );
@@ -97,12 +111,12 @@ function SourceControlVirtualListContent<T>({
   useLayoutEffect(() => {
     list.update({
       count: items.length,
-      enabled: true,
+      enabled: scrollMargin !== null,
       getScrollElement,
       // Attaching a nested list must start from the shared viewport's current position.
       initialOffset: () => getScrollElement()?.scrollTop ?? 0,
       getItemKey,
-      scrollMargin,
+      scrollMargin: scrollMargin ?? 0,
     });
   }, [list, items.length, getScrollElement, getItemKey, scrollMargin]);
   useLayoutEffect(() => {
@@ -133,6 +147,7 @@ function SourceControlVirtualListContent<T>({
     return observeResize(elements, updateMargin);
   }, [getScrollElement]);
 
+  const measurementsCurrent = snapshot.count === items.length && snapshot.getItemKey === getItemKey;
   return (
     <div ref={listRef} className="relative" style={{ height: snapshot.height }}>
       {snapshot.rows
@@ -141,9 +156,9 @@ function SourceControlVirtualListContent<T>({
           <div
             key={getItemKey(row.index)}
             data-index={row.index}
-            ref={list.measureElement}
+            ref={measurementsCurrent ? list.measureElement : undefined}
             className="absolute left-0 top-0 w-full pb-0.5"
-            style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
+            style={{ transform: `translateY(${row.start - (scrollMargin ?? 0)}px)` }}
           >
             {renderItem(items[row.index]!)}
           </div>
