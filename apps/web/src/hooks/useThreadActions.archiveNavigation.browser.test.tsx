@@ -9,9 +9,9 @@ import {
   RouterProvider,
   useNavigate,
 } from "@tanstack/react-router";
-import { act, useEffect, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { useEffect, type ReactNode } from "react";
+import { expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../test/render";
 
 const state = await vi.hoisted(async () => {
   const { Atom, AtomRegistry } = await import("effect/reactivity");
@@ -89,8 +89,6 @@ import { useThreadActions } from "./useThreadActions";
 import { useThreadUndoNotice } from "./showThreadUndoNotice";
 
 const target = { environmentId: EnvironmentId.make("undo-env"), threadId: ThreadId.make("thread") };
-let renderer: Root | undefined;
-let container: HTMLDivElement;
 
 function Actions() {
   const actions = useThreadActions();
@@ -110,15 +108,19 @@ function Landing() {
   return null;
 }
 
-afterEach(async () => {
-  await act(() => renderer?.unmount());
-  container?.remove();
+function setup() {
+  state.registry.set(state.shell, null);
+  state.unarchiveReceipt = () => {};
   useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
-  vi.unstubAllGlobals();
-});
+  return {
+    [Symbol.dispose]() {
+      useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+    },
+  };
+}
 
 it("waits for the restored thread in a live shell before Undo returns through the real route view", async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _state = setup();
   const thread = makeThreadFixture({ id: target.threadId, environmentId: target.environmentId });
   // A partial async store mock deadlocks on the store/model-selection/TraitsPicker cycle.
   useComposerDraftStore
@@ -148,12 +150,9 @@ it("waits for the restored thread in a live shell before Undo returns through th
     history: createMemoryHistory({ initialEntries: ["/undo-env/thread"] }),
   });
   await router.load();
-  await act(() => {
-    container = document.createElement("div");
-    document.body.append(container);
-    renderer = createRoot(container);
-    renderer.render(<RouterProvider router={router} />);
-  });
+  // This test supplies its own router to exercise the real route guard.
+  await using screen = await render(<RouterProvider router={router} />, { router: false });
+  const { container } = screen;
   await act(() => container.querySelector<HTMLButtonElement>("button")!.click());
   expect(router.state.location.pathname).toBe("/draft/archive-draft");
   await act(() => state.registry.set(state.shell, null));

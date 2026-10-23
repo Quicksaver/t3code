@@ -25,7 +25,7 @@ vi.mock("../components/ui/toast", () => ({
 }));
 
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { useThreadArchiveActions, type ThreadArchiveEntry } from "./useThreadArchiveActions";
+import { createThreadArchiveActions, type ThreadArchiveEntry } from "./createThreadArchiveActions";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -47,7 +47,7 @@ const secondary = entry("secondary");
 const options = { confirmationMessage: () => "Archive these threads?" };
 
 function actions() {
-  const archiveThread = vi.fn<Parameters<typeof useThreadArchiveActions>[0]["archiveThread"]>(
+  const archiveThread = vi.fn<Parameters<typeof createThreadArchiveActions>[0]["archiveThread"]>(
     async (_ref, callbacks) => {
       callbacks?.onArchived?.();
       return AsyncResult.success<undefined, never>(undefined);
@@ -55,7 +55,7 @@ function actions() {
   );
   return {
     archiveThread,
-    ...useThreadArchiveActions({ archiveThread, confirmThreadArchive: true }),
+    ...createThreadArchiveActions({ archiveThread, confirmThreadArchive: true }),
   };
 }
 

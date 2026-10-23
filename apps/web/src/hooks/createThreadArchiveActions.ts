@@ -51,10 +51,10 @@ function checkArchivePermissions(entries: readonly ThreadArchiveEntry[]): boolea
 
 /**
  * Shared archive policy for every web surface. The reservation pool lives in
- * the pure coordination module, so separate hook instances (for example the
+ * the pure coordination module, so separate callers (for example the
  * sidebar and chat header) cannot race the same thread.
  */
-export function useThreadArchiveActions({
+export function createThreadArchiveActions({
   archiveThread,
   confirmThreadArchive,
 }: ThreadArchiveActionsInput) {
