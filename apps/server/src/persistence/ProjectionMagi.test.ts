@@ -311,6 +311,7 @@ it.effect("reads Magi state and granted evidence while the writer is held", () =
       return yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         const repository = yield* ProjectionMagiRepository;
+        yield* sql`PRAGMA journal_mode = WAL`;
         yield* runMigrations();
         yield* insertThread(rootThreadId);
         const run = {
