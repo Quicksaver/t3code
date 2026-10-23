@@ -104,6 +104,7 @@ export function SidebarSectionHeader(props: {
   label: string;
   className?: string;
   dragging?: boolean;
+  trailing?: ReactNode;
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
@@ -123,6 +124,7 @@ export function SidebarSectionHeader(props: {
       <CollapsibleSectionHeader
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
+        trailing={props.trailing}
         tone={
           props.isDropTarget ? "accent" : props.dragging ? "emphasized" : snoozed ? "info" : "muted"
         }
