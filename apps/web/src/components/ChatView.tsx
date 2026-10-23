@@ -1,3 +1,16 @@
+import { useProjects } from "../state/entities";
+import { dismissThreadErrorBannerForSession } from "./chat/ThreadErrorBanner";
+import {
+  buildSourceControlEnvironmentOption,
+  normalizeSourceControlRightPanelPresence,
+  resolveThreadErrorDismissAction,
+  resolveThreadErrorPresentation,
+  resolveSourceControlPanelTarget,
+  retargetOpenSourceControlSurface,
+  useSourceControlRightPanelSurfaceState,
+  useSourceControlThreadMetadataRouting,
+} from "./ChatView.sourceControl";
+import { useThreadRefs } from "../state/entities";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
 import { announcedRun, isDetailBehindShell } from "./chat/threadActivityAnnouncement";
@@ -146,6 +159,7 @@ import {
 } from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
 import {
+  fileSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectThreadPanelOpen,
@@ -447,6 +461,7 @@ export default function ChatView(props: ChatViewProps) {
   const { environments } = useEnvironments();
   const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironment = usePrimaryEnvironment();
+  const allProjects = useProjects();
   const environmentById = new Map(
     environments.map((environment) => [environment.environmentId, environment]),
   );
@@ -531,7 +546,7 @@ export default function ChatView(props: ChatViewProps) {
   })() as MessagesTimelineHistoryControls | undefined;
   const committedServerMessageIds = deriveCommittedServerUserMessageIds(serverVisibleTurnItems);
   // Queued messages have no turn item until their run starts, so the
-  // turn-item-derived set alone can never retire their optimistic rows —
+  // turn-item-derived set alone can never retire their optimistic rows â€”
   // cancelling such a run would leave a phantom "pending" queue row behind.
   const serverAcknowledgedUserMessageIds = (() => {
     const ids = new Set(committedServerMessageIds);
@@ -815,20 +830,7 @@ export default function ChatView(props: ChatViewProps) {
           threadId: parentSubagentThreadRef.threadId,
           title: parentSubagentThread?.title ?? "Parent thread",
         };
-  const threadError = isServerThread
-    ? (localServerError ?? serverRuntime?.lastError ?? null)
-    : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
-  const visibleThreadError = shouldShowThreadErrorBanner(
-    routeThreadKey,
-    threadError,
-    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
-  )
-    ? threadError
-    : null;
   const [, setThreadErrorBannerDismissTick] = useState(0);
-  const threadErrorIsServerRuntimeError =
-    localServerError === null && visibleThreadError === serverRuntime?.lastError;
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
@@ -878,6 +880,43 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef?.environmentId ?? null,
   );
   const browserAvailable = isPreviewSupportedInRuntime() || activeEnvironmentServerBrowser;
+  const serverThreadRefs = useThreadRefs();
+  const draftThreadKeys = useComposerDraftStore(useShallow((store) => store.listDraftThreadKeys()));
+  const existingThreadKeys = new Set([
+    ...serverThreadRefs.map(scopedThreadKey),
+    ...draftThreadKeys,
+    ...(activeThreadKey ? [activeThreadKey] : []),
+  ]);
+  const {
+    clearActiveSourceControlMetadataError,
+    handleSourceControlThreadRefChange,
+    sourceControlMetadataError,
+  } = useSourceControlThreadMetadataRouting({
+    activeThreadKey,
+    activeThreadRef,
+    draftId,
+    existingThreadKeys,
+    isServerThread,
+    setDraftThreadContext,
+    updateThreadMetadata,
+  });
+  const { error: threadError, source: threadErrorSource } = resolveThreadErrorPresentation({
+    isServerThread,
+    localDraftError,
+    localServerError,
+    sessionError: serverRuntime?.lastError ?? null,
+    sourceControlMetadataError,
+  });
+  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const visibleThreadError = shouldShowThreadErrorBanner(
+    routeThreadKey,
+    threadError,
+    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
+  )
+    ? threadError
+    : null;
+  const threadErrorIsServerRuntimeError =
+    threadErrorSource === "session" && visibleThreadError === serverRuntime?.lastError;
   const activeThreadShell = serverThread;
   const timelineThreadError =
     serverRuntime?.status === "failed" &&
@@ -897,7 +936,7 @@ export default function ChatView(props: ChatViewProps) {
   const timelineAnchorMessageId = timelineAnchor.messageId;
   // LegendList sizes the anchored end-space filler for the geometry at anchor
   // time and never recomputes it, so a lingering anchor leaves stale filler
-  // height behind the composer — phantom scroll range on threads whose content
+  // height behind the composer â€” phantom scroll range on threads whose content
   // fits.
   const anchorRunSettled = (() => {
     if (timelineAnchorMessageId === null) return false;
@@ -931,7 +970,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
-  const activeRightPanelSurface = useRightPanelStore((state) =>
+  const storeActiveRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
@@ -953,30 +992,6 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelOpen = rightPanelState.isOpen;
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
-  const rightPanelPresenceValue = {
-    activeSurface: activeRightPanelSurface,
-    surfaces: rightPanelState.surfaces,
-  };
-  const rightPanelPresence = usePanelPresence(
-    rightPanelOpen && activeThreadRef !== null,
-    rightPanelPresenceValue,
-    panelAnimationsActive,
-    activeThreadKey,
-    panelAnimationDurationMs,
-  );
-  const rightPanelPresent = rightPanelPresence.present;
-  const rightPanelControlsInPanel =
-    shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
-  const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
-  const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
-  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
-    activePreviewMiniPlayer?.source ?? null,
-    renderedRightPanelSurface,
-  );
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
-  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
@@ -1057,6 +1072,89 @@ export default function ChatView(props: ChatViewProps) {
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusQuery = useEnvironmentQuery(
+    gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: gitStatusCwd },
+        }),
+  );
+  // Git status arrives after the composer paints. A checkout seen earlier in
+  // this session answers from memory, so a non-Git project does not mount the
+  // branch strip and then drop it. A never-seen checkout assumes Git, which
+  // is what nearly every project is.
+  const liveIsGitRepo = gitStatusQuery.data?.isRepo;
+  useEffect(() => {
+    if (gitStatusCwd !== null && liveIsGitRepo !== undefined) {
+      rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
+    }
+  }, [environmentId, gitStatusCwd, liveIsGitRepo]);
+  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const {
+    addSourceControlSurface,
+    sourceControlAvailable,
+    visibleActiveRightPanelSurface,
+    visibleRightPanelSurfaces,
+  } = useSourceControlRightPanelSurfaceState({
+    activeRightPanelSurface: storeActiveRightPanelSurface,
+    activeThreadRef,
+    gitCwd,
+    isGitRepo,
+    panelSupported:
+      activeThreadRef !== null &&
+      environmentById.get(activeThreadRef.environmentId)?.serverConfig?.environment.capabilities
+        .sourceControlPanel === true,
+    rightPanelSurfaces: rightPanelState.surfaces,
+  });
+  // The store can still record a Source Control tab hidden by availability as active. Panel
+  // handlers (close, split, add terminal) follow the surface the panel actually shows.
+  const activeRightPanelSurface = visibleActiveRightPanelSurface;
+  const rightPanelPresenceValue = (() => ({
+    activeSurface: visibleActiveRightPanelSurface,
+    surfaces: visibleRightPanelSurfaces,
+  }))();
+  const rightPanelPresence = usePanelPresence(
+    rightPanelOpen && activeThreadRef !== null,
+    rightPanelPresenceValue,
+    panelAnimationsActive,
+    activeThreadKey,
+    panelAnimationDurationMs,
+  );
+  const rightPanelPresent = rightPanelPresence.present;
+  const rightPanelControlsInPanel =
+    shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
+  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
+  // A closing panel keeps its last value, which can predate Source Control becoming unavailable.
+  const renderedRightPanelPresence = (() =>
+    normalizeSourceControlRightPanelPresence({
+      activeSurface: rightPanelPresence.value?.activeSurface ?? null,
+      surfaces: rightPanelPresence.value?.surfaces ?? [],
+      sourceControlAvailable,
+    }))();
+  const renderedRightPanelSurfaces = renderedRightPanelPresence.surfaces;
+  const renderedRightPanelSurface = renderedRightPanelPresence.activeSurface;
+  const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
+    activePreviewMiniPlayer?.source ?? null,
+    renderedRightPanelSurface,
+  );
+  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
+  const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const activeFileSurface =
+    renderedRightPanelSurface?.kind === "file" ? renderedRightPanelSurface : null;
+  const sourceControlPanelTarget = resolveSourceControlPanelTarget({
+    activeThreadRef,
+    gitCwd,
+    surface: renderedRightPanelSurface,
+  });
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -1088,9 +1186,10 @@ export default function ChatView(props: ChatViewProps) {
     : EMPTY_PENDING_FILE_SURFACE_IDS;
   const handleFilePendingChange = (relativePath: string, pending: boolean) => {
     if (!activeProjectKey) return;
+    const cwd = activeFileSurface?.cwd;
     setPendingFileSurfaceIdsByProject((currentByProject) => {
       const current = currentByProject.get(activeProjectKey) ?? EMPTY_PENDING_FILE_SURFACE_IDS;
-      const surfaceId = `file:${relativePath}`;
+      const surfaceId = fileSurfaceId(relativePath, cwd);
       if (current.has(surfaceId) === pending) return currentByProject;
       const next = new Set(current);
       if (pending) next.add(surfaceId);
@@ -1102,7 +1201,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const handleFilePendingChangeStable = useStableCallback(handleFilePendingChange);
-  const configuredPreviewUrls = getConfiguredPreviewUrls(activeProjectScripts);
+  const configuredPreviewUrls = (() => getConfiguredPreviewUrls(activeProjectScripts))();
 
   useEffect(() => {
     if (!activeThreadRef || !activeEnvironmentBootstrapComplete) return;
@@ -1139,9 +1238,29 @@ export default function ChatView(props: ChatViewProps) {
   const logicalProjectEnvironments = useLogicalProjectEnvironments(
     activeProject,
     activeProjectIsScratch && draftId !== null,
-  );
+  ).map((option) => {
+    const project = allProjects.find(
+      (project) =>
+        project.environmentId === option.environmentId && project.id === option.projectId,
+    );
+    if (!project) return option;
+    const environment = environmentById.get(option.environmentId);
+    return buildSourceControlEnvironmentOption({
+      ...option,
+      project,
+      connected: environment?.connection.phase === "connected",
+    });
+  });
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
   const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  // Peers on servers from before the Version Control panel reject every vcs.panel.* request.
+  const sourceControlPanelEnvironments = (() =>
+    logicalProjectEnvironments.filter(
+      (environment): environment is ReturnType<typeof buildSourceControlEnvironmentOption> =>
+        "connected" in environment &&
+        environmentById.get(environment.environmentId)?.serverConfig?.environment.capabilities
+          .sourceControlPanel === true,
+    ))();
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
@@ -1571,21 +1690,6 @@ export default function ChatView(props: ChatViewProps) {
     turnDiffSummaries.at(-1)?.completedAt ?? null,
   );
 
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
-    gitStatusCwd === null
-      ? null
-      : vcsEnvironment.status({
-          environmentId,
-          input: { cwd: gitStatusCwd },
-        }),
-  );
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -1664,13 +1768,6 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  const liveIsGitRepo = gitStatusQuery.data?.isRepo;
-  useEffect(() => {
-    if (gitStatusCwd !== null && liveIsGitRepo !== undefined) {
-      rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
-    }
-  }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
   // A provider-native subagent cannot take messages: a status bar replaces the
   // composer and its strips. Its approvals and questions are asked on the
   // top-level parent thread.
@@ -1754,6 +1851,7 @@ export default function ChatView(props: ChatViewProps) {
     readPendingEnvironmentChange,
     onEnvironmentChangeStable,
   } = useDraftEnvironmentRouting({
+    activeThreadRef,
     draftId,
     draftThread,
     envLocked,
@@ -1844,6 +1942,7 @@ export default function ChatView(props: ChatViewProps) {
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
 
   const {
+    canOperatePanelTerminal,
     activatePanelTerminalStable,
     addTerminalContextToDraftStable,
     addTerminalSurfaceStable,
@@ -1882,7 +1981,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     project: activeProject,
     scripts: activeProjectScripts,
-    settings,
+    environments: environmentById,
   });
   const canOperatePreview = useEnvironmentScope(
     activeThreadRef?.environmentId ?? null,
@@ -2427,11 +2526,24 @@ export default function ChatView(props: ChatViewProps) {
     pullRequestsSurfaceAvailable,
     gitCwd,
     activeProjectCwd,
+    activeFileCwd: activeFileSurface?.cwd,
     explicitDiffOpenRef,
     setTerminalFocusRequestId,
     onDiffPanelOpen,
     closeRightPanelSurface,
   });
+  const dismissThreadError = () => {
+    const action = resolveThreadErrorDismissAction(threadErrorSource);
+    if (action === "clear-thread" || action === "clear-thread-and-mask") {
+      setThreadError(activeThreadId, null);
+    } else if (action === "clear-source-control") {
+      clearActiveSourceControlMetadataError();
+    }
+    if (action === "clear-thread-and-mask" || action === "mask-only") {
+      dismissThreadErrorBannerForSession(threadErrorBannerKey);
+      setThreadErrorBannerDismissTick((tick) => tick + 1);
+    }
+  };
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
   const nowMinute = useNowMinute();
   const {
@@ -3078,6 +3190,16 @@ export default function ChatView(props: ChatViewProps) {
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
+      sourceControl={
+        sourceControlPanelTarget
+          ? {
+              ...sourceControlPanelTarget,
+              worktreePath: activeThreadWorktreePath,
+              environments: sourceControlPanelEnvironments,
+              onThreadRefChange: handleSourceControlThreadRefChange,
+            }
+          : null
+      }
       terminal={{
         launchContext: activeTerminalLaunchContext ?? null,
         focusRequestId: terminalFocusRequestId,
@@ -3235,6 +3357,7 @@ export default function ChatView(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
+              onDismissThreadError={dismissThreadError}
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
               setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
@@ -3820,6 +3943,7 @@ export default function ChatView(props: ChatViewProps) {
               {...(isServerThread && isGitRepo
                 ? { onOpenChanges: openChangesFromThreadPanelStable }
                 : {})}
+              {...(sourceControlAvailable ? { onOpenSourceControl: addSourceControlSurface } : {})}
               onRunProjectScript={runProjectScriptStable}
               onAddProjectScript={saveProjectScriptStable}
               onUpdateProjectScript={updateProjectScriptStable}
@@ -3891,13 +4015,15 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddSourceControl={addSourceControlSurface}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
-          terminalAvailable={activeProject !== null && canOperateTerminal}
+          terminalAvailable={activeProject !== null && canOperatePanelTerminal}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          sourceControlAvailable={sourceControlAvailable}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}

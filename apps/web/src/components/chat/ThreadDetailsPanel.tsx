@@ -59,6 +59,7 @@ export interface ThreadDetailsPanelProps extends Pick<
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
+  onOpenSourceControl?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -176,6 +177,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     activeThreadRef={activeThreadRef}
                     {...(props.draftId ? { draftId: props.draftId } : {})}
                     {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                    {...(props.onOpenSourceControl
+                      ? { onOpenSourceControl: props.onOpenSourceControl }
+                      : {})}
                   />
                 ) : null}
               </div>

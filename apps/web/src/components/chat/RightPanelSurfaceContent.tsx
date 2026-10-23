@@ -9,7 +9,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ComponentProps } from "react";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -31,6 +31,12 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+
+const SourceControlPanel = lazy(() =>
+  import("../source-control/SourceControlPanel").then((module) => ({
+    default: module.SourceControlPanel,
+  })),
+);
 
 export type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -75,6 +81,7 @@ export function RightPanelSurfaceContent(props: {
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   readonly terminal: RightPanelTerminalProps;
+  readonly sourceControl: ComponentProps<typeof SourceControlPanel> | null;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly files: RightPanelFileProps;
 }) {
@@ -115,6 +122,19 @@ export function RightPanelSurfaceContent(props: {
           />
         </Suspense>
       );
+    case "source-control":
+      return props.sourceControl ? (
+        <Suspense fallback={null}>
+          <SourceControlPanel
+            key={JSON.stringify([
+              props.sourceControl.environmentId,
+              props.sourceControl.threadId,
+              props.sourceControl.cwd,
+            ])}
+            {...props.sourceControl}
+          />
+        </Suspense>
+      ) : null;
     case "pull-request": {
       const pullRequest = props.pullRequest;
       if (!pullRequest.capabilityKnown) return <PullRequestDetailGhost />;
@@ -192,17 +212,25 @@ export function RightPanelSurfaceContent(props: {
         <Suspense fallback={null}>
           <FilePreviewPanel
             key={`${props.environmentId}:${
-              attachment ? `attachment:${attachment.id}` : files.workspaceRoot
+              attachment
+                ? `attachment:${attachment.id}`
+                : surface.kind === "file"
+                  ? (surface.cwd ?? files.workspaceRoot)
+                  : files.workspaceRoot
             }`}
             environmentId={props.environmentId}
-            cwd={files.workspaceRoot ?? ""}
+            cwd={(surface.kind === "file" ? surface.cwd : undefined) ?? files.workspaceRoot ?? ""}
             projectName={files.projectName ?? ""}
             threadRef={threadRef}
             composerDraftTarget={props.composerDraftTarget}
             keybindings={props.keybindings}
             availableEditors={files.availableEditors}
             openInShortcutEnabled={visible}
-            relativePath={surface.kind === "file" ? surface.relativePath : null}
+            relativePath={
+              surface.kind === "file" && !(surface.cwd && surface.relativePath === ".")
+                ? surface.relativePath
+                : null
+            }
             {...(attachment ? { attachment } : {})}
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
             revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}

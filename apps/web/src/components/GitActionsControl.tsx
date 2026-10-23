@@ -29,6 +29,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -130,6 +131,8 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  /** Opens the Version Control surface. Absent when the surface is unavailable. */
+  onOpenSourceControl?: () => void;
 }
 
 interface PendingDefaultBranchAction {
@@ -458,7 +461,7 @@ interface PublishRepositoryDialogProps {
   readonly gitCwd: string;
 }
 
-function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const sourceControlDiscovery = useEnvironmentQuery(
@@ -962,10 +965,12 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  onOpenSourceControl,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
+  const changesAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1824,25 +1829,54 @@ export default function GitActionsControl({
       )}
 
       {isPanel && isRepo ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-diff-addition">
-              +{formatDiffCount(changesTotals?.insertions ?? 0)}
+        <div ref={changesAnchorRef} className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+          <ThreadDetailsControl
+            type="button"
+            variant="ghost"
+            size="sm"
+            part="primary"
+            disabled={!onOpenChanges}
+            onClick={onOpenChanges}
+          >
+            <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+            <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              Changes
             </span>
-            <span className="text-diff-deletion">
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
+            <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
+              <span className="text-success">
+                +{formatDiffCount(changesTotals?.insertions ?? 0)}
+              </span>
+              <span className="text-destructive">
+                -{formatDiffCount(changesTotals?.deletions ?? 0)}
+              </span>
             </span>
-          </span>
-        </ThreadDetailsControl>
+          </ThreadDetailsControl>
+          <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+          <Menu>
+            <MenuTrigger
+              render={
+                <ThreadDetailsControl
+                  aria-label="Changes options"
+                  size="sm"
+                  variant="ghost"
+                  part="secondary"
+                />
+              }
+            >
+              <ChevronDownIcon aria-hidden="true" className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+            </MenuTrigger>
+            <MenuPopup align="end" anchor={changesAnchorRef} className="w-(--anchor-width)">
+              <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
+                <FileDiffIcon aria-hidden />
+                <MenuItemLabel>Changes</MenuItemLabel>
+              </MenuItem>
+              <MenuItem disabled={!onOpenSourceControl} onClick={onOpenSourceControl}>
+                <GitBranchIcon aria-hidden />
+                <MenuItemLabel>Version Control</MenuItemLabel>
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
       ) : null}
 
       <Dialog

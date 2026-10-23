@@ -3,14 +3,18 @@ import {
   AuthTerminalReadScope,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
-import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -30,7 +34,17 @@ export interface TerminalLaunchLocation {
  * through here, so ids are allocated from one view of the thread's terminals
  * and every new session starts with the same cwd and environment.
  */
-export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
+export function useThreadTerminalActions(
+  ownerThreadRef: ScopedThreadRef | null,
+  target?: Extract<RightPanelSurface, { kind: "terminal" }>["target"],
+) {
+  const threadRef =
+    target && ownerThreadRef
+      ? scopeThreadRef(
+          target.environmentId as ScopedThreadRef["environmentId"],
+          ownerThreadRef.threadId,
+        )
+      : ownerThreadRef;
   const openTerminalCommand = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalCommand = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -38,11 +52,16 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   const draftThread = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
-  const projectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
+  const projectRef = target
+    ? scopeProjectRef(
+        target.environmentId as ScopedThreadRef["environmentId"],
+        target.projectId as NonNullable<typeof serverThread>["projectId"],
+      )
+    : serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
   const project = useProject(projectRef);
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const knownSessions = useKnownTerminalSessions({
@@ -79,15 +98,17 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   };
 
   const defaultLaunchLocation = (): TerminalLaunchLocation | null =>
-    project
-      ? {
-          cwd: projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+    target
+      ? { cwd: target.cwd, worktreePath: target.worktreePath }
+      : project
+        ? {
+            cwd: projectScriptCwd({
+              project: { cwd: project.workspaceRoot },
+              worktreePath: threadWorktreePath,
+            }),
             worktreePath: threadWorktreePath,
-          }),
-          worktreePath: threadWorktreePath,
-        }
-      : null;
+          }
+        : null;
 
   /**
    * Starts a session for `terminalId` on the server. `place` records the id in

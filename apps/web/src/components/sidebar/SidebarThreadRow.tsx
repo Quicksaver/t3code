@@ -1,3 +1,4 @@
+import { WorkingIndicator } from "../WorkingIndicator";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -33,7 +34,6 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
   GitBranchIcon,
@@ -318,7 +318,7 @@ function SidebarThreadTooltip({
             />
             <div className="min-w-0 truncate text-foreground/75">
               {showInstanceBadge && providerEntry
-                ? `${modelLabel} · ${providerEntry.displayName}`
+                ? `${modelLabel} Â· ${providerEntry.displayName}`
                 : modelLabel}
             </div>
           </div>
@@ -413,7 +413,7 @@ function SnoozeMenuButton(props: {
             if (choice) onSnooze(choice);
           }}
         >
-          Custom…
+          Customâ€¦
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -1316,7 +1316,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                <span role="status">{topStatus.label}</span>
+                                {topStatus.icon !== "working" ? (
+                                  <span role="status">{topStatus.label}</span>
+                                ) : null}
                               </button>
                             }
                           />
@@ -1330,7 +1332,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           )}
                         >
                           {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+                            <WorkingIndicator label={topStatus.label} announce={!props.isRouteThread} />
                           ) : topStatus.icon === "waiting" ? (
                             <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "input" ? (
@@ -1347,9 +1349,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             screen readers announce every second. The open
                             thread announces its own status, so its row stays
                             quiet instead of saying everything twice. */}
-                          <span role={props.isRouteThread ? undefined : "status"}>
-                            {topStatus.label}
-                          </span>
+                          {topStatus.icon !== "working" ? <span role={props.isRouteThread ? undefined : "status"}>{topStatus.label}</span> : null}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
@@ -1465,7 +1465,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     +{formatDiffCount(diff.insertions)}
                   </span>{" "}
                   <span className="text-diff-deletion-foreground">
-                    −{formatDiffCount(diff.deletions)}
+                    âˆ’{formatDiffCount(diff.deletions)}
                   </span>
                 </span>
               ) : null}

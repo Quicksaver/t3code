@@ -38,12 +38,14 @@ export const make = Effect.gen(function* () {
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("bitbucket"),
     listChangeRequests: (input) => {
-      const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const source = input.headSelector
+        ? SourceControlProvider.sourceControlRefFromInput({ headSelector: input.headSelector })
+        : undefined;
       return bitbucket
         .listPullRequests({
           cwd: input.cwd,
           ...(input.context ? { context: input.context } : {}),
-          headSelector: input.headSelector,
+          ...(input.headSelector ? { headSelector: input.headSelector } : {}),
           ...(source ? { source } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
@@ -56,9 +58,13 @@ export const make = Effect.gen(function* () {
                 provider: SourceControlProviderKind.make("bitbucket"),
                 operation: "listChangeRequests",
                 cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
+                ...(input.headSelector
+                  ? {
+                      reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                        input.headSelector,
+                      ),
+                    }
+                  : {}),
                 detail: "Failed to list change requests.",
                 cause: error,
               }),
@@ -127,6 +133,25 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    getCommitAvatarUrl: (input) =>
+      bitbucket
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          ...(input.context ? { context: input.context } : {}),
+          sha: input.sha,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: SourceControlProviderKind.make("bitbucket"),
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              detail: "Failed to get commit author avatar.",
+              error,
+            }),
+          ),
+        ),
     createRepository: (input) =>
       bitbucket.createRepository(input).pipe(
         Effect.mapError(

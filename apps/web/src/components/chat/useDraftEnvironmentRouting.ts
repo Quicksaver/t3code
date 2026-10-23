@@ -1,3 +1,6 @@
+import { retargetOpenSourceControlSurface } from "../ChatView.sourceControl";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
 import { useScratchProject } from "../../hooks/useScratchProject";
@@ -22,6 +25,7 @@ import { useProjects } from "../../state/entities";
 import type { DraftSessionState } from "../../composerDraftStore";
 
 interface DraftEnvironmentRoutingInput {
+  readonly activeThreadRef: ScopedThreadRef | null;
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
   readonly envLocked: boolean;
@@ -218,6 +222,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         currentDraft.projectId !== originalDraft.projectId
       )
         return;
+      if (input.activeThreadRef)
+        retargetOpenSourceControlSurface({
+          currentThreadRef: input.activeThreadRef,
+          nextThreadRef: scopeThreadRef(target.environmentId, input.activeThreadRef.threadId),
+        });
       const projectRef = scopeProjectRef(target.environmentId, project.id);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(

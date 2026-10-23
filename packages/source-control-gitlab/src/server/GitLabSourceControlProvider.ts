@@ -138,6 +138,29 @@ const refineRepositoryIdentity: NonNullable<
     : identity;
 });
 
+function repositoryFromContext(
+  context: SourceControlProvider.SourceControlProviderContext | undefined,
+): string | undefined {
+  if (!context) return undefined;
+  const repository = SourceControlProvider.repositoryPathFromRemoteUrl(context.remoteUrl);
+  if (!repository) return undefined;
+  try {
+    const baseUrl = new URL(context.provider.baseUrl);
+    if (baseUrl.hostname.toLowerCase() === "gitlab.com") return repository;
+    const basePath = decodeURIComponent(baseUrl.pathname).replace(/^\/+|\/+$/gu, "");
+    const relativeRepository =
+      basePath && (repository === basePath || repository.startsWith(`${basePath}/`))
+        ? repository.slice(basePath.length).replace(/^\/+/u, "")
+        : repository;
+    baseUrl.pathname = [basePath, relativeRepository].filter(Boolean).join("/");
+    baseUrl.search = "";
+    baseUrl.hash = "";
+    return baseUrl.toString();
+  } catch {
+    return repository;
+  }
+}
+
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("gitlab"),
@@ -222,30 +245,31 @@ export const make = Effect.gen(function* () {
       );
     },
     listChangeRequests: (input) => {
-      const source = SourceControlProvider.sourceControlRefFromInput(input);
+      const source = input.headSelector
+        ? SourceControlProvider.sourceControlRefFromInput({ headSelector: input.headSelector })
+        : undefined;
+      // A head lookup lets glab select the MR target project, such as a fork's upstream. Binding
+      // the context's remote would search the push fork; repository-wide reads still bind it.
+      const repository = input.headSelector ? undefined : repositoryFromContext(input.context);
       return gitlab
         .listMergeRequests({
           cwd: input.cwd,
-          headSelector: input.headSelector,
+          ...(input.headSelector ? { headSelector: input.headSelector } : {}),
           ...(source ? { source } : {}),
+          ...(repository ? { repository } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
         .pipe(
           Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError(
-            (error) =>
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("gitlab"),
-                operation: "listChangeRequests",
-                command: error.command,
-                cwd: input.cwd,
-                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                  input.headSelector,
-                ),
-                detail: error.detail,
-                cause: error,
-              }),
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: SourceControlProviderKind.make("gitlab"),
+              operation: "listChangeRequests",
+              cwd: input.cwd,
+              ...(input.headSelector ? { reference: input.headSelector } : {}),
+              error,
+            }),
           ),
         );
     },
@@ -313,6 +337,30 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    getCommitAvatarUrl: (input) => {
+      const authorEmail = input.authorEmail?.trim();
+      if (!authorEmail) {
+        return Effect.succeed(null);
+      }
+
+      return gitlab
+        .getCommitAvatarUrl({
+          cwd: input.cwd,
+          email: authorEmail,
+          providerBaseUrl: input.context?.provider.baseUrl ?? "https://gitlab.com",
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            SourceControlProvider.sourceControlProviderError({
+              provider: SourceControlProviderKind.make("gitlab"),
+              operation: "getCommitAvatarUrl",
+              cwd: input.cwd,
+              reference: input.sha,
+              error,
+            }),
+          ),
+        );
+    },
     createRepository: (input) =>
       gitlab.createRepository(input).pipe(
         Effect.mapError(

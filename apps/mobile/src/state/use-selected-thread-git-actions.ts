@@ -178,7 +178,10 @@ export function useSelectedThreadGitActions() {
         readonly project: EnvironmentProject;
         readonly cwd: string;
       }) => Promise<AtomCommandResult<T, E>>,
-      options?: { readonly managedExternally?: boolean; readonly changesThreadBranch?: boolean },
+      options?: {
+        readonly managedExternally?: boolean;
+        readonly changesThreadBranch?: boolean;
+      },
     ): Promise<T | null> => {
       if (
         !selectedThread ||
@@ -207,6 +210,9 @@ export function useSelectedThreadGitActions() {
           ? await run()
           : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
       if (AsyncResult.isFailure(result)) {
+        if (Cause.hasInterruptsOnly(result.cause)) {
+          return null;
+        }
         const error = Cause.squash(result.cause);
         const message = error instanceof Error ? error.message : "Git action failed.";
         setPendingConnectionError(message);
@@ -251,7 +257,7 @@ export function useSelectedThreadGitActions() {
 
   const onCheckoutSelectedThreadBranch = useCallback(
     async (branch: string) => {
-      return runSelectedThreadGitMutation(
+      return await runSelectedThreadGitMutation(
         "switch_ref",
         "Switching branch",
         async ({ thread, cwd }) => {
