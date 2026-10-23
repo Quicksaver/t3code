@@ -321,7 +321,6 @@ describe("ArchivedThreadsPanel", () => {
   it("updates both age labels when the archive clock advances", async () => {
     using _setup = setup();
     using _timers = fakeTimers({
-      toFake: ["Date", "setInterval", "clearInterval"],
       now: new Date("2026-06-02T00:00:00.000Z"),
     });
     const entry = populatedArchiveSnapshots[0];
@@ -393,7 +392,7 @@ describe("ArchivedThreadsPanel", () => {
     "blocks a retained %s callback after permission is revoked",
     async (label) => {
       using _setup = setup();
-      await using screen = await renderPopulatedArchive("Archived");
+      await using _screen = await renderPopulatedArchive("Archived");
       testDoubles.canOperate = false;
       clickCapturedButton(label);
       expect(testDoubles.confirm).not.toHaveBeenCalled();
@@ -419,7 +418,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.canOperate = false;
       return true;
     });
-    await using screen = await renderPopulatedArchive();
+    await using _screen = await renderPopulatedArchive();
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 0, bottom: 0 }),
     });
@@ -441,7 +440,7 @@ describe("ArchivedThreadsPanel", () => {
   it("requests a destructive confirmation for a single archived-thread delete", async () => {
     using _setup = setup();
     // Searching expands the project so its row actions are rendered.
-    await using screen = await renderPopulatedArchive("Archived");
+    await using _screen = await renderPopulatedArchive("Archived");
 
     clickCapturedButton("Delete");
 
@@ -470,7 +469,7 @@ describe("ArchivedThreadsPanel", () => {
       using _setup = setup();
       action().mockResolvedValueOnce({ _tag: "Success", value: undefined });
       if (confirm) testDoubles.confirm.mockResolvedValueOnce(true);
-      await using screen = await renderPopulatedArchive("Archived");
+      await using _screen = await renderPopulatedArchive("Archived");
 
       clickCapturedButton(buttonLabel);
 
@@ -513,7 +512,7 @@ describe("ArchivedThreadsPanel", () => {
           testDoubles.contextMenuResult = "unarchive-all";
           testDoubles.confirm.mockResolvedValueOnce(true);
         }
-        await using screen = await renderPopulatedArchive("Archived");
+        await using _screen = await renderPopulatedArchive("Archived");
         clickCapturedButton(
           source === "row" ? "Unarchive" : "Project actions for Archive project",
           { getBoundingClientRect: () => ({ right: 80, bottom: 40 }) },
@@ -543,7 +542,7 @@ describe("ArchivedThreadsPanel", () => {
     try {
       testDoubles.contextMenuResult = "unarchive-all";
       testDoubles.confirm.mockResolvedValueOnce(false);
-      await using screen = await renderPopulatedArchive();
+      await using _screen = await renderPopulatedArchive();
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
       });
@@ -585,7 +584,7 @@ describe("ArchivedThreadsPanel", () => {
     if (buttonLabel === "Delete") {
       testDoubles.confirm.mockResolvedValueOnce(true);
     }
-    await using screen = await renderPopulatedArchive("Archived");
+    await using _screen = await renderPopulatedArchive("Archived");
 
     clickCapturedButton(buttonLabel);
 
@@ -637,7 +636,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.deleteThread.mockResolvedValueOnce({ _tag: "Success", value: undefined });
       testDoubles.confirm.mockResolvedValueOnce(true);
       if (source === "project") testDoubles.contextMenuResult = "delete-all";
-      await using screen = await renderPopulatedArchive("Archived");
+      await using _screen = await renderPopulatedArchive("Archived");
 
       clickCapturedButton(source === "row" ? "Delete" : "Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -659,7 +658,7 @@ describe("ArchivedThreadsPanel", () => {
   it("requests a destructive confirmation for a project bulk delete", async () => {
     using _setup = setup();
     testDoubles.contextMenuResult = "delete-all";
-    await using screen = await renderPopulatedArchive();
+    await using _screen = await renderPopulatedArchive();
 
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -676,7 +675,7 @@ describe("ArchivedThreadsPanel", () => {
   it("keeps project bulk unarchive on the default confirmation variant", async () => {
     using _setup = setup();
     testDoubles.contextMenuResult = "unarchive-all";
-    await using screen = await renderPopulatedArchive();
+    await using _screen = await renderPopulatedArchive();
 
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -704,7 +703,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.contextMenuResult = contextMenuResult;
       testDoubles.confirm.mockResolvedValueOnce(true);
       action().mockResolvedValueOnce({ _tag: "Success", value: undefined });
-      await using screen = await renderPopulatedArchive();
+      await using _screen = await renderPopulatedArchive();
 
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -736,7 +735,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.contextMenuResult = contextMenuResult;
       testDoubles.confirm.mockResolvedValueOnce(true);
       action().mockRejectedValueOnce(new Error(`${contextMenuResult} rejected`));
-      await using screen = await renderPopulatedArchive();
+      await using _screen = await renderPopulatedArchive();
 
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
