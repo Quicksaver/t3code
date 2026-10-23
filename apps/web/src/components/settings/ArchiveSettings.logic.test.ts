@@ -87,6 +87,14 @@ function failureResult(cause: unknown): AtomCommandResult<unknown, unknown> {
   return AsyncResult.failure(Cause.fail(cause));
 }
 
+function createActionSignal() {
+  let resolve = () => {};
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve: () => resolve() };
+}
+
 describe("resolveArchivedProjectEnvironmentLabel", () => {
   const primaryEnvironment = {
     environmentId,
@@ -478,8 +486,8 @@ describe("runArchivedProjectThreadActions", () => {
     let maxActiveCount = 0;
     const attemptedThreadIds: string[] = [];
 
-    const started = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    const started = createActionSignal();
+    const release = createActionSignal();
     const result = runArchivedProjectThreadActions(threads, async (thread) => {
       attemptedThreadIds.push(thread.id);
       activeCount += 1;
@@ -509,8 +517,8 @@ describe("runArchivedProjectThreadActions", () => {
     const attemptedThreadIds: string[] = [];
     let caughtError: unknown;
 
-    const started = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
+    const started = createActionSignal();
+    const release = createActionSignal();
     const result = runArchivedProjectThreadActions(threads, async (thread) => {
       attemptedThreadIds.push(thread.id);
       activeCount += 1;
