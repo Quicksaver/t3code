@@ -87,10 +87,6 @@ function failureResult(cause: unknown): AtomCommandResult<unknown, unknown> {
   return AsyncResult.failure(Cause.fail(cause));
 }
 
-function waitForMacrotask(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 describe("resolveArchivedProjectEnvironmentLabel", () => {
   const primaryEnvironment = {
     environmentId,
@@ -482,15 +478,22 @@ describe("runArchivedProjectThreadActions", () => {
     let maxActiveCount = 0;
     const attemptedThreadIds: string[] = [];
 
-    const failures = await runArchivedProjectThreadActions(threads, async (thread) => {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const result = runArchivedProjectThreadActions(threads, async (thread) => {
       attemptedThreadIds.push(thread.id);
       activeCount += 1;
       maxActiveCount = Math.max(maxActiveCount, activeCount);
-      await waitForMacrotask();
+      if (attemptedThreadIds.length === 4) started.resolve();
+      await release.promise;
       activeCount -= 1;
       return thread.id === "thread-2" ? failureResult(new Error("failed")) : successResult();
     });
 
+    await started.promise;
+    expect(activeCount).toBe(4);
+    release.resolve();
+    const failures = await result;
     expect(failures).toHaveLength(1);
     expect(attemptedThreadIds).toHaveLength(threads.length);
     expect(new Set(attemptedThreadIds)).toEqual(new Set(threads.map((thread) => thread.id)));
@@ -506,23 +509,30 @@ describe("runArchivedProjectThreadActions", () => {
     const attemptedThreadIds: string[] = [];
     let caughtError: unknown;
 
-    try {
-      await runArchivedProjectThreadActions(threads, async (thread) => {
-        attemptedThreadIds.push(thread.id);
-        activeCount += 1;
-        try {
-          await waitForMacrotask();
-          if (thread.id === "thread-0" || thread.id === "thread-1") {
-            throw new Error("failed");
-          }
-          if (thread.id === "thread-2") {
-            return failureResult(new Error("command failed"));
-          }
-          return successResult();
-        } finally {
-          activeCount -= 1;
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const result = runArchivedProjectThreadActions(threads, async (thread) => {
+      attemptedThreadIds.push(thread.id);
+      activeCount += 1;
+      try {
+        if (attemptedThreadIds.length === 4) started.resolve();
+        await release.promise;
+        if (thread.id === "thread-0" || thread.id === "thread-1") {
+          throw new Error("failed");
         }
-      });
+        if (thread.id === "thread-2") {
+          return failureResult(new Error("command failed"));
+        }
+        return successResult();
+      } finally {
+        activeCount -= 1;
+      }
+    });
+    await started.promise;
+    expect(activeCount).toBe(4);
+    release.resolve();
+    try {
+      await result;
     } catch (error) {
       caughtError = error;
     }

@@ -1,9 +1,9 @@
 import { flushSync } from "react-dom";
-import { createRoot, type Root } from "react-dom/client";
+import { act, fakeTimers, render } from "../../../test/render";
 import type { ComponentProps, ReactNode, Ref } from "react";
 import { EnvironmentId, ProjectId, ThreadId, type ConfirmDialogOptions } from "@t3tools/contracts";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as ThreadUndo from "../../hooks/threadUndo";
 import { makeThreadFixture } from "../../test-fixtures";
@@ -169,23 +169,7 @@ import {
 } from "../../previewStateStore";
 import { ArchivedThreadsPanel } from "./ArchivedThreadsPanel";
 
-beforeEach(() => {
-  vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
-});
-
-const mountedRoots: Root[] = [];
-function renderArchive() {
-  const container = document.createElement("div");
-  document.body.append(container);
-  const root = createRoot(container);
-  mountedRoots.push(root);
-  flushSync(() => root.render(<ArchivedThreadsPanel />));
-  return container;
-}
-
-afterEach(() => {
-  for (const root of mountedRoots.splice(0)) root.unmount();
-  document.body.replaceChildren();
+function setup() {
   vi.restoreAllMocks();
   resetPreviewStateForTests();
   testDoubles.canOperate = true;
@@ -207,7 +191,15 @@ afterEach(() => {
   testDoubles.archiveState.error = null;
   testDoubles.archiveState.isLoading = false;
   testDoubles.archiveState.refresh.mockReset();
-});
+  const resources = new DisposableStack();
+  resources.use(vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {}));
+  return resources;
+}
+
+function renderArchive() {
+  // The panel's navigation hooks are mocked to isolate Settings search focus.
+  return render(<ArchivedThreadsPanel />, { router: false });
+}
 
 const populatedArchiveSnapshots = [
   {
@@ -245,19 +237,22 @@ const populatedArchiveSnapshots = [
   },
 ] as const;
 
-function renderPopulatedArchive(searchQuery?: string) {
+async function renderPopulatedArchive(searchQuery?: string) {
   testDoubles.archiveState.snapshots = populatedArchiveSnapshots;
-  const container = renderArchive();
-  if (searchQuery === undefined) return container.innerHTML;
-  const input = document.querySelector<HTMLInputElement>("#archive")!;
-  flushSync(() => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-      input,
-      searchQuery,
-    );
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  return container.innerHTML;
+  await using pending = new AsyncDisposableStack();
+  const screen = pending.use(await renderArchive());
+  if (searchQuery !== undefined) {
+    const input = screen.container.querySelector<HTMLInputElement>("#archive")!;
+    flushSync(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        searchQuery,
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  const resources = pending.move();
+  return { ...screen, [Symbol.asyncDispose]: () => resources.disposeAsync() };
 }
 
 function clickCapturedButton(label: string, currentTarget: unknown = {}) {
@@ -291,16 +286,20 @@ describe("ArchivedThreadsPanel", () => {
     },
   ])(
     "focuses the persistent archive search field in the $state state",
-    ({ archiveState, expectedContent }) => {
+    async ({ archiveState, expectedContent }) => {
+      using _setup = setup();
       testDoubles.archiveState.snapshots = archiveState.snapshots;
       testDoubles.archiveState.isLoading = archiveState.isLoading;
       const scrollIntoView = vi.fn();
-      vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(scrollIntoView);
+      using _scroll = vi
+        .spyOn(HTMLElement.prototype, "scrollIntoView")
+        .mockImplementation(scrollIntoView);
       const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
       Object.defineProperty(mediaQuery, "matches", { value: false });
-      vi.spyOn(window, "matchMedia").mockReturnValue(mediaQuery);
+      using _media = vi.spyOn(window, "matchMedia").mockReturnValue(mediaQuery);
 
-      const markup = renderArchive().innerHTML;
+      await using screen = await renderArchive();
+      const markup = screen.container.innerHTML;
       const archiveInput = document.querySelector<HTMLInputElement>("#archive")!;
 
       expect(markup).toContain('id="archive"');
@@ -319,11 +318,40 @@ describe("ArchivedThreadsPanel", () => {
     },
   );
 
-  it("shows partial archive failures above loaded groups and retries them", () => {
+  it("updates both age labels when the archive clock advances", async () => {
+    using _setup = setup();
+    using _timers = fakeTimers({
+      toFake: ["Date", "setInterval", "clearInterval"],
+      now: new Date("2026-06-02T00:00:00.000Z"),
+    });
+    const entry = populatedArchiveSnapshots[0];
+    testDoubles.archiveState.snapshots = [
+      {
+        ...entry,
+        snapshot: {
+          ...entry.snapshot,
+          threads: [
+            { ...entry.snapshot.threads[0], createdAt: entry.snapshot.threads[0].archivedAt },
+          ],
+        },
+      },
+    ];
+    await using screen = await renderArchive();
+    await screen.getByRole("textbox", { name: "Search archived conversations" }).fill("Archived");
+    expect(screen.container.textContent?.match(/just now/g)).toHaveLength(2);
+
+    await act(() => vi.advanceTimersByTime(60_000));
+
+    expect(screen.container.textContent?.match(/1m ago/g)).toHaveLength(2);
+  });
+
+  it("shows partial archive failures above loaded groups and retries them", async () => {
+    using _setup = setup();
     testDoubles.archiveState.snapshots = populatedArchiveSnapshots;
     testDoubles.archiveState.error = "Remote archive unavailable";
 
-    const markup = renderArchive().innerHTML;
+    await using screen = await renderArchive();
+    const markup = screen.container.innerHTML;
 
     expect(markup).toContain("Could not load every archive");
     expect(markup).toContain("Remote archive unavailable");
@@ -334,19 +362,23 @@ describe("ArchivedThreadsPanel", () => {
     expect(testDoubles.archiveState.refresh).toHaveBeenCalledOnce();
   });
 
-  it("explains a search miss while a partial archive failure is shown", () => {
+  it("explains a search miss while a partial archive failure is shown", async () => {
+    using _setup = setup();
     testDoubles.archiveState.error = "Remote archive unavailable";
 
-    const markup = renderPopulatedArchive("missing title");
+    await using screen = await renderPopulatedArchive("missing title");
+    const markup = screen.container.innerHTML;
 
     expect(markup).toContain("Could not load every archive");
     expect(markup).toContain("No matching archived threads");
   });
 
-  it("shows the retry alert when every archive fails", () => {
+  it("shows the retry alert when every archive fails", async () => {
+    using _setup = setup();
     testDoubles.archiveState.error = "Every archive is unavailable";
 
-    const markup = renderArchive().innerHTML;
+    await using screen = await renderArchive();
+    const markup = screen.container.innerHTML;
 
     expect(markup).toContain("Could not load every archive");
     expect(markup).toContain("Every archive is unavailable");
@@ -360,7 +392,8 @@ describe("ArchivedThreadsPanel", () => {
   it.each(["Unarchive", "Delete"])(
     "blocks a retained %s callback after permission is revoked",
     async (label) => {
-      renderPopulatedArchive("Archived");
+      using _setup = setup();
+      await using screen = await renderPopulatedArchive("Archived");
       testDoubles.canOperate = false;
       clickCapturedButton(label);
       expect(testDoubles.confirm).not.toHaveBeenCalled();
@@ -375,6 +408,7 @@ describe("ArchivedThreadsPanel", () => {
   );
 
   it("keeps Archive Undo when permission is revoked during project confirmation", async () => {
+    using _setup = setup();
     const threadRef = scopeThreadRef(
       EnvironmentId.make("environment-1"),
       ThreadId.make("thread-1"),
@@ -385,7 +419,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.canOperate = false;
       return true;
     });
-    renderPopulatedArchive();
+    await using screen = await renderPopulatedArchive();
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 0, bottom: 0 }),
     });
@@ -405,8 +439,9 @@ describe("ArchivedThreadsPanel", () => {
   });
 
   it("requests a destructive confirmation for a single archived-thread delete", async () => {
+    using _setup = setup();
     // Searching expands the project so its row actions are rendered.
-    renderPopulatedArchive("Archived");
+    await using screen = await renderPopulatedArchive("Archived");
 
     clickCapturedButton("Delete");
 
@@ -432,9 +467,10 @@ describe("ArchivedThreadsPanel", () => {
   ])(
     "refreshes after a successful single $buttonLabel",
     async ({ action, buttonLabel, confirm }) => {
+      using _setup = setup();
       action().mockResolvedValueOnce({ _tag: "Success", value: undefined });
       if (confirm) testDoubles.confirm.mockResolvedValueOnce(true);
-      renderPopulatedArchive("Archived");
+      await using screen = await renderPopulatedArchive("Archived");
 
       clickCapturedButton(buttonLabel);
 
@@ -454,6 +490,7 @@ describe("ArchivedThreadsPanel", () => {
   it.each(["row", "project"] as const)(
     "expires only the restored thread's Archive Undo before a %s restore starts",
     async (source) => {
+      using _setup = setup();
       const threadRef = scopeThreadRef(
         EnvironmentId.make("environment-1"),
         ThreadId.make("thread-1"),
@@ -476,7 +513,7 @@ describe("ArchivedThreadsPanel", () => {
           testDoubles.contextMenuResult = "unarchive-all";
           testDoubles.confirm.mockResolvedValueOnce(true);
         }
-        renderPopulatedArchive("Archived");
+        await using screen = await renderPopulatedArchive("Archived");
         clickCapturedButton(
           source === "row" ? "Unarchive" : "Project actions for Archive project",
           { getBoundingClientRect: () => ({ right: 80, bottom: 40 }) },
@@ -496,6 +533,7 @@ describe("ArchivedThreadsPanel", () => {
   );
 
   it("keeps Archive Undo when a project restore is cancelled", async () => {
+    using _setup = setup();
     const archive = ThreadUndo.begin(
       "archive",
       scopedThreadKey(
@@ -505,7 +543,7 @@ describe("ArchivedThreadsPanel", () => {
     try {
       testDoubles.contextMenuResult = "unarchive-all";
       testDoubles.confirm.mockResolvedValueOnce(false);
-      renderPopulatedArchive();
+      await using screen = await renderPopulatedArchive();
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
       });
@@ -541,12 +579,13 @@ describe("ArchivedThreadsPanel", () => {
       title: "Failed to delete thread",
     },
   ])("reports an unexpected $buttonLabel rejection", async ({ action, buttonLabel, title }) => {
+    using _setup = setup();
     const error = new Error(`${buttonLabel} rejected`);
     action().mockRejectedValueOnce(error);
     if (buttonLabel === "Delete") {
       testDoubles.confirm.mockResolvedValueOnce(true);
     }
-    renderPopulatedArchive("Archived");
+    await using screen = await renderPopulatedArchive("Archived");
 
     clickCapturedButton(buttonLabel);
 
@@ -572,6 +611,7 @@ describe("ArchivedThreadsPanel", () => {
   it.each(["row", "project"] as const)(
     "cleans up only the deleted thread's UI state after a %s delete",
     async (source) => {
+      using _setup = setup();
       const threadRef = scopeThreadRef(
         EnvironmentId.make("environment-1"),
         ThreadId.make("thread-1"),
@@ -597,7 +637,7 @@ describe("ArchivedThreadsPanel", () => {
       testDoubles.deleteThread.mockResolvedValueOnce({ _tag: "Success", value: undefined });
       testDoubles.confirm.mockResolvedValueOnce(true);
       if (source === "project") testDoubles.contextMenuResult = "delete-all";
-      renderPopulatedArchive("Archived");
+      await using screen = await renderPopulatedArchive("Archived");
 
       clickCapturedButton(source === "row" ? "Delete" : "Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -617,8 +657,9 @@ describe("ArchivedThreadsPanel", () => {
   );
 
   it("requests a destructive confirmation for a project bulk delete", async () => {
+    using _setup = setup();
     testDoubles.contextMenuResult = "delete-all";
-    renderPopulatedArchive();
+    await using screen = await renderPopulatedArchive();
 
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -633,8 +674,9 @@ describe("ArchivedThreadsPanel", () => {
   });
 
   it("keeps project bulk unarchive on the default confirmation variant", async () => {
+    using _setup = setup();
     testDoubles.contextMenuResult = "unarchive-all";
-    renderPopulatedArchive();
+    await using screen = await renderPopulatedArchive();
 
     clickCapturedButton("Project actions for Archive project", {
       getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -658,10 +700,11 @@ describe("ArchivedThreadsPanel", () => {
   ])(
     "refreshes once after a successful $contextMenuResult project action",
     async ({ action, contextMenuResult }) => {
+      using _setup = setup();
       testDoubles.contextMenuResult = contextMenuResult;
       testDoubles.confirm.mockResolvedValueOnce(true);
       action().mockResolvedValueOnce({ _tag: "Success", value: undefined });
-      renderPopulatedArchive();
+      await using screen = await renderPopulatedArchive();
 
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
@@ -689,10 +732,11 @@ describe("ArchivedThreadsPanel", () => {
   ])(
     "refreshes once after a throwing $contextMenuResult project action",
     async ({ action, contextMenuResult }) => {
+      using _setup = setup();
       testDoubles.contextMenuResult = contextMenuResult;
       testDoubles.confirm.mockResolvedValueOnce(true);
       action().mockRejectedValueOnce(new Error(`${contextMenuResult} rejected`));
-      renderPopulatedArchive();
+      await using screen = await renderPopulatedArchive();
 
       clickCapturedButton("Project actions for Archive project", {
         getBoundingClientRect: () => ({ right: 80, bottom: 40 }),
