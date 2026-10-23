@@ -70,7 +70,47 @@ describe("thread execution presentation", () => {
       presentPendingBackgroundWork([
         { taskId: "magi:panel", kind: "monitor", description: "Waiting on Magi" },
       ]),
-    ).toMatchObject({ title: "Waiting on Magi", waiting: true });
+    ).toBeNull();
+  });
+
+  it("presents ordinary subagents, monitors and commands while Magi holds its owner", () => {
+    const childThreadId = ThreadId.make("participant");
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "magi:panel", kind: "monitor", description: "Waiting on Magi" },
+        {
+          taskId: "magi:participant",
+          kind: "subagent",
+          description: "Review the change",
+          childThreadId,
+        },
+        { taskId: "watch", kind: "monitor", description: "Watch the build" },
+        { taskId: "magi:command", kind: "command", description: "Run the checks" },
+      ]),
+    ).toEqual({
+      title: "Waiting on 1 subagent, 1 command and 1 monitor",
+      waiting: true,
+      items: [
+        {
+          taskId: "magi:participant",
+          kind: "subagent",
+          label: "Review the change",
+          childThreadId,
+        },
+        {
+          taskId: "magi:command",
+          kind: "command",
+          label: "Run the checks",
+          childThreadId: undefined,
+        },
+        {
+          taskId: "watch",
+          kind: "monitor",
+          label: "Watch the build",
+          childThreadId: undefined,
+        },
+      ],
+    });
   });
 
   it("derives the current root failure without inheriting errors from children or previous runs", () => {

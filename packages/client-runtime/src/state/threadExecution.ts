@@ -315,9 +315,13 @@ function joinWithAnd(parts: ReadonlyArray<string>): string {
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
 ): PendingBackgroundWorkPresentation | null {
-  if (tasks.length === 0) return null;
-  const waiting = backgroundWorkHoldsCompletion(tasks);
-  const items = tasks
+  // Magi's owner marker holds completion between turns; its reserved monitor is not UI work.
+  const visibleTasks = tasks.filter(
+    (task) => task.kind !== "monitor" || !task.taskId.startsWith("magi:"),
+  );
+  if (visibleTasks.length === 0) return null;
+  const waiting = backgroundWorkHoldsCompletion(visibleTasks);
+  const items = visibleTasks
     .map((task): PendingBackgroundWorkItem => {
       const description = task.description?.trim();
       const label =
