@@ -144,6 +144,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {props.activeProjectScripts ? (
                 <ProjectScriptsControl
                   environmentId={props.environmentId}
+                  projectId={props.projectId}
+                  threadId={props.threadId}
                   displayMode="panel"
                   scripts={props.activeProjectScripts}
                   fileScripts={fileScripts}

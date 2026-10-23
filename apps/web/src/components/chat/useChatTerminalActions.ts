@@ -111,6 +111,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const terminalActions = useThreadTerminalActions(activeThreadRef);
+  const panelActionTarget =
+    activeRightPanelSurface?.kind === "terminal" ? activeRightPanelSurface.actionTarget : undefined;
+  const panelTerminalActions = useThreadTerminalActions(activeThreadRef, panelActionTarget);
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -313,9 +316,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const runShellCommandStable = useStableCallback(runShellCommand);
   const addTerminalSurface = () => {
     if (!activeThreadRef) return;
-    const launched = terminalActions.launchTerminal({
+    const launched = panelTerminalActions.launchTerminal({
       place: (terminalId) =>
-        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, panelActionTarget),
     });
     if (!launched) return;
     setTerminalFocusRequestId((value) => value + 1);
@@ -331,7 +334,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
     const surfaceId = activeRightPanelSurface.id;
-    const launched = terminalActions.launchTerminal({
+    const launched = panelTerminalActions.launchTerminal({
       place: (terminalId) =>
         useRightPanelStore
           .getState()
@@ -356,13 +359,13 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const activatePanelTerminalStable = useStableCallback(activatePanelTerminal);
   const closePanelTerminal = (terminalId: string) => {
     if (
-      !hasTerminalWriteAccess() ||
+      !panelTerminalActions.canWrite() ||
       !activeThreadRef ||
       activeRightPanelSurface?.kind !== "terminal"
     )
       return;
-    terminalActions.closeTerminalSession(terminalId);
-    storeCloseTerminal(activeThreadRef, terminalId);
+    panelTerminalActions.closeTerminalSession(terminalId);
+    if (!panelActionTarget) storeCloseTerminal(activeThreadRef, terminalId);
     useRightPanelStore
       .getState()
       .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
@@ -380,10 +383,11 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const requestCloseTerminalStable = useStableCallback(requestCloseTerminal);
   const requestClosePanelTerminal = (terminalId: string) => {
-    if (!hasTerminalWriteAccess()) return;
-    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    if (!panelTerminalActions.canWrite()) return;
+    const label =
+      panelActionTarget?.label ?? activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
-      if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
+      if (confirmed && panelTerminalActions.canWrite()) {
         closePanelTerminal(terminalId);
       }
     });
@@ -404,19 +408,34 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       toggleTerminalVisibility();
     },
     "terminal.split": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal();
       openTerminalIfClosed();
       splitTerminal();
     },
     "terminal.splitVertical": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal("vertical");
       openTerminalIfClosed();
       splitTerminal("vertical");
     },
     "terminal.close": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
         requestClosePanelTerminal(activeRightPanelSurface.activeTerminalId);
         return;
@@ -424,7 +443,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       if (terminalUiState.terminalOpen) requestCloseTerminal(terminalUiState.activeTerminalId);
     },
     "terminal.new": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void addTerminalSurface();
       openTerminalIfClosed();
       createNewTerminal();

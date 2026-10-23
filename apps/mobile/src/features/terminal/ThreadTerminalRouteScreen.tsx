@@ -1,3 +1,6 @@
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { useProject } from "../../state/entities";
+import { ProjectId } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   AuthTerminalReadScope,
@@ -250,6 +253,8 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
   readonly threadId: string;
   readonly terminalId?: string;
+  readonly projectActionProjectId?: string;
+  readonly projectActionLabel?: string;
 }>;
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
@@ -264,17 +269,56 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const connectionsReady = useConnectionsReady();
   const params = props.route.params;
-  const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
-    useThreadSelection();
+  const {
+    selectedThread: conversationThread,
+    selectedThreadProject: conversationProject,
+    selectedEnvironmentConnection,
+  } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadProjection();
-  const selectedThreadDetailWorktreePath =
-    selectedThreadDetail?.projection.thread.worktreePath ?? null;
+  const selectedThreadDetailWorktreePath = params.projectActionProjectId
+    ? null
+    : (selectedThreadDetail?.projection.thread.worktreePath ?? null);
   const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
   const routeThreadIdRaw = firstRouteParam(params.threadId);
   const routeEnvironmentId = routeEnvironmentIdRaw
     ? EnvironmentId.make(routeEnvironmentIdRaw)
     : null;
   const routeThreadId = routeThreadIdRaw ? ThreadId.make(routeThreadIdRaw) : null;
+  const actionProject = useProject(
+    params.projectActionProjectId && routeEnvironmentId
+      ? {
+          environmentId: routeEnvironmentId,
+          projectId: ProjectId.make(params.projectActionProjectId),
+        }
+      : null,
+  );
+  const selectedThreadProject = params.projectActionProjectId ? actionProject : conversationProject;
+  const selectedThread = useMemo(
+    () =>
+      params.projectActionProjectId
+        ? actionProject &&
+          routeThreadId ===
+            projectActionThreadId({
+              environmentId: actionProject.environmentId,
+              environmentLabel: "",
+              projectId: actionProject.id,
+              projectCwd: actionProject.workspaceRoot,
+            })
+          ? { environmentId: actionProject.environmentId, id: routeThreadId, worktreePath: null }
+          : null
+        : conversationThread,
+    [params.projectActionProjectId, actionProject, routeThreadId, conversationThread],
+  );
+  const actionRouteParams = useMemo(
+    () =>
+      params.projectActionProjectId
+        ? {
+            projectActionProjectId: params.projectActionProjectId,
+            projectActionLabel: params.projectActionLabel,
+          }
+        : {},
+    [params.projectActionProjectId, params.projectActionLabel],
+  );
   const terminalSession = useEnvironmentQuery(
     routeEnvironmentId === null ? null : environmentSession.sessionStateAtom(routeEnvironmentId),
   );
@@ -552,7 +596,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
-  const headerSubtitle = selectedThreadProject?.title ?? "";
+  const headerSubtitle = params.projectActionLabel ?? selectedThreadProject?.title ?? "";
   const terminalToolbarActions = useMemo<ReadonlyArray<TerminalToolbarAction>>(() => {
     const modifierActions: ReadonlyArray<TerminalToolbarAction> =
       hostPlatform === "mac"
@@ -665,12 +709,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     }
     navigation.dispatch(
       StackActions.replace("ThreadTerminal", {
+        ...actionRouteParams,
         environmentId: String(selectedThread.environmentId),
         threadId: String(selectedThread.id),
         terminalId: runningSession.target.terminalId,
       }),
     );
-  }, [navigation, runningSession, selectedThread, shouldRedirectToRunningTerminal]);
+  }, [
+    actionRouteParams,
+    navigation,
+    runningSession,
+    selectedThread,
+    shouldRedirectToRunningTerminal,
+  ]);
 
   useEffect(() => {
     const initialInput = pendingLaunch?.initialInput;
@@ -890,13 +941,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
       navigation.dispatch(
         StackActions.replace("ThreadTerminal", {
+          ...actionRouteParams,
           environmentId: String(selectedThread.environmentId),
           threadId: String(selectedThread.id),
           terminalId: nextTerminalId,
         }),
       );
     },
-    [navigation, selectedThread, terminalId],
+    [actionRouteParams, navigation, selectedThread, terminalId],
   );
 
   const handleCloseTerminal = useCallback(() => {
@@ -920,6 +972,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     if (fallbackTerminalId !== null && selectedThread) {
       navigation.dispatch(
         StackActions.replace("ThreadTerminal", {
+          ...actionRouteParams,
           environmentId: String(selectedThread.environmentId),
           threadId: String(selectedThread.id),
           terminalId: fallbackTerminalId,
@@ -939,7 +992,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       );
     }
-  }, [navigation, selectedThread, terminalId, terminalMenuSessions]);
+  }, [actionRouteParams, navigation, selectedThread, terminalId, terminalMenuSessions]);
 
   useTerminalLifecycle({
     terminalKey,
@@ -1011,6 +1064,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
     navigation.dispatch(
       StackActions.replace("ThreadTerminal", {
+        ...actionRouteParams,
         environmentId: String(selectedThread.environmentId),
         threadId: String(selectedThread.id),
         terminalId: nextOpenTerminalId({
@@ -1023,7 +1077,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       }),
     );
-  }, [knownSessions, navigation, selectedThread, terminalId, terminalMenuSessions]);
+  }, [
+    actionRouteParams,
+    knownSessions,
+    navigation,
+    selectedThread,
+    terminalId,
+    terminalMenuSessions,
+  ]);
 
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));

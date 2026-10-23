@@ -1,4 +1,8 @@
 import {
+  projectActionThreadId,
+  type ProjectActionDestination,
+} from "@t3tools/client-runtime/project-actions";
+import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type ScopedThreadRef,
@@ -30,7 +34,13 @@ export interface TerminalLaunchLocation {
  * through here, so ids are allocated from one view of the thread's terminals
  * and every new session starts with the same cwd and environment.
  */
-export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
+export function useThreadTerminalActions(
+  ownerRef: ScopedThreadRef | null,
+  destination?: ProjectActionDestination,
+) {
+  const threadRef = destination
+    ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
+    : ownerRef;
   const openTerminalCommand = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalCommand = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -38,11 +48,13 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   const draftThread = useComposerDraftStore((store) =>
     threadRef ? store.getDraftThreadByRef(threadRef) : null,
   );
-  const projectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
+  const projectRef = destination
+    ? scopeProjectRef(destination.environmentId, destination.projectId)
+    : serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
   const project = useProject(projectRef);
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const knownSessions = useKnownTerminalSessions({
@@ -72,6 +84,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       ),
     ]);
     const canReuse =
+      destination === undefined &&
       knownSessions !== null &&
       threadRef !== null &&
       readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope);

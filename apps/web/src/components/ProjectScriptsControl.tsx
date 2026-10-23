@@ -1,3 +1,5 @@
+import { useRemoteProjectActions, RemoteProjectActionItems } from "./RemoteProjectActionItems";
+import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   AuthSettingsWriteScope,
@@ -63,6 +65,8 @@ interface ProjectScriptsControlProps {
   presentation?: "toolbar" | "menu";
   onRequestMenuClose?: () => void;
   environmentId: EnvironmentId;
+  projectId: ProjectId;
+  threadId: ThreadId;
   scripts: ReadonlyArray<ProjectScript>;
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
@@ -80,6 +84,8 @@ export default function ProjectScriptsControl({
   presentation = "toolbar",
   onRequestMenuClose,
   environmentId,
+  projectId,
+  threadId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
   preferredScriptId = null,
@@ -88,6 +94,7 @@ export default function ProjectScriptsControl({
   onUpdateScript,
   onDeleteScript,
 }: ProjectScriptsControlProps) {
+  const remoteGroups = useRemoteProjectActions(environmentId, projectId);
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = React.useRef<HTMLDivElement | null>(null);
@@ -115,6 +122,8 @@ export default function ProjectScriptsControl({
           script.name.toLowerCase() === fileScript.name.toLowerCase(),
       ),
   );
+
+  const hasActions = scripts.length > 0 || remoteGroups.length > 0 || importableScripts.length > 0;
 
   const openAddDialog = () => {
     setEditorRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT });
@@ -154,7 +163,7 @@ export default function ProjectScriptsControl({
 
   const importMenuItems = importableScripts.length > 0 && (
     <>
-      {scripts.length > 0 && <MenuSeparator />}
+      {(scripts.length > 0 || remoteGroups.length > 0) && <MenuSeparator />}
       <MenuGroup>
         <MenuGroupLabel>From t3.json</MenuGroupLabel>
         {importableScripts.map((fileScript) => (
@@ -226,6 +235,15 @@ export default function ProjectScriptsControl({
           </MenuItem>
         );
       })}
+      {remoteGroups.map((group, index) => (
+        <RemoteProjectActionItems
+          key={group.environmentId}
+          group={group}
+          threadRef={{ environmentId, threadId }}
+          separated={scripts.length > 0 || index > 0}
+          density={presentation === "menu" ? "touch" : "default"}
+        />
+      ))}
       {importMenuItems}
       <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
         <PlusIcon className="size-4" />
@@ -251,7 +269,7 @@ export default function ProjectScriptsControl({
               </MenuShortcut>
             </MenuItem>
           )}
-          {scripts.length > 0 || importableScripts.length > 0 ? (
+          {hasActions ? (
             <MenuSub
               open={actionsMenuOpen.scripts}
               onOpenChange={(open) =>
@@ -354,7 +372,7 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </ActionGroup>
-      ) : scripts.length > 0 || importableScripts.length > 0 ? (
+      ) : hasActions ? (
         isPanel ? (
           <div
             role="group"

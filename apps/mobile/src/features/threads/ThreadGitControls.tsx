@@ -1,3 +1,4 @@
+import type { RemoteProjectActionGroup } from "@t3tools/client-runtime/project-actions";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -104,6 +105,11 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly canOpenTerminal: boolean;
   readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
+  readonly remoteProjectActionGroups: ReadonlyArray<RemoteProjectActionGroup & { canRun: boolean }>;
+  readonly onRunRemoteProjectAction: (
+    group: RemoteProjectActionGroup,
+    script: ProjectScript,
+  ) => Promise<void>;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
@@ -274,7 +280,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
   return {
     terminal: {
       accessibilityLabel: "Open terminal",
-      disabled: !props.canOpenTerminal,
+      disabled: !props.canOpenTerminal && props.remoteProjectActionGroups.length === 0,
       icon: { name: "terminal", type: "sfSymbol" },
       identifier: "thread-right-terminal",
       label: "Terminal",
@@ -288,7 +294,20 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             onPress: () => void props.onRunProjectScript(script),
             type: "action" as const,
           })),
-          ...(props.projectScripts.length === 0
+          ...props.remoteProjectActionGroups.map((group) => ({
+            type: "submenu" as const,
+            label: `From ${group.environmentLabel}`,
+            inline: true,
+            items: group.scripts.map((script) => ({
+              type: "action" as const,
+              description: script.command,
+              disabled: !group.canRun,
+              icon: { name: projectScriptMenuIcon(script.icon), type: "sfSymbol" as const },
+              label: projectScriptMenuLabel(script),
+              onPress: () => void props.onRunRemoteProjectAction(group, script),
+            })),
+          })),
+          ...(props.projectScripts.length === 0 && props.remoteProjectActionGroups.length === 0
             ? [
                 {
                   description: "This project has no saved scripts yet",
@@ -442,7 +461,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
         <Toolbar.Menu
           accessibilityLabel="Open terminal"
           icon="terminal"
-          disabled={!props.canOpenTerminal}
+          disabled={!props.canOpenTerminal && props.remoteProjectActionGroups.length === 0}
           separateBackground
         >
           {props.projectScripts.length > 0 ? (
@@ -467,6 +486,22 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               <Toolbar.Label>No project scripts</Toolbar.Label>
             </Toolbar.MenuAction>
           )}
+          {props.remoteProjectActionGroups.map((group) => (
+            <Toolbar.Menu key={group.environmentId} title={`From ${group.environmentLabel}`} inline>
+              <Toolbar.Label>{`From ${group.environmentLabel}`}</Toolbar.Label>
+              {group.scripts.map((script) => (
+                <Toolbar.MenuAction
+                  key={script.id}
+                  icon={projectScriptMenuIcon(script.icon)}
+                  disabled={!group.canRun}
+                  onPress={() => void props.onRunRemoteProjectAction(group, script)}
+                  subtitle={script.command}
+                >
+                  <Toolbar.Label>{projectScriptMenuLabel(script)}</Toolbar.Label>
+                </Toolbar.MenuAction>
+              ))}
+            </Toolbar.Menu>
+          ))}
           {props.terminalSessions.map((session) => (
             <Toolbar.MenuAction
               key={session.terminalId}

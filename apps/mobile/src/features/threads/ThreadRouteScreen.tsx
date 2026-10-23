@@ -1,3 +1,4 @@
+import { useRemoteProjectActions } from "./useRemoteProjectActions";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -705,7 +706,10 @@ function ThreadRouteContent(
       terminalId: targetTerminalId,
     });
   };
+  const remoteProjectActions = useRemoteProjectActions(selectedThreadProject);
   const threadGitControlProps = {
+    remoteProjectActionGroups: remoteProjectActions.groups,
+    onRunRemoteProjectAction: remoteProjectActions.run,
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     auxiliaryPaneControl:

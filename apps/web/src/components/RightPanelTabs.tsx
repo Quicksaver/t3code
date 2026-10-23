@@ -558,6 +558,7 @@ function surfaceTitle(
       );
     case "terminal":
       return (
+        surface.actionTarget?.label ??
         terminalLabelsById.get(surface.activeTerminalId) ??
         getTerminalLabel(surface.activeTerminalId)
       );
