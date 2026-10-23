@@ -152,6 +152,7 @@ Expected behavior:
 - Web servers have no runtime queue. Worktree-local state, path-derived preferred ports, and the actual ports printed by `dev-runner` let independent worktrees run concurrently. Integrated web UI automation still holds the selected host's desktop lease, regardless of browser driver.
 - Verification workers record and remove their exact disposable state directories, temporary repositories, source snapshots, and linked worktrees after owned processes stop and leases are released. Worktree-owned Android AVDs and ordinary path-keyed Xcode DerivedData remain reusable.
 - The fork extends upstream `$test-t3-app` with collaborative-preview routing for worktree web servers, including direct environment-port navigation when the preview has a verified route and `--share` fallback for Windows or other tailnet consumers.
+- The dev runner loads environment files from its process working directory, so invoking main's current helper in an assigned worktree preserves that worktree's environment overrides.
 - Each assigned worktree remains authoritative on its host. Typechecks and automated tests run directly there with the repository's normal host-native commands and need no verification lease or source snapshot. Failures are compared with the cached upstream-control result produced on the same host before they are treated as branch regressions.
 
 Primary files:

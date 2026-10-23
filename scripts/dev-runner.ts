@@ -24,7 +24,7 @@ import { ChildProcess } from "effect/process";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
-Object.assign(process.env, loadRepoEnv());
+Object.assign(process.env, loadRepoEnv({ repoRoot: process.cwd() }));
 
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
