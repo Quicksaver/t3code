@@ -1,7 +1,7 @@
 import type { SourceControlEnvironmentPanelProps } from "./SourceControlEnvironmentPanel";
 import type { VcsPanelSnapshotResult } from "@t3tools/contracts";
 import { useSourceControlPanelActions } from "./useSourceControlPanelActions";
-import { buildSourceControlPanelExpansion } from "./useSourceControlPanelExpansion";
+import { buildSourceControlPanelExpansion } from "./sourceControlPanelExpansion";
 import { useSourceControlPanelRefresh } from "./useSourceControlPanelRefresh";
 import { useSourceControlPanelState } from "./useSourceControlPanelState";
 

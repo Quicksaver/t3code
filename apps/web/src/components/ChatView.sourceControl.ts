@@ -58,7 +58,7 @@ interface SourceControlThreadMetadataRouting {
   ) => Promise<void>;
 }
 
-interface UseSourceControlRightPanelSurfaceInput {
+interface SourceControlRightPanelSurfaceInput {
   readonly activeRightPanelSurface: RightPanelSurface | null;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly gitCwd: string | null;
@@ -366,7 +366,7 @@ export function createSourceControlServerMetadataUpdateQueue() {
 }
 
 export function buildSourceControlRightPanelSurfaceState(
-  input: UseSourceControlRightPanelSurfaceInput,
+  input: SourceControlRightPanelSurfaceInput,
 ): SourceControlRightPanelSurfaceState {
   const {
     activeRightPanelSurface,
