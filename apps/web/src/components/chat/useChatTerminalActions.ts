@@ -385,7 +385,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const requestClosePanelTerminal = (terminalId: string) => {
     if (!panelTerminalActions.canWrite()) return;
     const label =
-      panelActionTarget?.label ?? activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+      panelActionTarget?.label ??
+      activeTerminalLabelsById.get(terminalId) ??
+      getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && panelTerminalActions.canWrite()) {
         closePanelTerminal(terminalId);
