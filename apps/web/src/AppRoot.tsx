@@ -10,6 +10,7 @@ import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { appAtomRegistry, AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+import { ThreadRemovalCleanupObserver } from "./threadRemovalCleanupObserver";
 
 /**
  * The Electron browser host intentionally sits outside the router so its
@@ -29,6 +30,7 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
   );
   return (
     <AppAtomRegistryProvider>
+      <ThreadRemovalCleanupObserver />
       <RouterProvider router={router} />
       <ElectronBrowserHost />
       <BrowserProfileReporter />

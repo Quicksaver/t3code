@@ -160,6 +160,7 @@ export function makeReplayServerConfig(
       logWebSocketEvents: false,
       stateDir,
       dbPath: path.join(stateDir, "state.sqlite"),
+      archiveDbPath: path.join(stateDir, "archivev2.sqlite"),
       keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
       settingsPath: path.join(stateDir, "settings.json"),
       providerStatusCacheDir,

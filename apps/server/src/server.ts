@@ -176,6 +176,9 @@ import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as EffectOutbox from "./orchestration-v2/EffectOutbox.ts";
+import * as ThreadColdStorage from "./orchestration-v2/ThreadColdStorage.ts";
+import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementService.ts";
 import * as IdleCompactionService from "./orchestration-v2/IdleCompactionService.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -501,6 +504,14 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),
+  // Merged so asset routes restore cold attachments through the same instance.
+  Layer.provideMerge(
+    ThreadColdStorage.layerWithReconcile.pipe(
+      Layer.provide(
+        Layer.mergeAll(ThreadCommandExecutor.layer, EffectOutbox.layer, ProjectionStoreV2.layer),
+      ),
+    ),
+  ),
   Layer.provide(
     RunFinalizationService.layerObserver.pipe(
       Layer.provide(ProjectionStoreV2.layer),

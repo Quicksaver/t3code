@@ -31,7 +31,10 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { permanentlyDiscardComposerDraft } from "../lib/composerDraftUploads";
+import {
+  permanentlyDiscardComposerDraft,
+  releaseArchivedComposerDraftUploads,
+} from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
@@ -369,6 +372,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    releaseArchivedComposerDraftUploads(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
