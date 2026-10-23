@@ -1777,7 +1777,12 @@ export default function ChatView(props: ChatViewProps) {
   };
   const focusComposerStable = useStableCallback(focusComposer);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    canOperateThread &&
+    deriveCanInterruptRunningThread(
+      activeThread !== undefined,
+      activeRuntime,
+      activeThread?.pendingBackgroundTasks ?? [],
+    );
   const onInterrupt = async () => {
     if (
       !activeThread ||
