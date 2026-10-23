@@ -44,6 +44,7 @@ import {
   ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
+  Undo2Icon,
   XIcon,
 } from "lucide-react";
 import {

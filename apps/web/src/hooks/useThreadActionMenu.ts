@@ -45,7 +45,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
-import { useThreadArchiveActions } from "./useThreadArchiveActions";
+import { createThreadArchiveActions } from "./createThreadArchiveActions";
 import { useThreadActions } from "./useThreadActions";
 
 function failureToast(title: string, error: unknown) {
@@ -92,7 +92,7 @@ export function useThreadActionMenu(input: {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
-  const { attemptArchive } = useThreadArchiveActions({ archiveThread, confirmThreadArchive });
+  const { attemptArchive } = createThreadArchiveActions({ archiveThread, confirmThreadArchive });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });

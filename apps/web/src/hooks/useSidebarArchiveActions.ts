@@ -8,7 +8,7 @@ import { useRef, useState } from "react";
 import type { useThreadActions } from "./useThreadActions";
 import { readThreadShell } from "../state/entities";
 import { canArchiveSettledSidebarThread } from "../components/SidebarArchiveControls.logic";
-import { useThreadArchiveActions, type ThreadArchiveEntry } from "./useThreadArchiveActions";
+import { createThreadArchiveActions, type ThreadArchiveEntry } from "./createThreadArchiveActions";
 
 export type SidebarArchiveEntry = ThreadArchiveEntry;
 
@@ -30,7 +30,7 @@ export function useSidebarArchiveActions({
   confirmThreadArchive,
   settledThreadKeysRef,
 }: SidebarArchiveActionsInput) {
-  const { archiveCoordinatedEntries, attemptArchive } = useThreadArchiveActions({
+  const { archiveCoordinatedEntries, attemptArchive } = createThreadArchiveActions({
     archiveThread,
     confirmThreadArchive,
   });

@@ -1,5 +1,4 @@
-import { act, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
+import { act, render } from "../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { SidebarArchiveAllButton } from "./SidebarArchiveControls";
@@ -24,35 +23,26 @@ describe("SidebarArchiveAllButton in a section header", () => {
         Settled
       </CollapsibleSectionHeader>
     );
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const render = async (node: ReactNode) => act(() => root.render(node));
-    await render(header(false, 3, false));
-    try {
-      const [toggle, archiveAll] = container.querySelectorAll("button");
-      expect(toggle!.contains(archiveAll!)).toBe(false);
+    // The header has no navigation; only its toggle and trailing action are under test.
+    await using screen = await render(header(false, 3, false), { router: false });
+    const { container } = screen;
+    const [toggle, archiveAll] = container.querySelectorAll("button");
+    expect(toggle!.contains(archiveAll!)).toBe(false);
 
-      archiveAll!.focus();
-      await act(() => archiveAll!.click());
-      expect(onArchiveAll).toHaveBeenCalledOnce();
-      expect(onToggle).not.toHaveBeenCalled();
+    archiveAll!.focus();
+    await act(() => archiveAll!.click());
+    expect(onArchiveAll).toHaveBeenCalledOnce();
+    expect(onToggle).not.toHaveBeenCalled();
 
-      // Every archivable row has left the shelf while the batch is in flight.
-      await render(header(true, 0, true));
-      expect([...container.querySelectorAll("button")]).toEqual([toggle, archiveAll]);
-      expect(document.activeElement).toBe(archiveAll);
-      // Still focusable while busy: unavailable through ARIA, not `disabled`.
-      expect(archiveAll!.disabled).toBe(false);
-      expect(archiveAll!.getAttribute("aria-disabled")).toBe("true");
+    // Every archivable row has left the shelf while the batch is in flight.
+    await screen.rerender(header(true, 0, true));
+    expect([...container.querySelectorAll("button")]).toEqual([toggle, archiveAll]);
+    expect(document.activeElement).toBe(archiveAll);
+    // Still focusable while busy: unavailable through ARIA, not `disabled`.
+    expect(archiveAll!.disabled).toBe(false);
+    expect(archiveAll!.getAttribute("aria-disabled")).toBe("true");
 
-      await render(header(true, 0, false));
-      expect([...container.querySelectorAll("button")]).toEqual([toggle]);
-    } finally {
-      await act(() => root.unmount());
-      container.remove();
-      vi.unstubAllGlobals();
-    }
+    await screen.rerender(header(true, 0, false));
+    expect([...container.querySelectorAll("button")]).toEqual([toggle]);
   });
 });
