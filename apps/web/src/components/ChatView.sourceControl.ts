@@ -365,7 +365,7 @@ export function createSourceControlServerMetadataUpdateQueue() {
   };
 }
 
-export function useSourceControlRightPanelSurfaceState(
+export function buildSourceControlRightPanelSurfaceState(
   input: UseSourceControlRightPanelSurfaceInput,
 ): SourceControlRightPanelSurfaceState {
   const {

@@ -22,7 +22,7 @@ import {
 } from "./SourceControlPanelModel";
 import type { SourceControlPanelState } from "./useSourceControlPanelState";
 
-export function useSourceControlPanelExpansion(state: SourceControlPanelState) {
+export function buildSourceControlPanelExpansion(state: SourceControlPanelState) {
   const {
     api,
     branchDetailRequestsRef,

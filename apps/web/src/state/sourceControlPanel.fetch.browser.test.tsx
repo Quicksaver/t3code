@@ -1,12 +1,10 @@
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
-import { act, useLayoutEffect } from "react";
-import { createRoot } from "react-dom/client";
+import { useLayoutEffect } from "react";
+import { render } from "../../test/render";
 import { useSourceControlPanelApi } from "./sourceControlPanel";
 
 let currentApi: ReturnType<typeof useSourceControlPanelApi>;
-let renderer: ReturnType<typeof createRoot>;
-let container: HTMLDivElement;
 function Probe() {
   const api = useSourceControlPanelApi(EnvironmentId.make("remote-environment"));
   useLayoutEffect(() => {
@@ -14,19 +12,6 @@ function Probe() {
   }, [api]);
   return null;
 }
-async function renderApi() {
-  container = document.createElement("div");
-  document.body.append(container);
-  renderer = createRoot(container);
-  await act(() => renderer.render(<Probe />));
-  return currentApi;
-}
-afterEach(async () => {
-  if (renderer) await act(() => renderer.unmount());
-  container?.remove();
-  vi.unstubAllGlobals();
-});
-
 const mocks = vi.hoisted(() => ({
   report: vi.fn<() => Promise<void>>(),
   fetch: vi.fn(),
@@ -39,12 +24,8 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: () => mocks.fetch }));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => mocks.fetch }));
 vi.mock("./vcs", () => ({ vcsEnvironment: {} }));
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.resetAllMocks();
-});
-
 it("fetches newly opened panel remotes only after its activity report is acknowledged", async () => {
+  vi.resetAllMocks();
   let acknowledge!: () => void;
   let hasDemand = false;
   mocks.report.mockImplementation(
@@ -57,7 +38,8 @@ it("fetches newly opened panel remotes only after its activity report is acknowl
       }),
   );
   mocks.fetch.mockImplementation(async () => ({ _tag: "Success", value: hasDemand }));
-  const api = await renderApi();
+  await using _screen = await render(<Probe />, { router: false });
+  const api = currentApi;
   const fetching = api.vcs.fetchAllRemotes({ cwd: "/repo" });
 
   expect(mocks.fetch).not.toHaveBeenCalled();
@@ -70,9 +52,11 @@ it("fetches newly opened panel remotes only after its activity report is acknowl
 });
 
 it("keeps explicit Fetch independent of activity reporting", async () => {
+  vi.resetAllMocks();
   mocks.report.mockImplementation(() => new Promise(() => {}));
   mocks.fetch.mockResolvedValue({ _tag: "Success", value: true });
-  const api = await renderApi();
+  await using _screen = await render(<Probe />, { router: false });
+  const api = currentApi;
 
   await expect(api.vcs.fetchAllRemotes({ cwd: "/repo", force: true })).resolves.toBe(true);
   expect(mocks.report).not.toHaveBeenCalled();

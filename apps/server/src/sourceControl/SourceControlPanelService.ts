@@ -407,14 +407,13 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
   });
 
   const stashLocks = yield* KeyedLock.make<string>();
-  const withStashMutation = <A, E>(cwd: string, effect: Effect.Effect<A, E>) =>
-    Effect.gen(function* () {
-      const commonDir = yield* canonicalizeExistingPath(
-        fileSystem,
-        yield* resolveGitCommonDir(cwd),
-      );
-      return yield* stashLocks.withLock(commonDir, effect);
-    });
+  const withStashMutation = Effect.fn("SourceControlPanel.withStashMutation")(function* <A, E>(
+    cwd: string,
+    effect: Effect.Effect<A, E>,
+  ) {
+    const commonDir = yield* canonicalizeExistingPath(fileSystem, yield* resolveGitCommonDir(cwd));
+    return yield* stashLocks.withLock(commonDir, effect);
+  });
 
   const fetchAllRemotes: SourceControlPanelService["Service"]["fetchAllRemotes"] = Effect.fn(
     "fetchAllRemotes",
@@ -433,7 +432,9 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
     return true;
   });
 
-  const withTemporaryIntentToAddIndex = <A, E>(
+  const withTemporaryIntentToAddIndex = Effect.fn(
+    "SourceControlPanel.withTemporaryIntentToAddIndex",
+  )(function* <A, E>(
     input: {
       readonly cwd: string;
       readonly paths: readonly string[];
@@ -444,52 +445,51 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
       };
     },
     body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
-  ) =>
-    Effect.gen(function* () {
-      const gitIndexPath = (yield* run(input.operations.gitIndexPath, input.cwd, [
-        "rev-parse",
-        "--git-path",
-        "index",
-      ])).trim();
-      const sourceIndexPath = path.isAbsolute(gitIndexPath)
-        ? gitIndexPath
-        : path.resolve(input.cwd, gitIndexPath);
-      const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
-      return yield* Effect.gen(function* () {
-        const tempIndexPath = path.join(tempDir, "index");
-        const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
-        yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
-          Effect.catch(() =>
-            run(input.operations.tempIndexReadTree, input.cwd, ["read-tree", "HEAD"], {
-              env,
-            }).pipe(
-              Effect.asVoid,
-              Effect.catch(() => Effect.void),
-            ),
+  ) {
+    const gitIndexPath = (yield* run(input.operations.gitIndexPath, input.cwd, [
+      "rev-parse",
+      "--git-path",
+      "index",
+    ])).trim();
+    const sourceIndexPath = path.isAbsolute(gitIndexPath)
+      ? gitIndexPath
+      : path.resolve(input.cwd, gitIndexPath);
+    const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
+    return yield* Effect.gen(function* () {
+      const tempIndexPath = path.join(tempDir, "index");
+      const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
+      yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
+        Effect.catch(() =>
+          run(input.operations.tempIndexReadTree, input.cwd, ["read-tree", "HEAD"], {
+            env,
+          }).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.void),
           ),
-        );
-        yield* run(
-          input.operations.tempIndexIntentToAdd,
-          input.cwd,
-          ["--literal-pathspecs", "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul"],
-          // A deleted row can compare against thousands of untracked rename candidates.
-          // Keep those literal paths off the platform-limited process command line.
-          { env, stdin: `${input.paths.join("\0")}\0` },
-        ).pipe(Effect.asVoid);
-        return yield* body(env);
-      }).pipe(
-        Effect.ensuring(
-          fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
         ),
       );
-    });
+      yield* run(
+        input.operations.tempIndexIntentToAdd,
+        input.cwd,
+        ["--literal-pathspecs", "add", "-N", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        // A deleted row can compare against thousands of untracked rename candidates.
+        // Keep those literal paths off the platform-limited process command line.
+        { env, stdin: `${input.paths.join("\0")}\0` },
+      ).pipe(Effect.asVoid);
+      return yield* body(env);
+    }).pipe(
+      Effect.ensuring(
+        fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
+      ),
+    );
+  });
 
-  const withTemporarySelectedIndex = <A, E>(
-    cwd: string,
-    paths: readonly string[],
-    body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
-  ) =>
-    Effect.gen(function* () {
+  const withTemporarySelectedIndex = Effect.fn("SourceControlPanel.withTemporarySelectedIndex")(
+    function* <A, E>(
+      cwd: string,
+      paths: readonly string[],
+      body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
+    ) {
       const tempDir = yield* fileSystem
         .makeTempDirectory({ prefix: "t3-vcs-selected-index-" })
         .pipe(
@@ -565,7 +565,8 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
           fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.ignore),
         ),
       );
-    });
+    },
+  );
 
   const branchWithExistingWorktreePath = (branch: VcsRef) => {
     if (!branch.worktreePath) return Effect.succeed(branch);
@@ -612,12 +613,10 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
         }
       : {}),
   });
-  const unstagedFilesWithUntrackedRenames = (
-    cwd: string,
-    untrackedPaths: readonly string[],
-    prefix: string,
-  ) =>
-    Effect.gen(function* () {
+  const unstagedFilesWithUntrackedRenames = Effect.fn(
+    "SourceControlPanel.unstagedFilesWithUntrackedRenames",
+  )(
+    function* (cwd: string, untrackedPaths: readonly string[], prefix: string) {
       if (untrackedPaths.length === 0) return null;
 
       return yield* withTemporaryIntentToAddIndex(
@@ -658,7 +657,9 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
             );
           }),
       );
-    }).pipe(Effect.orElseSucceed(() => null));
+    },
+    Effect.orElseSucceed(() => null),
+  );
 
   // Commit objects are immutable. Share reads across pages, panels, and clients.
   const commitFilesCache = yield* Cache.makeWith(

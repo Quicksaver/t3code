@@ -990,8 +990,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getCommitAvatarUrl: (input) =>
-      Effect.gen(function* () {
+    getCommitAvatarUrl: Effect.fn("GitHubSourceControlProvider.getCommitAvatarUrl")(
+      function* (input) {
         const locator = yield* panelRepository(input);
         const response = yield* rest({
           host: locator.host,
@@ -1003,9 +1003,12 @@ export const make = Effect.gen(function* () {
           return yield* failure("GitHub returned an invalid commit author.", decoded.failure);
         }
         return decoded.success.author?.avatar_url?.trim() || null;
-      }).pipe(
-        Effect.mapError(providerError("getCommitAvatarUrl", input.cwd, { reference: input.sha })),
-      ),
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(providerError("getCommitAvatarUrl", input.cwd, { reference: input.sha })),
+        ),
+    ),
     getChangeRequest: (input) =>
       readPullRequest({ ...input, host: contextHost(input.context) }).pipe(
         Effect.map(toChangeRequest),

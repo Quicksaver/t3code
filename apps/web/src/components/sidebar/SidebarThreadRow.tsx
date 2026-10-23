@@ -1323,9 +1323,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                {topStatus.icon !== "working" ? (
-                                  <span role="status">{topStatus.label}</span>
-                                ) : null}
+                                <span role="status">{topStatus.label}</span>
                               </button>
                             }
                           />

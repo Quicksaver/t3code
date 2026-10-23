@@ -2,6 +2,8 @@ import {
   VcsPanelBranchActionInput,
   VcsPanelFileDiffInput,
   VcsPanelDeleteBranchInput,
+  VcsPanelFileActionInput,
+  VcsPanelWorkingTreeFileEnrichmentResult,
 } from "./git.ts";
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
@@ -17,6 +19,12 @@ const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadResult,
 );
 const decodeRunStackedActionInput = Schema.decodeUnknownSync(GitRunStackedActionInput);
+
+const decodeVcsPanelBranchActionInput = Schema.decodeUnknownSync(VcsPanelBranchActionInput);
+const decodeVcsPanelDeleteBranchInput = Schema.decodeUnknownSync(VcsPanelDeleteBranchInput);
+const decodeVcsPanelFileDiffInput = Schema.decodeUnknownSync(VcsPanelFileDiffInput);
+const decodeVcsPanelFileActionInput = Schema.decodeUnknownSync(VcsPanelFileActionInput);
+const encodeVcsPanelEnrichmentResult = Schema.encodeSync(VcsPanelWorkingTreeFileEnrichmentResult);
 
 describe("GitCommandError", () => {
   it("decodes an unknown failure reason as absent", () => {

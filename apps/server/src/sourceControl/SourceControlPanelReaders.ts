@@ -325,10 +325,8 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
       Effect.orElseSucceed(() => new Map<string, CommitRefs>()),
     );
 
-  const commitAvatarProviderContexts = (
-    cwd: string,
-  ): Effect.Effect<ReadonlyArray<SourceControlProvider.SourceControlProviderContext>> =>
-    Effect.gen(function* () {
+  const commitAvatarProviderContexts = Effect.fn("SourceControlPanel.commitAvatarProviderContexts")(
+    function* (cwd: string) {
       if (!sourceControlProviders) return [];
       const providerSettings = (yield* serverSettings.getSettings).sourceControl.providers;
       // Avatars are opt-in per provider; skip reading remotes when no provider wants them.
@@ -346,7 +344,9 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
           const key = avatarSettingsKey(context.provider.kind);
           return key !== null && providerSettings[key].showCommitAuthorAvatar === true;
         });
-    }).pipe(Effect.orElseSucceed(() => []));
+    },
+    Effect.orElseSucceed(() => []),
+  );
 
   /**
    * Memoized reads shared by every commit list in one response, so a branch expansion reads
@@ -359,13 +359,13 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     });
   type CommitDecorationReads = Effect.Success<ReturnType<typeof commitDecorationReads>>;
 
-  const providerAvatarUrlForCommit = (
-    cwd: string,
-    registry: SourceControlProviderRegistry["Service"],
-    contexts: ReadonlyArray<SourceControlProvider.SourceControlProviderContext>,
-    commit: VcsPanelCommitSummary,
-  ) =>
-    Effect.gen(function* () {
+  const providerAvatarUrlForCommit = Effect.fn("SourceControlPanel.providerAvatarUrlForCommit")(
+    function* (
+      cwd: string,
+      registry: SourceControlProviderRegistry["Service"],
+      contexts: ReadonlyArray<SourceControlProvider.SourceControlProviderContext>,
+      commit: VcsPanelCommitSummary,
+    ) {
       for (const context of contexts) {
         const provider = yield* registry
           .get(context.provider.kind)
@@ -383,7 +383,8 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         if (avatarUrl) return avatarUrl;
       }
       return null;
-    });
+    },
+  );
 
   const withCommitAvatars = (
     cwd: string,
@@ -419,46 +420,45 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     );
   };
 
-  const withCommitDetails = (
+  const withCommitDetails = Effect.fn("SourceControlPanel.withCommitDetails")(function* (
     cwd: string,
     commits: VcsPanelCommitSummary[],
     deferFiles = false,
     decorations?: CommitDecorationReads,
-  ) =>
-    Effect.gen(function* () {
-      if (commits.length === 0) return [];
-      const { avatarContexts, refsBySha } = decorations ?? (yield* commitDecorationReads(cwd));
-      const [withAvatars, refs, prefix] = yield* Effect.all(
-        [
-          withCommitAvatars(cwd, commits, avatarContexts),
-          refsBySha,
-          deferFiles
-            ? Effect.succeed(null)
-            : workingTreePrefix(cwd).pipe(Effect.orElseSucceed(() => null)),
-        ],
-        { concurrency: "unbounded" },
-      );
-      return yield* Effect.forEach(
-        withAvatars,
-        (commit) => {
-          const summary = {
-            ...commit,
-            ...(refs.get(commit.sha) ?? { headRefs: [], tags: [] }),
-          };
-          // Older clients expect files inline and do not know the detail endpoint.
-          if (deferFiles) {
-            return Effect.succeed({ ...summary, files: [], filesDeferred: true });
-          }
-          return prefix === null
-            ? Effect.succeed({ ...summary, files: [] })
-            : commitFilesRelativeTo(cwd, commit.sha, prefix).pipe(
-                Effect.orElseSucceed(() => []),
-                Effect.map((files) => ({ ...summary, files })),
-              );
-        },
-        { concurrency: 2 },
-      );
-    });
+  ) {
+    if (commits.length === 0) return [];
+    const { avatarContexts, refsBySha } = decorations ?? (yield* commitDecorationReads(cwd));
+    const [withAvatars, refs, prefix] = yield* Effect.all(
+      [
+        withCommitAvatars(cwd, commits, avatarContexts),
+        refsBySha,
+        deferFiles
+          ? Effect.succeed(null)
+          : workingTreePrefix(cwd).pipe(Effect.orElseSucceed(() => null)),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return yield* Effect.forEach(
+      withAvatars,
+      (commit) => {
+        const summary = {
+          ...commit,
+          ...(refs.get(commit.sha) ?? { headRefs: [], tags: [] }),
+        };
+        // Older clients expect files inline and do not know the detail endpoint.
+        if (deferFiles) {
+          return Effect.succeed({ ...summary, files: [], filesDeferred: true });
+        }
+        return prefix === null
+          ? Effect.succeed({ ...summary, files: [] })
+          : commitFilesRelativeTo(cwd, commit.sha, prefix).pipe(
+              Effect.orElseSucceed(() => []),
+              Effect.map((files) => ({ ...summary, files })),
+            );
+      },
+      { concurrency: 2 },
+    );
+  });
 
   const parseCount = (value: string) => {
     const parsed = Number.parseInt(value.trim(), 10);
@@ -668,36 +668,35 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
 
   // Callers whose commits may come from outside the branch, like a symmetric compare range, ask to
   // confirm branch membership too.
-  const unsyncedShasAmong = (
+  const unsyncedShasAmong = Effect.fn("SourceControlPanel.unsyncedShasAmong")(function* (
     cwd: string,
     unsyncedBaseRef: string | null,
     refName: string,
     commits: VcsPanelCommitSummary[],
     confirmOnBranch = false,
-  ): Effect.Effect<ReadonlySet<string>, GitCommandError> =>
-    Effect.gen(function* () {
-      if (unsyncedBaseRef === null || commits.length === 0) return new Set<string>();
-      // Resolving once pins every check to one base commit. A missing base, such as a deleted
-      // default compare ref, leaves nothing to be unsynced against.
-      const baseSha = (yield* run(
-        "vcs.panel.unsyncedBase",
-        cwd,
-        ["rev-parse", "--verify", "--quiet", `${unsyncedBaseRef}^{commit}`],
-        { allowNonZeroExit: true },
-      )).trim();
-      if (baseSha.length === 0) return new Set<string>();
-      const shas = [...new Set(commits.map((commit) => commit.sha))];
-      const unsynced = yield* Effect.forEach(
-        shas,
-        (sha) =>
-          Effect.all([
-            commitReachableFrom(cwd, sha, baseSha),
-            confirmOnBranch ? commitReachableFrom(cwd, sha, refName) : Effect.succeed(true),
-          ]).pipe(Effect.map(([inBase, onBranch]) => onBranch && !inBase)),
-        { concurrency: 8 },
-      );
-      return new Set(shas.filter((_, index) => unsynced[index]));
-    });
+  ) {
+    if (unsyncedBaseRef === null || commits.length === 0) return new Set<string>();
+    // Resolving once pins every check to one base commit. A missing base, such as a deleted
+    // default compare ref, leaves nothing to be unsynced against.
+    const baseSha = (yield* run(
+      "vcs.panel.unsyncedBase",
+      cwd,
+      ["rev-parse", "--verify", "--quiet", `${unsyncedBaseRef}^{commit}`],
+      { allowNonZeroExit: true },
+    )).trim();
+    if (baseSha.length === 0) return new Set<string>();
+    const shas = [...new Set(commits.map((commit) => commit.sha))];
+    const unsynced = yield* Effect.forEach(
+      shas,
+      (sha) =>
+        Effect.all([
+          commitReachableFrom(cwd, sha, baseSha),
+          confirmOnBranch ? commitReachableFrom(cwd, sha, refName) : Effect.succeed(true),
+        ]).pipe(Effect.map(([inBase, onBranch]) => onBranch && !inBase)),
+      { concurrency: 8 },
+    );
+    return new Set(shas.filter((_, index) => unsynced[index]));
+  });
 
   const flagUnsyncedCommits = (
     commits: VcsPanelCommitSummary[],
@@ -734,7 +733,7 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
       Effect.flatMap((commits) => withCommitDetails(cwd, commits, deferFiles, decorations)),
     );
 
-  const branchCommits = (
+  const branchCommits = Effect.fn("SourceControlPanel.branchCommits")(function* (
     cwd: string,
     branch: VcsRef,
     baseRef: string | null | undefined,
@@ -743,48 +742,41 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
     limit: number,
     deferFiles = false,
     defaultCompareRef: string | null = null,
-  ): Effect.Effect<VcsPanelBranchCommitsResult, GitCommandError> =>
-    Effect.gen(function* () {
-      yield* validateRevisionOperands("vcs.panel.branchCommits", cwd, [
-        branch.name,
-        baseRef,
-        defaultCompareRef,
-      ]);
-      const refName = branch.name;
-      const historyRef = yield* branchCommitRange(baseRef ?? null, refName, kind ?? "history");
-      if (!historyRef) {
-        return {
-          commits: [],
-          remaining: 0,
-        };
-      }
-      const [total, commits] = yield* Effect.all(
-        [
-          countCommitsForRange(cwd, historyRef),
-          commitsForRange(cwd, historyRef, limit, skip, deferFiles),
-        ],
-        { concurrency: "unbounded" },
-      );
-      // Behind commits are not on the branch, so they are never unsynced.
-      const unsyncedShas =
-        commits.length === 0 || kind === "behind"
-          ? new Set<string>()
-          : yield* unsyncedBaseRefFor(cwd, branch, defaultCompareRef).pipe(
-              Effect.flatMap((unsyncedBaseRef) =>
-                unsyncedShasAmong(
-                  cwd,
-                  unsyncedBaseRef,
-                  refName,
-                  commits,
-                  kind === "compare-history",
-                ),
-              ),
-            );
+  ) {
+    yield* validateRevisionOperands("vcs.panel.branchCommits", cwd, [
+      branch.name,
+      baseRef,
+      defaultCompareRef,
+    ]);
+    const refName = branch.name;
+    const historyRef = yield* branchCommitRange(baseRef ?? null, refName, kind ?? "history");
+    if (!historyRef) {
       return {
-        commits: flagUnsyncedCommits(commits, unsyncedShas),
-        remaining: Math.max(0, total - skip - commits.length),
+        commits: [],
+        remaining: 0,
       };
-    });
+    }
+    const [total, commits] = yield* Effect.all(
+      [
+        countCommitsForRange(cwd, historyRef),
+        commitsForRange(cwd, historyRef, limit, skip, deferFiles),
+      ],
+      { concurrency: "unbounded" },
+    );
+    // Behind commits are not on the branch, so they are never unsynced.
+    const unsyncedShas =
+      commits.length === 0 || kind === "behind"
+        ? new Set<string>()
+        : yield* unsyncedBaseRefFor(cwd, branch, defaultCompareRef).pipe(
+            Effect.flatMap((unsyncedBaseRef) =>
+              unsyncedShasAmong(cwd, unsyncedBaseRef, refName, commits, kind === "compare-history"),
+            ),
+          );
+    return {
+      commits: flagUnsyncedCommits(commits, unsyncedShas),
+      remaining: Math.max(0, total - skip - commits.length),
+    };
+  });
 
   const stashDetails = (
     cwd: string,
@@ -854,12 +846,8 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         );
   };
 
-  const generatedStashMessage = (
-    cwd: string,
-    mode: "all" | "staged" | "unstaged",
-    paths?: readonly string[],
-  ): Effect.Effect<string, GitCommandError> =>
-    Effect.gen(function* () {
+  const generatedStashMessage = Effect.fn("SourceControlPanel.generatedStashMessage")(
+    function* (cwd: string, mode: "all" | "staged" | "unstaged", paths?: readonly string[]) {
       const fallback = `T3 Code ${mode} stash`;
       const diffArgs =
         mode === "staged"
@@ -929,23 +917,22 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         policy,
       });
       return yield* nonEmptySubject(generated.subject);
-    }).pipe(
-      Effect.mapError(
-        messageGenerationError(
-          "vcs.panel.generateStashMessage",
-          cwd,
-          "git stash push",
-          "Stash message generation failed; enter a message or retry.",
+    },
+    (effect, cwd) =>
+      effect.pipe(
+        Effect.mapError(
+          messageGenerationError(
+            "vcs.panel.generateStashMessage",
+            cwd,
+            "git stash push",
+            "Stash message generation failed; enter a message or retry.",
+          ),
         ),
       ),
-    );
+  );
 
-  const generatedCommitMessage = (
-    cwd: string,
-    paths?: readonly string[],
-    env?: NodeJS.ProcessEnv,
-  ): Effect.Effect<string, GitCommandError> =>
-    Effect.gen(function* () {
+  const generatedCommitMessage = Effect.fn("SourceControlPanel.generatedCommitMessage")(
+    function* (cwd: string, paths?: readonly string[], env?: NodeJS.ProcessEnv) {
       const fallback = "T3 Code changes";
       const pathArgs = paths && paths.length > 0 ? (["--", ...paths] as const) : [];
       const literalPathspecArgs = pathArgs.length > 0 ? (["--literal-pathspecs"] as const) : [];
@@ -998,16 +985,19 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
         policy,
       });
       return yield* nonEmptySubject(generated.subject);
-    }).pipe(
-      Effect.mapError(
-        messageGenerationError(
-          "vcs.panel.generateCommitMessage",
-          cwd,
-          "git commit",
-          "Commit message generation failed; enter a message or retry.",
+    },
+    (effect, cwd) =>
+      effect.pipe(
+        Effect.mapError(
+          messageGenerationError(
+            "vcs.panel.generateCommitMessage",
+            cwd,
+            "git commit",
+            "Commit message generation failed; enter a message or retry.",
+          ),
         ),
       ),
-    );
+  );
 
   const compareFiles = (cwd: string, baseRef: string | null, refName: string) => {
     if (!baseRef) return Effect.succeed([]);
@@ -1102,99 +1092,98 @@ export function makeSourceControlPanelReaders(deps: SourceControlPanelReaderDepe
       Effect.orElseSucceed(() => null),
     );
 
-  const branchDetails = (
+  const branchDetails = Effect.fn("SourceControlPanel.branchDetails")(function* (
     cwd: string,
     branch: VcsRef,
     defaultCompareRef: string | null,
     compareBaseRef?: string,
     deferFiles = false,
-  ): Effect.Effect<VcsPanelBranchDetails, GitCommandError> =>
-    Effect.gen(function* () {
-      yield* validateRevisionOperands("vcs.panel.branchDetails", cwd, [
-        branch.name,
-        compareBaseRef,
-        defaultCompareRef,
-      ]);
-      const refName = branch.name;
-      const upstreamRef = branch.isRemote ? null : yield* upstreamForRef(cwd, refName);
-      const createdBaseRef = upstreamRef ? null : yield* createdFromRef(cwd, refName);
-      const baseRef = compareBaseRef ?? upstreamRef ?? createdBaseRef ?? defaultCompareRef;
-      const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
-      const decorations = yield* commitDecorationReads(cwd);
-      const historyRef = refName;
-      const [
-        aheadCommits,
-        aheadCommitTotal,
-        behindCommits,
-        behindCommitTotal,
-        totalCommits,
-        commits,
-        files,
-      ] = yield* Effect.all(
-        [
-          baseRef
-            ? commitsForRange(
-                cwd,
-                `${baseRef}..${refName}`,
-                COMMIT_PAGE_SIZE,
-                0,
-                deferFiles,
-                decorations,
-              )
-            : Effect.succeed([]),
-          baseRef ? countCommitsForRange(cwd, `${baseRef}..${refName}`) : Effect.succeed(0),
-          baseRef
-            ? commitsForRange(
-                cwd,
-                `${refName}..${baseRef}`,
-                COMMIT_PAGE_SIZE,
-                0,
-                deferFiles,
-                decorations,
-              )
-            : Effect.succeed([]),
-          baseRef ? countCommitsForRange(cwd, `${refName}..${baseRef}`) : Effect.succeed(0),
-          countCommitsForRange(cwd, historyRef),
-          commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE, 0, deferFiles, decorations),
-          compareFiles(cwd, baseRef, refName),
-        ],
-        { concurrency: "unbounded" },
-      );
-      const unsyncedShas = yield* unsyncedShasAmong(cwd, unsyncedBaseRef, refName, [
-        ...aheadCommits,
-        ...commits,
-      ]);
-      const flaggedAheadCommits = flagUnsyncedCommits(aheadCommits, unsyncedShas);
-      const flaggedCommits = flagUnsyncedCommits(commits, unsyncedShas);
-      const unsyncedCommitShas = [
-        ...new Set(
-          [...flaggedAheadCommits, ...flaggedCommits]
-            .filter((commit) => commit.unsynced === true)
-            .map((commit) => commit.sha),
-        ),
-      ];
-      return {
-        name: branch.name,
-        fullRefName: branch.name,
-        isRemote: branch.isRemote === true,
-        remoteName: branch.remoteName ?? null,
-        current: branch.current,
-        isDefault: branch.isDefault,
-        worktreePath: branch.worktreePath,
-        upstreamRef,
-        baseRef,
-        unsyncedCommitShas,
-        aheadCommits: flaggedAheadCommits,
-        aheadCommitsRemaining: Math.max(0, aheadCommitTotal - aheadCommits.length),
-        behindCommits,
-        behindCommitsRemaining: Math.max(0, behindCommitTotal - behindCommits.length),
-        compareCommits: [],
-        compareCommitsRemaining: 0,
-        commits: flaggedCommits,
-        commitsRemaining: Math.max(0, totalCommits - commits.length),
-        compareFiles: files,
-      };
-    });
+  ) {
+    yield* validateRevisionOperands("vcs.panel.branchDetails", cwd, [
+      branch.name,
+      compareBaseRef,
+      defaultCompareRef,
+    ]);
+    const refName = branch.name;
+    const upstreamRef = branch.isRemote ? null : yield* upstreamForRef(cwd, refName);
+    const createdBaseRef = upstreamRef ? null : yield* createdFromRef(cwd, refName);
+    const baseRef = compareBaseRef ?? upstreamRef ?? createdBaseRef ?? defaultCompareRef;
+    const unsyncedBaseRef = branch.isRemote ? null : (upstreamRef ?? defaultCompareRef);
+    const decorations = yield* commitDecorationReads(cwd);
+    const historyRef = refName;
+    const [
+      aheadCommits,
+      aheadCommitTotal,
+      behindCommits,
+      behindCommitTotal,
+      totalCommits,
+      commits,
+      files,
+    ] = yield* Effect.all(
+      [
+        baseRef
+          ? commitsForRange(
+              cwd,
+              `${baseRef}..${refName}`,
+              COMMIT_PAGE_SIZE,
+              0,
+              deferFiles,
+              decorations,
+            )
+          : Effect.succeed([]),
+        baseRef ? countCommitsForRange(cwd, `${baseRef}..${refName}`) : Effect.succeed(0),
+        baseRef
+          ? commitsForRange(
+              cwd,
+              `${refName}..${baseRef}`,
+              COMMIT_PAGE_SIZE,
+              0,
+              deferFiles,
+              decorations,
+            )
+          : Effect.succeed([]),
+        baseRef ? countCommitsForRange(cwd, `${refName}..${baseRef}`) : Effect.succeed(0),
+        countCommitsForRange(cwd, historyRef),
+        commitsForRange(cwd, historyRef, COMMIT_PAGE_SIZE, 0, deferFiles, decorations),
+        compareFiles(cwd, baseRef, refName),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const unsyncedShas = yield* unsyncedShasAmong(cwd, unsyncedBaseRef, refName, [
+      ...aheadCommits,
+      ...commits,
+    ]);
+    const flaggedAheadCommits = flagUnsyncedCommits(aheadCommits, unsyncedShas);
+    const flaggedCommits = flagUnsyncedCommits(commits, unsyncedShas);
+    const unsyncedCommitShas = [
+      ...new Set(
+        [...flaggedAheadCommits, ...flaggedCommits]
+          .filter((commit) => commit.unsynced === true)
+          .map((commit) => commit.sha),
+      ),
+    ];
+    return {
+      name: branch.name,
+      fullRefName: branch.name,
+      isRemote: branch.isRemote === true,
+      remoteName: branch.remoteName ?? null,
+      current: branch.current,
+      isDefault: branch.isDefault,
+      worktreePath: branch.worktreePath,
+      upstreamRef,
+      baseRef,
+      unsyncedCommitShas,
+      aheadCommits: flaggedAheadCommits,
+      aheadCommitsRemaining: Math.max(0, aheadCommitTotal - aheadCommits.length),
+      behindCommits,
+      behindCommitsRemaining: Math.max(0, behindCommitTotal - behindCommits.length),
+      compareCommits: [],
+      compareCommitsRemaining: 0,
+      commits: flaggedCommits,
+      commitsRemaining: Math.max(0, totalCommits - commits.length),
+      compareFiles: files,
+    };
+  });
 
   return {
     actionableForkBranches,
