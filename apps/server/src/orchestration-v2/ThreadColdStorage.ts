@@ -431,8 +431,8 @@ const make = Effect.gen(function* () {
 
   // Forks read their source's rows, and a subagent's parent may still recover
   // its result. Those threads stay hot while archived.
-  const isReferencedByLiveThread = (threadId: string, thread: ThreadRow) =>
-    Effect.gen(function* () {
+  const isReferencedByLiveThread = Effect.fn("ThreadColdStorage.isReferencedByLiveThread")(
+    function* (threadId: string, thread: ThreadRow) {
       if (yield* hasForkDependents(threadId)) return true;
       if (thread.relationship_to_parent !== "subagent" || thread.parent_thread_id === null) {
         return false;
@@ -443,9 +443,10 @@ const make = Effect.gen(function* () {
         parent.value.deleted_at === null &&
         parent.value.archived_at === null
       );
-    });
+    },
+  );
 
-  const upsertManifest = (input: {
+  const upsertManifest = Effect.fn("ThreadColdStorage.upsertManifest")(function* (input: {
     readonly threadId: string;
     readonly status: ManifestRow["status"];
     readonly archivedAt: string | null;
@@ -453,10 +454,9 @@ const make = Effect.gen(function* () {
     readonly originalBytes?: number;
     readonly compressedBytes?: number;
     readonly bumpGeneration?: boolean;
-  }) =>
-    Effect.gen(function* () {
-      const updatedAt = yield* nowIso;
-      yield* sql`
+  }) {
+    const updatedAt = yield* nowIso;
+    yield* sql`
         INSERT INTO thread_archive_manifests (
           thread_id, status, archived_at, restore_generation, shell_json,
           original_bytes, compressed_bytes, updated_at
@@ -476,53 +476,51 @@ const make = Effect.gen(function* () {
           compressed_bytes = excluded.compressed_bytes,
           updated_at = excluded.updated_at
       `;
-    });
+  });
 
   // Callers only drop a bundle that is stale or no longer needed, so a header
   // left after an interrupted deletion never guards data that matters.
-  const deleteBundle = (threadId: string) =>
-    Effect.gen(function* () {
-      while (true) {
-        // The count must come from the same connection hold as its DELETE.
-        const deleted = yield* sql.withTransaction(
-          Effect.gen(function* () {
-            yield* sql.unsafe(
-              `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE rowid IN (
+  const deleteBundle = Effect.fn("ThreadColdStorage.deleteBundle")(function* (threadId: string) {
+    while (true) {
+      // The count must come from the same connection hold as its DELETE.
+      const deleted = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql.unsafe(
+            `DELETE FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks WHERE rowid IN (
                  SELECT rowid FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks
                  WHERE thread_id = ? LIMIT ${RESTORE_CHUNK_PAGE_SIZE}
                )`,
-              [threadId],
-            );
-            const rows = (yield* sql.unsafe(
-              "SELECT changes() AS changes",
-            )) as ReadonlyArray<SqlRow>;
-            return Number(rows[0]?.changes ?? 0);
-          }),
-        );
-        if (deleted === 0) break;
-        yield* yieldToEventLoop;
-      }
-      yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
-        threadId,
-      ]);
-    });
+            [threadId],
+          );
+          const rows = (yield* sql.unsafe("SELECT changes() AS changes")) as ReadonlyArray<SqlRow>;
+          return Number(rows[0]?.changes ?? 0);
+        }),
+      );
+      if (deleted === 0) break;
+      yield* yieldToEventLoop;
+    }
+    yield* sql.unsafe(`DELETE FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`, [
+      threadId,
+    ]);
+  });
 
-  const assertBundleComplete = (threadId: string) =>
-    Effect.gen(function* () {
-      const rows = (yield* sql.unsafe(
-        `SELECT archive_version FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`,
-        [threadId],
-      )) as ReadonlyArray<SqlRow>;
-      const version = rows[0]?.archive_version;
-      if (version === undefined) {
-        return yield* new ArchiveContentError({ detail: "the cold bundle is missing" });
-      }
-      if (Number(version) !== ARCHIVE_VERSION) {
-        return yield* new ArchiveContentError({
-          detail: `unsupported cold bundle version ${String(version)}`,
-        });
-      }
-    });
+  const assertBundleComplete = Effect.fn("ThreadColdStorage.assertBundleComplete")(function* (
+    threadId: string,
+  ) {
+    const rows = (yield* sql.unsafe(
+      `SELECT archive_version FROM ${ARCHIVE_SCHEMA}.archive_threads WHERE thread_id = ?`,
+      [threadId],
+    )) as ReadonlyArray<SqlRow>;
+    const version = rows[0]?.archive_version;
+    if (version === undefined) {
+      return yield* new ArchiveContentError({ detail: "the cold bundle is missing" });
+    }
+    if (Number(version) !== ARCHIVE_VERSION) {
+      return yield* new ArchiveContentError({
+        detail: `unsupported cold bundle version ${String(version)}`,
+      });
+    }
+  });
 
   const bundleAttachmentEntries = (threadId: string) =>
     sql
@@ -541,36 +539,37 @@ const make = Effect.gen(function* () {
       );
 
   // Removes only the exact thread log and its numeric rotations.
-  const removeProviderLogs = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const segment = toSafeThreadAttachmentSegment(threadId);
-      if (!segment) return;
-      // An open writer would recreate the file, and Windows cannot delete it.
-      yield* providerLoggers.native?.closeThread?.(threadId) ?? Effect.void;
-      const configuredBaseName = path.basename(config.providerEventLogPath);
-      const extension = path.extname(configuredBaseName);
-      const prefix = `${
-        extension.length > 0 ? configuredBaseName.slice(0, -extension.length) : configuredBaseName
-      }.`;
-      const baseName = `${prefix}${segment}.log`;
-      const entries = yield* fs
-        .readDirectory(config.providerLogsDir)
-        .pipe(
-          Effect.catch((error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed([] as string[]) : Effect.fail(error),
-          ),
-        );
-      yield* Effect.forEach(
-        entries.filter((entry) => {
-          if (entry === baseName) return true;
-          if (!entry.startsWith(`${baseName}.`)) return false;
-          const rotation = entry.slice(baseName.length + 1);
-          return rotation.length > 0 && /^\d+$/.test(rotation);
-        }),
-        (entry) => fs.remove(path.join(config.providerLogsDir, entry), { force: true }),
-        { concurrency: 4, discard: true },
+  const removeProviderLogs = Effect.fn("ThreadColdStorage.removeProviderLogs")(function* (
+    threadId: ThreadId,
+  ) {
+    const segment = toSafeThreadAttachmentSegment(threadId);
+    if (!segment) return;
+    // An open writer would recreate the file, and Windows cannot delete it.
+    yield* providerLoggers.native?.closeThread?.(threadId) ?? Effect.void;
+    const configuredBaseName = path.basename(config.providerEventLogPath);
+    const extension = path.extname(configuredBaseName);
+    const prefix = `${
+      extension.length > 0 ? configuredBaseName.slice(0, -extension.length) : configuredBaseName
+    }.`;
+    const baseName = `${prefix}${segment}.log`;
+    const entries = yield* fs
+      .readDirectory(config.providerLogsDir)
+      .pipe(
+        Effect.catch((error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed([] as string[]) : Effect.fail(error),
+        ),
       );
-    });
+    yield* Effect.forEach(
+      entries.filter((entry) => {
+        if (entry === baseName) return true;
+        if (!entry.startsWith(`${baseName}.`)) return false;
+        const rotation = entry.slice(baseName.length + 1);
+        return rotation.length > 0 && /^\d+$/.test(rotation);
+      }),
+      (entry) => fs.remove(path.join(config.providerLogsDir, entry), { force: true }),
+      { concurrency: 4, discard: true },
+    );
+  });
 
   const freePageCount = (schema: string) =>
     sql
@@ -595,51 +594,49 @@ const make = Effect.gen(function* () {
   // Removes a thread's rows in batches of at most DELETE_CHUNK_ROWS per commit, so
   // no single commit writes a whole conversation's pages. `finish` runs inside
   // the last commit.
-  const deleteThreadRows = <E>(
+  const deleteThreadRows = Effect.fn("ThreadColdStorage.deleteThreadRows")(function* <E>(
     tables: ReadonlyArray<ThreadTable>,
     threadId: string,
     finish: Effect.Effect<unknown, E>,
-  ) =>
-    Effect.gen(function* () {
-      const remaining = [...tables].toReversed();
-      while (remaining.length > 0) {
-        yield* sql.withTransaction(
-          Effect.gen(function* () {
-            let budget = DELETE_CHUNK_ROWS;
-            while (remaining.length > 0 && budget > 0) {
-              const entry = remaining[0]!;
-              yield* sql.unsafe(
-                `DELETE FROM ${entry.table} WHERE rowid IN (
+  ) {
+    const remaining = [...tables].toReversed();
+    while (remaining.length > 0) {
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          let budget = DELETE_CHUNK_ROWS;
+          while (remaining.length > 0 && budget > 0) {
+            const entry = remaining[0]!;
+            yield* sql.unsafe(
+              `DELETE FROM ${entry.table} WHERE rowid IN (
                    SELECT rowid FROM ${entry.table} WHERE ${entry.predicate} LIMIT ${budget}
                  )`,
-                bindThread(entry, threadId),
-              );
-              const rows = (yield* sql.unsafe(
-                "SELECT changes() AS changes",
-              )) as ReadonlyArray<SqlRow>;
-              const changed = Number(rows[0]?.changes ?? 0);
-              if (changed < budget) remaining.shift();
-              budget -= changed;
-            }
-            if (remaining.length === 0) yield* finish;
-          }),
-        );
-        yield* yieldToEventLoop;
-      }
-    });
+              bindThread(entry, threadId),
+            );
+            const rows = (yield* sql.unsafe(
+              "SELECT changes() AS changes",
+            )) as ReadonlyArray<SqlRow>;
+            const changed = Number(rows[0]?.changes ?? 0);
+            if (changed < budget) remaining.shift();
+            budget -= changed;
+          }
+          if (remaining.length === 0) yield* finish;
+        }),
+      );
+      yield* yieldToEventLoop;
+    }
+  });
 
   // A `moving` thread's bundle is complete and its reads already restore from it,
   // so its remaining hot rows can go in batches. It stays `moving` until its
   // files are gone too, so an interrupted cleanup is resumed. Repeats safely.
-  const finishMove = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      yield* deleteThreadRows(coldTables, threadId, Effect.void);
-      yield* removeColdFiles(threadId);
-      yield* sql`
+  const finishMove = Effect.fn("ThreadColdStorage.finishMove")(function* (threadId: ThreadId) {
+    yield* deleteThreadRows(coldTables, threadId, Effect.void);
+    yield* removeColdFiles(threadId);
+    yield* sql`
         UPDATE thread_archive_manifests SET status = 'cold', updated_at = ${yield* nowIso}
         WHERE thread_id = ${threadId} AND status = 'moving'
       `;
-    });
+  });
 
   // Free pages are returned once the lifecycle queue drains: a backlog such as
   // the startup convergence reuses them meanwhile, and one final pass returns
@@ -657,24 +654,23 @@ const make = Effect.gen(function* () {
     yield* reclaimFreePages;
   });
 
-  const enqueueColdArchive = (input: {
+  const enqueueColdArchive = Effect.fn("ThreadColdStorage.enqueueColdArchive")(function* (input: {
     readonly threadId: ThreadId;
     readonly key: string;
     readonly delayMs: number;
-  }) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const commandId = CommandId.make(`command:thread-cold:${input.threadId}:${input.key}`);
-      yield* outbox.enqueue([
-        {
-          id: `effect:${commandId}:thread.cold-archive`,
-          commandId,
-          threadId: input.threadId,
-          request: { type: "thread.cold-archive" },
-          availableAt: DateTime.add(now, { milliseconds: input.delayMs }),
-        },
-      ]);
-    });
+  }) {
+    const now = yield* DateTime.now;
+    const commandId = CommandId.make(`command:thread-cold:${input.threadId}:${input.key}`);
+    yield* outbox.enqueue([
+      {
+        id: `effect:${commandId}:thread.cold-archive`,
+        commandId,
+        threadId: input.threadId,
+        request: { type: "thread.cold-archive" },
+        availableAt: DateTime.add(now, { milliseconds: input.delayMs }),
+      },
+    ]);
+  });
 
   const moveCold = Effect.fn("ThreadColdStorage.moveCold")(function* (
     threadId: ThreadId,
@@ -712,16 +708,19 @@ const make = Effect.gen(function* () {
       );
       yield* yieldToEventLoop;
     });
-    const insertChunk = (kind: string, rowCount: number, encoded: Uint8Array) =>
-      Effect.gen(function* () {
-        const data = yield* compress(encoded);
-        pending.push([chunkIndex, kind, rowCount, data]);
-        pendingBytes += data.byteLength;
-        chunkIndex += 1;
-        originalBytes += encoded.byteLength;
-        compressedBytes += data.byteLength;
-        if (pendingBytes >= BUNDLE_COMMIT_BYTES) yield* flushChunks;
-      });
+    const insertChunk = Effect.fn("ThreadColdStorage.insertChunk")(function* (
+      kind: string,
+      rowCount: number,
+      encoded: Uint8Array,
+    ) {
+      const data = yield* compress(encoded);
+      pending.push([chunkIndex, kind, rowCount, data]);
+      pendingBytes += data.byteLength;
+      chunkIndex += 1;
+      originalBytes += encoded.byteLength;
+      compressedBytes += data.byteLength;
+      if (pendingBytes >= BUNDLE_COMMIT_BYTES) yield* flushChunks;
+    });
 
     for (const entry of coldTables) {
       let lastRowId = 0;
@@ -802,51 +801,51 @@ const make = Effect.gen(function* () {
   });
 
   // Idempotent: safe to repeat when a crash interrupted the cleanup after commit.
-  const removeColdFiles = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const entries = yield* bundleAttachmentEntries(threadId);
-      yield* Effect.forEach(
-        entries,
-        (entry) => fs.remove(path.join(config.attachmentsDir, entry), { force: true }),
-        { concurrency: 4, discard: true },
-      );
-      yield* removeProviderLogs(threadId);
-    });
+  const removeColdFiles = Effect.fn("ThreadColdStorage.removeColdFiles")(function* (
+    threadId: ThreadId,
+  ) {
+    const entries = yield* bundleAttachmentEntries(threadId);
+    yield* Effect.forEach(
+      entries,
+      (entry) => fs.remove(path.join(config.attachmentsDir, entry), { force: true }),
+      { concurrency: 4, discard: true },
+    );
+    yield* removeProviderLogs(threadId);
+  });
 
-  const insertRows = (
+  const insertRows = Effect.fn("ThreadColdStorage.insertRows")(function* (
     table: string,
     rows: ReadonlyArray<SqlRow>,
     columnsByTable: Map<string, ReadonlySet<string>>,
-  ) =>
-    Effect.gen(function* () {
-      if (OBSOLETE_V1_ARCHIVE_TABLES.has(table)) return;
-      if (!coldTableNames.has(table)) {
-        return yield* new ArchiveContentError({ detail: `unknown table '${table}'` });
-      }
-      let columns = columnsByTable.get(table);
-      if (columns === undefined) {
-        columns = new Set(
-          (
-            (yield* sql.unsafe(
-              `PRAGMA main.table_info(${quoteIdentifier(table)})`,
-            )) as ReadonlyArray<SqlRow>
-          ).map((column) => String(column.name)),
-        );
-        columnsByTable.set(table, columns);
-      }
-      for (const row of rows) {
-        // Bundles can outlive migrations: drop removed columns, default new ones.
-        const present = Object.keys(row).filter((column) => columns.has(column));
-        if (present.length === 0) continue;
-        // Rows written after the move are newer than the bundle and win.
-        yield* sql.unsafe(
-          `INSERT OR IGNORE INTO ${quoteIdentifier(table)} (${present
-            .map(quoteIdentifier)
-            .join(", ")}) VALUES (${present.map(() => "?").join(", ")})`,
-          present.map((column) => row[column]),
-        );
-      }
-    });
+  ) {
+    if (OBSOLETE_V1_ARCHIVE_TABLES.has(table)) return;
+    if (!coldTableNames.has(table)) {
+      return yield* new ArchiveContentError({ detail: `unknown table '${table}'` });
+    }
+    let columns = columnsByTable.get(table);
+    if (columns === undefined) {
+      columns = new Set(
+        (
+          (yield* sql.unsafe(
+            `PRAGMA main.table_info(${quoteIdentifier(table)})`,
+          )) as ReadonlyArray<SqlRow>
+        ).map((column) => String(column.name)),
+      );
+      columnsByTable.set(table, columns);
+    }
+    for (const row of rows) {
+      // Bundles can outlive migrations: drop removed columns, default new ones.
+      const present = Object.keys(row).filter((column) => columns.has(column));
+      if (present.length === 0) continue;
+      // Rows written after the move are newer than the bundle and win.
+      yield* sql.unsafe(
+        `INSERT OR IGNORE INTO ${quoteIdentifier(table)} (${present
+          .map(quoteIdentifier)
+          .join(", ")}) VALUES (${present.map(() => "?").join(", ")})`,
+        present.map((column) => row[column]),
+      );
+    }
+  });
 
   const readChunkPage = (threadId: ThreadId, kindPattern: string, afterIndex: number) =>
     sql
@@ -860,57 +859,55 @@ const make = Effect.gen(function* () {
 
   // Writes attachment files outside any transaction; a failed write leaves the
   // bundle authoritative for a retry.
-  const restoreFiles = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      let afterIndex = -1;
-      while (true) {
-        const chunks = yield* readChunkPage(threadId, "attachment:%", afterIndex);
-        if (chunks.length === 0) break;
-        for (const chunk of chunks) {
-          afterIndex = Number(chunk.chunk_index);
-          const entry = String(chunk.kind).slice("attachment:".length);
-          if (!isSafeAttachmentEntry(entry)) {
-            return yield* new ArchiveContentError({ detail: `unsafe attachment '${entry}'` });
-          }
-          const data = yield* decompress(chunk.data as Uint8Array);
-          const target = path.join(config.attachmentsDir, entry);
-          const temporary = `${target}.t3-restore`;
-          yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-          yield* fs
-            .writeFile(temporary, data)
-            .pipe(
-              Effect.andThen(fs.remove(target, { force: true })),
-              Effect.andThen(fs.rename(temporary, target)),
-              Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
-            );
+  const restoreFiles = Effect.fn("ThreadColdStorage.restoreFiles")(function* (threadId: ThreadId) {
+    let afterIndex = -1;
+    while (true) {
+      const chunks = yield* readChunkPage(threadId, "attachment:%", afterIndex);
+      if (chunks.length === 0) break;
+      for (const chunk of chunks) {
+        afterIndex = Number(chunk.chunk_index);
+        const entry = String(chunk.kind).slice("attachment:".length);
+        if (!isSafeAttachmentEntry(entry)) {
+          return yield* new ArchiveContentError({ detail: `unsafe attachment '${entry}'` });
         }
+        const data = yield* decompress(chunk.data as Uint8Array);
+        const target = path.join(config.attachmentsDir, entry);
+        const temporary = `${target}.t3-restore`;
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        yield* fs
+          .writeFile(temporary, data)
+          .pipe(
+            Effect.andThen(fs.remove(target, { force: true })),
+            Effect.andThen(fs.rename(temporary, target)),
+            Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
+          );
       }
-    });
+    }
+  });
 
   // Inserts rows one page of chunks per commit, decoding outside the commit, so
   // a large conversation never holds the database connection for its whole size.
-  const restoreRows = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const columnsByTable = new Map<string, ReadonlySet<string>>();
-      let afterIndex = -1;
-      while (true) {
-        const chunks = yield* readChunkPage(threadId, "table:%", afterIndex);
-        if (chunks.length === 0) break;
-        const decoded = yield* Effect.forEach(chunks, (chunk) =>
-          decompress(chunk.data as Uint8Array).pipe(
-            Effect.flatMap(decodeRows),
-            Effect.map((rows) => [String(chunk.kind).slice("table:".length), rows] as const),
-          ),
-        );
-        afterIndex = Number(chunks.at(-1)!.chunk_index);
-        yield* sql.withTransaction(
-          Effect.forEach(decoded, ([table, rows]) => insertRows(table, rows, columnsByTable), {
-            discard: true,
-          }),
-        );
-        yield* yieldToEventLoop;
-      }
-    });
+  const restoreRows = Effect.fn("ThreadColdStorage.restoreRows")(function* (threadId: ThreadId) {
+    const columnsByTable = new Map<string, ReadonlySet<string>>();
+    let afterIndex = -1;
+    while (true) {
+      const chunks = yield* readChunkPage(threadId, "table:%", afterIndex);
+      if (chunks.length === 0) break;
+      const decoded = yield* Effect.forEach(chunks, (chunk) =>
+        decompress(chunk.data as Uint8Array).pipe(
+          Effect.flatMap(decodeRows),
+          Effect.map((rows) => [String(chunk.kind).slice("table:".length), rows] as const),
+        ),
+      );
+      afterIndex = Number(chunks.at(-1)!.chunk_index);
+      yield* sql.withTransaction(
+        Effect.forEach(decoded, ([table, rows]) => insertRows(table, rows, columnsByTable), {
+          discard: true,
+        }),
+      );
+      yield* yieldToEventLoop;
+    }
+  });
 
   const restore = Effect.fn("ThreadColdStorage.restore")(function* (
     threadId: ThreadId,
@@ -1023,41 +1020,45 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const removeAttachmentFiles = (threadId: ThreadId) =>
-    Effect.gen(function* () {
-      const fromMessages = (yield* projections.getThreadAttachmentIds(threadId)).flatMap(
-        (attachmentId) => {
-          const filePath = resolveAttachmentPathById({
-            attachmentsDir: config.attachmentsDir,
-            attachmentId,
-          });
-          return filePath === null ? [] : [path.basename(filePath)];
-        },
-      );
-      const entries = new Set([...(yield* bundleAttachmentEntries(threadId)), ...fromMessages]);
-      yield* Effect.forEach(
-        entries,
-        (entry) => fs.remove(path.join(config.attachmentsDir, entry), { force: true }),
-        { concurrency: 4, discard: true },
-      );
-    });
+  const removeAttachmentFiles = Effect.fn("ThreadColdStorage.removeAttachmentFiles")(function* (
+    threadId: ThreadId,
+  ) {
+    const fromMessages = (yield* projections.getThreadAttachmentIds(threadId)).flatMap(
+      (attachmentId) => {
+        const filePath = resolveAttachmentPathById({
+          attachmentsDir: config.attachmentsDir,
+          attachmentId,
+        });
+        return filePath === null ? [] : [path.basename(filePath)];
+      },
+    );
+    const entries = new Set([...(yield* bundleAttachmentEntries(threadId)), ...fromMessages]);
+    yield* Effect.forEach(
+      entries,
+      (entry) => fs.remove(path.join(config.attachmentsDir, entry), { force: true }),
+      { concurrency: 4, discard: true },
+    );
+  });
 
-  const enqueuePurge = (threadIds: ReadonlyArray<string>, key: string, delayMs = 0) =>
-    Effect.gen(function* () {
-      const availableAt = DateTime.add(yield* DateTime.now, { milliseconds: delayMs });
-      yield* outbox.enqueue(
-        threadIds.map((threadId) => {
-          const commandId = CommandId.make(`command:thread-purge:${threadId}:${key}`);
-          return {
-            id: `effect:${commandId}:thread.storage-purge`,
-            commandId,
-            threadId: ThreadId.make(threadId),
-            request: { type: "thread.storage-purge" as const },
-            availableAt,
-          };
-        }),
-      );
-    });
+  const enqueuePurge = Effect.fn("ThreadColdStorage.enqueuePurge")(function* (
+    threadIds: ReadonlyArray<string>,
+    key: string,
+    delayMs = 0,
+  ) {
+    const availableAt = DateTime.add(yield* DateTime.now, { milliseconds: delayMs });
+    yield* outbox.enqueue(
+      threadIds.map((threadId) => {
+        const commandId = CommandId.make(`command:thread-purge:${threadId}:${key}`);
+        return {
+          id: `effect:${commandId}:thread.storage-purge`,
+          commandId,
+          threadId: ThreadId.make(threadId),
+          request: { type: "thread.storage-purge" as const },
+          availableAt,
+        };
+      }),
+    );
+  });
 
   const purge = Effect.fn("ThreadColdStorage.purge")(function* (threadId: ThreadId) {
     const thread = yield* readThread(threadId);
@@ -1074,24 +1075,26 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const removeStorage = (threadId: ThreadId, thread: ThreadRow) =>
-    Effect.gen(function* () {
-      // Forks still read this thread's rows. Its purge runs again once the last
-      // of them is purged, or on the next startup.
-      if (yield* hasForkDependents(threadId)) return;
-      // The bundle and the messages are the only inventory of the thread's files.
-      yield* removeAttachmentFiles(threadId);
-      yield* removeProviderLogs(threadId);
-      yield* deleteBundle(threadId);
-      // Batched like a move; an interrupted purge repeats until it records `purged`.
-      yield* deleteThreadRows(
-        purgeTables,
-        threadId,
-        Effect.gen(function* () {
-          // A shared session goes once no binding is left and its owner is this
-          // thread or already purged, whichever thread loses the last binding.
-          // Found again on every attempt, so an interrupted purge cannot miss it.
-          yield* sql`
+  const removeStorage = Effect.fn("ThreadColdStorage.removeStorage")(function* (
+    threadId: ThreadId,
+    thread: ThreadRow,
+  ) {
+    // Forks still read this thread's rows. Its purge runs again once the last
+    // of them is purged, or on the next startup.
+    if (yield* hasForkDependents(threadId)) return;
+    // The bundle and the messages are the only inventory of the thread's files.
+    yield* removeAttachmentFiles(threadId);
+    yield* removeProviderLogs(threadId);
+    yield* deleteBundle(threadId);
+    // Batched like a move; an interrupted purge repeats until it records `purged`.
+    yield* deleteThreadRows(
+      purgeTables,
+      threadId,
+      Effect.gen(function* () {
+        // A shared session goes once no binding is left and its owner is this
+        // thread or already purged, whichever thread loses the last binding.
+        // Found again on every attempt, so an interrupted purge cannot miss it.
+        yield* sql`
             DELETE FROM orchestration_v2_projection_provider_sessions
             WHERE NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_provider_session_bindings AS binding
@@ -1105,36 +1108,36 @@ const make = Effect.gen(function* () {
                 )
               )
           `;
-          yield* upsertManifest({ threadId, status: "purged", archivedAt: thread.archived_at });
-        }),
-      );
-      coldThreadIds.delete(threadId);
-      const sourceId = thread.forked_from_thread_id;
-      if (sourceId === null) return;
-      // The source this fork kept hot or unpurged can move on now.
-      const source = yield* readThread(sourceId);
-      const sourceManifest = yield* readManifest(sourceId);
-      if (Option.isNone(source)) return;
-      if (
-        source.value.deleted_at !== null &&
-        !(Option.isSome(sourceManifest) && sourceManifest.value.status === "purged")
-      ) {
-        yield* enqueuePurge([sourceId], `after-fork:${threadId}`);
-        yield* outbox.notifyAvailable();
-      } else if (
-        source.value.deleted_at === null &&
-        source.value.archived_at !== null &&
-        Option.isSome(sourceManifest) &&
-        sourceManifest.value.status === "kept-hot"
-      ) {
-        yield* enqueueColdArchive({
-          threadId: ThreadId.make(sourceId),
-          key: `after-fork:${threadId}`,
-          delayMs: 0,
-        });
-        yield* outbox.notifyAvailable();
-      }
-    });
+        yield* upsertManifest({ threadId, status: "purged", archivedAt: thread.archived_at });
+      }),
+    );
+    coldThreadIds.delete(threadId);
+    const sourceId = thread.forked_from_thread_id;
+    if (sourceId === null) return;
+    // The source this fork kept hot or unpurged can move on now.
+    const source = yield* readThread(sourceId);
+    const sourceManifest = yield* readManifest(sourceId);
+    if (Option.isNone(source)) return;
+    if (
+      source.value.deleted_at !== null &&
+      !(Option.isSome(sourceManifest) && sourceManifest.value.status === "purged")
+    ) {
+      yield* enqueuePurge([sourceId], `after-fork:${threadId}`);
+      yield* outbox.notifyAvailable();
+    } else if (
+      source.value.deleted_at === null &&
+      source.value.archived_at !== null &&
+      Option.isSome(sourceManifest) &&
+      sourceManifest.value.status === "kept-hot"
+    ) {
+      yield* enqueueColdArchive({
+        threadId: ThreadId.make(sourceId),
+        key: `after-fork:${threadId}`,
+        delayMs: 0,
+      });
+      yield* outbox.notifyAvailable();
+    }
+  });
 
   const reconcile = Effect.gen(function* () {
     // One identity per startup, so work whose earlier attempt failed for good
@@ -1213,14 +1216,16 @@ const make = Effect.gen(function* () {
   // Hot threads take their lease without the lock. A cold thread, a move in
   // progress, or an unarchive (which cancels queued re-colds) goes through the
   // lock, so the lease starts after any move has finished and the restore ran.
-  const acquireLease = (threadId: ThreadId, unarchive: boolean) =>
-    Effect.gen(function* () {
+  const acquireLease = Effect.fn("ThreadColdStorage.acquireLease")(
+    function* (threadId: ThreadId, unarchive: boolean) {
       if (!unarchive && (yield* takeHotLease(threadId))) return;
       yield* threadLocks.withLock(
         threadId,
         restore(threadId, unarchive).pipe(Effect.andThen(takeLease(threadId))),
       );
-    }).pipe(mapError("restore", threadId));
+    },
+    (effect, threadId) => effect.pipe(mapError("restore", threadId)),
+  );
 
   const withHot: ThreadColdStorageShape["withHot"] = (threadId, use, options) =>
     Effect.acquireUseRelease(
@@ -1229,28 +1234,29 @@ const make = Effect.gen(function* () {
       () => releaseLease(threadId),
     );
 
-  const ensureAttachmentHot = (attachmentId: string) =>
-    Effect.gen(function* () {
-      if (resolveAttachmentPathById({ attachmentsDir: config.attachmentsDir, attachmentId })) {
-        return;
-      }
-      const kinds = attachmentFileNameCandidates(attachmentId).map((name) => `attachment:${name}`);
-      if (kinds.length === 0) return;
-      const rows = (yield* sql.unsafe(
-        `SELECT thread_id FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks
+  const ensureAttachmentHot = Effect.fn("ThreadColdStorage.ensureAttachmentHot")(function* (
+    attachmentId: string,
+  ) {
+    if (resolveAttachmentPathById({ attachmentsDir: config.attachmentsDir, attachmentId })) {
+      return;
+    }
+    const kinds = attachmentFileNameCandidates(attachmentId).map((name) => `attachment:${name}`);
+    if (kinds.length === 0) return;
+    const rows = (yield* sql.unsafe(
+      `SELECT thread_id FROM ${ARCHIVE_SCHEMA}.archive_thread_chunks
          WHERE kind IN (${kinds.map(() => "?").join(", ")}) LIMIT 1`,
-        kinds,
-      )) as ReadonlyArray<SqlRow>;
-      const owner = rows[0]?.thread_id;
-      if (owner === undefined) return;
-      yield* withHot(ThreadId.make(String(owner)), Effect.void);
-    }).pipe(mapError("restore"));
+      kinds,
+    )) as ReadonlyArray<SqlRow>;
+    const owner = rows[0]?.thread_id;
+    if (owner === undefined) return;
+    yield* withHot(ThreadId.make(String(owner)), Effect.void);
+  }, mapError("restore"));
 
   return ThreadColdStorage.of({
     withHot,
     ensureAttachmentHot,
-    scheduleArchive: (threadId) =>
-      Effect.gen(function* () {
+    scheduleArchive: Effect.fn("ThreadColdStorage.scheduleArchive")(
+      function* (threadId: ThreadId) {
         const thread = yield* readThread(threadId);
         if (Option.isNone(thread) || thread.value.deleted_at !== null) return;
         yield* enqueueColdArchive({
@@ -1259,7 +1265,9 @@ const make = Effect.gen(function* () {
           delayMs: 0,
         });
         yield* outbox.notifyAvailable();
-      }).pipe(mapError("schedule", threadId)),
+      },
+      (effect, threadId) => effect.pipe(mapError("schedule", threadId)),
+    ),
     // Convergence runs many of these back to back; each starts on a fresh turn
     // of the event loop.
     archive: (threadId, prepare) =>
