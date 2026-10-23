@@ -1,4 +1,3 @@
-import { flushSync } from "react-dom";
 import { act, fakeTimers, render } from "../../../test/render";
 import type { ComponentProps, ReactNode, Ref } from "react";
 import { EnvironmentId, ProjectId, ThreadId, type ConfirmDialogOptions } from "@t3tools/contracts";
@@ -171,7 +170,6 @@ import {
 import { ArchivedThreadsPanel } from "./ArchivedThreadsPanel";
 
 function setup() {
-  vi.restoreAllMocks();
   resetPreviewStateForTests();
   testDoubles.canOperate = true;
   testDoubles.navigate.mockReset();
@@ -243,14 +241,9 @@ async function renderPopulatedArchive(searchQuery?: string) {
   await using pending = new AsyncDisposableStack();
   const screen = pending.use(await renderArchive());
   if (searchQuery !== undefined) {
-    const input = screen.container.querySelector<HTMLInputElement>("#archive")!;
-    flushSync(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        input,
-        searchQuery,
-      );
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await screen
+      .getByRole("searchbox", { name: "Search archived conversations" })
+      .fill(searchQuery);
   }
   const resources = pending.move();
   return { ...screen, [Symbol.asyncDispose]: () => resources.disposeAsync() };
