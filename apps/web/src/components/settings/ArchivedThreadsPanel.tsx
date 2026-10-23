@@ -273,7 +273,7 @@ export function ArchivedThreadsPanel() {
     direction: "desc",
   });
   // Archive ages never show seconds, so a minute tick keeps them current.
-  useRelativeTimeTick(60_000);
+  const nowMs = useRelativeTimeTick(60_000);
   const archiveEnvironmentsById = new Map(
     environments.map((environment) => [
       environment.environmentId,
@@ -818,10 +818,11 @@ export function ArchivedThreadsPanel() {
                           <div className="pointer-events-none truncate text-right font-mono text-2xs text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-has-[:focus-visible]:opacity-0 group-has-[:focus-visible]:text-current">
                             {formatRelativeTimeLabel(
                               archivedThreadTimestampValue(thread, "archivedAt"),
+                              nowMs,
                             )}
                           </div>
                           <div className="pointer-events-none truncate text-right font-mono text-2xs text-muted-foreground/75 transition-[color,opacity] duration-150 group-hover:opacity-0 group-hover:text-current group-has-[:focus-visible]:opacity-0 group-has-[:focus-visible]:text-current">
-                            {formatRelativeTimeLabel(thread.createdAt)}
+                            {formatRelativeTimeLabel(thread.createdAt, nowMs)}
                           </div>
                           {/* Keeps row text columns aligned with the header action column. */}
                           <div aria-hidden="true" />
