@@ -16,6 +16,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -46,6 +47,7 @@ const AttachmentDiscardTool = Tool.make("t3_attachment_discard", {
 }).annotate(Tool.Destructive, true);
 const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
   ...shared,
+  dependencies: [...shared.dependencies, MagiParticipantPolicy.MagiParticipantPolicy],
   description:
     "Send uploaded attachments to this thread or any other thread in this environment. Each call is a new message, without a retry key. Acceptance does not mean the provider can consume the attachment or has finished the turn. The target cannot have broader permission modes than the caller; failures retain claimed files when dispatch outcome is uncertain.",
   parameters: Schema.Struct({

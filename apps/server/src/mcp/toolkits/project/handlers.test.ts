@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -44,6 +45,9 @@ const clientLaunchHarness = (input: {
     model: "claude-opus",
   };
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+      requireToolAllowed: () => Effect.die("OAuth clients have no participant lineage."),
+    }),
     ServerSettings.layerTest({
       ...(input.defaultRuntimeMode === undefined
         ? {}

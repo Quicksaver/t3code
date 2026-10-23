@@ -143,6 +143,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server answers projects.listIgnoredFiles. */
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes Magi weighted-consensus runs and their RPCs. */
+  magi: Schema.optionalKey(Schema.Boolean),
+  /** Server detects `platform.machine` and persists the `environmentIcon`
+      setting. Older servers drop the key on write, so clients show the
+      picker inert rather than offering a choice that would never stick. */
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   /** Server answers orchestration.subscribeCommandOutput. Absent on older servers,

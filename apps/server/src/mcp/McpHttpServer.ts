@@ -54,6 +54,10 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
+import { ContextArtifactToolkitHandlersLive } from "./toolkits/context/handlers.ts";
+import { ContextArtifactToolkit } from "./toolkits/context/tools.ts";
+import { MagiToolkitHandlersLive } from "./toolkits/magi/handlers.ts";
+import { MagiToolkit } from "./toolkits/magi/tools.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
@@ -1025,6 +1029,11 @@ const layerPreviewControlsRegistration = toolkitRegistration(
   PreviewControlsHandlers.layer,
 );
 
+const layerMagiToolkit = Layer.mergeAll(
+  toolkitRegistration(MagiToolkit, MagiToolkitHandlersLive),
+  toolkitRegistration(ContextArtifactToolkit, ContextArtifactToolkitHandlersLive),
+);
+
 const layerEnvironmentToolkit = toolkitRegistration(
   EnvironmentToolkit,
   EnvironmentHandlers.layer,
@@ -1068,6 +1077,7 @@ export const layerMcpTransport = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
+  layerMagiToolkit,
   layerThreadToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,

@@ -36,6 +36,8 @@ import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -45,6 +47,8 @@ const dependencies = [
   ThreadManagementService.ThreadManagementService,
   OrchestratorMcpService.OrchestratorMcpService,
 ];
+// Tools a Magi participant's subtree is restricted from.
+const participantGatedDependencies = [...dependencies, MagiParticipantPolicy.MagiParticipantPolicy];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
@@ -111,7 +115,7 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   success: Schema.Struct({}),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: participantGatedDependencies,
 })
   .annotate(Tool.Title, "Stop a workflow")
   .annotate(Tool.Destructive, true);
@@ -123,7 +127,7 @@ const ScheduleTaskTool = Tool.make("schedule_task", {
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: participantGatedDependencies,
 })
   .annotate(Tool.Title, "Schedule a recurring task")
   .annotate(Tool.Destructive, true)
@@ -150,7 +154,7 @@ const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: [...participantGatedDependencies, ScheduledTasks.ScheduledTaskService],
 })
   .annotate(Tool.Title, "Update a scheduled task")
   .annotate(Tool.Destructive, true);
@@ -186,7 +190,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: participantGatedDependencies,
 })
   .annotate(Tool.Title, "Create T3 threads")
   .annotate(Tool.Destructive, true)
@@ -241,7 +245,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: participantGatedDependencies,
 })
   .annotate(Tool.Title, "Send to a T3 thread")
   .annotate(Tool.Destructive, true)
@@ -268,7 +272,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   success: OrchestratorMcpThreadInterruptResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies,
+  dependencies: participantGatedDependencies,
 })
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);

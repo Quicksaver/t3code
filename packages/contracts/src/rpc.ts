@@ -162,6 +162,7 @@ import {
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
+import { MagiSettings, MagiSettingsPatch, MagiValidationError } from "./magi.ts";
 import {
   PullRequestActionInput,
   PullRequestActivity,
@@ -292,7 +293,6 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import {} from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -581,6 +581,12 @@ export const WS_METHODS = {
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
+export const MAGI_WS_METHODS = {
+  getSettings: "magi.getSettings",
+  updateSettings: "magi.updateSettings",
+  resetSettings: "magi.resetSettings",
+} as const;
+
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
   success: ServerUpsertKeybindingResult,
@@ -768,6 +774,24 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   }),
   success: ServerSettings,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiGetSettingsRpc = Rpc.make(MAGI_WS_METHODS.getSettings, {
+  payload: Schema.Struct({}),
+  success: MagiSettings,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsMagiUpdateSettingsRpc = Rpc.make(MAGI_WS_METHODS.updateSettings, {
+  payload: MagiSettingsPatch,
+  success: MagiSettings,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
+});
+
+export const WsMagiResetSettingsRpc = Rpc.make(MAGI_WS_METHODS.resetSettings, {
+  payload: Schema.Struct({}),
+  success: MagiSettings,
+  error: Schema.Union([MagiValidationError, EnvironmentAuthorizationError]),
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
@@ -1909,6 +1933,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsMagiGetSettingsRpc,
+  WsMagiUpdateSettingsRpc,
+  WsMagiResetSettingsRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerSearchAcpRegistryRpc,
   WsServerPrepareAcpRegistryAgentRpc,

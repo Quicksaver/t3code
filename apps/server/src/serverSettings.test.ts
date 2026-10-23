@@ -1246,7 +1246,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           assert.propertyVal(
             redacted.providerInstances[instanceId]?.config,
             "apiKey",
-            apiKey ? "••••••" : "",
+            apiKey ? "â€¢â€¢â€¢â€¢â€¢â€¢" : "",
           );
         }
 
@@ -1338,6 +1338,67 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         serverUrl: "http://127.0.0.1:4097",
         serverPassword: "legacy-password",
       });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("removes obsolete Magi settings on load while preserving arbitrator instructions", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.writeFileString(
+        config.settingsPath,
+        JSON.stringify({
+          magi: {
+            arbitratorPrompt: "Keep these instructions.",
+            showRunDetailsAndDiagnostics: true,
+            personalities: [{ id: "legacy", name: "Old", prompt: "Obsolete", included: true }],
+            lastPanelRoster: [{ obsolete: true }],
+            lastPanelConsensusThresholdPercent: 100,
+            lastPanelMagiTurnLimit: 1,
+          },
+        }),
+      );
+      const settings = yield* service.getSettings;
+      assert.deepStrictEqual(settings.magi, {
+        ...DEFAULT_SERVER_SETTINGS.magi,
+        arbitratorPrompt: "Keep these instructions.",
+      });
+      const persisted = JSON.parse(yield* fs.readFileString(config.settingsPath));
+      assert.deepStrictEqual(persisted.magi, { arbitratorPrompt: "Keep these instructions." });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("persists only the Magi fields that differ from the bundled defaults", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const readPersistedMagi = Effect.gen(function* () {
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // Inspect raw persisted JSON before schema decoding can apply defaults.
+        const persisted = JSON.parse(raw) as { magi?: Record<string, unknown> };
+        const decoded = yield* decodeServerSettingsJson(raw);
+        return { stored: persisted.magi, decoded: decoded.magi };
+      });
+      const defaults = DEFAULT_SERVER_SETTINGS.magi;
+      yield* serverSettings.updateSettings({
+        magi: {
+          arbitratorPrompt: "Arbitrate tersely.",
+        },
+      });
+      const edited = yield* readPersistedMagi;
+      assert.strictEqual(edited.stored?.arbitratorPrompt, "Arbitrate tersely.");
+
+      // Restoring defaults drops them from the file so they track the bundled values again.
+      yield* serverSettings.updateSettings({
+        magi: {
+          arbitratorPrompt: defaults.arbitratorPrompt,
+        },
+      });
+      const restored = yield* readPersistedMagi;
+      assert.isUndefined(restored.stored);
+      assert.strictEqual(restored.decoded.arbitratorPrompt, defaults.arbitratorPrompt);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

@@ -236,6 +236,7 @@ export function deriveThreadStructureRuntime(
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
+      pendingMagiRunId: projection.thread.pendingMagiRunId,
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,
