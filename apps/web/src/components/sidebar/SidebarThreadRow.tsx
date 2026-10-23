@@ -1316,9 +1316,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                {topStatus.icon !== "working" ? (
-                                  <span role="status">{topStatus.label}</span>
-                                ) : null}
+                                <span role="status">{topStatus.label}</span>
                               </button>
                             }
                           />
@@ -1332,7 +1330,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           )}
                         >
                           {topStatus.icon === "working" ? (
-                            <WorkingIndicator label={topStatus.label} announce={!props.isRouteThread} />
+                            <WorkingIndicator
+                              label={topStatus.label}
+                              announce={!props.isRouteThread}
+                            />
                           ) : topStatus.icon === "waiting" ? (
                             <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "input" ? (
@@ -1349,7 +1350,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             screen readers announce every second. The open
                             thread announces its own status, so its row stays
                             quiet instead of saying everything twice. */}
-                          {topStatus.icon !== "working" ? <span role={props.isRouteThread ? undefined : "status"}>{topStatus.label}</span> : null}
+                          {topStatus.icon !== "working" ? (
+                            <span role={props.isRouteThread ? undefined : "status"}>
+                              {topStatus.label}
+                            </span>
+                          ) : null}
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />

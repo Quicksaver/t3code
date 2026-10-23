@@ -1,11 +1,58 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Virtualizer,
+  elementScroll,
+  observeElementOffset,
+  observeElementRect,
+  type VirtualizerOptions,
+  type VirtualItem,
+} from "@tanstack/react-virtual";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 
-function useItemKey<T>(items: readonly T[], getKey: (item: T) => string) {
-  return (index: number) => getKey(items[index]!);
+// Publish measurements as an external-store snapshot so the compiler never caches the mutable instance.
+function createVirtualList() {
+  const listeners = new Set<() => void>();
+  let snapshot: { readonly rows: readonly VirtualItem[]; readonly height: number } = {
+    rows: [],
+    height: 0,
+  };
+  const publish = () => {
+    const rows = virtualizer.getVirtualItems();
+    const height = virtualizer.getTotalSize();
+    if (snapshot.rows === rows && snapshot.height === height) return;
+    snapshot = { rows, height };
+    for (const listener of listeners) listener();
+  };
+  const virtualizer = new Virtualizer<HTMLElement, HTMLDivElement>({
+    count: 0,
+    enabled: false,
+    getScrollElement: () => null,
+    estimateSize: () => 30,
+    observeElementOffset,
+    observeElementRect,
+    scrollToFn: elementScroll,
+    overscan: 6,
+    useAnimationFrameWithResizeObserver: true,
+    onChange: publish,
+  });
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    mount: () => virtualizer._didMount(),
+    update: (options: Partial<VirtualizerOptions<HTMLElement, HTMLDivElement>>) => {
+      virtualizer.setOptions({ ...virtualizer.options, ...options });
+      virtualizer._willUpdate();
+      publish();
+    },
+    measureElement: virtualizer.measureElement,
+  };
 }
 
 type SourceControlVirtualListProps<T> = {
@@ -20,32 +67,41 @@ export function SourceControlVirtualList<T>({
   getKey,
   renderItem,
 }: SourceControlVirtualListProps<T>) {
-  "use no memo"; // TanStack Virtual exposes a mutable instance that React Compiler cannot memoize.
+  const getItemKey = (index: number) => getKey(items[index]!);
+  return (
+    <SourceControlVirtualListContent
+      items={items}
+      getItemKey={getItemKey}
+      renderItem={renderItem}
+    />
+  );
+}
 
+function SourceControlVirtualListContent<T>({
+  items,
+  getItemKey,
+  renderItem,
+}: Omit<SourceControlVirtualListProps<T>, "getKey"> & {
+  readonly getItemKey: (index: number) => string;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
-  const [mounted, setMounted] = useState(false);
   const getScrollElement = useStableCallback(
     () => listRef.current?.closest<HTMLElement>("[data-source-control-section-content]") ?? null,
   );
-  const getItemKey = useItemKey(items, getKey);
-  // This component opts out of compilation above; the mutable instance stays local.
-  // oxlint-disable-next-line react/incompatible-library
-  const virtualizer = useVirtualizer<HTMLElement, HTMLDivElement>({
-    count: items.length,
-    // Attaching scrolls the shared viewport to the initial offset, so a list mounted by
-    // expanding a row must attach after mount and start from the viewport's position.
-    enabled: mounted,
-    getScrollElement,
-    initialOffset: () => getScrollElement()?.scrollTop ?? 0,
-    getItemKey,
-    estimateSize: () => 30,
-    overscan: 6,
-    scrollMargin,
-    useAnimationFrameWithResizeObserver: true,
-  });
-
-  useLayoutEffect(() => setMounted(true), []);
+  const [list] = useState(createVirtualList);
+  const snapshot = useSyncExternalStore(list.subscribe, list.getSnapshot, list.getSnapshot);
+  useLayoutEffect(() => list.mount(), [list]);
+  useLayoutEffect(() => {
+    list.update({
+      count: items.length,
+      enabled: true,
+      getScrollElement,
+      initialOffset: () => getScrollElement()?.scrollTop ?? 0,
+      getItemKey,
+      scrollMargin,
+    });
+  }, [list, items.length, getScrollElement, getItemKey, scrollMargin]);
 
   useLayoutEffect(() => {
     const list = listRef.current;
@@ -72,18 +128,20 @@ export function SourceControlVirtualList<T>({
   }, [getScrollElement]);
 
   return (
-    <div ref={listRef} className="relative" style={{ height: virtualizer.getTotalSize() }}>
-      {virtualizer.getVirtualItems().map((row) => (
-        <div
-          key={row.key}
-          data-index={row.index}
-          ref={virtualizer.measureElement}
-          className="absolute left-0 top-0 w-full pb-0.5"
-          style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
-        >
-          {renderItem(items[row.index]!)}
-        </div>
-      ))}
+    <div ref={listRef} className="relative" style={{ height: snapshot.height }}>
+      {snapshot.rows
+        .filter((row) => row.index < items.length)
+        .map((row) => (
+          <div
+            key={row.key}
+            data-index={row.index}
+            ref={list.measureElement}
+            className="absolute left-0 top-0 w-full pb-0.5"
+            style={{ transform: `translateY(${row.start - scrollMargin}px)` }}
+          >
+            {renderItem(items[row.index]!)}
+          </div>
+        ))}
     </div>
   );
 }

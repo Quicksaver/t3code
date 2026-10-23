@@ -333,73 +333,74 @@ export function makeSourceControlPanelActions(
       { stdin: pathspecStdin(input.paths) },
     ).pipe(Effect.asVoid);
 
-  const discardFiles: SourceControlPanelService["Service"]["discardFiles"] = (input) =>
-    Effect.gen(function* () {
-      const paths = uniquePaths(input.paths);
-      if (paths.length === 0) return;
-      if (input.staged) {
-        const headPathSet = new Set(
-          yield* listPathsInBatches(
-            "vcs.panel.discardStagedFiles.listHeadPaths",
-            input.cwd,
-            ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-            paths,
-            { allowNonZeroExit: true },
-          ),
-        );
-        const pathsInHead = paths.filter((path) => headPathSet.has(path));
-        const pathsOutsideHead = paths.filter((path) => !headPathSet.has(path));
-
-        if (pathsInHead.length > 0) {
-          yield* run(
-            "vcs.panel.discardStagedFiles",
-            input.cwd,
-            [
-              "--literal-pathspecs",
-              "restore",
-              "--staged",
-              "--worktree",
-              "--source=HEAD",
-              "--pathspec-from-file=-",
-              "--pathspec-file-nul",
-            ],
-            { stdin: pathspecStdin(pathsInHead) },
-          ).pipe(Effect.asVoid);
-        }
-        if (pathsOutsideHead.length > 0) {
-          yield* run(
-            "vcs.panel.discardStagedFiles.reset",
-            input.cwd,
-            ["--literal-pathspecs", "reset", "--pathspec-from-file=-", "--pathspec-file-nul"],
-            { stdin: pathspecStdin(pathsOutsideHead) },
-          ).pipe(Effect.asVoid);
-          yield* cleanPaths("vcs.panel.discardStagedFiles.clean", input.cwd, pathsOutsideHead);
-        }
-        return;
-      }
-
-      const trackedPaths = yield* listPathsInBatches(
-        "vcs.panel.discardUnstagedFiles.listIndexPaths",
-        input.cwd,
-        ["--literal-pathspecs", "ls-files", "--cached", "-z"],
-        paths,
+  const discardFiles: SourceControlPanelService["Service"]["discardFiles"] = Effect.fn(
+    "SourceControlPanel.discardFiles",
+  )(function* (input) {
+    const paths = uniquePaths(input.paths);
+    if (paths.length === 0) return;
+    if (input.staged) {
+      const headPathSet = new Set(
+        yield* listPathsInBatches(
+          "vcs.panel.discardStagedFiles.listHeadPaths",
+          input.cwd,
+          ["--literal-pathspecs", "ls-tree", "-r", "--name-only", "-z", "HEAD"],
+          paths,
+          { allowNonZeroExit: true },
+        ),
       );
-      if (trackedPaths.length > 0) {
+      const pathsInHead = paths.filter((path) => headPathSet.has(path));
+      const pathsOutsideHead = paths.filter((path) => !headPathSet.has(path));
+
+      if (pathsInHead.length > 0) {
         yield* run(
-          "vcs.panel.discardUnstagedFiles",
+          "vcs.panel.discardStagedFiles",
           input.cwd,
           [
             "--literal-pathspecs",
             "restore",
+            "--staged",
             "--worktree",
+            "--source=HEAD",
             "--pathspec-from-file=-",
             "--pathspec-file-nul",
           ],
-          { stdin: pathspecStdin(trackedPaths) },
+          { stdin: pathspecStdin(pathsInHead) },
         ).pipe(Effect.asVoid);
       }
-      yield* cleanPaths("vcs.panel.cleanUntrackedFiles", input.cwd, paths);
-    });
+      if (pathsOutsideHead.length > 0) {
+        yield* run(
+          "vcs.panel.discardStagedFiles.reset",
+          input.cwd,
+          ["--literal-pathspecs", "reset", "--pathspec-from-file=-", "--pathspec-file-nul"],
+          { stdin: pathspecStdin(pathsOutsideHead) },
+        ).pipe(Effect.asVoid);
+        yield* cleanPaths("vcs.panel.discardStagedFiles.clean", input.cwd, pathsOutsideHead);
+      }
+      return;
+    }
+
+    const trackedPaths = yield* listPathsInBatches(
+      "vcs.panel.discardUnstagedFiles.listIndexPaths",
+      input.cwd,
+      ["--literal-pathspecs", "ls-files", "--cached", "-z"],
+      paths,
+    );
+    if (trackedPaths.length > 0) {
+      yield* run(
+        "vcs.panel.discardUnstagedFiles",
+        input.cwd,
+        [
+          "--literal-pathspecs",
+          "restore",
+          "--worktree",
+          "--pathspec-from-file=-",
+          "--pathspec-file-nul",
+        ],
+        { stdin: pathspecStdin(trackedPaths) },
+      ).pipe(Effect.asVoid);
+    }
+    yield* cleanPaths("vcs.panel.cleanUntrackedFiles", input.cwd, paths);
+  });
 
   const readFileDiff: SourceControlPanelService["Service"]["readFileDiff"] = Effect.fn(
     "readFileDiff",

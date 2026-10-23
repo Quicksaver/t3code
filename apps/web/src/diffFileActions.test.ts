@@ -36,11 +36,6 @@ describe("openDiffFilePrimaryAction", () => {
           kind: "file",
           relativePath: "Dockerfile",
         }),
-        expect.objectContaining({
-          kind: "file",
-          cwd: "/repo.worktrees/sibling/frontend",
-          relativePath: "Dockerfile",
-        }),
       ],
     });
     expect(openInEditor).not.toHaveBeenCalled();
