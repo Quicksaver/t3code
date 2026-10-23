@@ -99,7 +99,7 @@ it("keeps the shared viewport position when a second list attaches", async () =>
         <SourceControlVirtualList
           items={["nested"]}
           getKey={(row) => row}
-          renderItem={(row) => <div style={{ height: "calc(30px - 0.125rem)" }}>{row}</div>}
+          renderItem={(row) => <div style={{ height: "calc(26px - 0.125rem)" }}>{row}</div>}
         />
       )}
     </div>
@@ -116,4 +116,33 @@ it("keeps the shared viewport position when a second list attaches", async () =>
   await vi.waitFor(() => expect(scroller.scrollTop).toBe(300));
   await screen.rerender(list(true));
   expect(scroller.scrollTop).toBe(300);
+});
+
+it("keeps measuring inserted and shifted retained rows after a prepend", async () => {
+  const list = (items: readonly string[]) => (
+    <div data-source-control-section-content style={{ height: 200, overflowY: "auto" }}>
+      <SourceControlVirtualList
+        items={items}
+        getKey={(item) => item}
+        renderItem={(item) => (
+          <div data-row={item} style={{ height: "calc(30px - 0.125rem)" }}>
+            {item}
+          </div>
+        )}
+      />
+    </div>
+  );
+  await using screen = await render(list(["a", "b"]));
+  await expect.element(screen.getByText("b", { exact: true })).toBeVisible();
+  await screen.rerender(list(["x", "a", "b"]));
+  const row = (item: string) =>
+    screen.container.querySelector<HTMLElement>(`[data-row="${item}"]`)!;
+  await vi.waitFor(() =>
+    expect(row("b").getBoundingClientRect().top - row("x").getBoundingClientRect().top).toBe(60),
+  );
+  const before = row("b").getBoundingClientRect().top;
+  row("x").style.height = "calc(90px - 0.125rem)";
+  await vi.waitFor(() => expect(row("b").getBoundingClientRect().top).toBe(before + 60));
+  row("a").style.height = "calc(90px - 0.125rem)";
+  await vi.waitFor(() => expect(row("b").getBoundingClientRect().top).toBe(before + 120));
 });
