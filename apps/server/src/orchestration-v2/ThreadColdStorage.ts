@@ -708,7 +708,8 @@ const make = Effect.gen(function* () {
       );
       yield* yieldToEventLoop;
     });
-    const insertChunk = Effect.fn("ThreadColdStorage.insertChunk")(function* (
+    // Per-chunk work is already covered by moveCold's span.
+    const insertChunk = Effect.fnUntraced(function* (
       kind: string,
       rowCount: number,
       encoded: Uint8Array,
@@ -813,7 +814,8 @@ const make = Effect.gen(function* () {
     yield* removeProviderLogs(threadId);
   });
 
-  const insertRows = Effect.fn("ThreadColdStorage.insertRows")(function* (
+  // Per-chunk work inside the write transaction is covered by restoreRows' span.
+  const insertRows = Effect.fnUntraced(function* (
     table: string,
     rows: ReadonlyArray<SqlRow>,
     columnsByTable: Map<string, ReadonlySet<string>>,
