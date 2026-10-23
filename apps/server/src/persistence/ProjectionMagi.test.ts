@@ -1,3 +1,5 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { assert, it } from "@effect/vitest";
 import {
   ContextArtifactId,
@@ -9,12 +11,17 @@ import {
   TurnItemId,
   type MagiRunConfig,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Sqlite from "./Sqlite.ts";
+import { runMigrations } from "./Migrations.ts";
 import { ProjectionMagiRepositoryLive } from "./ProjectionMagi.ts";
 import { ProjectionMagiRepository, type PersistedMagiRun } from "./ProjectionMagi.ts";
 
@@ -294,3 +301,81 @@ layer("ProjectionMagiRepository", (it) => {
     }),
   );
 });
+
+it.effect("reads Magi state and granted evidence while the writer is held", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-magi-reader-" });
+      return yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const repository = yield* ProjectionMagiRepository;
+        yield* runMigrations();
+        yield* insertThread(rootThreadId);
+        const run = {
+          ...persistedRun,
+          protocol: { ...(persistedRun.protocol as object), turnDelivery: { state: "pending" } },
+        };
+        yield* repository.putRun(run);
+        const participantThreadId = ThreadId.make("participant-thread-1");
+        const evidence = artifact("reader-artifact");
+        yield* repository.putContextArtifacts({
+          runId,
+          artifacts: [evidence],
+          participantThreadIds: [participantThreadId],
+        });
+        yield* sql`CREATE TABLE writer_probe (value INTEGER)`;
+        const held = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const writer = yield* sql
+          .withTransaction(
+            sql`INSERT INTO writer_probe VALUES (1)`.pipe(
+              Effect.andThen(Deferred.succeed(held, undefined)),
+              Effect.andThen(Deferred.await(release)),
+            ),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(held);
+        // Joining these reads before releasing the writer proves they use the reader connection.
+        yield* Effect.gen(function* () {
+          assert.deepStrictEqual(Option.getOrNull(yield* repository.getRun(runId)), run);
+          assert.isTrue(Option.isSome(yield* repository.findActiveRun(rootThreadId)));
+          assert.isTrue(yield* repository.hasPendingOwnerWork(rootThreadId));
+          assert.isTrue(
+            Option.isSome(
+              yield* repository.findRunByInitiatingReferenceId({
+                rootThreadId,
+                initiatingReferenceId: run.initiatingReferenceId!,
+              }),
+            ),
+          );
+          assert.deepStrictEqual(yield* repository.listRunsByOwner(rootThreadId), [run]);
+          assert.deepStrictEqual(yield* repository.listRecoverableRuns(), [run]);
+          assert.deepStrictEqual(yield* repository.findParticipantThreads([participantThreadId]), [
+            participantThreadId,
+          ]);
+          assert.deepStrictEqual(
+            yield* repository.readContextArtifacts({
+              participantThreadId,
+              artifactIds: [evidence.manifest.artifactId],
+            }),
+            [evidence],
+          );
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+        yield* Fiber.join(writer);
+      }).pipe(
+        Effect.provide(
+          ProjectionMagiRepositoryLive.pipe(
+            Layer.provideMerge(
+              NodeSqliteClient.layer({
+                filename: path.join(directory, "state.sqlite"),
+                readerWorker: true,
+              }),
+            ),
+          ),
+        ),
+      );
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

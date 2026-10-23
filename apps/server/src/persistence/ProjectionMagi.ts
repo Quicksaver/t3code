@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -186,6 +187,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
     sql<{ readonly snapshot: string }>`
       SELECT snapshot_json AS snapshot FROM magi_runs WHERE run_id = ${runId}
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(toPersistenceSqlError("ProjectionMagi.getRun.query")),
       Effect.flatMap((rows) => firstRun("ProjectionMagi.getRun", rows)),
     );
@@ -196,6 +198,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
       WHERE root_thread_id = ${rootThreadId} AND state IN ${sql.in(RECOVERABLE_MAGI_STATES)}
       ORDER BY started_at DESC, run_id DESC LIMIT 1
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(toPersistenceSqlError("ProjectionMagi.findActiveRun.query")),
       Effect.flatMap((rows) => firstRun("ProjectionMagi.findActiveRun", rows)),
     );
@@ -207,6 +210,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
         AND json_type(snapshot_json, '$.protocol.turnDelivery') = 'object'
       LIMIT 1
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(toPersistenceSqlError("ProjectionMagi.hasPendingOwnerWork")),
       Effect.map((rows) => rows.length > 0),
     );
@@ -219,6 +223,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
           AND initiating_reference_id = ${input.initiatingReferenceId}
         ORDER BY started_at DESC, run_id DESC LIMIT 1
       `.pipe(
+        NodeSqliteClient.readOnly,
         Effect.mapError(
           toPersistenceSqlError("ProjectionMagi.findRunByInitiatingReferenceId.query"),
         ),
@@ -231,6 +236,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
       WHERE root_thread_id = ${rootThreadId}
       ORDER BY started_at ASC, run_id ASC
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(toPersistenceSqlError("ProjectionMagi.listRunsByOwner.query")),
       Effect.flatMap((rows) => decodeRunRows("ProjectionMagi.listRunsByOwner", rows)),
     );
@@ -248,6 +254,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
          )
       ORDER BY updated_at ASC, run_id ASC
     `.pipe(
+      NodeSqliteClient.readOnly,
       Effect.mapError(toPersistenceSqlError("ProjectionMagi.listRecoverableRuns.query")),
       Effect.flatMap((rows) => decodeRunRows("ProjectionMagi.listRecoverableRuns", rows)),
     );
@@ -319,6 +326,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
           WHERE thread_id IN ${sql.in(threadIds)}
         `.pipe(
           Effect.map((rows) => rows.map((row) => row.threadId)),
+          NodeSqliteClient.readOnly,
           Effect.mapError(toPersistenceSqlError("ProjectionMagi.findParticipantThreads")),
         );
 
@@ -333,6 +341,7 @@ const makeProjectionMagiRepository = Effect.gen(function* () {
           WHERE grants.participant_thread_id = ${input.participantThreadId}
             AND grants.artifact_id IN ${sql.in(input.artifactIds)}
         `.pipe(
+          NodeSqliteClient.readOnly,
           Effect.mapError(toPersistenceSqlError("ProjectionMagi.readContextArtifacts.query")),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
