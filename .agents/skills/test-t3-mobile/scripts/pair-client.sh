@@ -44,7 +44,15 @@ process.stdout.write(`t3code-dev://connections/new?${query}`);
 NODE
 )"
 
-if ! "$agent_device_command" open com.t3tools.t3code.dev "$deep_link" "$@" \
+# cmd.exe splits a Windows .cmd shim's arguments at every unquoted `&`, which the
+# deep link's query contains. Run the shim's Node launcher directly instead.
+agent_device=("$agent_device_command")
+if [[ "$agent_device_command" == *.cmd ]]; then
+  shim="$(cygpath -m "$agent_device_command")"
+  agent_device=(node "${shim%/*}/agent-device-launcher.mjs")
+fi
+
+if ! "${agent_device[@]}" open com.t3tools.t3code.dev "$deep_link" "$@" \
   >/dev/null 2>&1; then
   echo "AgentDevice could not open the pairing route. Check the Device panel and retry with a fresh credential." >&2
   exit 1

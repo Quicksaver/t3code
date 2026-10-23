@@ -13,6 +13,7 @@ import pkg from "./package.json" with { type: "json" };
 import {
   DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES,
   DEV_PROXIED_PATH_PREFIXES,
+  resolveDevProxyTarget,
 } from "@t3tools/shared/devProxy";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
@@ -128,38 +129,11 @@ const browserTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
-function resolveDevProxyTarget(
-  backendPort: string | undefined,
-  wsUrl: string | undefined,
-): string | undefined {
-  const port = Number(backendPort?.trim());
-  if (Number.isInteger(port) && port > 0) {
-    return `http://localhost:${port}/`;
-  }
-
-  // dev:desktop still points the renderer straight at the backend, so fall
-  // back to deriving the target from the explicit websocket URL.
-  if (!wsUrl) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(wsUrl);
-    if (url.protocol === "ws:") {
-      url.protocol = "http:";
-    } else if (url.protocol === "wss:") {
-      url.protocol = "https:";
-    }
-    url.pathname = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return undefined;
-  }
-}
-
-const devProxyTarget = resolveDevProxyTarget(process.env.T3CODE_PORT, configuredWsUrl);
+const devProxyTarget = resolveDevProxyTarget(
+  process.env.T3CODE_PORT,
+  configuredWsUrl,
+  process.env.T3CODE_HOST,
+);
 
 // Brotli quality 5 keeps encode time in the hundreds of ms; the default
 // (quality 11) would trade the transfer stall for an equally long encode stall.

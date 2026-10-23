@@ -5,15 +5,43 @@ description: Test T3 Code's native iOS and Android app through its Device panel 
 
 # Test T3 Mobile
 
+Load `$worktrees` for exact-source staging and runtime ownership. Acquire the selected device host's `mobile` lease before native preparation or device interaction. Keep the upstream Device panel and returned AgentDevice command as the automation path. Release the lease after owned device sessions and processes are closed.
+
 ## Open the device
 
 Call `device_list`, then `device_open` with the selected host and device IDs.
 T3 boots the device and shows its live stream in the Device panel. Follow its
 returned `quickStart`, using the exact `agentDevice.command` and all `targetArgs`
-on every operation. Use `device_screenshot` to inspect the screen.
+on every operation. Use `device_screenshot` to inspect the screen. On Windows the
+command is a `.cmd` shim, and `cmd.exe` splits its arguments at every unquoted
+`&`, including deep-link queries; for such arguments run `node` with the
+`agent-device-launcher.mjs` beside the shim, followed by the same arguments.
+
+A session name and an Android serial are separate identities. Emulator serials can be recycled after shutdown. If opening reports an existing session, inspect its recorded device identity and owner before recovery. Close only a session proven to belong to this task or a terminated task; do not clear the shared session directory or stop the device daemon. After closing it, reopen through `device_open` and retain the newly returned command and target arguments.
+
+If a snapshot reports a missing helper or instrumentation failure while claiming the helper is current, retain the session's request log, verify the helper package on that exact device, and reopen a fresh owned session once. Let AgentDevice install its own helper. A repeated failure is an automation blocker; do not reinstall the T3 app to repair the automation helper.
+
+A Settings snapshot proves device control only. Application verification requires launching the intended T3 binary, pairing its isolated backend, and exercising the requested flow. If T3 exits before JavaScript, collect its native crash trace and resolved build dependencies before changing Metro or package versions.
 
 If T3 device tools or the selected device are unavailable, report the blocker
 and stop verification. Do not install or switch to another automation system.
+
+## Prepare the native client
+
+On Windows, finish source installs and stop this task's backend, Metro, and other Node watchers in the target checkout before native preparation, including rebuilds during verification. Retain their captured PIDs and confirm their processes and listeners have exited. A non-watch backend can also keep a loaded native dependency such as `bufferutil` locked while pnpm replaces `node_modules`. Keep the checkout idle until the complete `ensure` command succeeds, including every install, prebuild, and Gradle stage. Start backend, fixture scripts, and Metro afterward; a listening server or completed intermediate install is not this completion criterion.
+
+If preparation fails with a pnpm rename `EPERM`, retain the exact path and inspect this task's captured process tree for remaining consumers before retrying the same helper. Stop only confirmed owned consumers and await any previous preparation process's exit. A native Expo prebuild exit such as `3221226505` (`0xC0000409`) is a separate failure: retain its stage, executable, exit code, and full output. After restoring an idle checkout, allow one retry through `ensure`; if the crash repeats, collect Expo debug output and any Windows crash report and report a preparation blocker. The exit code alone does not identify the faulty dependency or justify changing application package versions.
+
+Use the current helper from that host's `main` checkout and explicitly select the source being tested:
+
+```bash
+node "<main-worktree>/scripts/mobile-native-client.ts" ensure <ios|android> <device-id> --worktree "<checkout-being-tested>"
+```
+
+On Windows, pass the selected emulator's actual ADB serial. The helper resolves its AVD name and delegates the complete build to the worktree wrapper, preserving short CMake staging, dependency preparation, and the bounded Ninja retry. Follow `$worktrees` to provision a worktree-owned AVD when needed.
+
+This reuses a matching native client or builds and installs one. Authorized
+mobile verification includes that build step unless the user prohibits it.
 
 ## Use an isolated backend
 
@@ -27,15 +55,6 @@ Test with meaningful project and thread data. Read the shared
 when inspecting or seeding SQLite. Stop the test server before fixture writes.
 
 ## Launch T3 Code Dev
-
-From the checkout being tested on the selected device host, run:
-
-```bash
-node scripts/mobile-native-client.ts ensure <ios|android> <device-id>
-```
-
-This reuses a matching native client or builds and installs one. Authorized
-mobile verification includes that build step unless the user prohibits it.
 
 Start `vp run dev:client` from `apps/mobile`, or reuse a healthy Metro belonging
 to this checkout. Open its printed development-client URL with AgentDevice
