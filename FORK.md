@@ -436,17 +436,11 @@ Archive, restore and delete cascade through existing native and app-owned subage
 
 **Worktree branch:** `fix/subagent-creation-lifecycle`
 
-[PR #20074](https://github.com/pingdotgg/t3code/pull/20074) is **maintainer-owned / pull-only**, taken over by [juliusmarminge](https://github.com/pingdotgg/t3code/pull/20074#issuecomment-6272575859). No local implementation, tests, reviews, commits, pushes or original PR edits are permitted. Only inspect or fetch/pull published maintainer source. Keep the PR linked to this thread. Published origin head: `3f5f407cef03604806f274633ef91e2faf91f92e`; local source remains `d77df163bea8983e6843bd7e24871a4986ddcd62`. Details below describe the earlier contributor source.
+[PR #20074](https://github.com/pingdotgg/t3code/pull/20074) is maintainer-owned / pull-only. The local branch is synchronized to the complete published head `3f5f407cef03604806f274633ef91e2faf91f92e`, based on upstream `44f977f4e819c2355cb2f8c75b93547fb9815fec`. Do not edit, commit, push, run review fixes or change the original PR. Its link and tracking remain in place.
 
-Worktree: `E:/Projects/t3code.worktrees/subagent-creation-lifecycle`. Current standalone base: `13aa882c22d584de5388dfce3b3ca413387ba059`. Development ports: web `6555`, server `14595`, with `T3CODE_PORT_OFFSET=822`.
-
-The contributor version of [PR #20074](https://github.com/pingdotgg/t3code/pull/20074) was at `d77df163bea8983e6843bd7e24871a4986ddcd62`, with 333 additions and one deletion, 334 changed lines across three files.
-
-Current CI has 19 Actions successes and seven skips plus CodeRabbit success; required contexts comprise five successes and three skips. Full CodeRabbit run `38b04743-49c1-40c8-b033-86e2583a697e` covers all three files at this head without actionable comments. Malformed self-parent lineage can deadlock, but no supported adapter producer was established; no speculative hardening was added. Human eligibility approval remains external.
+The published implementation includes the maintainer's self-parent deadlock correction and current native branch-correction coverage. Main preserves the parent-before-child locking and lifecycle inheritance around newer provider normalization.
 
 Native child creation inherits the parent's persisted archive/delete state under parent-before-child shared locking. Archive inheritance also clears a stale child archive time when the persisted parent has been restored. Fork lineage stays independent, and fresh delegation under an archived or deleted parent is rejected. These creation-time guarantees are independent of the descendant cascade implementation.
-
-The update supplies upstream's new Git fixture dependency and two lifecycle/branch-correction regressions. A review fix prevents a vacuous timestamp comparison. Fifty focused tests pass at `bcae5635`, then all 11 lifecycle cases and scoped checks pass at final head. Executed same-host controls pass typechecking and 34 ingestor tests, with seven unrelated Windows failures retained. HIGH adaptation review reached consensus with no outstanding findings. Current proof is `.piz/proof/review-7e4b2021/README.md`; verification remains backend-only.
 
 ## Archive Settings UX
 
@@ -675,6 +669,8 @@ The delayed-shell navigation fixture isolates both archive upload release and pe
 **Worktree branch:** `feat/cross-environment-project-actions`
 
 The standalone source is `4f26f2a259c19f83424cc6557e24c45584f95eec` above `66ee628e0875b2b735b199f42e6151e347833637`. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
+
+Project-action terminal identity derives from the destination project ID; each RPC receives the destination environment separately. Native terminal routing uses that same project identity.
 
 The normal project actions menu includes actions defined for the same logical project in other connected environments. Local actions appear first, followed by separated groups such as `From MacBookPro`, then the existing `From t3.json` group. Remote actions execute through their destination environment and project checkout with destination permissions and terminal context; results and errors identify that destination, and failures never fall back locally. Read-only destinations disable their actions, disconnected environments are omitted, and missing destination checkouts produce an explicit error. This feature is independent of Version Control and uses the existing project/environment grouping.
 
