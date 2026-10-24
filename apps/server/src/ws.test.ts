@@ -254,6 +254,7 @@ it.live.each(["thread", "shell"] as const)(
       const items = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable: <A, E, R>(_threadId: ThreadId, read: Effect.Effect<A, E, R>) => read,
           getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
           streamStoredEventsFrom: (
@@ -606,6 +607,7 @@ it.effect("thread resume across compacted history keeps message order and final 
       ),
       Effect.provideService(ThreadManagement.ThreadManagementService, {
         ensureLegacyTranscript: () => Effect.void,
+        withThreadReadable: <A, E, R>(_threadId: ThreadId, read: Effect.Effect<A, E, R>) => read,
         streamStoredEventsFrom: () => Stream.never,
       } as unknown as ThreadManagement.ThreadManagementService["Service"]),
     );

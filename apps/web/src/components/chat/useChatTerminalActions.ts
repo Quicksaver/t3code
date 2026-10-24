@@ -338,6 +338,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
           terminalId,
           panelTarget
             ? {
+                ...(panelTarget.threadId ? { threadId: panelTarget.threadId } : {}),
                 environmentId: panelTarget.environmentId,
                 projectId: panelTarget.projectId,
                 cwd: panelTarget.cwd,
