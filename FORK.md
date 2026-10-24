@@ -683,7 +683,7 @@ The delayed-shell navigation fixture isolates both archive upload release and pe
 
 **Worktree branch:** `feat/cross-environment-project-actions`
 
-Implemented and committed at `7fe46c23f8147e72df8a486faaa13940fd689077` on standalone `base/main` boundary `848e352b48f982e0f1fe134aa9712d75ba7da3b9`. No implementation is integrated, deployed or pushed.
+The standalone source is `4f26f2a259c19f83424cc6557e24c45584f95eec` above `66ee628e0875b2b735b199f42e6151e347833637`. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
 
 The normal project actions menu includes actions defined for the same logical project in other connected environments. Local actions appear first, followed by separated groups such as `From MacBookPro`, then the existing `From t3.json` group. Remote actions execute through their destination environment and project checkout with destination permissions and terminal context; results and errors identify that destination, and failures never fall back locally. Read-only destinations disable their actions, disconnected environments are omitted, and missing destination checkouts produce an explicit error. This feature is independent of Version Control and uses the existing project/environment grouping.
 
