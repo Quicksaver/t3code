@@ -299,10 +299,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         ? actionProject &&
           routeThreadId ===
             projectActionThreadId({
-              environmentId: actionProject.environmentId,
-              environmentLabel: "",
               projectId: actionProject.id,
-              projectCwd: actionProject.workspaceRoot,
             })
           ? { environmentId: actionProject.environmentId, id: routeThreadId, worktreePath: null }
           : null
