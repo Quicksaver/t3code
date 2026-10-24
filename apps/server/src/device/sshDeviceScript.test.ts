@@ -118,6 +118,16 @@ it("runs Windows npm probe and installation through Node with paths containing s
       const node = NodePath.join(home, "Node runtime", "node.exe");
       const npm = NodePath.join(NodePath.dirname(node), "node_modules/npm/bin/npm-cli.js");
       const calls = NodePath.join(home, "npm calls.jsonl");
+      const sdk = NodePath.join(home, "Android SDK");
+      for (const tool of [
+        "platform-tools/adb.exe",
+        "emulator/emulator.exe",
+        "cmdline-tools/latest/bin/avdmanager.bat",
+      ]) {
+        const file = NodePath.join(sdk, tool);
+        await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+        await NodeFSP.writeFile(file, "");
+      }
       await writeNpmPackage(NodePath.dirname(node), "11.0.0", "^20.17.0 || >=22.9.0");
       await writeNodeRuntime(NodePath.dirname(node));
       const npmFixture = `const fs = require('node:fs');
@@ -156,7 +166,7 @@ childProcess.spawnSync = (command, args, options) => command === 'adb'
         );
         context.signal.throwIfAborted();
         const child = NodeChildProcess.spawn(node, [script], {
-          env: { ...env, [pathKey]: npmPath },
+          env: { ...env, ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk, [pathKey]: npmPath },
           detached: !windowsHost,
         });
         active = child;
@@ -350,7 +360,17 @@ require('node:fs').accessSync=()=>{};
 ${setup}
 ` + SshDeviceScript.remoteDeviceScript("fixture", "probe"),
     ],
-    { encoding: "utf8", timeout: 10000 },
+    {
+      encoding: "utf8",
+      timeout: 10000,
+      env: {
+        ...process.env,
+        PATH: [
+          NodePath.resolve(NodePath.dirname(process.execPath), windowsHost ? "." : "../lib"),
+          process.env.PATH ?? process.env.Path ?? "",
+        ].join(NodePath.delimiter),
+      },
+    },
   );
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout).platforms;
