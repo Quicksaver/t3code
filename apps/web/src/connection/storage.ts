@@ -52,7 +52,6 @@ const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
 const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 7;
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
-const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 5;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
