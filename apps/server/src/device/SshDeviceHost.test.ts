@@ -82,7 +82,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
                 platform === "win32"
                   ? ["-NoProfile", "-NonInteractive", "-Command", command.args.slice(-2).join(" ")]
                   : ["-c", command.args.slice(-2).join(" ")],
-                { stdin, env: { HOME: home.replaceAll("\\", "/") } },
+                { stdin, env: { ...process.env, HOME: home.replaceAll("\\", "/") } },
               ),
             );
           }
@@ -155,7 +155,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         stdin: input,
       },
     );
-    expect(result.code).toBe(0);
+    expect(result).toMatchObject({ code: 0, stderr: "" });
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toEqual({ args: [value], input });
     yield* SshDeviceHost.probe({
