@@ -816,9 +816,7 @@ This replacement follows the [maintainer's re-landing direction](https://github.
 
 **Worktree branch:** `fix/preview-recording-unreadable-start`
 
-Worktree: `E:/Projects/t3code.worktrees/preview-recording-unreadable-start`. Fixed standalone base: `30afc56076c86580d5d913897280bea660d44c79`. Development ports: web `6557`, server `14597`, with `T3CODE_PORT_OFFSET=824`.
-
-Published [PR #20091](https://github.com/pingdotgg/t3code/pull/20091) remains open at `af16677223bce05a81bccd8a124222de24e364d2`, with synchronized source tracking. The ordinary diff is +473/-26, 499 changed lines across four files. Only recording tests conflicted during rebase; resolution retained upstream diagnostics and all fallback, duration, live-frame-timeout and mandatory terminal-ACK behavior. No separate adaptation was warranted.
+Worktree: `E:/Projects/t3code.worktrees/preview-recording-unreadable-start`. Source: `96964c65a4b7d25256698b89cb03eedc8c1ff868`, directly above `66ee628e0875b2b735b199f42e6151e347833637`. Published [PR #20091](https://github.com/pingdotgg/t3code/pull/20091) is open and contributor-maintained. All eight required checks are accepted and CodeRabbit reviewed the exact source. Its performance-measurement nitpick has no demonstrated defect; 4K/HiDPI encoding cost and decoder throughput remain unmeasured. Maintainer scope approval remains external.
 
 Native `getDisplayMedia` remains first, preserving the grant queue, requester checks and permission policy. Only an acquisition DOMException named `NotReadableError` selects frames from the same authoritative guest without replacement or debugger takeover. First decoded readiness shares the acquisition deadline. Capture IDs, JPEG quality 85, bounded latest-frame delivery/decode, coalescing and backpressure remain. Live frame acknowledgement has a separate five-second bound; expiry stops the producer and starts bounded finalization. Warmup retains two bounded attempts, seeds fallback from a successful image and ignores late results; expiry yields null under the existing best-effort policy.
 
