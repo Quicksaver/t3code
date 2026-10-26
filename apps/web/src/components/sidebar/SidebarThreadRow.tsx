@@ -18,6 +18,7 @@ import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import {
   formatWorkingDurationLabel,
   resolveThreadProviderStack,
+  threadRuntimeCanArchive,
 } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -87,6 +88,10 @@ import {
   useSidebarRowSubscriptionLease,
   setFileDragActive,
 } from "../Sidebar.logic";
+import {
+  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+  SidebarSettledLifecycleControls,
+} from "../SidebarArchiveControls";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
@@ -128,6 +133,11 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
+const SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME = cn(
+  "-mr-1 inline-flex h-full items-center gap-1 px-1.5 text-xs",
+  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+);
+
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -580,6 +590,7 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
+  onArchive: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
@@ -631,6 +642,7 @@ function ThreadRenameInput(props: {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     isRenaming,
+    onArchive,
     onCancelRename,
     onCommitRename,
     onContextMenu,
@@ -897,6 +909,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
+  const handleArchiveClick = () => onArchive(threadRef);
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
   };
@@ -1262,14 +1275,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span
                   className={cn(
-                    "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                    "group/sidebar-slim-status-slot relative ml-auto flex h-6 shrink-0 items-center justify-end",
+                    variantAction === "unsettle" && canOperateThread ? "min-w-14" : "min-w-8",
                     props.sweepAction !== null && "hidden",
                   )}
                 >
                   <span
                     className={cn(
                       "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
-                      !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                      !isWoke &&
+                        (variantAction !== "unsettle" || canOperateThread) &&
+                        "group-has-[:focus-visible]/sidebar-slim-status-slot:opacity-0 group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
@@ -1333,27 +1349,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockOffIcon className="mb-px size-3" />
                       </button>
                     )
-                  ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <button
-                            type="button"
-                            aria-label="Un-settle thread"
-                            onClick={handleUnsettleClick}
-                            onPointerDown={handleActionPointerDown}
-                            className={cn(
-                              "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                              isWoke && "group-any-hover/sidebar-row:static",
-                            )}
-                          />
-                        }
-                      >
-                        <Undo2Icon className="mb-px size-3.5" />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">Un-settle thread</TooltipPopup>
-                    </Tooltip>
-                  ) : (
+                  ) : variantAction === "unsettle" ? (
+                    canOperateThread ? (
+                      <SidebarSettledLifecycleControls
+                        settlementSupported={props.settlementSupported}
+                        archiveDisabled={!threadRuntimeCanArchive(thread.runtime)}
+                        preserveWokeStatus={isWoke}
+                        onUnsettle={handleUnsettleClick}
+                        onUnsettlePointerDown={handleActionPointerDown}
+                        onArchive={handleArchiveClick}
+                      />
+                    ) : null
+                  ) : !props.settlementSupported ? null : (
                     <button
                       type="button"
                       aria-label="Settle thread"
@@ -1546,7 +1553,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                                 aria-label="Settle thread"
                                 onClick={handleSettleClick}
                                 onPointerDown={handleActionPointerDown}
-                                className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                className={SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME}
                               />
                             }
                           >
