@@ -58,7 +58,10 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import {
+  unloadedOlderSettledCount,
+  type OlderSettledScope,
+} from "@t3tools/client-runtime/state/threads";
 
 import {
   CheckIcon,
@@ -149,9 +152,14 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
+import { loadSettledArchiveTargets } from "../state/settledArchiveTargets";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentsWithScope,
+} from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -239,11 +247,14 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
+import { filterArchivableSidebarThreads } from "./SidebarArchiveControls.logic";
+import { SidebarArchiveAllButton } from "./SidebarArchiveControls";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
+import { useSidebarArchiveActions } from "../hooks/useSidebarArchiveActions";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import {
   SidebarSearchResultRow,
@@ -471,8 +482,9 @@ function useSidebarThreads(input: {
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
+  const settledScopes = olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys);
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    scopes: settledScopes,
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -554,6 +566,7 @@ function useSidebarThreads(input: {
     ],
     settledVisibleCount,
     settledCount,
+    settledScopes,
     olderSettledShelf,
     hiddenSettledCount: Math.max(0, settledCount - visibleSettledThreads.length),
     showMoreSettled: () =>
@@ -893,6 +906,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
+    archiveThread,
     settleThread,
     unsettleThread,
     snoozeThread,
@@ -905,7 +919,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reorderPinnedThread,
     reorderActiveThread,
     markThreadUnread,
-    archiveThread,
     deleteThread,
   } = useThreadActions();
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -1250,6 +1263,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     searchableThreads,
     settledVisibleCount,
     settledCount,
+    settledScopes,
     olderSettledShelf,
     hiddenSettledCount,
     showMoreSettled,
@@ -1362,10 +1376,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setActiveSearchResultIndex((activeSearchResultIndex + step + count) % count);
   };
 
+  const operableSettledEnvironments = useEnvironmentsWithScope(
+    settledScopes,
+    AuthOrchestrationOperateScope,
+  );
+  const archivableSettledThreads = filterArchivableSidebarThreads(settledThreads, (thread) =>
+    operableSettledEnvironments.has(thread.environmentId),
+  );
+  const hasUnloadedSettledThreads =
+    unloadedOlderSettledCount({
+      olderSettled: (environmentId) =>
+        operableSettledEnvironments.has(environmentId)
+          ? (olderSettledShelf.environments.get(environmentId)?.older ?? null)
+          : null,
+      scopes: settledScopes,
+      threads,
+    }) > 0;
   const orderedThreadKeysRef = useRef(orderedThreadKeys);
   // Read changing maps/sets through refs so streamed events preserve row callbacks.
   const threadByKeyRef = useRef(threadByKey);
   const settledThreadKeysRef = useRef(settledThreadKeys);
+  const settledScopesRef = useRef(settledScopes);
+  const { archiveAllSettled, archiveSelectedEntries, attemptArchive, isArchivingAllSettled } =
+    useSidebarArchiveActions({
+      archiveThread,
+      loadSettledThreads: () => loadSettledArchiveTargets(settledScopes),
+      confirmThreadArchive,
+      settledScopesRef,
+    });
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
 
   const jumpLabelByKey = (() => {
@@ -1721,6 +1759,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     orderedThreadKeysRef.current = orderedThreadKeys;
     threadByKeyRef.current = threadByKey;
     settledThreadKeysRef.current = settledThreadKeys;
+    settledScopesRef.current = settledScopes;
     snoozedThreadKeysRef.current = snoozedThreadKeys;
     sectionByThreadKeyRef.current = sectionByThreadKey;
   });
@@ -1865,7 +1904,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         workingThreads.length +
         snoozedThreads.length +
         settledCount ===
-        0
+        0 &&
+      // Keep the bulk control mounted until its batch finishes.
+      !isArchivingAllSettled
     ) {
       return [];
     }
@@ -2161,7 +2202,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         threadKey,
         currentThreadKey: readRouteThreadKey(router),
         action: "snooze",
-        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
         now: new Date().toISOString(),
         thread: readThreadShell(threadRef),
       })
@@ -2201,7 +2241,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+      const hasRunningThread = threadKeys.some(
+        (threadKey) => !threadRuntimeCanArchive(threadByKeyRef.current.get(threadKey)?.runtime),
+      );
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
         const thread = threadByKeyRef.current.get(threadKey);
@@ -2232,7 +2274,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         pinnedCount: pinnedSelectedThreads.length,
       });
       // Presets sync across environments, so the first selected thread's stand for all.
-      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
         menuOpenedAt,
@@ -2282,6 +2323,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   },
                 ]
               : []),
+            {
+              id: "archive",
+              label: `Archive (${count})`,
+              disabled: hasRunningThread || !canOperateThreads(selectedThreads),
+            },
             { id: "mark-unread", label: `Mark unread (${count})` },
             {
               id: "delete",
@@ -2389,6 +2435,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
         clearSelection();
+        return;
+      }
+      if (clicked.value === "archive") {
+        await archiveSelectedEntries(
+          threadKeys.flatMap((threadKey) => {
+            const thread = threadByKeyRef.current.get(threadKey);
+            if (!thread) return [];
+            return [
+              {
+                threadKey,
+                threadRef: scopeThreadRef(thread.environmentId, thread.id),
+              },
+            ];
+          }),
+        );
         return;
       }
       if (clicked.value === "mark-unread") {
@@ -2635,6 +2696,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "unsettle":
             attemptUnsettle(threadRef);
             return;
+          case "archive":
+            attemptArchive(threadRef);
+            return;
           case "unsnooze":
             attemptUnsnooze(threadRef);
             return;
@@ -2733,34 +2797,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
             return;
-          case "archive": {
-            if (confirmThreadArchive) {
-              const confirmed = await settlePromise(() =>
-                api.dialogs.confirm(`Archive thread "${thread.title}"?`),
-              );
-              if (confirmed._tag === "Failure" || !confirmed.value) return;
-            }
-            let didArchive = false;
-            const result = await archiveThread(threadRef, {
-              onArchived: () => {
-                didArchive = true;
-              },
-            });
-            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: didArchive
-                    ? "Thread archived, but navigation failed"
-                    : "Failed to archive thread",
-                  description: error instanceof Error ? error.message : "An error occurred.",
-                }),
-              );
-              return;
-            }
-            return;
-          }
           case "delete": {
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
@@ -3296,6 +3332,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onSettle={attemptSettle}
                             onActionSweepStart={startActionSweep}
                             onUnsettle={attemptUnsettle}
+                            onArchive={attemptArchive}
                             onSnooze={attemptSnooze}
                             onUnsnooze={attemptUnsnooze}
                             onUnpin={attemptUnpin}
@@ -3429,6 +3466,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 )}
                                 label="Settled"
                                 count={settledCount}
+                                trailing={
+                                  <SidebarArchiveAllButton
+                                    archivableCount={archivableSettledThreads.length}
+                                    hasUnloadedThreads={hasUnloadedSettledThreads}
+                                    isArchiving={isArchivingAllSettled}
+                                    onArchiveAll={archiveAllSettled}
+                                  />
+                                }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
@@ -3493,6 +3538,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           {!isSearchingThreads &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
+          // The retained Settled header stands in while Archive all runs.
+          !isArchivingAllSettled &&
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
