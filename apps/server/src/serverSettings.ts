@@ -27,6 +27,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -41,6 +42,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+import { migrateMagiArbitratorPrompt } from "./magi/MagiSettingsMigration.ts";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
@@ -339,6 +341,7 @@ const ServerSettingsJson = fromLenientJson(
 const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 const LegacyProviderSettingsJson = fromLenientJson(
   Schema.Struct({
+    magi: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     providers: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     bitbucket: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
     github: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
@@ -609,6 +612,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const crypto = yield* Crypto.Crypto;
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
@@ -621,7 +625,13 @@ const make = Effect.gen(function* () {
   const emitChange = (settings: ServerSettings) =>
     PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
 
-  const readConfigExists = fs.exists(settingsPath).pipe(
+  // Windows access() succeeds for dangling links; stat() follows their targets.
+  const readConfigExists = fs.stat(settingsPath).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (error) => error.reason._tag === "NotFound",
+      () => Effect.succeed(false),
+    ),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -702,12 +712,16 @@ const make = Effect.gen(function* () {
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     let parseFailure = Option.none<unknown>();
+    let hasObsoleteMagiSettings = false;
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
       const decoded = decodeServerSettingsJsonExit(raw);
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
+        hasObsoleteMagiSettings = Object.keys(legacySettings.value.magi ?? {}).some(
+          (key) => key !== "arbitratorPrompt",
+        );
         legacyProviders = legacySettings.value.providers;
         legacySourceControl = {
           bitbucket: legacySettings.value.bitbucket,
@@ -728,6 +742,13 @@ const make = Effect.gen(function* () {
         }
       } else {
         settings = decoded.value;
+        const prompt = yield* migrateMagiArbitratorPrompt(settings.magi.arbitratorPrompt).pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
+        if (prompt !== settings.magi.arbitratorPrompt) {
+          settings = { ...settings, magi: { arbitratorPrompt: prompt } };
+          hasObsoleteMagiSettings = true;
+        }
       }
     }
     // Settings saved by a server that kept the mode in `compactIdleThreads` move
@@ -827,7 +848,8 @@ const make = Effect.gen(function* () {
     if (
       migrated !== loaded ||
       (settingsFileTrusted && legacyProviders !== undefined) ||
-      hasLegacySourceControl
+      hasLegacySourceControl ||
+      (settingsFileTrusted && hasObsoleteMagiSettings)
     ) {
       yield* writeSettingsAtomically(migrated);
       for (const move of sourceControlMigration.secretMoves) {

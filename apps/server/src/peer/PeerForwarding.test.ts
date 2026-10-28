@@ -33,6 +33,9 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
+import { ProjectionMagiRepository } from "../persistence/ProjectionMagi.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -46,6 +49,8 @@ const box = descriptorOf("environment-box", "Box");
 const boxProject = ProjectId.make("project:box");
 const boxThread = ThreadId.make("thread:box-auto");
 const boxRun = RunId.make("run:box-auto");
+const participant = ThreadId.make("thread:laptop-participant");
+const participantChild = ThreadId.make("thread:laptop-participant-child");
 
 /** What B's thread service was asked to do. */
 interface Seen {
@@ -208,6 +213,11 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       McpHttpServer.layerProjectRegistration,
       McpHttpServer.layerThreadToolkit,
     ).pipe(
+      Layer.provide(
+        Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+          requireToolAllowed: () => Effect.void,
+        }),
+      ),
       Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       Layer.provide(NodeCrypto.layer),
       Layer.provide(boxThreads(seen, linkSession)),
@@ -275,11 +285,32 @@ const makeLaptop = Effect.gen(function* () {
       ),
     ),
     Layer.provide(NodeServices.layer),
-    Layer.provide(PeerForwarding.layer),
+    Layer.provideMerge(PeerForwarding.layer),
+    Layer.provide(
+      MagiParticipantPolicy.layerFromServices.pipe(
+        Layer.provide(
+          Layer.mock(ProjectionMagiRepository)({
+            findParticipantThreads: (threadIds) =>
+              Effect.succeed(threadIds.filter((threadId) => threadId === participant)),
+          }),
+        ),
+      ),
+    ),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(
       Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadRecords: (threadId) =>
+          Effect.succeed({
+            thread: {
+              ...liveThreadShell(threadId),
+              lineage: {
+                rootThreadId: participant,
+                parentThreadId: threadId === participantChild ? participant : null,
+                relationshipToParent: threadId === participantChild ? "subagent" : null,
+              },
+            },
+          } as never),
         getThreadShell: (threadId) =>
           Effect.succeed(
             threadId === ThreadId.make("thread:laptop-from-desk")
@@ -347,13 +378,75 @@ const makeLaptop = Effect.gen(function* () {
         ),
         Effect.provideService(McpSchema.McpServerClient, mcpClient),
       );
-  return { links: Context.get(linking, PeerLinks.PeerLinks), call };
+  return {
+    links: Context.get(linking, PeerLinks.PeerLinks),
+    forwarding: Context.get(here, PeerForwarding.PeerForwarding),
+    scopeOf,
+    call,
+  };
 });
 
 const failureOf = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
+
+it.effect("confines Magi participant subtrees before a link replaces their caller identity", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+
+      for (const caller of [participant, participantChild]) {
+        const sent = yield* a.call(caller, "t3_thread_send", {
+          environmentId: box.environmentId,
+          threadId: usersThread,
+          message: "Escape the participant subtree.",
+        });
+        const launched = yield* a.call(caller, "t3_thread_launch", {
+          environmentId: box.environmentId,
+          projectId: boxProject,
+          title: "Escape",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        });
+        const read = yield* a.call(caller, "t3_thread_read", {
+          environmentId: box.environmentId,
+          threadId: boxThread,
+        });
+        expect(failureOf(sent)).toMatchObject({ code: "capability_denied" });
+        expect(failureOf(launched)).toMatchObject({ code: "capability_denied" });
+        expect(failureOf(read)).toMatchObject({ code: "capability_denied" });
+        expect(failureOf(yield* a.call(caller, "t3_environment_links", {}))).toMatchObject({
+          code: "capability_denied",
+        });
+
+        // Remote delegation calls the forwarder directly, bypassing local tool declarations.
+        const delegated = yield* a.forwarding
+          .call(a.scopeOf(caller), ProjectToolkit.tools.t3_thread_launch, box.environmentId, {
+            projectId: boxProject,
+            title: "Remote child",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            delegatedFrom: { environmentId: laptop.environmentId, threadId: caller, title: caller },
+          })
+          .pipe(Effect.flip);
+        expect(delegated.code).toBe("capability_denied");
+      }
+      expect(yield* Ref.get(seen)).toEqual(nothingSeen);
+
+      const ordinary = yield* a.call("thread:laptop-full", "t3_thread_send", {
+        environmentId: box.environmentId,
+        threadId: usersThread,
+        message: "Ordinary linked work still runs.",
+      });
+      expect(ordinary.isError).toBe(false);
+      expect((yield* Ref.get(seen)).sends).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("an agent here works on a linked environment's threads within its own modes", () =>
   Effect.scoped(

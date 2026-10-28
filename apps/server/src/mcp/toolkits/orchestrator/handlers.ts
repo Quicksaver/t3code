@@ -5,11 +5,19 @@ import * as Effect from "effect/Effect";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
-import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import {
+  readCaller,
+  requireMagiParticipantToolAllowed,
+  requireScheduledTaskTargetAllowed,
+  requireThreadWriteAllowed,
+  unavailable,
+} from "../../threadAccess.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -45,6 +53,7 @@ const handlers = {
     (input) =>
       Effect.gen(function* () {
         const { threads } = yield* readCaller();
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* threads.stopWorkflow(input).pipe(
           Effect.as({}),
           Effect.mapError(
@@ -95,6 +104,15 @@ const handlers = {
           }
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const { caller } = yield* readCaller();
+          // Mirrors OrchestratorMcpService.scheduleTask's binding rule; keep them in sync.
+          const bindsToCaller =
+            input.bindToCurrentThread ??
+            (caller !== undefined &&
+              (input.projectId === undefined || input.projectId === caller.projectId));
+          yield* requireScheduledTaskTargetAllowed(
+            bindsToCaller && caller !== undefined ? caller.id : null,
+          );
           return yield* service.scheduleTask(scope, { ...input, prompt, schedule });
         }),
       // A scheduled run starts long after its caller, with nothing to carry the link.
@@ -106,6 +124,22 @@ const handlers = {
           if (scheduledTaskId === undefined) return yield* Effect.die("unreachable");
           const scope = yield* McpInvocationContext.McpInvocationContext;
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          if (scope.thread !== undefined) {
+            const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+            const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+            const task = tasks.find((task) => task.id === scheduledTaskId);
+            if (task !== undefined) {
+              yield* requireScheduledTaskTargetAllowed(task.threadId);
+              // Mirrors OrchestratorMcpService.updateScheduledTask's binding rule; keep them in sync.
+              const nextThreadId =
+                bindToCurrentThread === undefined
+                  ? task.threadId
+                  : bindToCurrentThread
+                    ? scope.thread.threadId
+                    : null;
+              yield* requireScheduledTaskTargetAllowed(nextThreadId);
+            }
+          }
           return yield* service.updateScheduledTask(scope, {
             scheduledTaskId,
             prompt,
@@ -142,6 +176,7 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      yield* requireMagiParticipantToolAllowed({ action: "create-threads" });
       return yield* service.createThreads(scope, input);
     }),
   ),
@@ -174,6 +209,7 @@ const handlers = {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* service.sendToThread(scope, input);
       }),
   ),
@@ -220,6 +256,7 @@ const handlers = {
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* requireThreadWriteAllowed(input.threadId);
         return yield* service.interruptThread(scope, input);
       }),
   ),

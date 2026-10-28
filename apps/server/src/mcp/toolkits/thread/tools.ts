@@ -27,6 +27,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
@@ -58,6 +59,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
+    MagiParticipantPolicy.MagiParticipantPolicy,
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
@@ -74,6 +76,11 @@ const commandTool = {
     Crypto.Crypto,
   ],
 };
+// Commands on another thread, restricted for a Magi participant's subtree.
+const participantGatedCommandTool = {
+  ...commandTool,
+  dependencies: [...commandTool.dependencies, MagiParticipantPolicy.MagiParticipantPolicy],
+};
 const queueEntry = Schema.Struct({
   queuedRunId: RunId,
   text: Schema.String,
@@ -81,7 +88,7 @@ const queueEntry = Schema.Struct({
 });
 const QUEUE_READ_ACTIONS = ["list", "read"] as const;
 const QueueTool = Tool.make("t3_queue", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. Writes fail once the run is no longer queued.",
   parameters: Schema.Struct({
@@ -125,7 +132,7 @@ const question = Schema.Struct({
   required: Schema.optional(Schema.Boolean),
 });
 const PendingRequestTool = Tool.make("t3_pending_request", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`; this cannot approve a permission request.",
   parameters: Schema.Struct({
@@ -163,7 +170,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 }).annotate(Tool.Destructive, true);
 
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
-  ...commandTool,
+  ...participantGatedCommandTool,
   description:
     "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
   parameters: Schema.Struct({
@@ -232,7 +239,10 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
     runCount: NonNegativeInt,
     nextRunAt: ScheduledTask.fields.nextRunAt,
   }),
-  dependencies: [...commandTool.dependencies, ScheduledTaskService.ScheduledTaskService],
+  dependencies: [
+    ...participantGatedCommandTool.dependencies,
+    ScheduledTaskService.ScheduledTaskService,
+  ],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);

@@ -17,6 +17,9 @@ import {
   newCommandId,
   readCaller,
   readThread,
+  requireMagiParticipantToolAllowed,
+  requireScheduledTaskTargetAllowed,
+  requireThreadWriteAllowed,
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
@@ -44,6 +47,7 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   command: (common: { commandId: CommandId; threadId: ThreadId }) => OrchestrationV2Command,
 ) {
   const { threads, projection } = yield* readThread(threadId);
+  yield* requireThreadWriteAllowed(projection.thread.id);
   const result = yield* threads
     .dispatch(command({ commandId: yield* newCommandId(), threadId: projection.thread.id }))
     .pipe(Effect.mapError(dispatchFailure));
@@ -95,11 +99,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const existingTask = tasks.find((task) => task.id === input.taskId);
+      if (existingTask === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      yield* requireScheduledTaskTargetAllowed(existingTask.threadId);
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(Effect.mapError(unavailable));
@@ -161,6 +167,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
             yield* readThread(targetThreadId);
+            yield* requireThreadWriteAllowed(targetThreadId);
             const result = yield* threads
               .dispatch({
                 type: "thread.merge_back",
@@ -174,6 +181,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               .pipe(Effect.mapError(dispatchFailure));
             return { sequence: result.sequence, targetThreadId };
           }
+          yield* requireMagiParticipantToolAllowed({ action: "create-threads" });
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
           const result = yield* threads
             .dispatch({
@@ -246,6 +254,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threadId: input.threadId,
           requestId,
         });
+        yield* requireThreadWriteAllowed(projection.thread.id);
         const result = yield* threads
           .dispatch({
             type: "runtime-request.respond",
@@ -330,6 +339,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   t3_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
+      yield* requireThreadWriteAllowed(projection.thread.id);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
       if (input.action === "settle") {
         return yield* threads

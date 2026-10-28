@@ -24,6 +24,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2Notification,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -141,6 +142,7 @@ export interface ThreadManagementSendInput {
   readonly messageId: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly notification?: OrchestrationV2Notification;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
@@ -157,7 +159,11 @@ export interface ThreadManagementSendResult {
   >;
   readonly message: OrchestrationV2ConversationMessage;
   readonly run: OrchestrationV2Run;
-  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
+  /** Null for queued sends: the item materializes when the queued turn starts. */
+  readonly turnItem: Extract<
+    OrchestrationV2TurnItem,
+    { readonly type: "user_message" | "notification" }
+  > | null;
   readonly delivery: "started" | "queued" | "steered" | "restarted";
 }
 
@@ -829,6 +835,7 @@ const make = Effect.gen(function* () {
       messageId: input.messageId,
       ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
       ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.notification === undefined ? {} : { notification: input.notification }),
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
@@ -838,7 +845,7 @@ const make = Effect.gen(function* () {
     });
     const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
       messageIds: [input.messageId],
-      turnItemTypes: ["user_message"],
+      turnItemTypes: ["user_message", "notification"],
     });
     const message = projection.messages.find((candidate) => candidate.id === input.messageId);
     const run =
@@ -847,10 +854,9 @@ const make = Effect.gen(function* () {
         : projection.runs.find((candidate) => candidate.id === message.runId);
     const turnItem =
       projection.turnItems.find(
-        (
-          candidate,
-        ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
-          candidate.type === "user_message" && candidate.messageId === input.messageId,
+        (candidate): candidate is NonNullable<ThreadManagementSendResult["turnItem"]> =>
+          (candidate.type === "user_message" && candidate.messageId === input.messageId) ||
+          (candidate.type === "notification" && candidate.runId === run?.id),
       ) ?? null;
     if (
       message === undefined ||
@@ -863,9 +869,10 @@ const make = Effect.gen(function* () {
       });
     }
     const delivery: ThreadManagementSendResult["delivery"] =
-      turnItem === null || turnItem.inputIntent === "queued_turn"
+      turnItem === null ||
+      (turnItem.type === "user_message" && turnItem.inputIntent === "queued_turn")
         ? "queued"
-        : turnItem.inputIntent === "turn_start"
+        : turnItem.type === "notification" || turnItem.inputIntent === "turn_start"
           ? "started"
           : input.mode === "restart"
             ? "restarted"

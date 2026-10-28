@@ -57,6 +57,18 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   },
 ];
 
+describe("settings navigation", () => {
+  it("keeps Magi reachable once in the Agents group", () => {
+    const agents = SETTINGS_NAV_GROUPS.find((group) => group.heading === "Agents");
+    expect(agents?.paths).toContain("/settings/magi");
+    expect(
+      SETTINGS_NAV_GROUPS.flatMap((group) => group.paths).filter(
+        (path) => path === "/settings/magi",
+      ),
+    ).toHaveLength(1);
+  });
+});
+
 describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);

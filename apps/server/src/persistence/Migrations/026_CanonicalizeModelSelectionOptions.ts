@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+// Legacy provider options were objects; current decoders require selection arrays.
+// Normalize persisted models while retaining only nonempty strings and booleans.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

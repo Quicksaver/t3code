@@ -21,6 +21,7 @@ import type * as Tool from "effect/ai/Tool";
 import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -96,6 +97,7 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Crypto.Crypto;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const participantPolicy = yield* MagiParticipantPolicy.MagiParticipantPolicy;
 
   /**
    * The caller's own limits, which travel with every forwarded call: the peer sees only the
@@ -106,6 +108,17 @@ const make = Effect.gen(function* () {
   const callerLimits = (scope: Scope) =>
     readCaller().pipe(
       Effect.tap((caller) => assertNotLinked(caller, "use this environment's links")),
+      // The peer sees a link credential, so it cannot enforce this caller's local participant lineage.
+      Effect.tap(() =>
+        scope.thread === undefined
+          ? Effect.void
+          : participantPolicy
+              .requireToolAllowed({
+                action: "use-linked-environment",
+                callerThreadId: scope.thread.threadId,
+              })
+              .pipe(Effect.catchDefect(() => Effect.fail(unavailable()))),
+      ),
       Effect.map((caller) => caller.limits),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
       Effect.provideService(ThreadManagement.ThreadManagementService, threads),

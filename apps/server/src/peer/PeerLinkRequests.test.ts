@@ -33,6 +33,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../mcp/McpToolAccess.ts";
@@ -152,6 +153,11 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
   );
   const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+    Layer.provide(
+      Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+        requireToolAllowed: () => Effect.void,
+      }),
+    ),
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),

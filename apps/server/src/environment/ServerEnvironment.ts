@@ -265,6 +265,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       ignoredFileListing: true,
       triage: true,
+      magi: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate

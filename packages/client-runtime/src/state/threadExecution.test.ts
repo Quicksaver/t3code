@@ -2,6 +2,7 @@ import {
   TurnItemId,
   NodeId,
   MessageId,
+  MagiRunId,
   ProviderInstanceId,
   ProviderThreadId,
   ProviderSessionId,
@@ -26,6 +27,8 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   presentRunStop,
+  presentPendingBackgroundWork,
+  threadHasInterruptibleWork,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -52,6 +55,82 @@ function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
 }
 
 describe("thread execution presentation", () => {
+  it("keeps a completed provider turn idle while Magi still owns work", () => {
+    const projection = {
+      ...v2Projection,
+      thread: { ...v2Projection.thread, pendingMagiRunId: MagiRunId.make("panel") },
+      runs: [run("owner", 1, "completed")],
+    };
+    expect(deriveThreadRuntime(projection)).toMatchObject({ status: "idle", activeRunId: null });
+    expect(
+      deriveThreadRuntime({
+        ...projection,
+        thread: { ...projection.thread, pendingMagiRunId: null },
+      }),
+    ).toMatchObject({ status: "completed" });
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "magi:panel", kind: "monitor", awaited: true, description: "Waiting on Magi" },
+      ]),
+    ).toBeNull();
+    expect(
+      threadHasInterruptibleWork(deriveThreadRuntime(projection), [
+        { taskId: "magi:panel", kind: "monitor", awaited: true, description: "Waiting on Magi" },
+      ]),
+    ).toBe(true);
+    expect(threadHasInterruptibleWork(deriveThreadRuntime(projection), [])).toBe(false);
+  });
+
+  it("allows Stop for completion-holding work without treating commands as held work", () => {
+    expect(threadHasInterruptibleWork(null, [{ taskId: "child", kind: "subagent" }])).toBe(true);
+    expect(threadHasInterruptibleWork(null, [{ taskId: "watch", kind: "monitor" }])).toBe(false);
+    expect(threadHasInterruptibleWork(null, [{ taskId: "shell", kind: "command" }])).toBe(false);
+    expect(
+      threadHasInterruptibleWork(null, [{ taskId: "watch", kind: "monitor", awaited: true }]),
+    ).toBe(true);
+    expect(threadHasInterruptibleWork(null, [])).toBe(false);
+  });
+
+  it("presents ordinary subagents, monitors and commands while Magi holds its owner", () => {
+    const childThreadId = ThreadId.make("participant");
+    expect(
+      presentPendingBackgroundWork([
+        { taskId: "magi:panel", kind: "monitor", awaited: true, description: "Waiting on Magi" },
+        {
+          taskId: "magi:participant",
+          kind: "subagent",
+          description: "Review the change",
+          childThreadId,
+        },
+        { taskId: "watch", kind: "monitor", description: "Watch the build" },
+        { taskId: "magi:command", kind: "command", description: "Run the checks" },
+      ]),
+    ).toEqual({
+      title: "Waiting on 1 subagent, 1 command and 1 monitor",
+      waiting: true,
+      items: [
+        {
+          taskId: "magi:participant",
+          kind: "subagent",
+          label: "Review the change",
+          childThreadId,
+        },
+        {
+          taskId: "magi:command",
+          kind: "command",
+          label: "Run the checks",
+          childThreadId: undefined,
+        },
+        {
+          taskId: "watch",
+          kind: "monitor",
+          label: "Watch the build",
+          childThreadId: undefined,
+        },
+      ],
+    });
+  });
+
   it("derives the current root failure without inheriting errors from children or previous runs", () => {
     const failed = { ...run("limited", 1, "failed"), rootNodeId: NodeId.make("root") };
     const item = {
@@ -188,6 +267,7 @@ describe("thread execution presentation", () => {
       activeRunId: runningRun.id,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(true);
+    expect(threadHasInterruptibleWork(runtime, [])).toBe(true);
   });
 
   it("marks an open run whose provider turn already ended", () => {
@@ -257,6 +337,7 @@ describe("thread execution presentation", () => {
       activeRunId: null,
     });
     expect(threadRuntimeHasInterruptibleRun(runtime)).toBe(false);
+    expect(threadHasInterruptibleWork(runtime, [])).toBe(false);
   });
 });
 

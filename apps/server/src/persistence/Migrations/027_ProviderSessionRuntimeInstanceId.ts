@@ -1,4 +1,5 @@
-// Historical sessions cannot be mapped unambiguously to configured instances; leave the column nullable.
+// Instance ownership is ambiguous for historical sessions with multiple
+// configured instances. Leave it nullable; persistence supplies the fallback.
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Effect from "effect/Effect";
 

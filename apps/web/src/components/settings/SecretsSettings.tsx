@@ -1,4 +1,8 @@
-import type { SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type SecretProviderConfig,
+  type SecretProviderId,
+} from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -19,9 +23,9 @@ import { Button } from "../ui/button";
 import { SecretProviderDialog } from "./SecretProviderDialog";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
 import {
-  classifyProviderEnvironmentAccess,
-  resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
+  classifyEnvironmentSettingsAccess,
+  resolveSessionOperateAccess,
+} from "./EnvironmentSettingsPanel.logic";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { searchableSetting } from "./settingsSearch";
@@ -73,10 +77,11 @@ function EnvironmentSecretProviders({
   const environmentId = environment.environmentId;
   const sessionState = useEnvironmentSessionState(environmentId);
   // The server requires the same grant for secret providers as for provider settings.
-  const access = classifyProviderEnvironmentAccess({
+  const access = classifyEnvironmentSettingsAccess({
     connectionPhase: environment.connection.phase,
     hasServerConfig: environment.serverConfig !== null,
-    operateAccess: resolveRemoteOperateAccess({
+    operateAccess: resolveSessionOperateAccess({
+      requiredScope: AuthProvidersManageScope,
       session: sessionState.data,
       isPending: sessionState.isPending,
       hasError: sessionState.hasError,

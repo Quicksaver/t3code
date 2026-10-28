@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Legacy NOT NULL provider columns remain write-through shadows; V2 reads explicit driver/instance columns.
+// Retain legacy provider columns as write-through shadows where NOT NULL.
+// V2 routing and indexes use the explicit instance and driver columns.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

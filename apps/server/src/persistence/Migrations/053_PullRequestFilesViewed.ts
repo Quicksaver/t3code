@@ -4,7 +4,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Delete unticked rows; storing the absent state would grow with every scrolled diff.
+  // Unticking deletes the row: absent is the resting state, and a table of "not viewed"
+  // rows would grow with every diff anybody scrolled past.
   yield* sql`
     CREATE TABLE IF NOT EXISTS pull_request_files_viewed (
       provider TEXT NOT NULL,

@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Bootstrap uses projections and cursors, so repair projections only.
-// Matching settledAt and occurred_at identifies automatic settlements from the decider's shared clock read.
+// Repair projections without rewriting events. Equal settledAt and occurred_at
+// identify automatic settlements stamped with the sweep time.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 

@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Role-bearing credentials and sessions cannot safely receive new capabilities implicitly. */
+/**
+ * This is an intentional alpha cutover: role-bearing credentials and sessions
+ * cannot safely be assigned new capabilities implicitly.
+ */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
