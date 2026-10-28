@@ -41,7 +41,7 @@ vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({
   releaseArchivedComposerDraftUploads: vi.fn(),
-  releaseComposerDraftUploads: vi.fn(),
+  permanentlyDiscardComposerDraft: vi.fn(),
 }));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",

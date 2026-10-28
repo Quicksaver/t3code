@@ -23,7 +23,6 @@ import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
-import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -36,7 +35,7 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import {
   releaseArchivedComposerDraftUploads,
-  releaseComposerDraftUploads,
+  permanentlyDiscardComposerDraft,
 } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
@@ -317,10 +316,6 @@ export function useThreadActions() {
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
-  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
-  const clearProjectDraftThreadById = useComposerDraftStore(
-    (store) => store.clearProjectDraftThreadById,
-  );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
   const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const router = useRouter();
@@ -547,12 +542,7 @@ export function useThreadActions() {
       return deleteResult;
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
-    releaseComposerDraftUploads(threadRef);
-    clearComposerDraftForThread(threadRef);
-    clearProjectDraftThreadById(
-      scopeProjectRef(threadRef.environmentId, thread.projectId),
-      threadRef,
-    );
+    permanentlyDiscardComposerDraft(threadRef);
     clearTerminalUiState(threadRef);
     clearThreadPreviewState(threadRef);
 

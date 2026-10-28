@@ -100,7 +100,7 @@ vi.mock("../lib/archivedThreadsState", () => ({
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
   releaseArchivedComposerDraftUploads: mocks.releaseArchivedComposerDraftUploads,
-  releaseComposerDraftUploads: mocks.releaseComposerDraftUploads,
+  permanentlyDiscardComposerDraft: mocks.releaseComposerDraftUploads,
 }));
 vi.mock("../localApi", () => ({ readLocalApi: vi.fn(() => null) }));
 vi.mock("../state/entities", () => ({
