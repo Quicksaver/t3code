@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as DocumentText from "../../../provider/DocumentText.ts";
+import * as MagiParticipantPolicy from "../../../magi/MagiParticipantPolicy.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -61,6 +62,9 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+    }),
+    Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+      requireToolAllowed: () => Effect.die("OAuth clients have no participant lineage."),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,

@@ -1,3 +1,4 @@
+import { MagiService } from "./magi/MagiService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -96,6 +97,7 @@ import {
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
+  MAGI_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -1337,6 +1339,7 @@ export const layerWsRpc = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+      const magi = yield* MagiService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -1864,6 +1867,9 @@ export const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
+        [MAGI_WS_METHODS.getSettings]: () => magi.getSettings,
+        [MAGI_WS_METHODS.updateSettings]: (input) => magi.updateSettings(input),
+        [MAGI_WS_METHODS.resetSettings]: () => magi.resetSettings(),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,

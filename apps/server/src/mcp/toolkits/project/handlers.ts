@@ -25,7 +25,13 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  newCommandId,
+  readCaller,
+  requireMagiParticipantToolAllowed,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -83,6 +89,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const context = yield* readCaller();
         const { caller } = context;
+        yield* requireMagiParticipantToolAllowed({ action: "launch-thread" });
         // A retry with the same key replays the first launch: the ids derive
         // from the caller and the key, and the launch service replays a
         // command it already accepted.

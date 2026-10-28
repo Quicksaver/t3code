@@ -219,6 +219,47 @@ function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
 
+describe("composerDraftStore legacy Magi cleanup", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+  it("removes obsolete Magi selections from saved storage while restoring ordinary drafts", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const threadId = ThreadId.make("legacy-magi-draft");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      const prompt = "Keep project writing preferences and personality discussion";
+      useComposerDraftStore.getState().setPrompt(threadRef, prompt);
+      const state = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+      const key = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+      const storage = useComposerDraftStore.persist.getOptions().storage!;
+      storage.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
+        version: 9,
+        state: {
+          ...state,
+          draftsByThreadKey: {
+            ...state.draftsByThreadKey,
+            [key]: {
+              ...state.draftsByThreadKey[key],
+              magiArm: { participants: [{ personalityId: "legacy" }] },
+            },
+          },
+        },
+      } as never);
+      await vi.advanceTimersByTimeAsync(300);
+
+      await useComposerDraftStore.persist.rehydrate();
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(prompt);
+      expect(await storage.getItem(COMPOSER_DRAFT_STORAGE_KEY)).toEqual({ version: 9, state });
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.make("thread-dedupe");
   const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

@@ -40,6 +40,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
@@ -117,6 +118,11 @@ const layerTools = Layer.mergeAll(
   McpHttpServer.layerThreadToolkit,
   McpHttpServer.layerProjectRegistration,
 ).pipe(
+  Layer.provide(
+    Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+      requireToolAllowed: () => Effect.void,
+    }),
+  ),
   Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provide(layerLaunches),

@@ -32,6 +32,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { DEFAULT_MAGI_SETTINGS, MagiSettings, MagiSettingsPatch } from "./magi.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   BrowserRecordingFrameRate,
@@ -1359,6 +1360,7 @@ export const ServerSettings = Schema.Struct({
   usageModelAliases: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  magi: MagiSettings.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAGI_SETTINGS))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1658,6 +1660,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   /** Merges per host, replacing patched fields whole; redaction markers retain secrets, empty or omitted secrets remove them. */
   sourceControlHosts: Schema.optionalKey(Schema.Record(Schema.String, SourceControlHostSettings)),
+  magi: Schema.optionalKey(MagiSettingsPatch),
   // Replace whole maps to avoid half-merged driver configs.
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
   // Merge per source to avoid racing other edits; null removes an entry.

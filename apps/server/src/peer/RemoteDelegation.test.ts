@@ -34,6 +34,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import * as MagiParticipantPolicy from "../magi/MagiParticipantPolicy.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
@@ -48,6 +49,11 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import {
+  ProjectionMagiRepository,
+  type ProjectionMagiRepositoryShape,
+} from "../persistence/ProjectionMagi.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -463,6 +469,11 @@ const boxToolkitLayer = (thread: BoxThread) => {
     McpHttpServer.layerOrchestratorToolkit,
     McpHttpServer.layerProjectRegistration,
   ).pipe(
+    Layer.provide(
+      Layer.mock(MagiParticipantPolicy.MagiParticipantPolicy)({
+        requireToolAllowed: () => Effect.void,
+      }),
+    ),
     Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(layerBoxThreads),
@@ -535,6 +546,8 @@ const makeLaptop = (
   >,
   /** The laptop's links from before a restart, which keep their sessions there. */
   kept?: Context.Context<Layer.Success<ReturnType<typeof layerLinkingEnvironment>>>,
+  findParticipantThreads: ProjectionMagiRepositoryShape["findParticipantThreads"] = () =>
+    Effect.succeed([]),
 ) =>
   Effect.gen(function* () {
     const linking = kept ?? (yield* layerLinkingEnvironment(laptop).pipe(Layer.build));
@@ -586,6 +599,11 @@ const makeLaptop = (
           ),
         ),
       ),
+      Layer.provide(
+        MagiParticipantPolicy.layerFromServices.pipe(
+          Layer.provide(Layer.mock(ProjectionMagiRepository)({ findParticipantThreads })),
+        ),
+      ),
       Layer.provide(Layer.succeedContext(linking)),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(NodeCrypto.layer),
@@ -606,6 +624,7 @@ const makeLaptop = (
       settings: Context.get(linking, ServerSettings.ServerSettingsService),
       orchestrator: Context.get(here, Orchestrator.OrchestratorV2),
       remote: Context.get(here, RemoteDelegation.RemoteDelegation),
+      forwarding: Context.get(here, PeerForwarding.PeerForwarding),
       threads: Context.get(here, ThreadManagement.ThreadManagementService),
       projections: Context.get(here, ProjectionStore.ProjectionStoreV2),
       sink: Context.get(here, EventSink.EventSinkV2),
@@ -1454,6 +1473,53 @@ const steppedRetries = Effect.gen(function* () {
   );
   return { failed, retry, schedule };
 });
+
+it.effect(
+  "retries a transient participant lookup failure while following an ordinary remote task",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const thread = yield* makeBoxThread;
+        const b = yield* serveBox(thread);
+        const offers = yield* SubscriptionRef.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+        const retries = yield* steppedRetries;
+        const failLookup = yield* Ref.make(true);
+        const a = yield* makeLaptop(database, offers, undefined, () =>
+          Ref.getAndSet(failLookup, false).pipe(
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.fail(new PersistenceSqlError({ operation: "participant lookup" }))
+                : Effect.succeed([]),
+            ),
+          ),
+        ).pipe(Effect.provideService(RemoteDelegation.FollowRetrySchedule, retries.schedule));
+        yield* linkTo(a.links, b, "full-access");
+        yield* seedParent(a);
+
+        const failure = yield* a.forwarding.links(parentScope).pipe(Effect.flip);
+        expect(failure.code).toBe("orchestration_error");
+        expect(yield* Ref.get(thread.waitedFor)).toEqual([]);
+
+        yield* Ref.set(thread.afterLaunch, Ref.set(failLookup, true));
+        const delegated = yield* delegateToBox(a);
+        yield* Queue.take(retries.failed);
+        expect(yield* Ref.get(thread.waitedFor)).toEqual([]);
+
+        yield* Ref.set(thread.reply, "Completed after the local lookup recovered.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        yield* Queue.offer(retries.retry, undefined);
+        expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+          status: "completed",
+          result: "Completed after the local lookup recovered.",
+        });
+        expect(yield* Ref.get(thread.waitedFor)).toEqual([boxRunId]);
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 /** Waits until the task here records that the `stopCount`th Stop after its result reached there. */
 const stoppedThere = (

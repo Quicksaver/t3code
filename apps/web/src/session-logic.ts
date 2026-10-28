@@ -5,6 +5,7 @@ import {
   type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
@@ -37,7 +38,7 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
-import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
+import { threadHasInterruptibleWork } from "@t3tools/client-runtime/state/thread-execution";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 
 import {
@@ -1137,10 +1138,12 @@ export function derivePhase(runtime: ThreadStructureRuntime | null): SessionPhas
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,
   runtime: ThreadStructureRuntime | null,
+  pendingBackgroundTasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask> = [],
 ): boolean {
   return (
     hasActiveThread &&
-    (derivePhase(runtime) === "running" || threadRuntimeHasInterruptibleRun(runtime))
+    (derivePhase(runtime) === "running" ||
+      threadHasInterruptibleWork(runtime, pendingBackgroundTasks))
   );
 }
 

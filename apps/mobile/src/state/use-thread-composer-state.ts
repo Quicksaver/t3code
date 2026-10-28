@@ -11,6 +11,7 @@ import {
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
+  threadHasInterruptibleWork,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { useRef, useState } from "react";
@@ -384,6 +385,10 @@ export function useThreadComposerState() {
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
     ? (selectedThreadRuntime?.activeRunId ?? null)
     : null;
+  const canStopThread = threadHasInterruptibleWork(
+    selectedThreadRuntime,
+    selectedThreadShell?.pendingBackgroundTasks ?? [],
+  );
 
   const cancelQueuedRunEdit = () => {
     if (selectedThreadKey === null || savingQueuedEditRef.current) return;
@@ -754,6 +759,7 @@ export function useThreadComposerState() {
     interactionMode,
     activeThreadBusy,
     interruptibleRunId,
+    canStopThread,
     onChangeDraftMessage,
     onPickDraftMedia,
     onPickDraftFiles,

@@ -100,6 +100,32 @@ describe("V2 session presentation", () => {
     expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
   });
 
+  it("keeps ordinary Stop available for completion-holding work after the provider settles", () => {
+    const runtime: ThreadRuntimeSummary = {
+      status: "idle",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-10-23T00:00:00.000Z",
+    };
+    for (const task of [
+      { taskId: "magi:panel", kind: "monitor", awaited: true },
+      { taskId: "participant", kind: "subagent" },
+      { taskId: "watch", kind: "monitor", awaited: true },
+    ] as const) {
+      expect(deriveCanInterruptRunningThread(true, runtime, [task])).toBe(true);
+      expect(deriveCanInterruptRunningThread(false, runtime, [task])).toBe(false);
+    }
+    expect(deriveCanInterruptRunningThread(true, runtime, [])).toBe(false);
+    expect(
+      deriveCanInterruptRunningThread(true, runtime, [{ taskId: "watch", kind: "monitor" }]),
+    ).toBe(false);
+    expect(
+      deriveCanInterruptRunningThread(true, runtime, [{ taskId: "shell", kind: "command" }]),
+    ).toBe(false);
+  });
+
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const retryItem = {

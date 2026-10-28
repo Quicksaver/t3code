@@ -55,6 +55,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { MagiRunId } from "./magi.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -446,6 +447,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  /** Magi will wake this conversation even while its provider turn is settled. */
+  pendingMagiRunId: Schema.optional(Schema.NullOr(MagiRunId)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
@@ -3354,6 +3357,12 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     projectId: ProjectId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.magi-work.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    pendingMagiRunId: Schema.NullOr(MagiRunId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),

@@ -11,6 +11,38 @@ import {
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  it("includes Magi participant conversations as ordinary owning-conversation subagents", () => {
+    const owner = ThreadId.make("owner");
+    const participant = ThreadId.make("thread:delegated-task:magi%3Arun%3Aseat%3Aparticipant");
+    const grandparent = ThreadId.make("grandparent");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: owner,
+          status: "running",
+          lineage: { parentThreadId: grandparent, relationshipToParent: "subagent" },
+        },
+        {
+          id: participant,
+          status: "running",
+          lineage: { parentThreadId: owner, relationshipToParent: "subagent" },
+        },
+      ] as never,
+      projection: null,
+    });
+    expect(immediateThreadRelationships(graph, owner)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          threadId: participant,
+          edge: expect.objectContaining({ kind: "subagent" }),
+        }),
+      ]),
+    );
+    expect(immediateThreadRelationships(graph, grandparent).map((row) => row.threadId)).toEqual([
+      owner,
+    ]);
+  });
+
   it.each([
     ["running", "completed"],
     ["completed", "running"],
