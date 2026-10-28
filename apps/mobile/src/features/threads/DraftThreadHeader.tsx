@@ -70,6 +70,10 @@ export function DraftThreadHeader(props: {
         canOpenTerminal: false,
         canOperateTerminal: false,
         canOpenFiles: canReadFiles && props.cwd !== null,
+        remoteProjectActionGroups: [],
+        onRunRemoteProjectAction: async () => {
+          requiresThread();
+        },
         projectScripts: [],
         terminalSessions: [],
         onOpenFilesInspector: openFiles,

@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
@@ -1094,6 +1094,30 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().byThreadKey,
         refAfterServerADisconnects,
       ).surfaces,
+    ).toEqual([]);
+  });
+
+  it("retains remote action destinations across split, reload and pane close", async () => {
+    const target = {
+      environmentId: "remote" as EnvironmentId,
+      environmentLabel: "MacBookPro",
+      projectId: ProjectId.make("remote-project"),
+      projectCwd: "/remote/checkout",
+      label: "Run · MacBookPro",
+    };
+    useRightPanelStore.getState().openTerminal(refA, "action-id", target);
+    useRightPanelStore.getState().splitTerminal(refA, "terminal:action-id", "action-split");
+    await reloadRightPanelStore();
+    useRightPanelStore.getState().closeTerminal(refA, "terminal:action-id", "action-id");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      actionTarget: target,
+      terminalIds: ["action-split"],
+      activeTerminalId: "action-split",
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
     ).toEqual([]);
   });
 

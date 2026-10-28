@@ -11,6 +11,10 @@
       "types": "./src/zip/zipDirectory.ts",
       "default": "./src/zip/zipDirectory.ts"
     },
+    "./project-actions": {
+      "types": "./src/projectActions.ts",
+      "default": "./src/projectActions.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"

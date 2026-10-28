@@ -10,6 +10,8 @@ import { useEffect, useEffectEvent, useRef } from "react";
 export function useTerminalExitNavigation(target: {
   readonly environmentId: string;
   readonly threadId: string;
+  readonly projectActionProjectId?: string;
+  readonly projectActionLabel?: string;
   readonly readFallbackTerminalId: () => string | null;
 }) {
   const navigation = useNavigation();
@@ -20,6 +22,12 @@ export function useTerminalExitNavigation(target: {
     if (fallbackTerminalId !== null) {
       navigation.dispatch(
         StackActions.replace("ThreadTerminal", {
+          ...(target.projectActionProjectId
+            ? {
+                projectActionProjectId: target.projectActionProjectId,
+                projectActionLabel: target.projectActionLabel,
+              }
+            : {}),
           environmentId: target.environmentId,
           threadId: target.threadId,
           terminalId: fallbackTerminalId,

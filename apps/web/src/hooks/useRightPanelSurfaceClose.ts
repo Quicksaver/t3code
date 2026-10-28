@@ -1,3 +1,5 @@
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { terminalEnvironment } from "../state/terminal";
 import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
@@ -29,6 +31,7 @@ export function useRightPanelSurfaceClose(input: {
   readonly terminalLabelsById: ReadonlyMap<string, string>;
 }) {
   const { threadRef, terminalLabelsById } = input;
+  const closeRemoteTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const canOperatePreview = useEnvironmentScope(
     threadRef?.environmentId ?? null,
@@ -53,11 +56,25 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind === "terminal" &&
-      readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
+      readEnvironmentScope(
+        surface.actionTarget?.environmentId ?? ref.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId);
+        if (surface.actionTarget) {
+          void closeRemoteTerminal({
+            environmentId: surface.actionTarget.environmentId,
+            input: {
+              threadId: projectActionThreadId(surface.actionTarget),
+              terminalId,
+              deleteHistory: true,
+            },
+          });
+        } else {
+          storeCloseTerminal(ref, terminalId);
+          terminalActions.closeTerminalSession(terminalId);
+        }
       }
     }
   };
@@ -117,19 +134,23 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind !== "terminal" ||
-      !readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      !readEnvironmentScope(
+        surface.actionTarget?.environmentId ?? threadRef.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       finishClose([surface]);
       return;
     }
     const otherLabels = surface.terminalIds
       .filter((terminalId) => terminalId !== surface.activeTerminalId)
-      .map(labelFor);
-    void confirmTerminalClose([labelFor(surface.activeTerminalId), ...otherLabels]).then(
-      (confirmed) => {
-        if (confirmed) finishClose([surface]);
-      },
-    );
+      .map((id) => surface.actionTarget?.label ?? labelFor(id));
+    void confirmTerminalClose([
+      surface.actionTarget?.label ?? labelFor(surface.activeTerminalId),
+      ...otherLabels,
+    ]).then((confirmed) => {
+      if (confirmed) finishClose([surface]);
+    });
   });
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
     closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),
