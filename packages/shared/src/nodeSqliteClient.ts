@@ -502,7 +502,7 @@ const readSafeSqliteInteger = (value: unknown) => {
 const checkpointWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
-const { statSync } = require("node:fs");
+const { statSync, openSync, readSync, closeSync } = require("node:fs");
 let db;
 let frames;
 let checkpoint;
@@ -513,29 +513,43 @@ let nextTruncateId = 0;
 let pendingTruncate;
 let pendingBarriers = 0;
 // Attached archives share worker ownership while main keeps its admission protocol.
-const archives = workerData.additionalPaths.map((filename) => {
+const archives = workerData.additionalPaths.map((filename) => ({ filename, statements: undefined }));
+const openArchive = (filename) => {
+  let file;
+  try {
+    file = openSync(filename, "r");
+  } catch (cause) {
+    if (cause.code === "ENOENT") return;
+    throw cause;
+  }
+  const header = Buffer.alloc(20);
+  let wal;
+  try {
+    // Rollback-mode readers can block WAL activation; inspect its header without a SQLite lock.
+    wal = readSync(file, header, 0, header.length, 0) === header.length &&
+      header[18] === 2 && header[19] === 2;
+  } finally {
+    closeSync(file);
+  }
+  if (!wal) return;
   const db = new DatabaseSync(filename);
   db.exec("PRAGMA busy_timeout = 0; PRAGMA checkpoint_fullfsync = ON;");
   return {
     frames: db.prepare("PRAGMA wal_checkpoint(NOOP)"),
-    schema: db.prepare("SELECT 1 FROM sqlite_schema LIMIT 1"),
     checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
   };
-});
+};
 let archivePending = false;
 const checkArchives = () => {
   archivePending = false;
   for (const archive of archives) {
     try {
-      let state = archive.frames.get();
-      // A read observes an archive switching from an empty file to WAL.
-      if (state.log < 0) {
-        archive.schema.get();
-        state = archive.frames.get();
-      }
+      const statements = archive.statements ??= openArchive(archive.filename);
+      if (statements === undefined) continue;
+      let state = statements.frames.get();
       if (state.log - state.checkpointed >= workerData.frames) {
-        archive.checkpoint.get();
-        state = archive.frames.get();
+        statements.checkpoint.get();
+        state = statements.frames.get();
       }
       if (state.log - state.checkpointed >= workerData.frames) archivePending = true;
     } catch (cause) {
