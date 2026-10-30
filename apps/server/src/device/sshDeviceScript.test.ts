@@ -15,6 +15,114 @@ import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 
+const executable = async (file: string, body = "exit 0") => {
+  await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+  await NodeFSP.writeFile(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+};
+
+const completeSdk = async (sdk: string, adb = "echo Android Debug Bridge") => {
+  await executable(NodePath.join(sdk, "platform-tools/adb"), adb);
+  await executable(NodePath.join(sdk, "emulator/emulator"));
+  await executable(NodePath.join(sdk, "cmdline-tools/latest/bin/avdmanager"));
+};
+
+/** Runs the probe through the SSH shell setup, then `after` in that same shell. */
+const probeAndroid = (setup: (home: string) => Promise<Record<string, string>>, after = "true") =>
+  Effect.promise(async () => {
+    const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-sdk-"));
+    try {
+      const env = await setup(home);
+      await executable(NodePath.join(home, "bin/npm"), "echo 10.0.0");
+      const probe = NodePath.join(home, "probe.cjs");
+      await NodeFSP.writeFile(probe, SshDeviceScript.remoteDeviceScript("fixture", "probe"));
+      const result = await exec(
+        "/bin/sh",
+        ["-c", `${SshDeviceScript.remoteDeviceEnvironment()}\n"$NODE" "$PROBE" && ${after}`],
+        {
+          env: {
+            HOME: home,
+            PATH: `${NodePath.join(home, "bin")}:/usr/bin:/bin`,
+            NODE: process.execPath,
+            PROBE: probe,
+            ...env,
+          },
+        },
+      );
+      const [inventory = "", ...rest] = result.stdout.trim().split("\n");
+      const android = JSON.parse(inventory).platforms.find(
+        (entry: { platform: string }) => entry.platform === "android",
+      );
+      return { android, after: rest.join("\n") };
+    } finally {
+      await NodeFSP.rm(home, { recursive: true, force: true });
+    }
+  });
+
+it.effect("does not offer Android when the SDK only has adb", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const { android } = yield* probeAndroid(async (home) => {
+      const sdk = NodePath.join(home, "sdk");
+      await executable(NodePath.join(sdk, "platform-tools/adb"), "echo Android Debug Bridge");
+      return { ANDROID_HOME: sdk };
+    });
+    expect(android).toEqual({
+      platform: "android",
+      available: false,
+      reason: expect.stringContaining("Android Emulator"),
+    });
+  }),
+);
+
+it.effect("does not offer Android when the SDK adb cannot run", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const { android } = yield* probeAndroid(async (home) => {
+      const sdk = NodePath.join(home, "sdk");
+      await completeSdk(sdk, "exit 1");
+      return { ANDROID_HOME: sdk };
+    });
+    expect(android).toEqual({ platform: "android", available: false, reason: expect.any(String) });
+  }),
+);
+
+it.effect("does not offer Android when SDK tools are directories", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const { android } = yield* probeAndroid(async (home) => {
+      const sdk = NodePath.join(home, "sdk");
+      await executable(NodePath.join(sdk, "platform-tools/adb"), "echo Android Debug Bridge");
+      await NodeFSP.mkdir(NodePath.join(sdk, "emulator/emulator"), { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(sdk, "cmdline-tools/latest/bin/avdmanager"), {
+        recursive: true,
+      });
+      return { ANDROID_HOME: sdk };
+    });
+    expect(android).toEqual({
+      platform: "android",
+      available: false,
+      reason: expect.stringContaining("Android Emulator"),
+    });
+  }),
+);
+
+it.effect("uses the SDK the probe accepted for later SSH commands", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    let sdk = "";
+    const result = yield* probeAndroid(async (home) => {
+      // Incomplete default locations must not shadow the configured SDK.
+      await NodeFSP.mkdir(NodePath.join(home, "Library/Android/sdk"), { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(home, "Android/Sdk"), { recursive: true });
+      sdk = NodePath.join(home, "custom-sdk");
+      await completeSdk(sdk);
+      return { ANDROID_SDK_ROOT: sdk };
+    }, "command -v emulator");
+    expect(result.android).toEqual({ platform: "android", available: true });
+    expect(result.after).toBe(NodePath.join(sdk, "emulator/emulator"));
+  }),
+);
+
 const writeNpmPackage = async (directory: string, version: string, nodeEngine: string) => {
   const root = NodePath.join(directory, "node_modules/npm");
   await NodeFSP.mkdir(NodePath.join(root, "bin"), { recursive: true });
@@ -139,6 +247,7 @@ else console.log(require('../package.json').version);`;
         siblingVersion?: string,
       ) => {
         const script = NodePath.join(home, `${mode}.cjs`);
+        await completeSdk(NodePath.join(home, "android-sdk"));
         await NodeFSP.writeFile(
           script,
           `Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -146,7 +255,7 @@ ${nodeVersion ? `Object.defineProperty(process.versions, 'node', { value: ${JSON
 require('node:os').homedir = () => ${JSON.stringify(home)};
 const childProcess = require('node:child_process');
 const originalSpawnSync = childProcess.spawnSync;
-childProcess.spawnSync = (command, args, options) => command === 'adb'
+childProcess.spawnSync = (command, args, options) => command === ${JSON.stringify(NodePath.join(home, "android-sdk/platform-tools/adb"))}
   ? { status: 0, stdout: '', stderr: '' }
   ${siblingVersion ? `: args[0] === '-p' ? { status: 0, stdout: ${JSON.stringify(siblingVersion)}, stderr: '' }` : ""}
   : originalSpawnSync(command, args, options);
@@ -157,7 +266,7 @@ childProcess.spawnSync = (command, args, options) => command === 'adb'
         );
         context.signal.throwIfAborted();
         const child = NodeChildProcess.spawn(node, [script], {
-          env: { ...env, [pathKey]: npmPath },
+          env: { ...env, ANDROID_HOME: NodePath.join(home, "android-sdk"), [pathKey]: npmPath },
           detached: !windowsHost,
         });
         active = child;

@@ -111,7 +111,9 @@ The first device listing installs pinned device tools on the host.
 Node 22 or newer and a compatible npm version must be available to non-interactive SSH commands.
 SSH device hosts also need a POSIX-compatible `sh` available to non-interactive SSH commands. On Windows hosts, Git for Windows provides `sh.exe` in its `bin` directory (for example `C:\Program Files\Git\bin`), which its default installation does not add to PATH; add that directory to the PATH SSH sessions use.
 T3 checks common Homebrew and Android SDK locations; custom installations need
-the appropriate PATH and ANDROID_HOME on the host. Android emulator video needs
+the appropriate PATH and `ANDROID_HOME` or `ANDROID_SDK_ROOT` on the host.
+Android on an SSH host needs the same SDK tools as a local environment; adb on
+the PATH alone does not enable it. Android emulator video needs
 `ffmpeg` with libx264 on that host; physical Android devices use scrcpy and do
 not need ffmpeg.
 
