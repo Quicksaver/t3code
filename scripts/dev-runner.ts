@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { resolveGitWorktreePath, resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { DEV_LOOPBACK_HOST } from "@t3tools/shared/devProxy";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
@@ -23,13 +24,12 @@ import { ChildProcess } from "effect/process";
 import { type DevShareError, shareDevServer, unshareDevServer } from "./lib/dev-share.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
 
-Object.assign(process.env, loadRepoEnv());
+Object.assign(process.env, loadRepoEnv({ repoRoot: process.cwd() }));
 
 const BASE_SERVER_PORT = 13773;
 const BASE_WEB_PORT = 5733;
 const MAX_HASH_OFFSET = 3000;
 const MAX_PORT = 65535;
-const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 // Browsers block these ports before networking even when curl accepts them.
 // https://fetch.spec.whatwg.org/#port-blocking
 const FETCH_BAD_PORTS = new Set([
@@ -312,6 +312,7 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   port,
   devUrl,
 }: CreateDevRunnerEnvInput): Effect.fn.Return<NodeJS.ProcessEnv, never, Path.Path> {
+  const path = yield* Path.Path;
   const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
   const webPort = BASE_WEB_PORT + webOffset;
   const configuredBaseDir = t3Home?.trim() || undefined;
@@ -321,15 +322,23 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   const output: NodeJS.ProcessEnv = {
     ...baseEnv,
     PORT: String(webPort),
-    VITE_DEV_SERVER_URL:
-      devUrl?.toString() ??
-      `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
+    VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://${DEV_LOOPBACK_HOST}:${webPort}`,
   };
 
   if (configuredBaseDir !== undefined) {
     output.T3CODE_HOME = resolvedBaseDir;
   } else {
     delete output.T3CODE_HOME;
+  }
+
+  // Worktree auth cookies share a hostname across ports and can exceed Node's default 16 KiB.
+  if (!/(?:^|\s)--max[-_]http[-_]header[-_]size(?:=|\s)/u.test(baseEnv.NODE_OPTIONS ?? "")) {
+    output.NODE_OPTIONS = `${baseEnv.NODE_OPTIONS ?? ""} --max-http-header-size=65536`.trim();
+  }
+  if (isDesktopMode && configuredBaseDir !== undefined) {
+    output.T3CODE_DESKTOP_USER_DATA_DIR = path.join(resolvedBaseDir, "userdata", "electron");
+  } else {
+    delete output.T3CODE_DESKTOP_USER_DATA_DIR;
   }
 
   // Managed T3 service shells leak launcher variables that make dev servers fail version checks.
@@ -358,14 +367,14 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
       // single-origin mode.
       output.T3CODE_SINGLE_ORIGIN_DEV = "1";
     } else {
-      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+      output.VITE_HTTP_URL = `http://${DEV_LOOPBACK_HOST}:${serverPort}`;
+      output.VITE_WS_URL = `ws://${DEV_LOOPBACK_HOST}:${serverPort}`;
       delete output.T3CODE_SINGLE_ORIGIN_DEV;
     }
   } else {
     output.T3CODE_PORT = String(serverPort);
-    output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
-    output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
+    output.VITE_HTTP_URL = `http://${DEV_LOOPBACK_HOST}:${serverPort}`;
+    output.VITE_WS_URL = `ws://${DEV_LOOPBACK_HOST}:${serverPort}`;
     // Desktop pins the renderer to loopback on purpose; an ambient marker
     // must not make Vite drop those URLs.
     delete output.T3CODE_SINGLE_ORIGIN_DEV;
@@ -406,7 +415,7 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
   }
 
   if (isDesktopMode) {
-    output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
+    output.HOST = DEV_LOOPBACK_HOST;
     delete output.T3CODE_DESKTOP_WS_URL;
   }
 

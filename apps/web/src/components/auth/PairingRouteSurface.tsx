@@ -14,6 +14,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { claimPairingToken, createPairingSubmissionQueue } from "./PairingRouteSurface.logic";
 
 export function PairingPendingSurface() {
   return (
@@ -35,31 +36,41 @@ export function PairingRouteSurface({
   initialErrorMessage?: string;
   onAuthenticated: () => void;
 }) {
-  const [autoPairToken] = useState(peekPairingTokenFromUrl);
-  const [credential, setCredential] = useState(autoPairToken ?? "");
+  const [credential, setCredential] = useState(() => peekPairingTokenFromUrl() ?? "");
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const autoSubmitAttemptedRef = useRef(false);
+  const [submissionQueue] = useState(createPairingSubmissionQueue);
+  const attemptedPairingTokensRef = useRef(new Set<string>());
+  const pendingSubmissionCountRef = useRef(0);
 
   const submitCredential = async (nextCredential: string) => {
+    pendingSubmissionCountRef.current += 1;
     setIsSubmitting(true);
-    setErrorMessage("");
 
-    const submitError = await submitServerAuthCredential(nextCredential).then(
-      () => null,
-      (error) => errorMessageFromUnknown(error),
-    );
+    try {
+      await submissionQueue.run(async () => {
+        setErrorMessage("");
 
-    setIsSubmitting(false);
+        const submitError = await submitServerAuthCredential(nextCredential).then(
+          () => null,
+          (error) => errorMessageFromUnknown(error),
+        );
 
-    if (submitError) {
-      setErrorMessage(submitError);
-      return;
+        if (submitError) {
+          setErrorMessage(submitError);
+          return;
+        }
+
+        startTransition(() => {
+          onAuthenticated();
+        });
+      });
+    } finally {
+      pendingSubmissionCountRef.current -= 1;
+      if (pendingSubmissionCountRef.current === 0) {
+        setIsSubmitting(false);
+      }
     }
-
-    startTransition(() => {
-      onAuthenticated();
-    });
   };
 
   const handleSubmit = async (event?: React.SubmitEvent<HTMLFormElement>) => {
@@ -73,14 +84,21 @@ export function PairingRouteSurface({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- strips the pairing token from the URL and submits it once when the route carries one
   useEffect(() => {
-    if (!autoPairToken || autoSubmitAttemptedRef.current) {
-      return;
-    }
+    const submitPairingTokenFromUrl = () => {
+      const token = claimPairingToken(peekPairingTokenFromUrl(), attemptedPairingTokensRef.current);
+      if (!token) return;
 
-    autoSubmitAttemptedRef.current = true;
-    stripPairingTokenFromUrl();
-    autoSubmit(autoPairToken);
-  }, [autoPairToken]);
+      setCredential(token);
+      stripPairingTokenFromUrl();
+      autoSubmit(token);
+    };
+
+    submitPairingTokenFromUrl();
+    window.addEventListener("hashchange", submitPairingTokenFromUrl);
+    return () => {
+      window.removeEventListener("hashchange", submitPairingTokenFromUrl);
+    };
+  }, []);
 
   return (
     <StandalonePage>

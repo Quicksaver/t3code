@@ -57,12 +57,14 @@ export type ArtifactSource = "local" | "remote" | "build";
 
 /** Keep native sources stable during ensure, as with a normal build; endpoint checks reject detected edits. */
 export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(operations: {
+  prepare?: Effect.Effect<void, E, R>;
   fingerprint: Effect.Effect<string, E, R>;
   installedBinary: Effect.Effect<string | null, E, R>;
   readRecord: Effect.Effect<NativeClientRecord | null, E, R>;
   install: (fingerprint: string) => Effect.Effect<ArtifactSource, E, R>;
   saveRecord: (record: NativeClientRecord) => Effect.Effect<void, E2, R2>;
 }) {
+  if (operations.prepare) yield* operations.prepare;
   const fingerprint = yield* operations.fingerprint;
   const status = clientStatus(
     fingerprint,
@@ -135,10 +137,15 @@ export const hashBundle = Effect.fn("hashBundle")(function* (root: string) {
 type FileSystemError = import("effect/PlatformError").PlatformError;
 
 const bundleId = "com.t3tools.t3code.dev";
+export const NativeClientWorktree = Context.Reference<string | undefined>("NativeClientWorktree", {
+  defaultValue: () => undefined,
+});
 const roots = Effect.gen(function* () {
   const path = yield* Path.Path;
-  const repo = yield* path.fromFileUrl(new URL("../", import.meta.url));
-  return { repo, mobile: path.join(repo, "apps/mobile") };
+  const tools = yield* path.fromFileUrl(new URL("../", import.meta.url));
+  const requested = yield* NativeClientWorktree;
+  const repo = requested === undefined ? tools : path.resolve(requested);
+  return { repo, tools, mobile: path.join(repo, "apps/mobile") };
 });
 const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
   stream.pipe(
@@ -400,6 +407,48 @@ export const prebuildAndroid = Effect.fn("nativeClient.prebuildAndroid")(functio
     clear.pipe(Effect.andThen(move(android, saved))),
     () => prebuild,
     () => move(saved, android).pipe(Effect.andThen(clear)),
+  );
+});
+
+/** Normalize Windows dependency paths before capturing the compatibility fingerprint. */
+export const prepareNativeClient = Effect.fn("nativeClient.prepare")(function* (
+  platform: NativePlatform,
+  run: typeof command = command,
+) {
+  if (platform !== "android" || (yield* HostProcess.Platform) !== "win32") return;
+  const path = yield* Path.Path;
+  const { repo, tools } = yield* roots;
+  yield* run(
+    yield* HostProcess.ExecutablePath,
+    [path.join(tools, "scripts/worktree-android-dependencies.ts"), "ensure", "--worktree", repo],
+    true,
+    repo,
+  );
+});
+
+export const buildNativeClient = Effect.fn("nativeClient.buildWindows")(function* (
+  abi: string,
+  run: typeof command = command,
+) {
+  const path = yield* Path.Path;
+  const { repo, tools } = yield* roots;
+  const tracked = yield* run("git", ["ls-files", "apps/mobile/android"], false, repo);
+  if (tracked)
+    return yield* new NativeClientError({
+      message: "Native directory contains tracked files; clean prebuild would overwrite them.",
+    });
+  yield* run(
+    yield* HostProcess.ExecutablePath,
+    [
+      path.join(tools, "scripts/worktree-android-build.ts"),
+      "assemble",
+      "--worktree",
+      repo,
+      "--abi",
+      abi,
+    ],
+    true,
+    repo,
   );
 });
 
@@ -697,7 +746,12 @@ const build = Effect.fn("nativeClient.build")(function* (
     true,
   ).pipe(Effect.asVoid);
   const onEas = platform === "ios" && !(yield* hasXcode);
-  if (platform === "android") yield* prebuildAndroid(mobile, prebuild);
+  const windowsAndroid = platform === "android" && (yield* HostProcess.Platform) === "win32";
+  if (windowsAndroid) {
+    if (abi === null)
+      return yield* new NativeClientError({ message: "An Android build requires an ABI." });
+    yield* buildNativeClient(abi);
+  } else if (platform === "android") yield* prebuildAndroid(mobile, prebuild);
   else if (!onEas) yield* prebuild;
   const staging = yield* fs.makeTempDirectory({
     directory: path.dirname(target),
@@ -736,12 +790,13 @@ const build = Effect.fn("nativeClient.build")(function* (
       ]);
     } else {
       const android = path.join(mobile, "android");
-      yield* command(
-        path.join(android, (yield* HostProcess.Platform) === "win32" ? "gradlew.bat" : "gradlew"),
-        ["app:assembleDebug", `-PreactNativeArchitectures=${abi}`],
-        true,
-        android,
-      );
+      if (!windowsAndroid)
+        yield* command(
+          path.join(android, (yield* HostProcess.Platform) === "win32" ? "gradlew.bat" : "gradlew"),
+          ["app:assembleDebug", `-PreactNativeArchitectures=${abi}`],
+          true,
+          android,
+        );
       yield* fs.copyFile(
         path.join(android, "app/build/outputs/apk/debug", artifactNames.android),
         path.join(staging, artifactNames.android),
@@ -923,7 +978,7 @@ const reportTelemetry = Effect.fn("nativeClient.reportTelemetry")(
  * provider, or a local device). A cache miss builds here, as for a local device: the device
  * only runs the client.
  */
-const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
+export const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function* (
   home: string,
   platform: NativePlatform,
   session: string,
@@ -933,14 +988,28 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const started = yield* Clock.currentTimeMillis;
   const path = yield* Path.Path;
   const node = yield* HostProcess.ExecutablePath;
-  const agentDevice = path.join(
-    (yield* roots).repo,
-    "scripts/node_modules/agent-device/bin/agent-device.mjs",
-  );
   // agent-device scopes session ownership to the workspace (working directory) it runs in.
   const workspace = yield* HostProcess.WorkingDirectory;
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
+  yield* prepareNativeClient(platform);
+  const fs = yield* FileSystem.FileSystem;
+  const { repo } = yield* roots;
+  const entrypoints = [
+    path.join(repo, "scripts/node_modules/agent-device/bin/agent-device.mjs"),
+    path.join(repo, "node_modules/agent-device/bin/agent-device.mjs"),
+  ];
+  let agentDevice: string | undefined;
+  for (const entrypoint of entrypoints) {
+    if (yield* fs.exists(entrypoint)) {
+      agentDevice = entrypoint;
+      break;
+    }
+  }
+  if (!agentDevice)
+    return yield* new NativeClientError({
+      message: `Could not find agent-device. Checked ${entrypoints.join(" and ")}.`,
+    });
   const current = yield* fingerprint(platform);
   const key = `${platform}/${deviceAbi ? `development-${deviceAbi}` : "development"}/${current}`;
   const source = yield* sharedSource(home, key);
@@ -1030,6 +1099,7 @@ const main = Command.make(
     mode: Argument.Literals("mode", ["check", "ensure"]),
     platform: Argument.Literals("platform", ["ios", "android"]),
     device: Argument.String("device").pipe(Argument.optional),
+    worktree: Flag.String("worktree").pipe(Flag.optional, Flag.map(Option.getOrUndefined)),
     session: Flag.String("session").pipe(
       Flag.withDescription(
         "Install into this already-open agent-device session (a device pool, cloud, or remote host) instead of a local device.",
@@ -1051,150 +1121,154 @@ const main = Command.make(
       Flag.withDefault(false),
     ),
   },
-  Effect.fn("nativeClient.main")(function* ({
-    mode,
-    platform,
-    device: requested,
-    session,
-    abi: sessionAbi,
-    metro,
-    prepare,
-  }) {
-    const started = yield* Clock.currentTimeMillis;
-    if (prepare) {
-      if (mode !== "ensure" || Option.isSome(requested) || Option.isSome(session))
-        return yield* new NativeClientError({
-          message: "--prepare needs no device; use it with ensure and no device id or --session.",
-        });
+  Effect.fn("nativeClient.main")(
+    function* ({ mode, platform, device: requested, session, abi: sessionAbi, metro, prepare }) {
+      const started = yield* Clock.currentTimeMillis;
+      if (prepare) {
+        if (mode !== "ensure" || Option.isSome(requested) || Option.isSome(session))
+          return yield* new NativeClientError({
+            message: "--prepare needs no device; use it with ensure and no device id or --session.",
+          });
+        const environment = yield* HostProcess.Environment;
+        const home = environment.HOME ?? environment.USERPROFILE;
+        if (!home)
+          return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+        yield* prepareNativeClient(platform);
+        const current = yield* fingerprint(platform);
+        const artifact = yield* resolveArtifact(
+          home,
+          platform,
+          platform === "android" ? sessionAbi : null,
+          current,
+        );
+        yield* Console.error(
+          `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
+        );
+        return yield* Console.log(
+          yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
+        );
+      }
+      if (Option.isSome(session)) {
+        if (mode !== "ensure" || Option.isSome(requested))
+          return yield* new NativeClientError({
+            message:
+              "--session installs into an agent-device session; use it with ensure and no device id.",
+          });
+        const environment = yield* HostProcess.Environment;
+        const home = environment.HOME ?? environment.USERPROFILE;
+        if (!home)
+          return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
+        return yield* installIntoSession(
+          home,
+          platform,
+          session.value,
+          sessionAbi,
+          Option.getOrUndefined(metro),
+        );
+      }
+      const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
+      const device = target.id;
+      yield* Console.error(`Device: ${target.label} (${device})`);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const environment = yield* HostProcess.Environment;
       const home = environment.HOME ?? environment.USERPROFILE;
       if (!home)
-        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
-      const current = yield* fingerprint(platform);
-      const artifact = yield* resolveArtifact(
-        home,
-        platform,
-        platform === "android" ? sessionAbi : null,
-        current,
-      );
-      yield* Console.error(
-        `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
-      );
-      return yield* Console.log(
-        yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
-      );
-    }
-    if (Option.isSome(session)) {
-      if (mode !== "ensure" || Option.isSome(requested))
         return yield* new NativeClientError({
-          message:
-            "--session installs into an agent-device session; use it with ensure and no device id.",
+          message: "HOME or USERPROFILE must be set to store native client records.",
         });
-      const environment = yield* HostProcess.Environment;
-      const home = environment.HOME ?? environment.USERPROFILE;
-      if (!home)
-        return yield* new NativeClientError({ message: "HOME or USERPROFILE must be set." });
-      return yield* installIntoSession(
-        home,
-        platform,
-        session.value,
-        sessionAbi,
-        Option.getOrUndefined(metro),
-      );
-    }
-    const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
-    const device = target.id;
-    yield* Console.error(`Device: ${target.label} (${device})`);
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const environment = yield* HostProcess.Environment;
-    const home = environment.HOME ?? environment.USERPROFILE;
-    if (!home)
-      return yield* new NativeClientError({
-        message: "HOME or USERPROFILE must be set to store native client records.",
-      });
-    const cache = path.join(home, ".cache/t3code/native-clients");
-    const recordPath = path.join(cache, platform, `${yield* digest(device)}.json`);
-    // An iOS simulator build is arm64 for every device; an APK carries only the device's own ABI.
-    const abi = Effect.gen(function* () {
-      if (platform === "ios") return null;
-      const value = yield* command("adb", ["-s", device, "shell", "getprop", "ro.product.cpu.abi"]);
-      if (value !== "x86_64" && value !== "arm64-v8a")
-        return yield* new NativeClientError({ message: `Unsupported Android ABI ${value}.` });
-      return value;
-    });
-    let task = `native-client:${platform}`;
-    let savedMs = 0;
-    const operations = {
-      fingerprint: fingerprint(platform),
-      installedBinary: installedBinary(platform, device),
-      readRecord: fs.readFileString(recordPath).pipe(
-        Effect.flatMap(decodeRecord),
-        Effect.catchTags({ SchemaError: () => Effect.succeed(null) }),
-        Effect.catchIf(
-          (error) => error.reason._tag === "NotFound",
-          () => Effect.succeed(null),
-        ),
-      ),
-      install: Effect.fn(function* (fingerprint: string) {
-        const deviceAbi = yield* abi;
-        if (deviceAbi) task = `native-client:android-${deviceAbi}`;
-        const artifact = yield* resolveArtifact(home, platform, deviceAbi, fingerprint);
-        savedMs = artifact.buildMs;
-        yield* Console.error(`Installing on ${target.label}...`);
-        yield* install(platform, device, artifact.file);
-        return artifact.source;
-      }),
-      saveRecord: Effect.fn(function* (record: NativeClientRecord) {
-        yield* fs.makeDirectory(path.dirname(recordPath), { recursive: true });
-        yield* fs.writeFileString(recordPath, yield* encodeRecord(record));
-      }),
-    };
-    if (mode === "check") {
-      const current = yield* operations.fingerprint;
-      const status = clientStatus(
-        current,
-        yield* operations.installedBinary,
-        yield* operations.readRecord,
-      );
-      yield* Console.log(
-        yield* encodeOutput({
-          status,
-          fingerprint: current,
+      const cache = path.join(home, ".cache/t3code/native-clients");
+      const recordPath = path.join(cache, platform, `${yield* digest(device)}.json`);
+      // An iOS simulator build is arm64 for every device; an APK carries only the device's own ABI.
+      const abi = Effect.gen(function* () {
+        if (platform === "ios") return null;
+        const value = yield* command("adb", [
+          "-s",
           device,
-          next:
-            status === "compatible"
-              ? "Start Metro with vp run dev:client"
-              : `vp run mobile:install ${platform} ${device}`,
+          "shell",
+          "getprop",
+          "ro.product.cpu.abi",
+        ]);
+        if (value !== "x86_64" && value !== "arm64-v8a")
+          return yield* new NativeClientError({ message: `Unsupported Android ABI ${value}.` });
+        return value;
+      });
+      let task = `native-client:${platform}`;
+      let savedMs = 0;
+      const operations = {
+        prepare: prepareNativeClient(platform),
+        fingerprint: fingerprint(platform),
+        installedBinary: installedBinary(platform, device),
+        readRecord: fs.readFileString(recordPath).pipe(
+          Effect.flatMap(decodeRecord),
+          Effect.catchTags({ SchemaError: () => Effect.succeed(null) }),
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.succeed(null),
+          ),
+        ),
+        install: Effect.fn(function* (fingerprint: string) {
+          const deviceAbi = yield* abi;
+          if (deviceAbi) task = `native-client:android-${deviceAbi}`;
+          const artifact = yield* resolveArtifact(home, platform, deviceAbi, fingerprint);
+          savedMs = artifact.buildMs;
+          yield* Console.error(`Installing on ${target.label}...`);
+          yield* install(platform, device, artifact.file);
+          return artifact.source;
         }),
+        saveRecord: Effect.fn(function* (record: NativeClientRecord) {
+          yield* fs.makeDirectory(path.dirname(recordPath), { recursive: true });
+          yield* fs.writeFileString(recordPath, yield* encodeRecord(record));
+        }),
+      };
+      if (mode === "check") {
+        yield* operations.prepare;
+        const current = yield* operations.fingerprint;
+        const status = clientStatus(
+          current,
+          yield* operations.installedBinary,
+          yield* operations.readRecord,
+        );
+        yield* Console.log(
+          yield* encodeOutput({
+            status,
+            fingerprint: current,
+            device,
+            next:
+              status === "compatible"
+                ? "Start Metro with vp run dev:client"
+                : `vp run mobile:install ${platform} ${device}`,
+          }),
+        );
+        process.exitCode = status === "compatible" ? 0 : 2;
+        return;
+      }
+      const logs = path.join(cache, "logs");
+      yield* fs.makeDirectory(logs, { recursive: true });
+      yield* prune(logs, "");
+      const stamp = DateTime.formatIso(DateTime.makeUnsafe(started)).replaceAll(":", "-");
+      const log = path.join(logs, `${stamp}-${platform}.log`);
+      const result = yield* ensureClient(operations).pipe(
+        Effect.provideService(BuildLog, environment.T3_NATIVE_CLIENT_VERBOSE === "1" ? null : log),
+        Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
       );
-      process.exitCode = status === "compatible" ? 0 : 2;
-      return;
-    }
-    const logs = path.join(cache, "logs");
-    yield* fs.makeDirectory(logs, { recursive: true });
-    yield* prune(logs, "");
-    const stamp = DateTime.formatIso(DateTime.makeUnsafe(started)).replaceAll(":", "-");
-    const log = path.join(logs, `${stamp}-${platform}.log`);
-    const result = yield* ensureClient(operations).pipe(
-      Effect.provideService(BuildLog, environment.T3_NATIVE_CLIENT_VERBOSE === "1" ? null : log),
-      Effect.tapError(() => reportTelemetry(home, task, "failed", 0)),
-    );
-    if (result.installed && result.source)
-      yield* reportTelemetry(
-        home,
-        task,
-        result.source === "build" ? "executed" : result.source,
-        result.source === "build" ? 0 : savedMs,
+      if (result.installed && result.source)
+        yield* reportTelemetry(
+          home,
+          task,
+          result.source === "build" ? "executed" : result.source,
+          result.source === "build" ? 0 : savedMs,
+        );
+      const seconds = Math.round(((yield* Clock.currentTimeMillis) - started) / 1000);
+      yield* Console.error(
+        result.installed
+          ? `Installed on ${target.label} in ${seconds}s (${result.source}). Next: start Metro with vp run dev:client.`
+          : `${target.label} already has the client for this checkout. Next: start Metro with vp run dev:client.`,
       );
-    const seconds = Math.round(((yield* Clock.currentTimeMillis) - started) / 1000);
-    yield* Console.error(
-      result.installed
-        ? `Installed on ${target.label} in ${seconds}s (${result.source}). Next: start Metro with vp run dev:client.`
-        : `${target.label} already has the client for this checkout. Next: start Metro with vp run dev:client.`,
-    );
-    yield* Console.log(yield* encodeOutput({ ...result, device, seconds }));
-  }),
+      yield* Console.log(yield* encodeOutput({ ...result, device, seconds }));
+    },
+    (effect, { worktree }) => effect.pipe(Effect.provideService(NativeClientWorktree, worktree)),
+  ),
 );
 
 if (import.meta.main) {
