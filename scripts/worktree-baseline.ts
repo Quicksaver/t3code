@@ -341,7 +341,7 @@ export const resolveBaselineTest = (controlWorktree: string, requested: string) 
   }
   const packageDirectory = NodePath.relative(controlWorktree, directory) || ".";
   const hasLocalConfig = NodeFS.readdirSync(directory).some((name) =>
-    /^(?:vite|vitest)\.config\./u.test(name),
+    /^(?:vite|vitest)\.config\.[cm]?[jt]s$/u.test(name),
   );
   return {
     testFile,

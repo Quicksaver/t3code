@@ -175,6 +175,7 @@ describe("worktree-baseline", () => {
     const sharedDirectory = NodePath.join(root, "packages", "shared");
     await NodeFSP.mkdir(NodePath.join(sharedDirectory, "src"), { recursive: true });
     await NodeFSP.writeFile(NodePath.join(sharedDirectory, "package.json"), "{}");
+    await NodeFSP.writeFile(NodePath.join(sharedDirectory, "vite.config.unit.ts"), "");
     await NodeFSP.writeFile(NodePath.join(sharedDirectory, "src", "example.test.ts"), "");
     expect(resolveBaselineTest(root, "packages/shared/src/example.test.ts")).toEqual({
       testFile: "packages/shared/src/example.test.ts",
