@@ -229,7 +229,7 @@ it.effect("retries a partial project deletion without repeating child events or 
       assert.deepEqual(finalEvents[0], partialEvents[0]);
       assert.equal(finalEvents[2]?.command_id, commandId);
       const finalCleanup = yield* readCleanup;
-      assert.lengthOf(finalCleanup, 6);
+      assert.lengthOf(finalCleanup, 8);
       assert.deepEqual(
         finalCleanup.filter((effect) => effect.thread_id === firstThreadId),
         partialCleanup,
