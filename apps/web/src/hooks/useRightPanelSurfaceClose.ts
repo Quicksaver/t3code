@@ -2,7 +2,10 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
+  type EnvironmentId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { terminalEnvironment } from "../state/terminal";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
@@ -36,6 +39,7 @@ export function useRightPanelSurfaceClose(input: {
   );
   const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
@@ -53,11 +57,22 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind === "terminal" &&
-      readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
+      readEnvironmentScope(
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? ref.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId);
+        const destination = surface.target
+          ? scopeThreadRef(surface.target.environmentId as EnvironmentId, ref.threadId)
+          : ref;
+        storeCloseTerminal(destination, terminalId);
+        if (surface.target)
+          void closeTerminal({
+            environmentId: destination.environmentId,
+            input: { threadId: destination.threadId, terminalId, deleteHistory: true },
+          });
+        else terminalActions.closeTerminalSession(terminalId);
       }
     }
   };
@@ -117,7 +132,10 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind !== "terminal" ||
-      !readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      !readEnvironmentScope(
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       finishClose([surface]);
       return;

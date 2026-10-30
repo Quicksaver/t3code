@@ -1,3 +1,4 @@
+import { WorkingIndicator } from "../WorkingIndicator";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -1303,8 +1304,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           topStatus.className,
                         )}
                       >
-                        <TopStatusIcon icon={topStatus.icon} className="size-3" />
-                        {topStatus.label}
+                        {topStatus.icon === "working" ? (
+                          <WorkingIndicator
+                            size="sm"
+                            label={topStatus.label}
+                            announce={!props.isRouteThread}
+                          />
+                        ) : (
+                          <>
+                            <TopStatusIcon icon={topStatus.icon} className="size-3" />
+                            {topStatus.label}
+                          </>
+                        )}
                       </span>
                     ) : (
                       <span className="text-xs">
@@ -1482,7 +1493,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
-                          <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          {topStatus.icon === "working" ? (
+                            <WorkingIndicator
+                              label={topStatus.label}
+                              announce={!props.isRouteThread}
+                            />
+                          ) : (
+                            <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          )}
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}

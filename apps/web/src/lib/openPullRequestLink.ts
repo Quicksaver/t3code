@@ -229,7 +229,7 @@ export function useOpenChangeRequestLink(
   };
 }
 
-export function useOpenPrLink(threadRef?: ScopedThreadRef) {
+export function useOpenPrLink(threadRef?: ScopedThreadRef, targetEnvironmentId?: EnvironmentId) {
   const openChangeRequest = useOpenChangeRequestLink(threadRef);
   const openLink = useOpenLink(threadRef);
   return (event: MouseEvent<HTMLElement>, prUrl: string, targetThreadRef?: ScopedThreadRef) => {
@@ -242,7 +242,8 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
     if (openInBrowser && isAnchor) return false;
 
     event.preventDefault();
-    if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef)) return true;
+    if (!openInBrowser && openChangeRequest(event, prUrl, targetThreadRef, targetEnvironmentId))
+      return true;
 
     void openLink(prUrl, { event, threadRef: targetThreadRef }).catch((error: unknown) => {
       console.error(error);

@@ -804,3 +804,19 @@ it.effect("keeps a sweep over many branches to a few Bitbucket requests at a tim
     assert.strictEqual(peak, 4);
   }),
 );
+
+it.effect("lists pull requests in bulk without a source branch filter", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({ values: [] }) });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.listPullRequests({ cwd: "/repo", state: "open", limit: 100 });
+
+    assert.deepStrictEqual(execute.mock.calls[0]?.[0].urlParams.params, [
+      ["pagelen", "50"],
+      ["sort", "-updated_on"],
+      ["q", 'state = "OPEN"'],
+      ["state", "OPEN"],
+    ]);
+  }).pipe(Effect.provide(layer));
+});

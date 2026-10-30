@@ -31,6 +31,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -120,6 +121,8 @@ interface GitActionsControlProps {
   showActions?: boolean;
   showChanges?: boolean;
   onOpenChanges?: () => void;
+  /** Opens the Version Control surface. Absent when the surface is unavailable. */
+  onOpenSourceControl?: () => void;
 }
 
 interface PendingDefaultBranchAction {
@@ -427,7 +430,7 @@ interface PublishRepositoryDialogProps {
   readonly gitCwd: string;
 }
 
-function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const sourceControlDiscovery = useEnvironmentQuery(
@@ -931,8 +934,10 @@ export default function GitActionsControl({
   showActions = true,
   showChanges = true,
   onOpenChanges,
+  onOpenSourceControl,
 }: GitActionsControlProps) {
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
+  const changesAnchorRef = useRef<HTMLDivElement | null>(null);
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -1623,35 +1628,66 @@ export default function GitActionsControl({
       )}
 
       {showChanges && isRepo && !quietEmptyDraft ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
-            <span
-              className={
-                changesTotals?.insertions
-                  ? "text-diff-addition-foreground"
-                  : "text-muted-foreground"
+        <div ref={changesAnchorRef} className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+          <ThreadDetailsControl
+            type="button"
+            variant="ghost"
+            size="sm"
+            part="primary"
+            disabled={!onOpenChanges}
+            onClick={onOpenChanges}
+          >
+            <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+            <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+              Changes
+            </span>
+            <span className="flex items-center gap-1.5 font-mono text-xs tabular-nums">
+              <span
+                className={
+                  changesTotals?.insertions
+                    ? "text-diff-addition-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                +{formatDiffCount(changesTotals?.insertions ?? 0)}
+              </span>
+              <span
+                className={
+                  changesTotals?.deletions
+                    ? "text-diff-deletion-foreground"
+                    : "text-muted-foreground"
+                }
+              >
+                -{formatDiffCount(changesTotals?.deletions ?? 0)}
+              </span>
+            </span>
+          </ThreadDetailsControl>
+          <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+          <Menu>
+            <MenuTrigger
+              render={
+                <ThreadDetailsControl
+                  aria-label="Changes options"
+                  size="sm"
+                  variant="ghost"
+                  part="secondary"
+                />
               }
             >
-              +{formatDiffCount(changesTotals?.insertions ?? 0)}
-            </span>
-            <span
-              className={
-                changesTotals?.deletions ? "text-diff-deletion-foreground" : "text-muted-foreground"
-              }
-            >
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
-            </span>
-          </span>
-        </ThreadDetailsControl>
+              <ChevronDownIcon aria-hidden="true" className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+            </MenuTrigger>
+            <MenuPopup align="end" anchor={changesAnchorRef} className="w-(--anchor-width)">
+              <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
+                <FileDiffIcon aria-hidden />
+                <MenuItemLabel>Changes</MenuItemLabel>
+              </MenuItem>
+              <MenuItem disabled={!onOpenSourceControl} onClick={onOpenSourceControl}>
+                <GitBranchIcon aria-hidden />
+                <MenuItemLabel>Version Control</MenuItemLabel>
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
       ) : null}
 
       <Dialog

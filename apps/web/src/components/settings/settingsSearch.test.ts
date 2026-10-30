@@ -269,6 +269,44 @@ describe("auto-settlement search availability", () => {
       }).isTargetAvailable,
     ).toBe(true);
   });
+  it("indexes customized source control settings with stable destinations", () => {
+    expect(searchSettings("fetch interval")[0]).toMatchObject({
+      id: "git-fetch-interval",
+      to: "/settings/maintenance",
+      targetId: "background-activity",
+    });
+    expect(searchSettings("all remotes interval")[0]).toMatchObject({
+      id: "all-remotes-fetch-interval",
+      to: "/settings/maintenance",
+      targetId: "background-activity",
+    });
+    expect(searchSettings("commit author avatars")[0]).toMatchObject({
+      id: "commit-author-avatars",
+      to: "/settings/source-control",
+      targetId: "source-control",
+    });
+
+    const writingStyle = searchSettings("source control writing style")[0];
+    expect(writingStyle).toMatchObject({
+      id: "source-control-writing-style",
+      to: "/settings/source-control",
+    });
+    expect(writingStyle?.targetId).toBeUndefined();
+
+    const templates = searchSettings("change request templates")[0];
+    expect(templates).toMatchObject({
+      id: "follow-change-request-templates",
+      to: "/settings/source-control",
+    });
+    expect(templates?.targetId).toBeUndefined();
+
+    const writerModel = searchSettings("writer model")[0];
+    expect(writerModel).toMatchObject({
+      id: "source-control-writer-model",
+      to: "/settings/source-control",
+    });
+    expect(writerModel?.targetId).toBeUndefined();
+  });
 });
 
 describe("source control host search items", () => {

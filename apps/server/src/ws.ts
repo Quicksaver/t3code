@@ -98,6 +98,8 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
+  WsCoreRpcGroup,
+  WsVcsPanelRpcGroup,
 } from "@t3tools/contracts";
 import {
   HttpRouter,
@@ -246,6 +248,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -557,12 +560,14 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerVcsPanelRpcGroup = WsVcsPanelRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
-type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
+type ServerWsRpc = RpcGroup.Rpcs<typeof ServerCoreRpcGroup>;
 const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
@@ -572,7 +577,7 @@ const isSplitWsRpc = (rpc: ServerWsRpc): rpc is SplitWsRpc =>
   SPLIT_WS_RPC_PREFIXES.some((prefix) => rpc._tag.startsWith(`${prefix}.`));
 const isOtherWsRpc = (rpc: ServerWsRpc): rpc is Exclude<ServerWsRpc, SplitWsRpc> =>
   !isSplitWsRpc(rpc);
-const serverWsRpcs = Array.from(ServerWsRpcGroup.requests.values());
+const serverWsRpcs = Array.from(ServerCoreRpcGroup.requests.values());
 const SplitWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isSplitWsRpc));
 const OtherWsRpcGroup = RpcGroup.make(...serverWsRpcs.filter(isOtherWsRpc));
 // Replaying each intervening event costs a shell refetch; past this gap a
@@ -1218,7 +1223,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-export const layerWsRpc = (
+const layerCoreWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
@@ -1863,7 +1868,7 @@ export const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3257,6 +3262,48 @@ export const layerWsRpc = (
       );
     }),
   );
+
+// Keep panel handler inference separate from the growing core RPC group.
+const layerVcsPanelRpc = ServerVcsPanelRpcGroup.toLayer(
+  Effect.map(SourceControlPanelService.SourceControlPanelService, (sourceControlPanel) => ({
+    [WS_METHODS.vcsPanelSnapshot]: (input) => sourceControlPanel.snapshot(input),
+    [WS_METHODS.vcsPanelBranchDetails]: (input) => sourceControlPanel.branchDetails(input),
+    [WS_METHODS.vcsPanelCommitFiles]: (input) => sourceControlPanel.commitFiles(input),
+    [WS_METHODS.vcsPanelBranchCommits]: (input) => sourceControlPanel.branchCommits(input),
+    [WS_METHODS.vcsPanelStashDetails]: (input) => sourceControlPanel.stashDetails(input),
+    [WS_METHODS.vcsPanelEnrichWorkingTreeFiles]: (input) =>
+      sourceControlPanel.enrichWorkingTreeFiles(input),
+    [WS_METHODS.vcsPanelReadFileDiff]: (input) => sourceControlPanel.readFileDiff(input),
+    [WS_METHODS.vcsPanelCommitStaged]: (input) => sourceControlPanel.commitStaged(input),
+    [WS_METHODS.vcsPanelStageFiles]: (input) => sourceControlPanel.stageFiles(input),
+    [WS_METHODS.vcsPanelUnstageFiles]: (input) => sourceControlPanel.unstageFiles(input),
+    [WS_METHODS.vcsPanelDiscardFiles]: (input) => sourceControlPanel.discardFiles(input),
+    [WS_METHODS.vcsPanelPullBranch]: (input) => sourceControlPanel.pullBranch(input),
+    [WS_METHODS.vcsPanelPushBranch]: (input) => sourceControlPanel.pushBranch(input),
+    [WS_METHODS.vcsPanelDeleteBranch]: (input) => sourceControlPanel.deleteBranch(input),
+    [WS_METHODS.vcsPanelUndoLatestCommit]: (input) => sourceControlPanel.undoLatestCommit(input),
+    [WS_METHODS.vcsPanelRevertCommit]: (input) => sourceControlPanel.revertCommit(input),
+    [WS_METHODS.vcsPanelCheckoutCommit]: (input) => sourceControlPanel.checkoutCommit(input),
+    [WS_METHODS.vcsPanelCreateBranchFromCommit]: (input) =>
+      sourceControlPanel.createBranchFromCommit(input),
+    [WS_METHODS.vcsPanelMergeBranchIntoCurrent]: (input) =>
+      sourceControlPanel.mergeBranchIntoCurrent(input),
+    [WS_METHODS.vcsPanelRebaseCurrentOnto]: (input) => sourceControlPanel.rebaseCurrentOnto(input),
+    [WS_METHODS.vcsPanelFetchBranch]: (input) => sourceControlPanel.fetchBranch(input),
+    [WS_METHODS.vcsPanelFetchRemote]: (input) => sourceControlPanel.fetchRemote(input),
+    [WS_METHODS.vcsPanelFetchAllRemotes]: (input) => sourceControlPanel.fetchAllRemotes(input),
+    [WS_METHODS.vcsPanelAddRemote]: (input) => sourceControlPanel.addRemote(input),
+    [WS_METHODS.vcsPanelRemoveRemote]: (input) => sourceControlPanel.removeRemote(input),
+    [WS_METHODS.vcsPanelCreateStash]: (input) => sourceControlPanel.createStash(input),
+    [WS_METHODS.vcsPanelApplyStash]: (input) => sourceControlPanel.applyStash(input),
+    [WS_METHODS.vcsPanelPopStash]: (input) => sourceControlPanel.popStash(input),
+    [WS_METHODS.vcsPanelDropStash]: (input) => sourceControlPanel.dropStash(input),
+    [WS_METHODS.vcsPanelCompare]: (input) => sourceControlPanel.compare(input),
+  })),
+);
+
+export const layerWsRpc = (...args: Parameters<typeof layerCoreWsRpc>) =>
+  Layer.merge(layerCoreWsRpc(...args), layerVcsPanelRpc);
 
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {

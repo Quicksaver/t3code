@@ -1,3 +1,4 @@
+import { expect } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, afterEach, describe, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -166,6 +167,53 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("lists pull requests against an explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({
+        cwd: "/repo",
+        headSelector: "feature/provider",
+        organization: "https://dev.azure.com/acme",
+        repository: "repo",
+        project: "project",
+        state: "open",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "pr",
+          "list",
+          "--detect",
+          "true",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--repository",
+          "repo",
+          "--project",
+          "project",
+          "--source-branch",
+          "feature/provider",
+          "--status",
+          "active",
+          "--top",
+          "20",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        classifyFailure: expect.any(Function),
+        notFoundDetail: "Pull request not found.",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("reads repository clone URLs", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -269,6 +317,77 @@ describe("AzureDevOpsCli.layer", () => {
 
       assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
       assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(layer)),
+  );
+  it.effect("lists pull requests in bulk without a source branch filter", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({ cwd: "/repo", state: "open", limit: 100 });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expect.not.arrayContaining(["--source-branch"]),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("requests commit avatars from the explicit Azure organization", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              author: {
+                imageUrl: "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getCommitAvatarUrl({
+        cwd: "/repo",
+        organization: "https://dev.azure.com/acme",
+        project: "project",
+        repository: "repo",
+        sha: "abc123",
+      });
+
+      assert.strictEqual(
+        result,
+        "https://dev.azure.com/acme/_apis/GraphProfile/MemberAvatars/aad.123",
+      );
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "devops",
+          "invoke",
+          "--organization",
+          "https://dev.azure.com/acme",
+          "--area",
+          "git",
+          "--resource",
+          "commits",
+          "--route-parameters",
+          "project=project",
+          "repositoryId=repo",
+          "commitId=abc123",
+          "--api-version",
+          "7.1",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        classifyFailure: expect.any(Function),
+        notFoundDetail: "Pull request not found.",
+      });
     }).pipe(Effect.provide(layer)),
   );
 });

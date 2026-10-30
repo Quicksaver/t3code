@@ -6,8 +6,11 @@ import {
   type ClientActivityReportInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
@@ -47,6 +50,7 @@ function makeReport(overrides: Partial<ClientActivityReportInput> = {}): ClientA
 function layerFor(
   hostPower: HostPowerSnapshot,
   settingsOverrides: Parameters<typeof ServerSettings.layerTest>[0] = {},
+  beforeSnapshot: Effect.Effect<void> = Effect.void,
 ) {
   const layerHost = Layer.effect(
     HostPowerMonitor.HostPowerMonitor,
@@ -54,7 +58,7 @@ function layerFor(
       const changes = yield* PubSub.sliding<HostPowerSnapshot>(1);
       let snapshot = hostPower;
       return HostPowerMonitor.HostPowerMonitor.of({
-        snapshot: Effect.sync(() => snapshot),
+        snapshot: beforeSnapshot.pipe(Effect.andThen(Effect.sync(() => snapshot))),
         report: (next) =>
           Effect.sync(() => {
             snapshot = next;
@@ -69,6 +73,58 @@ function layerFor(
 }
 
 describe("BackgroundPolicy", () => {
+  it.effect("publishes panel demand acquisition and release to existing subscribers", () =>
+    Effect.gen(function* () {
+      const publicationStarted = yield* Deferred.make<void>();
+      const releasePublication = yield* Deferred.make<void>();
+      let pauseNextSnapshot = false;
+      const beforeSnapshot = Effect.suspend(() => {
+        if (!pauseNextSnapshot) return Effect.void;
+        pauseNextSnapshot = false;
+        return Deferred.succeed(publicationStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releasePublication)),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const policy = yield* BackgroundPolicy.BackgroundPolicy;
+        const sessionId = AuthSessionId.make("panel-session");
+        const rpcClientId = RpcClientId.make(1);
+        const scope = { type: "git-refs", cwd: "/repo" } as const;
+        const subscription = yield* policy.subscribe;
+        assert.deepStrictEqual(subscription.latest.activeScopeKeys, []);
+
+        yield* policy.reportClientActivity(sessionId, rpcClientId, makeReport({ scopes: [scope] }));
+        const acquired = Option.getOrThrow(yield* Stream.runHead(subscription.changes));
+        assert.deepStrictEqual(acquired.activeScopeKeys, ["git-refs:/repo"]);
+        assert.equal(yield* policy.hasDemand(scope), true);
+
+        yield* policy.removeRpcClient(sessionId, rpcClientId);
+        const released = Option.getOrThrow(yield* Stream.runHead(subscription.changes));
+        assert.deepStrictEqual(released.activeScopeKeys, []);
+        assert.equal(yield* policy.hasDemand(scope), false);
+
+        pauseNextSnapshot = true;
+        const reportFiber = yield* policy
+          .reportClientActivity(sessionId, rpcClientId, makeReport({ scopes: [scope] }))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(publicationStarted);
+        const removeFiber = yield* policy
+          .removeRpcClient(sessionId, rpcClientId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        assert.isUndefined(removeFiber.pollUnsafe());
+
+        yield* Deferred.succeed(releasePublication, undefined);
+        yield* Fiber.join(reportFiber);
+        yield* Fiber.join(removeFiber);
+        const last = Option.getOrThrow(yield* Stream.runHead(subscription.changes));
+        assert.deepStrictEqual(last.activeScopeKeys, []);
+        assert.equal(last.activeForegroundLeaseCount, 0);
+        assert.equal(yield* policy.hasDemand(scope), false);
+      }).pipe(Effect.provide(layerFor(nominalHostPower, {}, beforeSnapshot)));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("removes all leases for a disconnected websocket connection", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;
