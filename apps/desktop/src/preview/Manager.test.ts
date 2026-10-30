@@ -1730,14 +1730,30 @@ describe("PreviewManager", () => {
           },
         );
         const screenshot = Promise.withResolvers<unknown>();
-        contents.debugger.sendCommand = vi.fn((method: string) =>
-          method === "Page.captureScreenshot" ? screenshot.promise : Promise.resolve(undefined),
-        ) as unknown as typeof contents.debugger.sendCommand;
+        const captureStarted = Promise.withResolvers<void>();
+        contents.debugger.sendCommand = vi.fn((method: string) => {
+          if (method !== "Page.captureScreenshot") return Promise.resolve(undefined);
+          captureStarted.resolve();
+          return screenshot.promise;
+        }) as unknown as typeof contents.debugger.sendCommand;
         fromId.mockReturnValue(contents);
         const manager = yield* PreviewManager.PreviewManager;
         const capturing = yield* Queue.unbounded<boolean>();
-        yield* manager.subscribeStateChanges((_tabId, state) =>
-          Queue.offer(capturing, state.capturing).pipe(Effect.asVoid),
+        const acknowledged: string[] = [];
+        let captureRequestIds: ReadonlyArray<string> = [];
+        let wasCapturing = false;
+        yield* manager.subscribeStateChanges((tabId, state) =>
+          Effect.gen(function* () {
+            captureRequestIds = state.captureRequestIds ?? [];
+            for (const requestId of captureRequestIds) {
+              acknowledged.push(requestId);
+              yield* manager.captureReady(tabId, contents.id, requestId);
+            }
+            if (state.capturing !== wasCapturing) {
+              wasCapturing = state.capturing;
+              yield* Queue.offer(capturing, state.capturing);
+            }
+          }),
         );
         const attached = yield* Deferred.make<void>();
         yield* host.events.pipe(
@@ -1767,8 +1783,11 @@ describe("PreviewManager", () => {
           }),
         );
         expect(yield* Queue.take(capturing)).toBe(true);
+        yield* Effect.promise(() => captureStarted.promise);
+        expect(acknowledged).toHaveLength(1);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+        expect(captureRequestIds).toEqual([]);
       }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 

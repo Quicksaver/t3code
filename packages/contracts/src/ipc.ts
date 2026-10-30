@@ -604,6 +604,8 @@ export interface DesktopPreviewTabState {
   /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
   capturing: boolean;
   favicon?: DesktopPreviewFavicon;
+  /** Agent captures holding the renderer's guest painting lease. */
+  captureRequestIds?: ReadonlyArray<string>;
   updatedAt: string;
 }
 
@@ -957,6 +959,12 @@ export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 
+export const DesktopPreviewCaptureReadyInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+  requestId: TrimmedNonEmptyString,
+});
+
 export const DesktopPreviewNavigateInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   url: Schema.String,
@@ -1141,6 +1149,7 @@ export interface DesktopPreviewBridge {
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
+  captureReady?: (tabId: string, webContentsId: number, requestId: string) => Promise<void>;
   navigate: (tabId: string, url: string) => Promise<void>;
   goBack: (tabId: string) => Promise<void>;
   goForward: (tabId: string) => Promise<void>;

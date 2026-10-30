@@ -6,6 +6,7 @@ import {
   type DesktopBrowserEvent as DesktopBrowserEventType,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -35,6 +36,10 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  readonly captureScreenshot?: (
+    params: Record<string, unknown>,
+    capture: (signal: AbortSignal) => Promise<unknown>,
+  ) => Effect.Effect<unknown, Error>;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -43,6 +48,7 @@ interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
+  captureController: AbortController | null;
   screenshotTurn: object | null;
   /** Each holds focus and painting while `held` and whoever queued it still waits on it. */
   readonly waitingScreenshots: Array<{
@@ -115,7 +121,9 @@ export const make = Effect.gen(function* () {
     readonly key: DesktopBrowserTabKey;
     readonly active: boolean;
   }>();
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
+  const runPromise = Effect.runPromiseWith(context);
   const tabs = new Map<string, AttachedTab>();
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
@@ -267,6 +275,8 @@ export const make = Effect.gen(function* () {
 
   const dropRelay = (tab: AttachedTab) => {
     tab.relay = null;
+    tab.captureController?.abort();
+    tab.captureController = null;
     tab.screencasts.clear();
     tab.agentUsed = false;
     dropFocusHolds(tab);
@@ -301,10 +311,34 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sessionId === undefined
-        ? sendPageCommand(webContents, debuggee, method, params)
-        : debuggee.sendCommand(method, params, sessionId);
+    const controller = new AbortController();
+    tab.captureController = controller;
+    const send = (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      if (sessionId !== undefined) return debuggee.sendCommand(method, params, sessionId);
+      if (method !== "Page.captureScreenshot" || !tab.debuggee.captureScreenshot)
+        return sendPageCommand(webContents, debuggee, method, params);
+      let nativeCapture: Promise<unknown> | undefined;
+      return (
+        runPromise(
+          tab.debuggee.captureScreenshot(params, (signal) => {
+            nativeCapture = sendPageCommand(webContents, debuggee, method, params, signal);
+            return nativeCapture;
+          }),
+          { signal: controller.signal },
+        )
+          .catch((cause: unknown) => {
+            // Preserve native CDP errors across the Effect/Promise boundary.
+            throw Cause.isUnknownError(cause) ? cause.cause : cause;
+          })
+          // Cancellation releases preparation, but Chromium still owns the pending capture.
+          .finally(() =>
+            nativeCapture?.then(
+              () => undefined,
+              () => undefined,
+            ),
+          )
+      );
+    };
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -394,6 +428,8 @@ export const make = Effect.gen(function* () {
     if (!tab) return;
     tabs.delete(id);
     tab.relay = null;
+    tab.captureController?.abort();
+    tab.captureController = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
     syncPainting(tab);
@@ -408,6 +444,7 @@ export const make = Effect.gen(function* () {
       key,
       debuggee,
       relay: null,
+      captureController: null,
       screenshotTurn: null,
       waitingScreenshots: [],
       downloadDirectory: null,

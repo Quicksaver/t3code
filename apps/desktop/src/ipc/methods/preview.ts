@@ -7,6 +7,7 @@ import {
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
+  DesktopPreviewCaptureReadyInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
@@ -100,6 +101,16 @@ const registerWebview = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.registerWebview")(function* ({ tabId, webContentsId }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.registerWebview(tabId, webContentsId);
+  }),
+});
+
+const captureReady = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CAPTURE_READY_CHANNEL,
+  payload: DesktopPreviewCaptureReadyInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.captureReady")(function* (input) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.captureReady(input.tabId, input.webContentsId, input.requestId);
   }),
 });
 
@@ -421,6 +432,7 @@ export const methods = [
   createTab,
   closeTab,
   registerWebview,
+  captureReady,
   navigate,
   goBack,
   goForward,
