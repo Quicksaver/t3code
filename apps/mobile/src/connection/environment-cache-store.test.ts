@@ -226,6 +226,14 @@ function makeDatabase() {
           .filter(([key]) => key.split(":")[1] === kind)
           .map(([, payload]) => payload),
       ),
+    listCacheKeys: (environmentId, kind) =>
+      Effect.sync(() =>
+        [...values.keys()].flatMap((key) =>
+          key.startsWith(`${environmentId}:${kind}:`)
+            ? [key.slice(`${environmentId}:${kind}:`.length)]
+            : [],
+        ),
+      ),
     saveCache: (environmentId, kind, cacheKey, schemaVersion, payload) =>
       Effect.sync(() => {
         const id = cacheId(environmentId, kind, cacheKey);
@@ -252,7 +260,7 @@ function makeDatabase() {
       }),
     clearAllCaches: Effect.sync(() => values.clear()),
     inspectCaches: Effect.succeed([]),
-    loadPreferencesJson: Effect.succeed(Option.none()),
+    loadPreferencesJson: Effect.succeedNone,
     savePreferencesJson: () => Effect.void,
   });
   return { database, removed, schemaVersions, values };

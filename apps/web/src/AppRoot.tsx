@@ -4,11 +4,13 @@ import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+import { ThreadRemovalCleanupObserver } from "./threadRemovalCleanupObserver";
 
 // Keep webviews outside the router but inside its atom registry so route changes preserve them.
 export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
+      <ThreadRemovalCleanupObserver />
       <RouterProvider router={router} />
       <ElectronBrowserHost />
       <QuitHoldOverlay />

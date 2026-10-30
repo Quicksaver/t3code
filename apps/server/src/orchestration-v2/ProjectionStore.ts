@@ -34,6 +34,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ActiveThreadIds,
   OrchestrationV2ShellThreadStatus,
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
@@ -61,6 +62,7 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2ThreadShellJson as OrchestrationV2ThreadShellJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   RunId,
@@ -415,6 +417,9 @@ export interface OlderSettledThreadsListing {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getActiveThreadIds: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<OrchestrationV2ActiveThreadIds, ProjectionStoreV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -935,6 +940,38 @@ type ShellPendingTurnItemRow = PayloadRow & {
   readonly thread_id: string;
   readonly owning_provider_instance_id: string | null;
 };
+
+// Shell fields derived from child rows. ThreadColdStorage freezes them when
+// the rows move to cold storage; the thread payload stays live.
+const COLD_SHELL_DERIVED_FIELDS = [
+  "latestRunId",
+  "latestRunRequestedAt",
+  "latestRunStartedAt",
+  "latestRunCompletedAt",
+  "latestRunStopRequested",
+  "activeRunId",
+  "activityRunStatus",
+  "activityRunStartedAt",
+  "blockedOnThreadWait",
+  "status",
+  "lastError",
+  "lastErrorClass",
+  "lastErrorCode",
+  "usageLimitResetAt",
+  "pendingRuntimeRequest",
+  "latestVisibleMessage",
+  "latestUserMessageAt",
+  "latestUserAuthoredMessageAt",
+  "hasActionableProposedPlan",
+  "pendingBackgroundTasks",
+  "providerInstanceHistory",
+  "itemCount",
+  "visibleItemCount",
+] as const satisfies ReadonlyArray<keyof OrchestrationV2ThreadShell>;
+
+const decodeColdShell = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadShellJsonSchema),
+);
 
 type ShellThreadRow = {
   readonly thread_id: string;
@@ -6496,6 +6533,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         } satisfies ShellThreadState;
       });
 
+    // Cold archived threads no longer have the child rows their shells derive
+    // from, so their frozen summary supplies those fields.
+    const withColdShellSummaries = Effect.fn("ProjectionStore.withColdShellSummaries")(function* (
+      shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+      snapshotRows?: ReadonlyArray<{ readonly thread_id: string; readonly shell_json: string }>,
+    ) {
+      if (shells.length === 0) return shells;
+      const rows =
+        snapshotRows ??
+        (yield* sql<{ readonly thread_id: string; readonly shell_json: string }>`
+          SELECT thread_id, shell_json FROM thread_archive_manifests
+          WHERE status IN ('moving', 'cold') AND shell_json IS NOT NULL
+            ${shells.length === 1 ? sql`AND thread_id = ${shells[0]!.id}` : sql``}
+        `);
+      if (rows.length === 0) return shells;
+      const summaries = new Map(rows.map((row) => [row.thread_id, row.shell_json] as const));
+      return yield* Effect.forEach(shells, (shell) => {
+        const summary = summaries.get(shell.id);
+        if (summary === undefined) return Effect.succeed(shell);
+        return decodeColdShell(summary).pipe(
+          Effect.map((frozen) => {
+            const derived: Partial<OrchestrationV2ThreadShell> = {};
+            for (const field of COLD_SHELL_DERIVED_FIELDS) {
+              Object.assign(derived, { [field]: frozen[field] });
+            }
+            return { ...shell, ...derived };
+          }),
+          Effect.orElseSucceed(() => shell),
+        );
+      });
+    });
+
     const shellSnapshotReadError = (cause: unknown) =>
       new ProjectionStoreReadError({ threadId: ThreadId.make("thread:shell"), cause });
 
@@ -6558,7 +6627,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         ),
       ]);
+      const coldShellRows =
+        options?.location === "active"
+          ? []
+          : yield* sql<{
+              readonly thread_id: string;
+              readonly shell_json: string;
+            }>`SELECT thread_id, shell_json FROM thread_archive_manifests
+        WHERE status IN ('moving', 'cold') AND shell_json IS NOT NULL`;
       return {
+        coldShellRows,
         targetThreadIds,
         threadRows,
         runRows,
@@ -6571,6 +6649,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
 
     const decodeShellSnapshot = Effect.fn("ProjectionStore.decodeShellSnapshot")(function* ({
+      coldShellRows,
       targetThreadIds,
       threadRows,
       runRows,
@@ -6615,7 +6694,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
         snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0,
         threads: shells.filter((thread) => thread.archivedAt === null),
-        archivedThreads: shells.filter((thread) => thread.archivedAt !== null),
+        archivedThreads: yield* withColdShellSummaries(
+          shells.filter((thread) => thread.archivedAt !== null),
+          coldShellRows,
+        ),
       };
     }, Effect.mapError(shellSnapshotReadError));
 
@@ -6629,6 +6711,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(readShellSnapshotRows(options))
         .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
+
+    const getActiveThreadIds = Effect.fn("ProjectionStore.getActiveThreadIds")(function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) {
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE thread_id IN ${sql.in(threadIds)} AND deleted_at IS NULL
+            AND json_extract(payload_json, '$.archivedAt') IS NULL
+        `;
+          const sequence = yield* sql<{ readonly sequence: number | null }>`
+          SELECT MAX(sequence) AS sequence
+          FROM orchestration_events INDEXED BY idx_orchestration_events_application_high_water
+          WHERE aggregate_kind = 'project'
+            OR (application_event_version = 2 AND aggregate_kind = 'thread')
+        `;
+          return {
+            snapshotSequence: sequence[0]?.sequence ?? 0,
+            threadIds: rows.map((row) => ThreadId.make(row.thread_id)),
+          };
+        }),
+      );
+    }, Effect.mapError(shellSnapshotReadError));
 
     const listActiveSubagentThreadIds = Effect.fn("ProjectionStore.listActiveSubagentThreadIds")(
       function* () {
@@ -6871,10 +6977,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             if (state === undefined) {
               return null;
             }
-            return shellFromState({
+            const shell = shellFromState({
               state,
               visibleItemCount: visibleItemCountForShell({ threadId, statesByThreadId }),
             });
+            if (shell.archivedAt === null) return shell;
+            return (yield* withColdShellSummaries([shell]))[0] ?? shell;
           }),
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
@@ -6892,6 +7000,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
+      getActiveThreadIds: readOnReader(getActiveThreadIds),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),

@@ -34,7 +34,10 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import {
+  releaseArchivedComposerDraftUploads,
+  releaseComposerDraftUploads,
+} from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentServerConfigLoaded,
@@ -392,6 +395,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    releaseArchivedComposerDraftUploads(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",

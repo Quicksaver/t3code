@@ -7,7 +7,8 @@ import * as Schema from "effect/Schema";
 import type { SQLiteDatabase } from "expo-sqlite";
 
 const DATABASE_NAME = "t3code-client.db";
-const DATABASE_SCHEMA_VERSION = 1;
+const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION = 2;
+const DATABASE_SCHEMA_VERSION = ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION;
 
 export const ClientCacheKind = Schema.Literals([
   "shell",
@@ -80,6 +81,10 @@ export class MobileDatabase extends Context.Service<
       cacheKey: string,
     ) => Effect.Effect<Option.Option<string>, MobileDatabaseError>;
     readonly listCache: (
+      kind: ClientCacheKind,
+    ) => Effect.Effect<ReadonlyArray<string>, MobileDatabaseError>;
+    readonly listCacheKeys: (
+      environmentId: EnvironmentId,
       kind: ClientCacheKind,
     ) => Effect.Effect<ReadonlyArray<string>, MobileDatabaseError>;
     readonly saveCache: (
@@ -157,8 +162,14 @@ const makeAvailable = Effect.gen(function* () {
               );
             `);
       });
-      if ((schema?.user_version ?? 0) < DATABASE_SCHEMA_VERSION) {
-        await database.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
+      const previousSchemaVersion = schema?.user_version ?? 0;
+      if (previousSchemaVersion < DATABASE_SCHEMA_VERSION) {
+        await database.withExclusiveTransactionAsync(async (transaction) => {
+          if (previousSchemaVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_SCHEMA_VERSION) {
+            await transaction.runAsync("DELETE FROM client_cache WHERE kind = ?", "thread");
+          }
+          await transaction.execAsync(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION};`);
+        });
       }
     },
     catch: databaseError("migrate"),
@@ -190,6 +201,17 @@ const makeAvailable = Effect.gen(function* () {
           ),
         catch: databaseError("list-cache"),
       }).pipe(Effect.map((rows) => rows.map((row) => row.payload))),
+    ),
+    listCacheKeys: Effect.fn("MobileDatabase.listCacheKeys")((environmentId, kind) =>
+      Effect.tryPromise({
+        try: () =>
+          database.getAllAsync<{ readonly cache_key: string }>(
+            "SELECT cache_key FROM client_cache WHERE environment_id = ? AND kind = ?",
+            environmentId,
+            kind,
+          ),
+        catch: databaseError("list-cache"),
+      }).pipe(Effect.map((rows) => rows.map((row) => row.cache_key))),
     ),
     saveCache: Effect.fn("MobileDatabase.saveCache")(
       (environmentId, kind, cacheKey, schemaVersion, payload) =>
@@ -333,6 +355,7 @@ function makeUnavailable(error: MobileDatabaseError): MobileDatabase["Service"] 
   return MobileDatabase.of({
     loadCache: () => fail,
     listCache: () => fail,
+    listCacheKeys: () => fail,
     saveCache: () => fail,
     removeCache: () => fail,
     clearCacheKind: () => fail,

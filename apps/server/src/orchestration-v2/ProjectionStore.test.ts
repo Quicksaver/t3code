@@ -37,6 +37,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
@@ -214,6 +215,90 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.effect("membership uses the shell cursor after a project-only update", () =>
+  Effect.gen(function* () {
+    const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const projectId = ProjectId.make("project:membership-cursor");
+    const event = yield* events.appendProjectEvent({
+      type: "project.created",
+      eventId: EventId.make("event:membership-cursor"),
+      aggregateKind: "project",
+      aggregateId: projectId,
+      occurredAt: now,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      payload: {
+        projectId,
+        title: "Membership cursor",
+        workspaceRoot: "/membership",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const membership = yield* store.getActiveThreadIds([
+      ThreadId.make("missing-after-project-edit"),
+    ]);
+    assert.deepEqual(membership, { snapshotSequence: event.sequence, threadIds: [] });
+  }).pipe(Effect.provide(OrchestrationEventStore.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
+it.effect("SQL validates known active membership without reading conversation bodies", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const active = yield* addRolledBackRecoveryCandidate("membership-active");
+    const archived = yield* addRolledBackRecoveryCandidate("membership-archived");
+    const deleted = yield* addRolledBackRecoveryCandidate("membership-deleted");
+    const activeThread = (yield* store.getThreadProjection(active)).thread;
+    const now = activeThread.updatedAt;
+    yield* store.apply({
+      id: EventId.make("event:membership:settled-subagent"),
+      type: "thread.metadata-updated",
+      threadId: active,
+      occurredAt: now,
+      payload: {
+        ...activeThread,
+        settledOverride: "settled",
+        settledAt: now,
+        lineage: {
+          ...activeThread.lineage,
+          relationshipToParent: "subagent",
+          parentThreadId: archived,
+        },
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:membership:archive"),
+      type: "thread.archived",
+      threadId: archived,
+      occurredAt: now,
+      payload: { ...(yield* store.getThreadProjection(archived)).thread, archivedAt: now },
+    });
+    yield* store.apply({
+      id: EventId.make("event:membership:delete"),
+      type: "thread.deleted",
+      threadId: deleted,
+      occurredAt: now,
+      payload: { ...(yield* store.getThreadProjection(deleted)).thread, deletedAt: now },
+    });
+    const sequence = (yield* store.getShellSnapshot()).snapshotSequence;
+    const trace = traceSqlStatements();
+    const membership = yield* store
+      .getActiveThreadIds([active, archived, deleted, ThreadId.make("missing")])
+      .pipe(Effect.withTracer(trace.tracer));
+    assert.deepEqual(membership, { snapshotSequence: sequence, threadIds: [active] });
+    assert.deepEqual((yield* store.getActiveThreadIds([])).threadIds, []);
+    assert.isFalse(
+      trace.statements.some((statement) => /projection_(runs|messages|turn_items)/.test(statement)),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("SQL queue readiness skips held runs without bypassing active work", () =>
   Effect.gen(function* () {
