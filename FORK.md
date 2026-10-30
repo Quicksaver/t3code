@@ -438,7 +438,7 @@ Native child creation inherits the parent's persisted archive/delete state under
 
 **Worktree branch:** `feat/archive-settings-ux`
 
-The standalone source is `27db7739a190abbf8d2f9d28f6d1a162b97d3656` directly above `e34067edef2eba03c1e40bca7d2b2d933ae12b85`. PR #12708 remains closed and unmerged. The web customization occupies upstream's extracted `ArchivedThreadsPanel.tsx`; Settings scope, route, search and thread-title instructions remain upstream-owned. Native actions preserve upstream Undo identities and compiler-managed callbacks. Archive reservations use collision-safe tuple keys, while dismissal uses the ordinary scoped thread identity. Row ages explicitly consume the minute clock for compiler invalidation.
+The standalone source is `0d047a772aa87fb66543a57a457f52d6a278eb58` directly above `6575ce32508bd7908444241f3719aa33aaf77f90`. PR #12708 remains closed and unmerged. The web customization occupies upstream's extracted `ArchivedThreadsPanel.tsx`; Settings scope, route, search and thread-title instructions remain upstream-owned. Native actions preserve upstream Undo identities and compiler-managed callbacks. Archive reservations use collision-safe tuple keys, while dismissal uses the ordinary scoped thread identity. Row ages explicitly consume the minute clock for compiler invalidation.
 
 The settings Archive panel uses a dense layout so large archives remain scannable. The native mobile Archived Threads screen mirrors the same information hierarchy and behavior with mobile-native project sections, swipe actions, long-press menus, and header controls.
 
