@@ -1,3 +1,4 @@
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -267,6 +268,7 @@ it.live.each(["thread", "shell"] as const)(
       const items = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
           ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable: <A, E, R>(_threadId: ThreadId, read: Effect.Effect<A, E, R>) => read,
           getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
           listActiveSubagentThreadIds: () => Effect.succeed([]),
           streamStoredEventsFrom: (
@@ -347,6 +349,7 @@ it.effect("coalesces streaming replay before synchronization and the live tail",
       Effect.flatMap(Stream.runCollect),
       Effect.provideService(ThreadManagement.ThreadManagementService, {
         ensureLegacyTranscript: () => Effect.void,
+        withThreadReadable: <A, E, R>(_threadId: ThreadId, read: Effect.Effect<A, E, R>) => read,
         streamStoredEventsFrom: () =>
           Stream.unwrap(
             insert(4, "Next", false).pipe(
@@ -480,6 +483,7 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(MagiService.MagiService)({}),
+  Layer.mock(SourceControlPanelService.SourceControlPanelService)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),
   Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
@@ -950,6 +954,7 @@ it.effect("thread resume across compacted history keeps message order and final 
       ),
       Effect.provideService(ThreadManagement.ThreadManagementService, {
         ensureLegacyTranscript: () => Effect.void,
+        withThreadReadable: <A, E, R>(_threadId: ThreadId, read: Effect.Effect<A, E, R>) => read,
         streamStoredEventsFrom: () => Stream.never,
       } as unknown as ThreadManagement.ThreadManagementService["Service"]),
     );

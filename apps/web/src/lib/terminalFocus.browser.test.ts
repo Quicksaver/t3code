@@ -56,7 +56,14 @@ describe("focusTerminalViewport", () => {
       };
       const target = scopeThreadRef(destination.environmentId, projectActionThreadId(destination));
       const panel = useRightPanelStore.getState();
-      panel.openTerminal(source, "action", destination);
+      panel.openTerminal(source, "action", {
+        environmentId: destination.environmentId,
+        projectId: destination.projectId,
+        cwd: destination.projectCwd,
+        worktreePath: null,
+        threadId: target.threadId,
+        label: destination.label,
+      });
       const terminalId = operation === "split" ? "split" : "action";
       if (operation === "split") {
         const { activeSurfaceId } = selectThreadRightPanelState(

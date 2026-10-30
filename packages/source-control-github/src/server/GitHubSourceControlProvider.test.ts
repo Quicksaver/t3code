@@ -125,7 +125,7 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
               ),
             );
       const call: GraphQlCall = {
-        host: new URL(request.url).hostname.replace(/^api\./, ""),
+        host: new URL(request.url).host.replace(/^api\./, ""),
         operationName: sent.operationName,
         query: sent.query,
         lookups,
@@ -259,6 +259,64 @@ const githubContext = (host: string) => ({
   },
   remoteName: "origin",
   remoteUrl: `git@${host}:acme/web.git`,
+});
+
+describe("GitHubSourceControlProvider panel reads", () => {
+  it.effect("reads history from the selected remote instead of the checkout default", () => {
+    const { layer, graphqlCalls: requests } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:other/default.git"]),
+      graphql: () => ({ history: { nodes: [node(3, "feature")] } }),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const rows = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        state: "all",
+        limit: 30,
+        context: {
+          ...githubContext("enterprise.test:8443"),
+          remoteUrl: "ssh://git@enterprise.test:8443/acme/web.git",
+        },
+      });
+      assert.strictEqual(rows[0]?.number, 3);
+      assert.strictEqual(requests[0]?.host, "enterprise.test:8443");
+      assert.deepStrictEqual(requests[0]?.lookups[0], {
+        owner: "acme",
+        name: "web",
+        states: ["OPEN", "CLOSED", "MERGED"],
+        limit: 30,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads commit avatars through the selected remote's API", () => {
+    const requests: GitHubRest.GitHubRestInput[] = [];
+    const { layer } = harness({
+      remotes: "",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(input);
+            return restResponse({ author: { avatar_url: "https://enterprise.test/avatar.png" } });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      assert.isDefined(provider.getCommitAvatarUrl);
+      const avatar = yield* provider.getCommitAvatarUrl!({
+        cwd: "/repo",
+        sha: "abc123",
+        context: {
+          ...githubContext("enterprise.test:8443"),
+          remoteUrl: "ssh://git@enterprise.test:8443/acme/web.git",
+        },
+      });
+      assert.strictEqual(avatar, "https://enterprise.test/avatar.png");
+      assert.strictEqual(requests[0]?.host, "enterprise.test:8443");
+      assert.strictEqual(requests[0]?.path, "repos/acme/web/commits/abc123");
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
@@ -1096,4 +1154,48 @@ it.effect("says a GH_REPO naming an unparseable host targets no remote rather th
     Effect.provide(layer),
     Effect.provideService(HostProcess.Environment, { GH_REPO: "bad host/acme/web" }),
   );
+});
+
+it.effect("batches concurrent panel head lookups on the context host", () => {
+  const branches = ["feature/a", "feature/b"];
+  const { layer, graphqlCalls } = harness({
+    remotes: remotesOutput(["origin", "git@enterprise.test:acme/web.git"]),
+    api: { rest: () => Effect.succeed(restResponse({ fork: false })) },
+    graphql: (lookup) => ({
+      pullRequests: {
+        nodes: [
+          {
+            ...node(branches.indexOf(String(lookup.head)) + 1, String(lookup.head)),
+            url: `https://enterprise.test/acme/web/pull/${branches.indexOf(String(lookup.head)) + 1}`,
+          },
+        ],
+      },
+    }),
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const pending = yield* Effect.forEach(
+      branches,
+      (headSelector) =>
+        provider.listChangeRequests({
+          cwd: "/repo",
+          headSelector,
+          state: "open",
+          context: githubContext("enterprise.test"),
+        }),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust("500 millis");
+    const rows = yield* Fiber.join(pending);
+    assert.deepStrictEqual(
+      rows.map((items) => items[0]?.number),
+      [1, 2],
+    );
+    assert.strictEqual(graphqlCalls.length, 1);
+    assert.strictEqual(graphqlCalls[0]?.host, "enterprise.test");
+    assert.deepStrictEqual(
+      graphqlCalls[0]?.lookups.map((lookup) => lookup.head).toSorted(),
+      branches,
+    );
+  }).pipe(Effect.provide(layer));
 });
