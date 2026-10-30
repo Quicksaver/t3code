@@ -151,7 +151,25 @@ describe("worktree-baseline", () => {
 
     expect(resolveBaselineTest(root, "scripts\\artifact.test.ts")).toEqual({
       testFile: "scripts/artifact.test.ts",
-      args: ["--dir", "scripts", "exec", "vp", "test", "run", "artifact.test.ts"],
+      args: [
+        "--dir",
+        "scripts",
+        "exec",
+        "vp",
+        "test",
+        "run",
+        "--config",
+        "../vite.config.ts",
+        "artifact.test.ts",
+      ],
+    });
+    const webDirectory = NodePath.join(root, "apps", "web");
+    await NodeFSP.mkdir(webDirectory, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(webDirectory, "package.json"), "{}");
+    await NodeFSP.writeFile(NodePath.join(webDirectory, "example.test.ts"), "");
+    expect(resolveBaselineTest(root, "apps/web/example.test.ts")).toEqual({
+      testFile: "apps/web/example.test.ts",
+      args: ["--dir", NodePath.join("apps", "web"), "exec", "vp", "test", "run", "example.test.ts"],
     });
     for (const path of ["../artifact.test.ts", "/artifact.test.ts", "--passWithNoTests", ""]) {
       expect(() => resolveBaselineTest(root, path)).toThrow("repository-relative test file");

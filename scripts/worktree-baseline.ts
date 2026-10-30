@@ -13,7 +13,7 @@ const SCRIPT_ROOT = NodePath.resolve(
   "..",
 );
 const CONTROL_BRANCH = "refs/heads/base/main";
-const BASELINE_SCHEMA_VERSION = 3;
+const BASELINE_SCHEMA_VERSION = 4;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const LOCK_OWNER_GRACE_MS = 10_000;
 const LOCK_RECLAIM_SUFFIX = ".reclaim";
@@ -54,7 +54,7 @@ export interface BaselineManifest {
   readonly fingerprint: string;
   readonly install: BaselineCommandResult;
   readonly overall: "failed" | "passed";
-  readonly schemaVersion: 3;
+  readonly schemaVersion: typeof BASELINE_SCHEMA_VERSION;
   readonly testFile: string | null;
   readonly tests: BaselineCommandResult;
   readonly typecheck: BaselineCommandResult | null;
@@ -339,15 +339,17 @@ export const resolveBaselineTest = (controlWorktree: string, requested: string) 
     if (directory === controlWorktree) throw new Error(`No package owns ${testFile}.`);
     directory = NodePath.dirname(directory);
   }
+  const packageDirectory = NodePath.relative(controlWorktree, directory) || ".";
   return {
     testFile,
     args: [
       "--dir",
-      NodePath.relative(controlWorktree, directory) || ".",
+      packageDirectory,
       "exec",
       "vp",
       "test",
       "run",
+      ...(packageDirectory === "scripts" ? ["--config", "../vite.config.ts"] : []),
       NodePath.relative(directory, absoluteFile).replaceAll("\\", "/"),
     ],
   };
