@@ -105,6 +105,7 @@ const browserTestProject = {
     include: [
       "vite-plus/test/browser",
       "@base-ui/react/autocomplete",
+      "@tanstack/react-virtual",
       "saxes",
       "@betteroffice/docx/editor",
       "@betteroffice/docx/layout",
