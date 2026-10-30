@@ -80,7 +80,7 @@ const storesLayer = Layer.mergeAll(
   TurnItemPositionStore.layer,
 );
 // Everything cold storage runs on, without a cold storage instance.
-const BaseLayer = EventSink.layerFromStores.pipe(
+const StorageServicesLayer = EventSink.layerFromStores.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       storesLayer,
@@ -93,9 +93,15 @@ const BaseLayer = EventSink.layerFromStores.pipe(
       ),
     ),
   ),
-  Layer.provideMerge(Sqlite.layerMemory),
 );
+const BaseLayer = StorageServicesLayer.pipe(Layer.provideMerge(Sqlite.layerMemory));
 const TestLayer = ThreadColdStorage.layer.pipe(Layer.provideMerge(BaseLayer));
+const FileTestLayer = ThreadColdStorage.layer.pipe(
+  Layer.provideMerge(StorageServicesLayer),
+  Layer.provideMerge(
+    Sqlite.layerConfig.pipe(Layer.provide(configLayer), Layer.provide(NodeServices.layer)),
+  ),
+);
 
 // The server's live cold storage and an effect worker that runs its lifecycle effects.
 const StartupLayer = EffectWorker.layer.pipe(
@@ -638,6 +644,36 @@ it.effect(
     }).pipe(Effect.provide(CommandOutputHub.layer.pipe(Layer.provideMerge(TestLayer)))),
 );
 
+it.effect("Force stop restores a cold completed run before checking its requested id", () =>
+  Effect.gen(function* () {
+    const cold = yield* ThreadColdStorage.ThreadColdStorage;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { threadId } = yield* seedArchivedThread("force-stop");
+    yield* cold.archive(threadId, Effect.void);
+    assert.equal((yield* hotCounts(threadId)).runs, 0);
+
+    const managementLayer = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: (...args) => projections.getThreadRecords(...args).pipe(Effect.orDie),
+        }),
+      ),
+    );
+    const result = yield* Effect.gen(function* () {
+      const management = yield* ThreadManagementService.ThreadManagementService;
+      return yield* management.forceStopThread({ threadId, runId: RunId.make("run:force-stop") });
+    }).pipe(Effect.provide(managementLayer));
+
+    assert.deepEqual(result, { outcome: "released", sharedWithThreadIds: [] });
+    assert.equal(yield* manifestStatus(threadId), "restored");
+    assert.equal((yield* hotCounts(threadId)).runs, 1);
+    yield* cold.archive(threadId, Effect.void);
+    assert.equal(yield* manifestStatus(threadId), "cold");
+  }).pipe(Effect.provide(FileTestLayer)),
+);
+
 it.effect("restores cold conversation rows for search, history pages and transcript export", () =>
   Effect.gen(function* () {
     const cold = yield* ThreadColdStorage.ThreadColdStorage;
@@ -750,7 +786,11 @@ it.effect("restores cold conversation rows for search, history pages and transcr
       assert.equal(expected.totalMatches, 1);
       yield* cold.archive(threadId, Effect.void);
       assert.equal(yield* manifestStatus(threadId), "cold");
-      assert.deepEqual(yield* management.searchThread({ threadId, query: "Remember" }), expected);
+      const concurrent = yield* Effect.all(
+        Array.from({ length: 4 }, () => management.searchThread({ threadId, query: "Remember" })),
+        { concurrency: "unbounded" },
+      );
+      for (const result of concurrent) assert.deepEqual(result, expected);
       assert.equal(yield* manifestStatus(threadId), "restored");
       yield* cold.archive(threadId, Effect.void);
       const results = yield* Stream.runCollect(
@@ -819,7 +859,7 @@ it.effect("restores cold conversation rows for search, history pages and transcr
       );
       assert.equal(yield* manifestStatus(threadId), "restored");
     }).pipe(Effect.provide(managementLayer));
-  }).pipe(Effect.provide(TestLayer)),
+  }).pipe(Effect.provide(FileTestLayer)),
 );
 
 it.effect.each(["html_render", "example.view"] as const)(

@@ -1263,13 +1263,15 @@ const make = Effect.gen(function* () {
       } as const;
     },
     (effect, input) =>
-      effect.pipe(
-        Effect.mapError((cause) =>
-          isForceStopThreadError(cause)
-            ? cause
-            : new OrchestrationV2ForceStopThreadError({ threadId: input.threadId, cause }),
+      coldStorage
+        .withHot(input.threadId, effect)
+        .pipe(
+          Effect.mapError((cause) =>
+            isForceStopThreadError(cause)
+              ? cause
+              : new OrchestrationV2ForceStopThreadError({ threadId: input.threadId, cause }),
+          ),
         ),
-      ),
   );
 
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(
