@@ -666,7 +666,7 @@ The current branch preserves archive Undo synchronization: an unarchive receipt 
 
 **Worktree branch:** `feat/cross-environment-project-actions`
 
-The standalone source is `6048eab2a8b008cdbb3a079b7c8e536b35f66a9e` directly above `e34067edef2eba03c1e40bca7d2b2d933ae12b85`. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
+The standalone source is `d1e146e468e6d99867767be9a97890241d2bef06` directly above `6575ce32508bd7908444241f3719aa33aaf77f90`. The configurable thread-details card retains its Scripts visibility gate and supplies the destination project and thread context to the relocated action control. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
 
 Project-action terminal identity derives from the destination project ID; each RPC receives the destination environment separately. Launch and split explicitly focus the destination terminal. Native terminal selection after shell exit retains destination project metadata and that same project identity.
 
