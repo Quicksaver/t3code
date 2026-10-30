@@ -34,7 +34,10 @@ import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
-import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
+import {
+  releaseArchivedComposerDraftUploads,
+  releaseComposerDraftUploads,
+} from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentServerConfigLoaded,
@@ -392,6 +395,7 @@ export function useThreadActions() {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
     refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    releaseArchivedComposerDraftUploads(threadRef);
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
@@ -733,7 +737,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
     const undoPlan = ThreadUndo.planThreadUndo("settle", resolved?.thread);
@@ -846,7 +849,6 @@ export function useThreadActions() {
       );
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
       return AsyncResult.failure(
         Cause.fail(

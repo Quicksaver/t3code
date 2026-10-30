@@ -65,6 +65,7 @@ export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 export interface EventNdjsonLogStore {
   readonly filePath: string;
   readonly logger: (stream: EventNdjsonStream) => ProviderEventLoggers.EventNdjsonLogger;
+  readonly closeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly close: () => Effect.Effect<void>;
 }
 
@@ -695,6 +696,17 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     yield* Scope.close(timerScope, Exit.void);
   });
 
+  const closeThread = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const threadSegment = resolveThreadSegment(threadId);
+    yield* flush(false, false);
+    yield* SynchronizedRef.update(stateRef, (state) => {
+      if (!state.sinks.has(threadSegment)) return state;
+      const sinks = new Map(state.sinks);
+      sinks.delete(threadSegment);
+      return { ...state, sinks };
+    });
+  });
+
   const loggerViews = new Map<EventNdjsonStream, ProviderEventLoggers.EventNdjsonLogger>();
   const logger = (stream: EventNdjsonStream): ProviderEventLoggers.EventNdjsonLogger => {
     const existing = loggerViews.get(stream);
@@ -744,11 +756,12 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     const view = {
       filePath,
       write,
+      closeThread,
       close: () => Effect.void,
     } satisfies ProviderEventLoggers.EventNdjsonLogger;
     loggerViews.set(stream, view);
     return view;
   };
 
-  return { filePath, logger, close } satisfies EventNdjsonLogStore;
+  return { filePath, logger, closeThread, close } satisfies EventNdjsonLogStore;
 });

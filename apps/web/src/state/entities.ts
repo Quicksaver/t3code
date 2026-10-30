@@ -34,6 +34,7 @@ import { environmentServerConfigsAtom } from "./server";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
   allEnvironmentShellsBootstrappedAtom,
+  liveShellEnvironmentIdsAtom,
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
@@ -118,6 +119,10 @@ export function useAllEnvironmentProjectSnapshotsReady(): boolean {
 /** Tasks linked environments run for a listed thread, by thread key; lists show them under it. */
 export function useDelegatedUnderParent(): ReadonlySet<string> {
   return useAtomValue(environmentThreadShells.delegatedUnderParentAtom);
+}
+
+export function useLiveEnvironmentIds(): ReadonlySet<EnvironmentId> {
+  return useAtomValue(liveShellEnvironmentIdsAtom);
 }
 
 export function useThreadShellsForProjectRefs(

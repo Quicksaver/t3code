@@ -14,6 +14,7 @@ import {
   enabledEnvironmentIds,
 } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -65,6 +66,33 @@ export const liveShellEnvironmentIdsAtom = Atom.make((get) => {
   previousLiveEnvironmentIds = next;
   return next;
 }).pipe(Atom.withLabel("web-live-shell-environment-ids"));
+
+const threadRemovalStateAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const state = get(environmentShell.stateValueAtom(environmentId));
+    const previous = Option.getOrUndefined(
+      get.self<Pick<EnvironmentShellState, "omitsThreads" | "removedAt">>(),
+    );
+    return previous !== undefined &&
+      previous.omitsThreads === state.omitsThreads &&
+      previous.removedAt === state.removedAt
+      ? previous
+      : { omitsThreads: state.omitsThreads, removedAt: state.removedAt };
+  }),
+);
+
+export const threadRemovalObservationsAtom = Atom.make((get) => {
+  const partialEnvironmentIds = new Set<EnvironmentId>();
+  const removedThreadKeys = new Set<string>();
+  for (const environmentId of enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom))) {
+    const state = get(threadRemovalStateAtom(environmentId));
+    if (state.omitsThreads === true) partialEnvironmentIds.add(environmentId);
+    for (const threadId of state.removedAt.keys()) {
+      removedThreadKeys.add(scopedThreadKey({ environmentId, threadId }));
+    }
+  }
+  return { partialEnvironmentIds, removedThreadKeys };
+});
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));

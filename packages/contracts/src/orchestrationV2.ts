@@ -3539,6 +3539,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
+  getActiveThreadIds: "orchestration.getActiveThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
@@ -3726,6 +3727,17 @@ export const OrchestrationV2WorktreeThreadIds = Schema.Struct({
   threadIds: Schema.Array(ThreadId),
 });
 export type OrchestrationV2WorktreeThreadIds = typeof OrchestrationV2WorktreeThreadIds.Type;
+
+export const OrchestrationV2GetActiveThreadIdsInput = Schema.Struct({
+  threadIds: Schema.Array(ThreadId).check(Schema.isMaxLength(200)),
+});
+
+/** Membership only, including active threads omitted from partial shells. */
+export const OrchestrationV2ActiveThreadIds = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  threadIds: Schema.Array(ThreadId),
+});
+export type OrchestrationV2ActiveThreadIds = typeof OrchestrationV2ActiveThreadIds.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   threadId: ThreadId,
@@ -4139,6 +4151,10 @@ export const OrchestrationV2RpcSchemas = {
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,
     output: OrchestrationV2WorktreeThreadIds,
+  },
+  getActiveThreadIds: {
+    input: OrchestrationV2GetActiveThreadIdsInput,
+    output: OrchestrationV2ActiveThreadIds,
   },
   getOlderSettledThreads: {
     input: OrchestrationV2GetOlderSettledThreadsInput,

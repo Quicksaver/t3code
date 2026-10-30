@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 
 /** Output bypasses orchestration events; expanded rows receive tails, coalesced appends, then persisted output. */
 
@@ -121,6 +122,7 @@ function setBounded<V>(
 export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const coldStorage = yield* ThreadColdStorage.ThreadColdStorage;
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
@@ -228,7 +230,7 @@ export const make = Effect.gen(function* () {
             ),
             Effect.forkScoped,
           );
-        const item = yield* projections.getTurnItem(target);
+        const item = yield* coldStorage.withHot(target.threadId, projections.getTurnItem(target));
         // Non-command rows would hold output subscriptions open forever.
         if (item === null || item.type !== "command_execution") {
           return yield* new OrchestrationV2CommandOutputError({

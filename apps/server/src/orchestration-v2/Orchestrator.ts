@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
+  OrchestrationV2ActiveThreadIds,
 } from "@t3tools/contracts";
 import {
   latestExecutedRun,
@@ -396,6 +397,9 @@ export interface OrchestratorV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, OrchestratorV2Error>;
+  readonly getActiveThreadIds: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<OrchestrationV2ActiveThreadIds, OrchestratorV2Error>;
   readonly listActiveSubagentThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     OrchestratorV2Error
@@ -4066,6 +4070,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           threadId: command.threadId,
           request: { type: "terminal.cleanup" },
+        } satisfies PendingOrchestrationEffectV2,
+        // Effects run in order per thread: the session is detached and its
+        // terminals closed before the conversation moves to cold storage.
+        {
+          id: `effect:${command.commandId}:thread.cold-archive`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "thread.cold-archive" },
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
@@ -13690,6 +13702,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }),
     listActiveShellIndex: Effect.fn("OrchestratorV2.listActiveShellIndex")(function () {
       return projectionStore.listActiveShellIndex().pipe(Effect.mapError(shellProjectionError));
+    }),
+    getActiveThreadIds: Effect.fn("OrchestratorV2.getActiveThreadIds")(function (threadIds) {
+      return projectionStore
+        .getActiveThreadIds(threadIds)
+        .pipe(Effect.mapError(shellProjectionError));
     }),
     listOlderSettledThreads: Effect.fn("OrchestratorV2.listOlderSettledThreads")(function (query) {
       return projectionStore

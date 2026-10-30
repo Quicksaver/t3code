@@ -37,6 +37,8 @@ export interface SqliteClientConfig {
   readonly readerWorker?: boolean | undefined;
   /** Ignored for in-memory databases. */
   readonly checkpointWorker?: boolean | undefined;
+  /** Additional database files, such as attached archives, to checkpoint on the same worker. */
+  readonly checkpointAdditionalPaths?: ReadonlyArray<string> | undefined;
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -510,6 +512,38 @@ let generation = 0;
 let nextTruncateId = 0;
 let pendingTruncate;
 let pendingBarriers = 0;
+// Attached archives share worker ownership while main keeps its admission protocol.
+const archives = workerData.additionalPaths.map((filename) => {
+  const db = new DatabaseSync(filename);
+  db.exec("PRAGMA busy_timeout = 0; PRAGMA checkpoint_fullfsync = ON;");
+  return {
+    frames: db.prepare("PRAGMA wal_checkpoint(NOOP)"),
+    schema: db.prepare("SELECT 1 FROM sqlite_schema LIMIT 1"),
+    checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
+  };
+});
+let archivePending = false;
+const checkArchives = () => {
+  archivePending = false;
+  for (const archive of archives) {
+    try {
+      let state = archive.frames.get();
+      // A read observes an archive switching from an empty file to WAL.
+      if (state.log < 0) {
+        archive.schema.get();
+        state = archive.frames.get();
+      }
+      if (state.log - state.checkpointed >= workerData.frames) {
+        archive.checkpoint.get();
+        state = archive.frames.get();
+      }
+      if (state.log - state.checkpointed >= workerData.frames) archivePending = true;
+    } catch (cause) {
+      if ((cause.errcode & 0xff) !== 5) throw cause;
+      archivePending = true;
+    }
+  }
+};
 let idle;
 const initialize = () => {
   if (db !== undefined) return;
@@ -528,12 +562,13 @@ const atCeiling = (state) => state.log >= workerData.backpressureFrames;
 const exceedsSizeLimit = () =>
   journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
 const schedule = (state, blocked) => {
-  if (blocked || state.log - state.checkpointed >= workerData.frames) {
+  if (blocked || archivePending || state.log - state.checkpointed >= workerData.frames) {
     idle = setTimeout(() => check(undefined, undefined, true), workerData.idleMs);
   }
 };
 const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => {
   initialize();
+  checkArchives();
   if (Number.isSafeInteger(nextGeneration)) generation = Math.max(generation, nextGeneration);
   if (Number.isSafeInteger(nextJournalSizeLimit)) journalSizeLimit = nextJournalSizeLimit;
   let state = frames.get();
@@ -619,6 +654,7 @@ parentPort.on("message", (request) => {
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
+  additionalPaths: ReadonlyArray<string>,
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -644,6 +680,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
         eval: true,
         workerData: {
           filename,
+          additionalPaths: [...new Set(additionalPaths)].filter((path) => path !== filename),
           frames: CHECKPOINT_FRAMES,
           backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
           idleMs: CHECKPOINT_IDLE_MS,
@@ -734,7 +771,13 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       checkAgain = true;
       return;
     }
-    if (!force && !gated() && log - checkpointed < CHECKPOINT_FRAMES) return;
+    if (
+      !force &&
+      additionalPaths.length === 0 &&
+      !gated() &&
+      log - checkpointed < CHECKPOINT_FRAMES
+    )
+      return;
     inFlight = ++nextId;
     try {
       send({
@@ -792,7 +835,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     if ("id" in message && message.id === inFlight) inFlight = undefined;
     if (checkAgain && inFlight === undefined) {
       checkAgain = false;
-      request(true);
+      request(additionalPaths.length === 0);
     }
     wake();
   });
@@ -884,7 +927,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(options.filename, db)
+        ? yield* startCheckpointWorker(
+            options.filename,
+            db,
+            options.checkpointAdditionalPaths ?? [],
+          )
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
