@@ -6680,7 +6680,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
           (
-            EXISTS (
+            json_extract(t.payload_json, '$.pendingMagiRunId') IS NOT NULL
+            OR EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runs r
               WHERE r.thread_id = t.thread_id
                 AND r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')

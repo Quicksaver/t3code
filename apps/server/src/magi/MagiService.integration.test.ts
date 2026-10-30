@@ -44,6 +44,7 @@ import * as Stream from "effect/Stream";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { OrchestrationEffectWorkerV2 } from "../orchestration-v2/EffectWorker.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
@@ -1302,7 +1303,7 @@ const startHeldRun = Effect.gen(function* () {
 });
 
 describe("MagiService passive delivery", () => {
-  it.live("pauses Magi when Stop reaches an owner whose provider turn already completed", () =>
+  it.live.each([false, true])("keeps a settled owner paused after Stop with force=%s", (force) =>
     withOwnerRun(
       "magi-idle-owner-stop",
       Effect.gen(function* () {
@@ -1337,8 +1338,82 @@ describe("MagiService passive delivery", () => {
         expect(
           (yield* threads.getThreadRecords(ownerThreadId, [])).thread.pendingMagiRunId,
         ).toBeNull();
+        if (force) {
+          yield* threads.forceStopThread({ threadId: ownerThreadId, runId: ownerRunId! });
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          const records = yield* threads.getThreadRecords(ownerThreadId, ["runs"]);
+          expect(records.thread.pendingMagiRunId).toBeNull();
+          expect(records.runs.find((run) => run.id === ownerRunId)?.status).toBe("completed");
+          expect((yield* runDetail(runId)).summary.state).toBe("paused");
+        }
       }),
     ),
+  );
+
+  it.live(
+    "does not revive a paused completion when a later user turn releases unattended holds",
+    () =>
+      withOwnerRun(
+        "magi-paused-unattended-queue",
+        Effect.gen(function* () {
+          const magi = yield* MagiService;
+          const threads = yield* ThreadManagementService.ThreadManagementService;
+          const receipt = yield* magi.startFromTool(caller, {
+            config,
+            objective,
+            contextActivityIds: [],
+          });
+          yield* watchStoredRuns(receipt.runId).pipe(
+            Stream.filter((run) => run.detail.summary.completedMagiTurns === 1),
+            Stream.runHead,
+          );
+          yield* magi.controlRun(caller, { runId: receipt.runId, action: "pause" });
+          const owner = yield* heldTurn(ownerThreadId);
+          const ownerRunId = (yield* storedRun(receipt.runId)).mainRunId;
+          yield* owner.finish("Paused while waiting for the user.");
+          yield* awaitEvent(
+            ownerThreadId,
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === ownerRunId &&
+              event.payload.status === "completed",
+          );
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          const messageId = MessageId.make("magi:paused:user-follow-up");
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("magi:paused:user-follow-up"),
+            threadId: ownerThreadId,
+            messageId,
+            text: "Keep Magi paused while answering this unrelated question.",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "start_immediately" },
+          });
+          const following = (yield* threads.getThreadRecords(ownerThreadId, ["runs"])).runs.find(
+            (run) => run.userMessageId === messageId,
+          )!;
+          yield* (yield* heldTurn(ownerThreadId, following.ordinal)).finish("Unrelated answer.");
+          yield* awaitEvent(
+            ownerThreadId,
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === following.id &&
+              event.payload.status === "completed",
+          );
+          yield* (yield* OrchestrationEffectWorkerV2).drain();
+          const records = yield* threads.getThreadRecords(ownerThreadId, ["runs", "messages"]);
+          const wake = records.messages.find(
+            (message) => message.id === `magi:${receipt.runId}:1:completion`,
+          )!;
+          expect(records.runs.find((run) => run.id === wake.runId)?.status).toBe("cancelled");
+          expect(records.runs.find((run) => run.id === following.id)?.status).toBe("completed");
+          expect(records.thread.pendingMagiRunId).toBeNull();
+          expect((yield* runDetail(receipt.runId)).summary.state).toBe("paused");
+          expect(records.runs.filter((run) => run.status === "queued")).toEqual([]);
+        }),
+      ),
   );
 
   it.live(
