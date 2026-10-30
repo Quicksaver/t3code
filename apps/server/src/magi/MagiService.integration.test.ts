@@ -1351,7 +1351,7 @@ describe("MagiService passive delivery", () => {
   );
 
   it.live(
-    "does not revive a paused completion when a later user turn releases unattended holds",
+    "keeps a withdrawn completion cancelled when the owner run and a later user turn complete while paused",
     () =>
       withOwnerRun(
         "magi-paused-unattended-queue",
