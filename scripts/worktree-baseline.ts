@@ -13,7 +13,7 @@ const SCRIPT_ROOT = NodePath.resolve(
   "..",
 );
 const CONTROL_BRANCH = "refs/heads/base/main";
-const BASELINE_SCHEMA_VERSION = 4;
+const BASELINE_SCHEMA_VERSION = 5;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const LOCK_OWNER_GRACE_MS = 10_000;
 const LOCK_RECLAIM_SUFFIX = ".reclaim";
@@ -340,6 +340,9 @@ export const resolveBaselineTest = (controlWorktree: string, requested: string) 
     directory = NodePath.dirname(directory);
   }
   const packageDirectory = NodePath.relative(controlWorktree, directory) || ".";
+  const hasLocalConfig = NodeFS.readdirSync(directory).some((name) =>
+    /^(?:vite|vitest)\.config\./u.test(name),
+  );
   return {
     testFile,
     args: [
@@ -349,7 +352,15 @@ export const resolveBaselineTest = (controlWorktree: string, requested: string) 
       "vp",
       "test",
       "run",
-      ...(packageDirectory === "scripts" ? ["--config", "../vite.config.ts"] : []),
+      ...(packageDirectory !== "." && !hasLocalConfig
+        ? [
+            "--config",
+            NodePath.relative(
+              directory,
+              NodePath.join(controlWorktree, "vite.config.ts"),
+            ).replaceAll("\\", "/"),
+          ]
+        : []),
       NodePath.relative(directory, absoluteFile).replaceAll("\\", "/"),
     ],
   };

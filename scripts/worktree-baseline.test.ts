@@ -166,10 +166,29 @@ describe("worktree-baseline", () => {
     const webDirectory = NodePath.join(root, "apps", "web");
     await NodeFSP.mkdir(webDirectory, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(webDirectory, "package.json"), "{}");
+    await NodeFSP.writeFile(NodePath.join(webDirectory, "vite.config.ts"), "");
     await NodeFSP.writeFile(NodePath.join(webDirectory, "example.test.ts"), "");
     expect(resolveBaselineTest(root, "apps/web/example.test.ts")).toEqual({
       testFile: "apps/web/example.test.ts",
       args: ["--dir", NodePath.join("apps", "web"), "exec", "vp", "test", "run", "example.test.ts"],
+    });
+    const sharedDirectory = NodePath.join(root, "packages", "shared");
+    await NodeFSP.mkdir(NodePath.join(sharedDirectory, "src"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(sharedDirectory, "package.json"), "{}");
+    await NodeFSP.writeFile(NodePath.join(sharedDirectory, "src", "example.test.ts"), "");
+    expect(resolveBaselineTest(root, "packages/shared/src/example.test.ts")).toEqual({
+      testFile: "packages/shared/src/example.test.ts",
+      args: [
+        "--dir",
+        NodePath.join("packages", "shared"),
+        "exec",
+        "vp",
+        "test",
+        "run",
+        "--config",
+        "../../vite.config.ts",
+        "src/example.test.ts",
+      ],
     });
     for (const path of ["../artifact.test.ts", "/artifact.test.ts", "--passWithNoTests", ""]) {
       expect(() => resolveBaselineTest(root, path)).toThrow("repository-relative test file");
