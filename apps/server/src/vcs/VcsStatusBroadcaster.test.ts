@@ -183,7 +183,7 @@ function layerBackgroundPolicy(
 }
 
 describe("VcsStatusBroadcaster", () => {
-  it.effect("refreshes queued behind a running one share the next git status read", () => {
+  it.effect("coalesces queued refreshes while publishing forced notifications", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
       currentRemoteStatus: baseRemoteStatus,
@@ -191,11 +191,35 @@ describe("VcsStatusBroadcaster", () => {
       remoteStatusCalls: 0,
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
-      fileSystem: FileSystem.makeNoop({ realPath: (cwd) => Effect.succeed(cwd) }),
+      fileSystem: FileSystem.makeNoop({
+        realPath: (cwd) => Effect.succeed(cwd),
+        watch: () => Stream.never,
+      }),
     };
 
     return Effect.gen(function* () {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const subscribed = yield* Deferred.make<void>();
+      const finalPublished = yield* Deferred.make<void>();
+      const localUpdates = yield* Queue.unbounded<VcsStatusLocalResult>();
+      const finalLocalStatus = { ...baseLocalStatus, refName: "feature/final-refresh" };
+      yield* broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+        Stream.runForEach((event) => {
+          if (event._tag === "snapshot") return Deferred.succeed(subscribed, undefined);
+          if (event._tag === "localUpdated") {
+            return Queue.offer(localUpdates, event.local).pipe(
+              Effect.andThen(
+                event.local.refName === finalLocalStatus.refName
+                  ? Deferred.succeed(finalPublished, undefined)
+                  : Effect.void,
+              ),
+            );
+          }
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(subscribed);
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       state.beforeLocalStatus = Deferred.succeed(started, undefined).pipe(
@@ -206,21 +230,30 @@ describe("VcsStatusBroadcaster", () => {
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.await(started);
       // Requested while the first read runs, so that read may predate their change.
-      state.currentLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
-      const queued = yield* Effect.all(
-        [broadcaster.refreshLocalStatus("/repo"), broadcaster.refreshLocalStatus("/repo")],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      const changedLocalStatus = { ...baseLocalStatus, hasWorkingTreeChanges: true };
+      state.currentLocalStatus = changedLocalStatus;
+      const queued = yield* broadcaster
+        .refreshLocalStatus("/repo")
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const forced = yield* broadcaster
+        .refreshLocalStatus("/repo", { forcePublish: true })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.succeed(release, undefined);
 
       assert.isFalse((yield* Fiber.join(running)).hasWorkingTreeChanges);
-      const [second, third] = yield* Fiber.join(queued);
-      assert.isTrue(second.hasWorkingTreeChanges);
-      assert.isTrue(third.hasWorkingTreeChanges);
-      assert.strictEqual(state.localStatusCalls, 2);
-
-      yield* broadcaster.refreshLocalStatus("/repo");
+      assert.isTrue((yield* Fiber.join(queued)).hasWorkingTreeChanges);
+      assert.isTrue((yield* Fiber.join(forced)).hasWorkingTreeChanges);
       assert.strictEqual(state.localStatusCalls, 3);
+
+      state.currentLocalStatus = finalLocalStatus;
+      yield* broadcaster.refreshLocalStatus("/repo");
+      yield* Deferred.await(finalPublished);
+      assert.strictEqual(state.localStatusCalls, 4);
+      assert.deepStrictEqual(yield* Queue.takeAll(localUpdates), [
+        changedLocalStatus,
+        changedLocalStatus,
+        finalLocalStatus,
+      ]);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
