@@ -87,7 +87,7 @@ function layerTestFor(state: {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(
       state.fileSystem
-        ? Layer.succeed(FileSystem.FileSystem, state.fileSystem)
+        ? Layer.merge(NodeServices.layer, Layer.succeed(FileSystem.FileSystem, state.fileSystem))
         : NodeServices.layer,
     ),
     Layer.provide(layerBackgroundPolicy(() => state.backgroundWorkEnabled !== false)),
@@ -1159,6 +1159,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(baseLocalStatus),
+            currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             remoteStatus: () => Effect.succeed(baseRemoteStatus),
             invalidateLocalStatus: (cwd) => Queue.offer(refreshed, cwd).pipe(Effect.asVoid),
             invalidateRemoteStatus: () => Effect.void,
@@ -1249,6 +1250,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(baseLocalStatus),
+            currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             remoteStatus: () => Effect.succeed(baseRemoteStatus),
             invalidateLocalStatus: (cwd) => Queue.offer(refreshed, cwd).pipe(Effect.asVoid),
             invalidateRemoteStatus: () => Effect.void,
@@ -1337,6 +1339,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(baseLocalStatus),
+            currentBranch: () => Effect.succeed(baseLocalStatus.refName),
             remoteStatus: () => Effect.succeed(baseRemoteStatus),
             invalidateLocalStatus: () => Effect.void,
             invalidateRemoteStatus: () => Effect.void,
@@ -1455,6 +1458,7 @@ describe("VcsStatusBroadcaster", () => {
         Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () => Effect.succeed(localStatus),
+            currentBranch: () => Effect.succeed(localStatus.refName),
             remoteStatus: () =>
               Effect.gen(function* () {
                 remoteStatusCalls += 1;
@@ -1489,14 +1493,14 @@ describe("VcsStatusBroadcaster", () => {
         rootDir = "/repo";
         siblingDir = "/repo.worktrees/feature";
         periodicRemoteDeferred = yield* Deferred.make<void>();
-        const pulledSnapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
+        const pulledRemoteDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
         const siblingRefreshDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
         const streamScope = yield* Scope.make();
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
         yield* Stream.runForEach(broadcaster.streamStatus({ cwd: rootDir }), (event) => {
-          if (event._tag === "snapshot" && event.remote?.behindCount === 0) {
-            return Deferred.succeed(pulledSnapshotDeferred, event).pipe(Effect.ignore);
+          if (event._tag === "remoteUpdated" && event.remote?.behindCount === 0) {
+            return Deferred.succeed(pulledRemoteDeferred, event).pipe(Effect.ignore);
           }
           if (event._tag === "localUpdated") {
             return Deferred.succeed(siblingRefreshDeferred, event).pipe(Effect.ignore);
@@ -1504,7 +1508,7 @@ describe("VcsStatusBroadcaster", () => {
           return Effect.void;
         }).pipe(Effect.forkIn(streamScope));
 
-        yield* Deferred.await(pulledSnapshotDeferred);
+        yield* Deferred.await(pulledRemoteDeferred);
         // The sibling watcher debounces for 150ms; panel demand polls the remote every 25ms.
         yield* TestClock.adjust("150 millis");
         yield* Deferred.await(siblingRefreshDeferred);
