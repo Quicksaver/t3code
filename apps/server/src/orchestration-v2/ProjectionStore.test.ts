@@ -7,6 +7,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
+  MagiRunId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
@@ -39,6 +40,7 @@ import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { loadSubscriberShellSnapshot } from "./ShellStream.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -1284,6 +1286,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
 it.effect("SQL list older settled threads below a cursor", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
     const id = (name: string) => ThreadId.make(`thread:older:${name}`);
     const at = (day: number) => DateTime.makeUnsafe(Date.UTC(2026, 9, day));
@@ -1294,6 +1297,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
       readonly subagent?: boolean;
       readonly archived?: boolean;
       readonly snoozedUntilDay?: number;
+      readonly pendingMagiRunId?: MagiRunId;
     }) =>
       store.apply({
         id: EventId.make(`event:older:${input.name}`),
@@ -1306,6 +1310,7 @@ it.effect("SQL list older settled threads below a cursor", () =>
           id: id(input.name),
           projectId: ProjectId.make(input.project ?? "project:a"),
           title: input.name,
+          pendingMagiRunId: input.pendingMagiRunId ?? null,
           providerInstanceId,
           modelSelection,
           runtimeMode: "full-access",
@@ -1372,6 +1377,66 @@ it.effect("SQL list older settled threads below a cursor", () =>
       threadIds: [],
       counts: [{ projectId: ProjectId.make("project:b"), count: 1 }],
     });
+
+    for (let index = 0; index < 25; index++) {
+      yield* createThread({ name: `newest-${index}`, settledDay: 25 });
+    }
+    for (const subagent of [false, true]) {
+      yield* createThread({
+        name: subagent ? "magi-child" : "magi-owner",
+        settledDay: 1,
+        subagent,
+        pendingMagiRunId: MagiRunId.make("magi:pending"),
+      });
+    }
+    yield* assertShellIndexCoversShells();
+    for (const pendingMagiRunId of [
+      MagiRunId.make("magi:pending"),
+      null,
+      MagiRunId.make("magi:resumed"),
+    ]) {
+      for (const name of ["magi-owner", "magi-child"]) {
+        const thread = yield* store.getThread(id(name));
+        yield* store.apply({
+          id: EventId.make(`event:older:${name}:${pendingMagiRunId ?? "cleared"}`),
+          type: "thread.metadata-updated",
+          threadId: thread.id,
+          occurredAt: now,
+          payload: { ...thread, pendingMagiRunId },
+        });
+      }
+      const { snapshot } = yield* loadSubscriberShellSnapshot({
+        sql,
+        listShellIndex: store.listActiveShellIndex(),
+        readThreads: (threadIds) =>
+          store.readShellSnapshot({
+            location: "active",
+            ...(threadIds === undefined ? {} : { threadIds }),
+          }),
+        listProjects: Effect.succeed([]),
+        latestSequence: Effect.succeed(0),
+        options: { omitIdleSubagents: true, omitOlderSettled: true },
+      });
+      for (const name of ["magi-owner", "magi-child"]) {
+        const shell = snapshot.threads.find((thread) => thread.id === id(name));
+        assert.equal(shell !== undefined, pendingMagiRunId !== null);
+        if (shell !== undefined) {
+          assert.isNull(shell.activeRunId);
+          assert.deepEqual(shell.pendingBackgroundTasks, [
+            {
+              taskId: `magi:${pendingMagiRunId}`,
+              kind: "monitor",
+              description: "Waiting on Magi",
+              awaited: true,
+            },
+          ]);
+        }
+      }
+      assert.notInclude(
+        snapshot.threads.map((thread) => thread.id),
+        id("d"),
+      );
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 
