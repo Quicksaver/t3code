@@ -518,8 +518,8 @@ it.effect("checkpoints an attached archive while the main database is idle", () 
         const fs = yield* FileSystem.FileSystem;
         const archive = path.join(path.dirname(filename), "archive.sqlite");
         const worker = startedWorkers.at(-1)!;
-        // The worker must observe the empty archive before the writer enables WAL.
         yield* checkpointWorkerReply(worker);
+        assert.isFalse(yield* fs.exists(archive));
         yield* sql`CREATE TABLE main_probe(value TEXT)`;
         yield* sql`INSERT INTO main_probe VALUES ('kept')`;
         yield* checkpointWorkerReply(worker);
@@ -559,17 +559,20 @@ it.effect("keeps checkpointing after a transient archive schema lock", () =>
     (sql, filename) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
         const archive = path.join(path.dirname(filename), "archive.sqlite");
         const worker = startedWorkers.at(-1)!;
         yield* checkpointWorkerReply(worker);
-        const lock = yield* Effect.acquireRelease(
-          Effect.sync(() => new NodeSqlite.DatabaseSync(archive)),
-          (db) => Effect.sync(() => db.close()),
-        );
-        lock.exec("BEGIN EXCLUSIVE");
-        // The worker must reply while the rollback-mode read is still blocked.
-        yield* checkpointWorkerReply(worker);
-        lock.exec("ROLLBACK");
+        yield* Effect.gen(function* () {
+          const lock = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(archive)),
+            (db) => Effect.sync(() => db.close()),
+          );
+          lock.exec("BEGIN EXCLUSIVE");
+          yield* checkpointWorkerReply(worker);
+          lock.exec("ROLLBACK");
+        }).pipe(Effect.scoped);
+        yield* fs.remove(archive);
         const backstop = yield* sql<{ readonly wal_autocheckpoint: number }>`
           PRAGMA wal_autocheckpoint
         `;
