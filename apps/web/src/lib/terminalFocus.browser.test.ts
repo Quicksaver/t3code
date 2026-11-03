@@ -1,13 +1,16 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   consumePendingTerminalFocus,
+  focusActivePanelTerminal,
   focusTerminal,
   focusTerminalViewport,
   registerTerminalFocusTarget,
 } from "./terminalFocus";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 
 // The drawer's collapsed shape: a 0fr grid row that clips the viewport, which
 // stays focusable, around a surface whose input refuses focus while hidden.
@@ -40,6 +43,53 @@ function mountClippedViewport() {
 }
 
 describe("focusTerminalViewport", () => {
+  it.each(["launch", "split"] as const)(
+    "focuses the destination viewport after a remote action %s, even with a colliding source id",
+    async (operation) => {
+      const source = scopeThreadRef(EnvironmentId.make("source"), ThreadId.make(operation));
+      const destination = {
+        environmentId: EnvironmentId.make("destination"),
+        projectId: ProjectId.make(operation),
+        projectCwd: "/destination",
+        environmentLabel: "Mac",
+        label: "Run on Mac",
+      };
+      const target = scopeThreadRef(destination.environmentId, projectActionThreadId(destination));
+      const panel = useRightPanelStore.getState();
+      panel.openTerminal(source, "action", destination);
+      const terminalId = operation === "split" ? "split" : "action";
+      if (operation === "split") {
+        const { activeSurfaceId } = selectThreadRightPanelState(
+          useRightPanelStore.getState().byThreadKey,
+          source,
+        );
+        panel.splitTerminal(source, activeSurfaceId!, terminalId);
+      }
+      using localViewport = mountClippedViewport();
+      localViewport.state.visible = true;
+      using _local = {
+        [Symbol.dispose]: registerTerminalFocusTarget({
+          threadRef: source,
+          terminalId,
+          focus: localViewport.focus,
+        }),
+      };
+
+      focusActivePanelTerminal(source);
+
+      using destinationViewport = mountClippedViewport();
+      destinationViewport.state.visible = true;
+      using _destination = {
+        [Symbol.dispose]: registerTerminalFocusTarget({
+          threadRef: target,
+          terminalId,
+          focus: destinationViewport.focus,
+        }),
+      };
+      await expect.element(destinationViewport.input).toHaveFocus();
+    },
+  );
+
   it("keeps a request made while the drawer is hidden until it shows", () => {
     const ref = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("hidden-drawer"));
     using viewport = mountClippedViewport();

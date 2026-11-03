@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
@@ -49,7 +50,8 @@ vi.mock("../state/use-atom-command", () => ({
       input: { threadId: string; terminalId: string; data?: string };
     }) => {
       const key = `${request.environmentId}/${request.input.threadId}/${request.input.terminalId}`;
-      if (label === "terminal close" && fixture.failClose) return { _tag: "Failure" };
+      if (label === "terminal close" && fixture.failClose)
+        return { _tag: "Failure", cause: Cause.fail(new Error("Terminal close failed")) };
       if (label === "terminal close" || label === "terminal write") fixture.sessions.delete(key);
       return { _tag: "Success" };
     },
@@ -59,9 +61,6 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  isAtomCommandInterrupted: () => false,
-}));
 
 function setup() {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
