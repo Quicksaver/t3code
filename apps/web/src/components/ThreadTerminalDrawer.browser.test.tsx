@@ -29,6 +29,7 @@ const fixture = vi.hoisted(() => ({
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
+  setPrimaryKeybindings: (_keybindings: ResolvedKeybindingsConfig) => {},
   writes: [] as Array<{ threadId: string; data: string; expectedPid?: number }>,
   messages: [] as string[],
   resetSessions: () => {},
@@ -206,7 +207,13 @@ vi.mock("../state/use-atom-command", () => ({
 vi.mock("../state/server", async () => {
   const Atom = await import("effect/reactivity/Atom");
   const config = Atom.make(null);
-  return { serverEnvironment: { configValueAtom: () => config } };
+  const primaryKeybindings = Atom.make<ResolvedKeybindingsConfig>([]).pipe(Atom.keepAlive);
+  fixture.setPrimaryKeybindings = (keybindings) =>
+    appAtomRegistry.set(primaryKeybindings, keybindings);
+  return {
+    primaryServerKeybindingsAtom: primaryKeybindings,
+    serverEnvironment: { configValueAtom: () => config },
+  };
 });
 vi.mock("../state/terminal", () => ({
   terminalEnvironment: {
@@ -284,6 +291,7 @@ function Drawer(props: {
 
 function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.resetSessions();
+  fixture.setPrimaryKeybindings([]);
   const original: ScopedThreadRef = {
     environmentId: EnvironmentId.make(`environment-a-${expect.getState().currentTestName}`),
     threadId: ThreadId.make("thread-a"),
@@ -390,6 +398,30 @@ it("hands thread navigation shortcuts from a focused terminal back to the app", 
     true,
     true,
   ]);
+});
+
+it("uses app cycle bindings and leaves destination-only cycle chords to the shell", async () => {
+  const { other: threadRef } = setup();
+  fixture.setPrimaryKeybindings(
+    compileResolvedKeybindingsConfig([{ key: "ctrl+y", command: "terminal.next" }]),
+  );
+  await using _screen = await render(
+    <Drawer
+      threadRef={threadRef}
+      onCloseTerminal={() => {}}
+      keybindings={compileResolvedKeybindingsConfig([{ key: "ctrl+e", command: "terminal.next" }])}
+    />,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const terminalHandles = (key: string, code: string) =>
+    fixture.surfaceOptions
+      .at(-1)!
+      .beforeKey(new KeyboardEvent("keydown", { key, code, ctrlKey: true }));
+
+  expect(terminalHandles("e", "KeyE")).toBe(true);
+  expect(terminalHandles("y", "KeyY")).toBe(false);
 });
 
 it("only activates terminal paths confirmed to exist on their environment", async () => {

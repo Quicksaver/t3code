@@ -1,13 +1,38 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { expect, it, vi } from "vite-plus/test";
 
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import { readProject } from "../state/entities";
+import { readEnvironmentScope } from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cycleThreadTerminal } from "./cycleThreadTerminal";
 import { registerTerminalFocusTarget } from "./terminalFocus";
 
+vi.mock("../state/entities", () => ({ readProject: vi.fn() }));
+vi.mock("../state/session", () => ({ readEnvironmentScope: vi.fn() }));
+
+const destination = {
+  environmentId: EnvironmentId.make("remote"),
+  environmentLabel: "Remote",
+  projectId: ProjectId.make("project"),
+  projectCwd: "/remote/project",
+  label: "Remote action",
+};
+
 function setup() {
+  vi.mocked(readEnvironmentScope).mockReturnValue(true);
+  vi.mocked(readProject).mockReturnValue({
+    environmentId: destination.environmentId,
+    id: destination.projectId,
+    title: "Remote project",
+    workspaceRoot: destination.projectCwd,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
   useTerminalUiStateStore.setState({
     terminalUiStateByThreadKey: {},
     suppressedTerminalIdsByThreadKey: {},
@@ -91,3 +116,80 @@ it("cycles panel terminal surfaces and splits without changing the drawer", () =
   panels.close(ref);
   expect(cycleThreadTerminal(ref, "right-panel", "next")).toBe(false);
 });
+
+it("cycles local and destination-owned terminals with a shared pane ID", () => {
+  const thread = setup();
+  const remote = scopeThreadRef(destination.environmentId, projectActionThreadId(destination));
+  const panels = useRightPanelStore.getState();
+  panels.openTerminal(thread, "shared");
+  panels.openTerminal(thread, "action", destination);
+  panels.splitTerminal(thread, "terminal:action", "shared");
+  panels.activateSurface(thread, "terminal:shared");
+
+  let focused: [typeof thread, string] | undefined;
+  const targets = [
+    [thread, "shared"],
+    [remote, "action"],
+    [remote, "shared"],
+  ] as const;
+  const unregister = targets.map(([threadRef, terminalId]) =>
+    registerTerminalFocusTarget({
+      threadRef,
+      terminalId,
+      focus: () => {
+        focused = [threadRef, terminalId];
+        return true;
+      },
+    }),
+  );
+  try {
+    for (const expected of [
+      [remote, "action"],
+      [remote, "shared"],
+      [thread, "shared"],
+    ]) {
+      expect(cycleThreadTerminal(thread, "right-panel", "next")).toBe(true);
+      expect(focused).toEqual(expected);
+    }
+    panels.activateSurface(thread, "terminal:action");
+    vi.mocked(readEnvironmentScope).mockImplementation(
+      (environmentId) => environmentId === destination.environmentId,
+    );
+    expect(cycleThreadTerminal(thread, "right-panel", "next")).toBe(true);
+    expect(focused).toEqual([remote, "action"]);
+    expect(cycleThreadTerminal(thread, "right-panel", "previous")).toBe(true);
+    expect(focused).toEqual([remote, "shared"]);
+  } finally {
+    for (const dispose of unregister) dispose();
+  }
+});
+
+it.each(["missing grant", "missing project"])(
+  "cycles past a saved destination terminal with a %s",
+  (unavailable) => {
+    const thread = setup();
+    const panels = useRightPanelStore.getState();
+    panels.openTerminal(thread, "before");
+    panels.openTerminal(thread, "action", destination);
+    panels.openTerminal(thread, "after");
+    panels.activateSurface(thread, "terminal:before");
+    if (unavailable === "missing grant") {
+      vi.mocked(readEnvironmentScope).mockImplementation(
+        (environmentId) => environmentId !== destination.environmentId,
+      );
+    } else {
+      vi.mocked(readProject).mockReturnValue(null);
+    }
+    const active = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, thread)
+        .activeSurfaceId;
+
+    expect(cycleThreadTerminal(thread, "right-panel", "next")).toBe(true);
+    expect(active()).toBe("terminal:after");
+    expect(cycleThreadTerminal(thread, "right-panel", "previous")).toBe(true);
+    expect(active()).toBe("terminal:before");
+    panels.activateSurface(thread, "terminal:action");
+    expect(cycleThreadTerminal(thread, "right-panel", "next")).toBe(true);
+    expect(active()).toBe("terminal:after");
+  },
+);

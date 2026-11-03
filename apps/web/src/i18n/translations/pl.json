@@ -13169,5 +13169,7 @@
   "236911500e5aff7c": "Agenci ciągle czekają, aż system zwolni pamięć.",
   "81aafe06d7fede9a": "Miejsce, w którym T3 Code trzyma dane i worktree",
   "9429f8ff8866edac": "CPU",
-  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno."
+  "79a21371b8db96da": "Praca czeka na wolny procesor lub na dysk, więc agenci działają wolno.",
+  "b5927127e289c0a8": "Nie udało się uruchomić {name} w środowisku {environment}",
+  "c62a0c9e2a477626": "Z {source}"
 }

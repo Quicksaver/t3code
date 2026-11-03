@@ -27,6 +27,10 @@
       "types": "./src/zip/zipErrorMessages.ts",
       "default": "./src/zip/zipErrorMessages.ts"
     },
+    "./project-actions": {
+      "types": "./src/projectActions.ts",
+      "default": "./src/projectActions.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"

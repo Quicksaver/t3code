@@ -1,3 +1,5 @@
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { terminalEnvironment } from "../state/terminal";
 import {
   AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
@@ -38,6 +40,7 @@ export function useRightPanelSurfaceClose(input: {
   readonly terminalLabelsById: ReadonlyMap<string, string>;
 }) {
   const { threadRef, terminalLabelsById } = input;
+  const closeRemoteTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const deleteThread = useAtomCommand(threadEnvironment.delete, "side chat delete");
   const canOperatePreview = useEnvironmentScope(
@@ -63,11 +66,25 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind === "terminal" &&
-      readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
+      readEnvironmentScope(
+        surface.actionTarget?.environmentId ?? ref.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId, ref);
+        if (surface.actionTarget) {
+          void closeRemoteTerminal({
+            environmentId: surface.actionTarget.environmentId,
+            input: {
+              threadId: projectActionThreadId(surface.actionTarget),
+              terminalId,
+              deleteHistory: true,
+            },
+          });
+        } else {
+          storeCloseTerminal(ref, terminalId);
+          terminalActions.closeTerminalSession(terminalId, ref);
+        }
       }
     }
     if (
@@ -117,7 +134,10 @@ export function useRightPanelSurfaceClose(input: {
       () => undefined,
     );
   };
-  const finishClose = (toClose: readonly RightPanelSurface[]) => {
+  const finishClose = (
+    toClose: readonly RightPanelSurface[],
+    terminalSurfaceIdsToRelease?: ReadonlySet<string>,
+  ) => {
     if (!threadRef) return;
     const store = useRightPanelStore.getState();
     const { activeSurfaceId, surfaces } = selectThreadRightPanelState(store.byThreadKey, threadRef);
@@ -134,7 +154,13 @@ export function useRightPanelSurfaceClose(input: {
       (left, right) => Number(left.id === activeSurfaceId) - Number(right.id === activeSurfaceId),
     );
     for (const surface of releaseOrder) {
-      releaseSurfaceResources(threadRef, surface);
+      if (
+        surface.kind !== "terminal" ||
+        !terminalSurfaceIdsToRelease ||
+        terminalSurfaceIdsToRelease.has(surface.id)
+      ) {
+        releaseSurfaceResources(threadRef, surface);
+      }
     }
     const nextActiveSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
@@ -150,18 +176,27 @@ export function useRightPanelSurfaceClose(input: {
   const closeSurfaces = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     closeAfterAgentBrowserConfirmation(toClose, () => {
-      const labels = readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
-        ? toClose.flatMap((surface) =>
-            surface.kind === "terminal" ? surface.terminalIds.map(labelFor) : [],
+      const terminalSurfaceIdsToRelease = new Set<string>();
+      const labels = toClose.flatMap((surface) => {
+        if (
+          surface.kind !== "terminal" ||
+          !readEnvironmentScope(
+            surface.actionTarget?.environmentId ?? threadRef.environmentId,
+            AuthTerminalOperateScope,
           )
-        : [];
+        ) {
+          return [];
+        }
+        terminalSurfaceIdsToRelease.add(surface.id);
+        return surface.terminalIds.map((id) => surface.actionTarget?.label ?? labelFor(id));
+      });
       const [first, ...rest] = labels;
       if (first === undefined) {
-        finishClose(toClose);
+        finishClose(toClose, terminalSurfaceIdsToRelease);
         return;
       }
       void confirmTerminalClose([first, ...rest]).then((confirmed) => {
-        if (confirmed) finishClose(toClose);
+        if (confirmed) finishClose(toClose, terminalSurfaceIdsToRelease);
       });
     });
   };
@@ -174,19 +209,23 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind !== "terminal" ||
-      !readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      !readEnvironmentScope(
+        surface.actionTarget?.environmentId ?? threadRef.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       finishClose([surface]);
       return;
     }
     const otherLabels = surface.terminalIds
       .filter((terminalId) => terminalId !== surface.activeTerminalId)
-      .map(labelFor);
-    void confirmTerminalClose([labelFor(surface.activeTerminalId), ...otherLabels]).then(
-      (confirmed) => {
-        if (confirmed) finishClose([surface]);
-      },
-    );
+      .map((id) => surface.actionTarget?.label ?? labelFor(id));
+    void confirmTerminalClose([
+      surface.actionTarget?.label ?? labelFor(surface.activeTerminalId),
+      ...otherLabels,
+    ]).then((confirmed) => {
+      if (confirmed) finishClose([surface]);
+    });
   });
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
     closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),

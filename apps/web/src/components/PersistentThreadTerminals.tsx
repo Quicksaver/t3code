@@ -1,3 +1,6 @@
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../state/server";
 import {
   AuthTerminalOperateScope,
   type EnvironmentId,
@@ -263,10 +266,10 @@ export interface PersistentThreadTerminalPanelProps {
 
 export const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
   visible,
-  threadRef,
+  threadRef: ownerRef,
   surface,
-  launchContext,
-  keybindings,
+  launchContext: ownerLaunchContext,
+  keybindings: ownerKeybindings,
   onAddTerminalContext,
   onSplitTerminal,
   onSplitTerminalVertical,
@@ -279,13 +282,28 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
   const messages = useMessages();
+  const target = surface.actionTarget;
+  const threadRef = target
+    ? { environmentId: target.environmentId, threadId: projectActionThreadId(target) }
+    : ownerRef;
+  const launchContext = target
+    ? { cwd: target.projectCwd, worktreePath: null }
+    : ownerLaunchContext;
+  const destinationConfig = useAtomValue(
+    serverEnvironment.configValueAtom(threadRef.environmentId),
+  );
+  const keybindings = target
+    ? (destinationConfig?.keybindings ?? ownerKeybindings)
+    : ownerKeybindings;
   const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  const projectRef = serverThread
-    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-    : draftThread
-      ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-      : null;
+  const projectRef = target
+    ? scopeProjectRef(target.environmentId, target.projectId)
+    : serverThread
+      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+      : draftThread
+        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+        : null;
   const project = useProject(projectRef);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
@@ -313,7 +331,10 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     const summary =
       knownTerminalSessions?.find((session) => session.target.terminalId === terminalId)?.state
         .summary ?? null;
-    terminalLabelsById.set(terminalId, resolveTerminalSessionLabel(terminalId, summary, messages));
+    terminalLabelsById.set(
+      terminalId,
+      target?.label ?? resolveTerminalSessionLabel(terminalId, summary, messages),
+    );
     if (!project) continue;
     const terminalWorktreePath = resolveTerminalWorktreePath({
       launchContext,
@@ -366,7 +387,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       newShortcutLabel={newShortcutLabel}
       closeShortcutLabel={closeShortcutLabel}
       onActiveTerminalChange={onActiveTerminalChange}
-      onCloseTerminal={onCloseTerminal}
+      onCloseTerminal={(terminalId) => onCloseTerminal(terminalId, ownerRef)}
       onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}

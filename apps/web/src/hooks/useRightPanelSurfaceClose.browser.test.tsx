@@ -1,5 +1,6 @@
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import * as Cause from "effect/Cause";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { useClosedViewStore } from "../closedViewStore";
@@ -58,7 +59,8 @@ vi.mock("../state/use-atom-command", () => ({
       input: { threadId: string; terminalId: string; data?: string };
     }) => {
       const key = `${request.environmentId}/${request.input.threadId}/${request.input.terminalId}`;
-      if (label === "terminal close" && fixture.failClose) return { _tag: "Failure" };
+      if (label === "terminal close" && fixture.failClose)
+        return { _tag: "Failure", cause: Cause.fail(new Error("Terminal close failed")) };
       if (label === "terminal close" || label === "terminal write") fixture.sessions.delete(key);
       return { _tag: "Success" };
     },
@@ -68,11 +70,8 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  isAtomCommandInterrupted: () => false,
-}));
 
-function setup(mode: "single" | "all") {
+function setup(mode: "single" | "all" | "selected") {
   fixture.allowed = new Set(["environment-a", "environment-b"]);
   fixture.sessions = new Map();
   fixture.failClose = false;
@@ -98,15 +97,20 @@ function setup(mode: "single" | "all") {
   });
   fixture.confirm = () => confirmation;
   function Harness({ threadRef }: { threadRef: ScopedThreadRef }) {
-    const { closeSurface, closeAllSurfaces } = useRightPanelSurfaceClose({
+    const { closeSurface, closeAllSurfaces, closeSelectedSurfaces } = useRightPanelSurfaceClose({
       threadRef,
       terminalLabelsById: new Map(),
     });
-    return (
-      <button onClick={() => (mode === "all" ? closeAllSurfaces() : closeSurface(surface))}>
-        Close original terminal
-      </button>
-    );
+    const close = () => {
+      if (mode === "single") return closeSurface(surface);
+      if (mode === "all") return closeAllSurfaces();
+      const { surfaces } = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        threadRef,
+      );
+      closeSelectedSurfaces(surfaces.filter((entry) => entry.kind === "terminal"));
+    };
+    return <button onClick={close}>Close original terminal</button>;
   }
   return { original, other, Harness, resolve };
 }
@@ -228,3 +232,45 @@ it("does not offer a side chat for reopen once closing it deleted it", async () 
     fixture.shells = new Map();
   }
 });
+
+it.each([
+  { mode: "selected", listed: "destination", listedLabel: "Run · Destination" },
+  { mode: "all", listed: "conversation", listedLabel: "Terminal 1" },
+] as const)(
+  "only releases the $listed terminal listed for $mode close when the other grant arrives",
+  async ({ mode, listed, listedLabel }) => {
+    const { original, other, Harness, resolve } = setup(mode);
+    const projectId = ProjectId.make("destination-project");
+    const destinationSession = `${other.environmentId}/project-actions:${projectId}/action-1`;
+    const initiallyDenied = listed === "destination" ? original.environmentId : other.environmentId;
+    fixture.allowed.delete(initiallyDenied);
+    fixture.sessions.set(destinationSession, "destination history");
+    useRightPanelStore.getState().openTerminal(original, "action-1", {
+      environmentId: other.environmentId,
+      environmentLabel: "Destination",
+      label: "Run · Destination",
+      projectId,
+      projectCwd: "/destination",
+    });
+    if (mode === "selected") useRightPanelStore.getState().openFile(original, "keep.txt");
+    const confirm = vi.fn(fixture.confirm);
+    fixture.confirm = confirm;
+
+    await using screen = await render(<Harness threadRef={original} />);
+    await screen.getByRole("button").click();
+    expect(confirm).toHaveBeenCalledExactlyOnceWith([listedLabel]);
+    expect(fixture.sessions.size).toBe(3);
+    fixture.allowed.add(initiallyDenied);
+    await act(async () => {
+      resolve(true);
+    });
+    expect(fixture.sessions.has("environment-a/thread-a/term-1")).toBe(listed === "destination");
+    expect(fixture.sessions.has(destinationSession)).toBe(listed === "conversation");
+    expect(fixture.sessions.get("environment-b/thread-b/term-1")).toBe("history to preserve");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original).surfaces.map(
+        (entry) => entry.kind,
+      ),
+    ).toEqual(mode === "selected" ? ["file"] : []);
+  },
+);

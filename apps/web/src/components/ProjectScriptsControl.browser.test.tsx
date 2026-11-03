@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
@@ -15,6 +15,8 @@ it.each(["edit", "dismiss", "newer import fails first"] as const)(
     await using screen = await render(
       <ProjectScriptsControl
         environmentId={EnvironmentId.make("test")}
+        projectId={ProjectId.make("test-project")}
+        threadId={ThreadId.make("test-thread")}
         displayMode="panel"
         scripts={[
           {
