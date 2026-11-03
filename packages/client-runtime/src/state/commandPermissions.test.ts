@@ -14,6 +14,7 @@ import {
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
   AuthProvidersManageScope,
+  AuthTerminalOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -99,6 +100,35 @@ describe("command permissions", () => {
         "EnvironmentAuthorizationError",
       );
     }),
+  );
+
+  it.effect("requires the destination grant for project action terminal operations", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthTerminalOperateScope],
+            permissions: [AuthTerminalOperateScope],
+          }),
+        );
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        for (const method of [
+          WS_METHODS.terminalOpen,
+          WS_METHODS.terminalWrite,
+          WS_METHODS.terminalClose,
+        ]) {
+          const terminal = createCommandPermissions(runtime, method);
+          expect(registry.get(terminal.permissionAtom(env))).toBe(true);
+          yield* terminal.authorize(registry, env);
+          expect(registry.get(terminal.permissionAtom(other))).toBe(false);
+          const denied = yield* terminal.authorize(registry, other).pipe(Effect.flip);
+          expect(denied._tag).toBe("EnvironmentAuthorizationError");
+        }
+      }),
+    ),
   );
 
   it.effect("requires the destination preview grant to close a browser tab", () =>

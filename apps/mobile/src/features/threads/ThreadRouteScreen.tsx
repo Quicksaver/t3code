@@ -1,3 +1,4 @@
+import { useRemoteProjectActions } from "./useRemoteProjectActions";
 import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -793,7 +794,10 @@ function ThreadRouteContent(
       terminalId: targetTerminalId,
     });
   };
+  const remoteProjectActions = useRemoteProjectActions(selectedThreadProject);
   const threadGitControlProps = {
+    remoteProjectActionGroups: remoteProjectActions.groups,
+    onRunRemoteProjectAction: remoteProjectActions.run,
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
     onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,

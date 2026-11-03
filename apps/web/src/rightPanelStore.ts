@@ -1,3 +1,4 @@
+import type { ProjectActionDestination } from "@t3tools/client-runtime/project-actions";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
@@ -44,6 +45,7 @@ export type RightPanelSurface =
       resourceId: string;
       terminalIds: string[];
       activeTerminalId: string;
+      actionTarget?: ProjectActionDestination & { label: string };
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
@@ -162,7 +164,11 @@ interface RightPanelStoreState {
   ) => void;
   /** Clears the surface's pending link only while it is still `revealUrl`. */
   settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
-  openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  openTerminal: (
+    ref: ScopedThreadRef,
+    terminalId: string,
+    actionTarget?: ProjectActionDestination & { label: string },
+  ) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -551,6 +557,21 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     ) {
                       return [];
                     }
+                    const target = surface.actionTarget;
+                    if (
+                      target !== undefined &&
+                      (target === null ||
+                        typeof target !== "object" ||
+                        typeof target.environmentId !== "string" ||
+                        !target.environmentId ||
+                        typeof target.environmentLabel !== "string" ||
+                        typeof target.projectId !== "string" ||
+                        !target.projectId ||
+                        typeof target.projectCwd !== "string" ||
+                        !target.projectCwd ||
+                        typeof target.label !== "string")
+                    )
+                      return [];
                     const terminalIds =
                       "terminalIds" in surface && Array.isArray(surface.terminalIds)
                         ? [
@@ -882,10 +903,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         ),
-      openTerminal: (ref, terminalId) =>
+      openTerminal: (ref, terminalId, actionTarget) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, terminalSurface(terminalId)),
+            upsertSurface(current, {
+              ...terminalSurface(terminalId),
+              ...(actionTarget ? { actionTarget } : {}),
+            }),
           ),
         ),
       splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
