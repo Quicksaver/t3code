@@ -31,7 +31,15 @@ const { StackRouter, StackActions, CommonActions } = requireNavigation(
 
 type Action = Parameters<ReturnType<typeof StackRouter>["getStateForAction"]>[1];
 
-function setup(fallbackTerminalId: string | null) {
+function setup(
+  fallbackTerminalId: string | null,
+  terminalTarget: {
+    environmentId: string;
+    threadId: string;
+    projectActionProjectId?: string;
+    projectActionLabel?: string;
+  } = thread,
+) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const router = StackRouter({});
   const options = {
@@ -47,7 +55,7 @@ function setup(fallbackTerminalId: string | null) {
   };
   const thread = { environmentId: "environment", threadId: "thread" };
   apply(StackActions.replace("Thread", thread));
-  apply(StackActions.push("ThreadTerminal", { ...thread, terminalId: "second" }));
+  apply(StackActions.push("ThreadTerminal", { ...terminalTarget, terminalId: "second" }));
   const terminalKey = state.routes.at(-1)!.key;
   const focusListeners = new Set<() => void>();
   // A screen's navigation object stamps its route as the source but leaves the
@@ -66,7 +74,7 @@ function setup(fallbackTerminalId: string | null) {
   let exitNavigation!: ReturnType<typeof useTerminalExitNavigation>;
   function Probe() {
     const value = useTerminalExitNavigation({
-      ...thread,
+      ...terminalTarget,
       readFallbackTerminalId: () => fallbackTerminalId,
     });
     useLayoutEffect(() => {
@@ -89,6 +97,31 @@ function setup(fallbackTerminalId: string | null) {
 }
 
 const thread = { environmentId: "environment", threadId: "thread" };
+
+it.each([false, true])(
+  "keeps destination project metadata when falling back after an exit, backgrounded=%s",
+  (backgrounded) => {
+    const destination = {
+      environmentId: "destination",
+      threadId: "project-actions:remote-project",
+      projectActionProjectId: "remote-project",
+      projectActionLabel: "Build · Mac",
+    };
+    using screen = setup("first", destination);
+    if (backgrounded) screen.openFiles();
+
+    screen.exitNavigation.exited();
+    if (backgrounded) {
+      expect(screen.routes().at(-1)).toEqual(["ThreadFiles", thread]);
+      screen.returnToTerminal();
+    }
+
+    expect(screen.routes()).toEqual([
+      ["Thread", thread],
+      ["ThreadTerminal", { ...destination, terminalId: "first" }],
+    ]);
+  },
+);
 
 it("leaves the screen on top alone when a terminal behind it exits, then goes back on return", () => {
   using screen = setup(null);
