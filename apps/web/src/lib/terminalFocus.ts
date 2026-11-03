@@ -1,7 +1,12 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 
 export type TerminalFocusOwner = "drawer" | "right-panel";
@@ -92,12 +97,21 @@ export function focusActiveDrawerTerminal(threadRef: ScopedThreadRef): void {
 
 /** Focuses the active terminal of the right panel when it shows a terminal surface. */
 export function focusActivePanelTerminal(threadRef: ScopedThreadRef): void {
+  const panelRef = rightPanelHostRef(threadRef);
   const { isOpen, activeSurfaceId, surfaces } = selectThreadRightPanelState(
     useRightPanelStore.getState().byThreadKey,
-    threadRef,
+    panelRef,
   );
   const surface = isOpen ? surfaces.find((candidate) => candidate.id === activeSurfaceId) : null;
-  if (surface?.kind === "terminal") focusTerminal(threadRef, surface.activeTerminalId);
+  if (surface?.kind === "terminal") {
+    const target = surface.actionTarget;
+    focusTerminal(
+      target
+        ? { environmentId: target.environmentId, threadId: projectActionThreadId(target) }
+        : panelRef,
+      surface.activeTerminalId,
+    );
+  }
 }
 
 /**

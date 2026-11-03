@@ -17,6 +17,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { projectScriptTerminalInput } from "@t3tools/shared/projectScripts";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
 import { type SetStateAction } from "react";
 import {
   isAtomCommandInterrupted,
@@ -118,6 +119,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const terminalActions = useThreadTerminalActions(activeThreadRef);
+  const panelActionTarget =
+    activeRightPanelSurface?.kind === "terminal" ? activeRightPanelSurface.actionTarget : undefined;
+  const panelTerminalActions = useThreadTerminalActions(activeThreadRef, panelActionTarget);
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -329,12 +333,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const runShellCommandStable = useStableCallback(runShellCommand);
   const addTerminalSurface = () => {
     if (!activeThreadRef) return;
-    const launched = terminalActions.launchTerminal({
+    const launched = panelTerminalActions.launchTerminal({
       place: (terminalId) =>
-        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId),
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, panelActionTarget),
     });
     if (!launched) return;
-    focusTerminal(activeThreadRef, launched.terminalId);
+    focusActivePanelTerminal(activeThreadRef);
     void launched.result;
   };
   const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
@@ -347,14 +351,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
     const surfaceId = activeRightPanelSurface.id;
-    const launched = terminalActions.launchTerminal({
+    const launched = panelTerminalActions.launchTerminal({
       place: (terminalId) =>
         useRightPanelStore
           .getState()
           .splitTerminal(activeThreadRef, surfaceId, terminalId, direction),
     });
     if (!launched) return;
-    focusTerminal(activeThreadRef, launched.terminalId);
+    focusActivePanelTerminal(activeThreadRef);
     void launched.result;
   };
   const splitPanelTerminalStable = useStableCallback(splitPanelTerminal);
@@ -367,18 +371,23 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     useRightPanelStore
       .getState()
       .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-    focusTerminal(activeThreadRef, terminalId);
+    focusActivePanelTerminal(activeThreadRef);
   };
   const activatePanelTerminalStable = useStableCallback(activatePanelTerminal);
   const closePanelTerminal = (terminalId: string, target = activeThreadRef) => {
-    if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
+    if (!target) return;
     const store = useRightPanelStore.getState();
     const surface = selectThreadRightPanelState(store.byThreadKey, target).surfaces.find(
       (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
     );
-    if (!surface) return;
-    terminalActions.closeTerminalSession(terminalId, target);
-    storeCloseTerminal(target, terminalId);
+    if (surface?.kind !== "terminal") return;
+    const destination = surface.actionTarget;
+    const terminalRef = destination
+      ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
+      : target;
+    if (!readEnvironmentScope(terminalRef.environmentId, AuthTerminalOperateScope)) return;
+    terminalActions.closeTerminalSession(terminalId, terminalRef);
+    if (!destination) storeCloseTerminal(target, terminalId);
     store.closeTerminal(target, surface.id, terminalId);
     focusActivePanelTerminal(target);
   };
@@ -394,10 +403,13 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const requestCloseTerminalStable = useStableCallback(requestCloseTerminal);
   const requestClosePanelTerminal = (terminalId: string) => {
-    if (!hasTerminalWriteAccess()) return;
-    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    if (!panelTerminalActions.canWrite()) return;
+    const label =
+      panelActionTarget?.label ??
+      activeTerminalLabelsById.get(terminalId) ??
+      getTerminalLabel(terminalId);
     void confirmTerminalClose([label]).then((confirmed) => {
-      if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
+      if (confirmed && panelTerminalActions.canWrite()) {
         closePanelTerminal(terminalId);
       }
     });
@@ -418,19 +430,34 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       toggleTerminalVisibility();
     },
     "terminal.split": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal();
       openTerminalIfClosed();
       splitTerminal();
     },
     "terminal.splitVertical": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void splitPanelTerminal("vertical");
       openTerminalIfClosed();
       splitTerminal("vertical");
     },
     "terminal.close": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
         requestClosePanelTerminal(activeRightPanelSurface.activeTerminalId);
         return;
@@ -438,7 +465,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       if (terminalUiState.terminalOpen) requestCloseTerminal(terminalUiState.activeTerminalId);
     },
     "terminal.new": ({ terminalFocusOwner }) => {
-      if (!hasTerminalWriteAccess()) return false;
+      if (
+        terminalFocusOwner === "right-panel"
+          ? !panelTerminalActions.canWrite()
+          : !hasTerminalWriteAccess()
+      )
+        return false;
       if (terminalFocusOwner === "right-panel") return void addTerminalSurface();
       openTerminalIfClosed();
       createNewTerminal();

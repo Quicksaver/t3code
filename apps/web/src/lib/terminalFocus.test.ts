@@ -1,8 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  hostRightPanel,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   consumePendingTerminalFocus,
@@ -258,25 +263,49 @@ describe("focusTerminal", () => {
     unregisterDrawer();
   });
 
-  it("focuses the panel terminal a closed surface falls back to", () => {
-    const ref = threadRef("panel-fallback");
-    const panel = useRightPanelStore.getState();
-    panel.openTerminal(ref, "a");
-    panel.open(ref, "diff");
-    const { activeSurfaceId: diffSurfaceId } = selectThreadRightPanelState(
-      useRightPanelStore.getState().byThreadKey,
-      ref,
-    );
-    const focus = vi.fn(() => true);
-    const unregister = registerTerminalFocusTarget({ threadRef: ref, terminalId: "a", focus });
-    expect(diffSurfaceId).not.toBeNull();
+  it.each(["local", "remote", "hosted-remote"])(
+    "focuses the %s panel terminal a closed surface falls back to",
+    (kind) => {
+      const ref = threadRef(`panel-fallback-${kind}`);
+      const host = kind === "hosted-remote" ? threadRef("parent-panel") : ref;
+      using _host =
+        kind === "hosted-remote" ? { [Symbol.dispose]: hostRightPanel(ref, host) } : undefined;
+      const destination =
+        kind === "local"
+          ? undefined
+          : {
+              environmentId: EnvironmentId.make("destination"),
+              projectId: ProjectId.make("destination-project"),
+              projectCwd: "/destination",
+              environmentLabel: "Mac",
+              label: "Run on Mac",
+            };
+      const terminalRef = destination
+        ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
+        : ref;
+      const panel = useRightPanelStore.getState();
+      panel.openTerminal(ref, "a", destination);
+      panel.open(ref, "diff");
+      const { activeSurfaceId: diffSurfaceId } = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        host,
+      );
+      const focus = vi.fn(() => true);
+      using _focus = {
+        [Symbol.dispose]: registerTerminalFocusTarget({
+          threadRef: terminalRef,
+          terminalId: "a",
+          focus,
+        }),
+      };
+      expect(diffSurfaceId).not.toBeNull();
 
-    useRightPanelStore.getState().closeSurface(ref, diffSurfaceId!);
-    focusActivePanelTerminal(ref);
+      useRightPanelStore.getState().closeSurface(ref, diffSurfaceId!);
+      focusActivePanelTerminal(ref);
 
-    expect(focus).toHaveBeenCalledTimes(1);
-    unregister();
-  });
+      expect(focus).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("closing a surface's last terminal focuses the terminal surface it falls back to", () => {
     const ref = threadRef("panel-terminal-fallback");
