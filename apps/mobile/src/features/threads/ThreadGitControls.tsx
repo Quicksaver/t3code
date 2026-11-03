@@ -1,3 +1,4 @@
+import type { RemoteProjectActionGroup } from "@t3tools/client-runtime/project-actions";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -95,6 +96,11 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly canOpenTerminal: boolean;
   readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
+  readonly remoteProjectActionGroups: ReadonlyArray<RemoteProjectActionGroup & { canRun: boolean }>;
+  readonly onRunRemoteProjectAction: (
+    group: RemoteProjectActionGroup,
+    script: ProjectScript,
+  ) => Promise<void>;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
@@ -249,22 +255,35 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
 }
 
 export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | null {
-  if (!props.canOpenTerminal) return null;
+  if (!props.canOpenTerminal && props.remoteProjectActionGroups.length === 0) return null;
   return {
     title: "Terminal",
     icon: "terminal",
     separateBackground: false,
     items: [
-      ...(props.projectScripts.length > 0
-        ? props.projectScripts.map((script) => ({
-            id: `script-${script.id}`,
-            title: projectScriptMenuLabel(script),
-            icon: projectScriptMenuIcon(script.icon),
-            subtitle: script.command,
-            disabled: !props.canOperateTerminal,
-            onPress: () => void props.onRunProjectScript(script),
-          }))
-        : [
+      ...props.projectScripts.map((script) => ({
+        id: `script-${script.id}`,
+        title: projectScriptMenuLabel(script),
+        icon: projectScriptMenuIcon(script.icon),
+        subtitle: script.command,
+        disabled: !props.canOperateTerminal,
+        onPress: () => void props.onRunProjectScript(script),
+      })),
+      ...props.remoteProjectActionGroups.map((group) => ({
+        id: `environment-${group.environmentId}`,
+        title: `From ${group.environmentLabel}`,
+        inline: true,
+        items: group.scripts.map((script) => ({
+          id: `remote-script-${group.environmentId}-${script.id}`,
+          title: projectScriptMenuLabel(script),
+          icon: projectScriptMenuIcon(script.icon),
+          subtitle: script.command,
+          disabled: !group.canRun,
+          onPress: () => void props.onRunRemoteProjectAction(group, script),
+        })),
+      })),
+      ...(props.projectScripts.length === 0 && props.remoteProjectActionGroups.length === 0
+        ? [
             {
               id: "script-none",
               title: "No project scripts",
@@ -273,7 +292,8 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
               disabled: true,
               onPress: () => {},
             },
-          ]),
+          ]
+        : []),
       ...props.terminalSessions.map((session) => ({
         id: `terminal-${session.terminalId}`,
         title: session.displayLabel,
