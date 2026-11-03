@@ -12147,7 +12147,6 @@
   "37ffec8201f153c1": "Failed",
   "984b361806ce8d25": "Woke",
   "c6e8abc00ae470d2": "Done",
-  "353b08f4363dbb2c": "Pending",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} linked issue} other {{count} linked issues}}",
   "8cf699ae75fd8067": "Pinned",
@@ -13214,5 +13213,7 @@
   "be5a329d077a9a60": "Deleting a parent also deletes its side chats.",
   "291105698d50de0e": "Restoring a parent may also restore side chats outside the selection.",
   "7bb03c812c7095ae": "Partial outcome: {succeeded} succeeded, {failed, plural, =0 {} other {{failed} failed, }}{interrupted, plural, =0 {} other {{interrupted} interrupted, }}{unexpected} failed unexpectedly, {notAttempted} not attempted.",
-  "1c5a8d3511257911": "This conversation has left Archive."
+  "1c5a8d3511257911": "This conversation has left Archive.",
+  "b5927127e289c0a8": "Could not run {name} on {environment}",
+  "c62a0c9e2a477626": "From {source}"
 }

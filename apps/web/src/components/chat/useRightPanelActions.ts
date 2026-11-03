@@ -28,7 +28,7 @@ import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/w
 import { setActivePreviewTab } from "../../previewStateStore";
 import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
-import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
+import { focusActivePanelTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { floatPanelSurfaceOnClose } from "../preview/agentOpenedPreviews";
 import { getClientSettings } from "../../hooks/useSettings";
@@ -214,7 +214,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       setActivePreviewTab(activeThreadRef, surface.resourceId);
     }
     if (surface.kind === "terminal") {
-      focusTerminal(activeThreadRef, surface.activeTerminalId);
+      focusActivePanelTerminal(activeThreadRef);
     }
     if (surface.kind === "thread") {
       const kind = sideThreadKindOf(

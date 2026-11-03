@@ -5808,5 +5808,6 @@
   "2904af0ccb229a6b": "Réussites : {succeeded}.",
   "be5a329d077a9a60": "La suppression d’un fil parent supprime aussi ses discussions secondaires.",
   "291105698d50de0e": "La restauration d’un fil parent peut aussi restaurer des discussions secondaires hors de la sélection.",
-  "1c5a8d3511257911": "Cette conversation a été retirée des archives."
+  "1c5a8d3511257911": "Cette conversation a été retirée des archives.",
+  "b5927127e289c0a8": "Impossible d'exécuter {name} sur {environment}"
 }

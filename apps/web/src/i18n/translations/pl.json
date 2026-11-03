@@ -13213,5 +13213,7 @@
   "be5a329d077a9a60": "Usunięcie wątku nadrzędnego usuwa też jego czaty boczne.",
   "291105698d50de0e": "Przywrócenie wątku nadrzędnego z archiwum może też przywrócić czaty boczne spoza wybranych rozmów.",
   "7bb03c812c7095ae": "Częściowy wynik: ukończone: {succeeded}, {failed, plural, =0 {} other {nieudane: {failed}, }}{interrupted, plural, =0 {} other {przerwane: {interrupted}, }}nieoczekiwane błędy: {unexpected}, bez próby: {notAttempted}.",
-  "1c5a8d3511257911": "Tej rozmowy nie ma już w archiwum."
+  "1c5a8d3511257911": "Tej rozmowy nie ma już w archiwum.",
+  "b5927127e289c0a8": "Nie udało się uruchomić {name} w środowisku {environment}",
+  "c62a0c9e2a477626": "Z {source}"
 }

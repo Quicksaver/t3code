@@ -5808,5 +5808,6 @@
   "2904af0ccb229a6b": "Concluídas: {succeeded}.",
   "be5a329d077a9a60": "Excluir uma conversa principal também exclui suas conversas paralelas.",
   "291105698d50de0e": "Restaurar uma conversa principal também pode restaurar conversas paralelas fora da seleção.",
-  "1c5a8d3511257911": "Esta conversa foi removida do arquivo."
+  "1c5a8d3511257911": "Esta conversa foi removida do arquivo.",
+  "b5927127e289c0a8": "Não foi possível executar {name} em {environment}"
 }

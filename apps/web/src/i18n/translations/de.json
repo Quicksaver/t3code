@@ -4305,7 +4305,7 @@
   ],
   "159ddd0d146a0f22": "Beobachtet: Der Agent wird geweckt, wenn Checks fertig sind, jemand kommentiert oder der Branch Konflikte hat. Klicke zum Beenden.",
   "1cbc8b5db51b4c77": "Mergen",
-  "353b08f4363dbb2c": "Pending",
+  "353b08f4363dbb2c": "Ausstehend",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -12140,7 +12140,6 @@
   "37ffec8201f153c1": "Fehlgeschlagen",
   "984b361806ce8d25": "Aufgeweckt",
   "c6e8abc00ae470d2": "Fertig",
-  "353b08f4363dbb2c": "Ausstehend",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} verknüpftes Issue} other {{count} verknüpfte Issues}}",
   "8cf699ae75fd8067": "Angeheftet",
@@ -13206,5 +13205,7 @@
   "be5a329d077a9a60": "Beim Löschen eines Elternthreads werden auch seine Nebenunterhaltungen gelöscht.",
   "291105698d50de0e": "Beim Wiederherstellen eines Elternthreads können auch nicht ausgewählte Nebenunterhaltungen wiederhergestellt werden.",
   "7bb03c812c7095ae": "Teilergebnis: Erfolgreich: {succeeded}{failed, plural, =0 {} other {, Fehlgeschlagen: {failed}}}{interrupted, plural, =0 {} other {, Unterbrochen: {interrupted}}}, Unerwartet fehlgeschlagen: {unexpected}, Nicht versucht: {notAttempted}.",
-  "1c5a8d3511257911": "Diese Unterhaltung wurde aus dem Archiv entfernt."
+  "1c5a8d3511257911": "Diese Unterhaltung wurde aus dem Archiv entfernt.",
+  "b5927127e289c0a8": "{name} konnte auf {environment} nicht ausgeführt werden",
+  "c62a0c9e2a477626": "Von {source}"
 }

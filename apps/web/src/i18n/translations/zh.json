@@ -4308,7 +4308,7 @@
   ],
   "159ddd0d146a0f22": "关注中：检查完成、有人评论或分支出现冲突时，智能体会被唤醒。点击停止关注。",
   "1cbc8b5db51b4c77": "合并",
-  "353b08f4363dbb2c": "Pending",
+  "353b08f4363dbb2c": "待同步",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -12162,7 +12162,6 @@
   "37ffec8201f153c1": "失败",
   "984b361806ce8d25": "已唤醒",
   "c6e8abc00ae470d2": "完成",
-  "353b08f4363dbb2c": "待同步",
   "f31a95961de19433": "议题 {key}：{title}，{state}",
   "2dd9d295c882ef65": "{count, plural, other {{count} 个关联议题}}",
   "8cf699ae75fd8067": "已置顶",
@@ -13220,5 +13219,7 @@
   "be5a329d077a9a60": "删除父线程时，也会删除其旁支对话。",
   "291105698d50de0e": "恢复父线程时，也可能恢复未选中的旁支对话。",
   "7bb03c812c7095ae": "部分结果：成功：{succeeded}{failed, plural, =0 {} other {，失败：{failed}}}{interrupted, plural, =0 {} other {，中断：{interrupted}}}，意外失败：{unexpected}，未尝试：{notAttempted}。",
-  "1c5a8d3511257911": "此对话已移出归档。"
+  "1c5a8d3511257911": "此对话已移出归档。",
+  "b5927127e289c0a8": "无法在 {environment} 上运行 {name}",
+  "c62a0c9e2a477626": "从 {source}"
 }

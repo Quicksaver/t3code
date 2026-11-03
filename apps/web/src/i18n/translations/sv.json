@@ -4303,7 +4303,7 @@
   ],
   "159ddd0d146a0f22": "Bevakar: agenten vaknar när kontrollerna är klara, någon kommenterar eller grenen får konflikter. Klicka för att sluta.",
   "1cbc8b5db51b4c77": "Merga",
-  "353b08f4363dbb2c": "Pending",
+  "353b08f4363dbb2c": "Väntar",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -12146,7 +12146,6 @@
   "37ffec8201f153c1": "Misslyckades",
   "984b361806ce8d25": "Väckt",
   "c6e8abc00ae470d2": "Klar",
-  "353b08f4363dbb2c": "Väntar",
   "f31a95961de19433": "Ärende {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} länkat ärende} other {{count} länkade ärenden}}",
   "8cf699ae75fd8067": "Fäst",
@@ -13213,5 +13212,7 @@
   "be5a329d077a9a60": "När en överordnad tråd tas bort tas även dess sidokonversationer bort.",
   "291105698d50de0e": "När en överordnad tråd återställs kan även sidokonversationer utanför urvalet återställas.",
   "7bb03c812c7095ae": "Delresultat: Lyckade: {succeeded}{failed, plural, =0 {} other {, Misslyckade: {failed}}}{interrupted, plural, =0 {} other {, Avbrutna: {interrupted}}}, Oväntade fel: {unexpected}, Ej försökta: {notAttempted}.",
-  "1c5a8d3511257911": "Den här konversationen har tagits bort från arkivet."
+  "1c5a8d3511257911": "Den här konversationen har tagits bort från arkivet.",
+  "b5927127e289c0a8": "Det gick inte att köra {name} på {environment}",
+  "c62a0c9e2a477626": "Från {source}"
 }

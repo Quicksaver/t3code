@@ -4303,7 +4303,7 @@
   ],
   "159ddd0d146a0f22": "Surveillance : l’agent se réveille quand les checks se terminent, que quelqu’un commente ou que la branche entre en conflit. Cliquez pour arrêter.",
   "1cbc8b5db51b4c77": "Fusionner",
-  "353b08f4363dbb2c": "Pending",
+  "353b08f4363dbb2c": "En attente",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -12138,7 +12138,6 @@
   "37ffec8201f153c1": "Échec",
   "984b361806ce8d25": "Réveillé",
   "c6e8abc00ae470d2": "Terminé",
-  "353b08f4363dbb2c": "En attente",
   "f31a95961de19433": "Ticket {key} : {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} ticket lié} other {{count} tickets liés}}",
   "8cf699ae75fd8067": "Épinglés",
@@ -13206,5 +13205,7 @@
   "be5a329d077a9a60": "La suppression d’un fil parent supprime aussi ses discussions secondaires.",
   "291105698d50de0e": "La restauration d’un fil parent peut aussi restaurer des discussions secondaires hors de la sélection.",
   "7bb03c812c7095ae": "Résultat partiel : Réussites : {succeeded}{failed, plural, =0 {} other {, Échecs : {failed}}}{interrupted, plural, =0 {} other {, Interruptions : {interrupted}}}, Échecs inattendus : {unexpected}, Actions non tentées : {notAttempted}.",
-  "1c5a8d3511257911": "Cette conversation a été retirée des archives."
+  "1c5a8d3511257911": "Cette conversation a été retirée des archives.",
+  "b5927127e289c0a8": "Impossible d'exécuter {name} sur {environment}",
+  "c62a0c9e2a477626": "Depuis {source}"
 }

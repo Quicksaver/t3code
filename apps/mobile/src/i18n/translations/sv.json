@@ -5814,5 +5814,6 @@
   "2904af0ccb229a6b": "Lyckade: {succeeded}.",
   "be5a329d077a9a60": "När en överordnad tråd tas bort tas även dess sidokonversationer bort.",
   "291105698d50de0e": "När en överordnad tråd återställs kan även sidokonversationer utanför urvalet återställas.",
-  "1c5a8d3511257911": "Den här konversationen har tagits bort från arkivet."
+  "1c5a8d3511257911": "Den här konversationen har tagits bort från arkivet.",
+  "b5927127e289c0a8": "Det gick inte att köra {name} på {environment}"
 }

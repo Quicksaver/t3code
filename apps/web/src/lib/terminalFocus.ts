@@ -1,7 +1,12 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 
 export type TerminalFocusOwner = "drawer" | "right-panel";
@@ -37,7 +42,10 @@ interface TerminalFocusTarget {
 }
 
 const focusTargets = new Set<TerminalFocusTarget>();
-const lastThreadFocus = new Map<string, "composer" | { terminalId: string }>();
+const lastThreadFocus = new Map<
+  string,
+  "composer" | { threadRef: ScopedThreadRef; terminalId: string }
+>();
 // One request at a time: the newest terminal the user asked for wins, so an
 // older request never fires later and steals focus.
 let pendingFocus: { readonly threadKey: string; readonly terminalId: string } | null = null;
@@ -90,14 +98,33 @@ export function focusActiveDrawerTerminal(threadRef: ScopedThreadRef): void {
   else cancelTerminalFocus(threadRef);
 }
 
-/** Focuses the active terminal of the right panel when it shows a terminal surface. */
-export function focusActivePanelTerminal(threadRef: ScopedThreadRef): void {
+function activePanelTerminal(threadRef: ScopedThreadRef) {
+  const panelRef = rightPanelHostRef(threadRef);
   const { isOpen, activeSurfaceId, surfaces } = selectThreadRightPanelState(
     useRightPanelStore.getState().byThreadKey,
-    threadRef,
+    panelRef,
   );
   const surface = isOpen ? surfaces.find((candidate) => candidate.id === activeSurfaceId) : null;
-  if (surface?.kind === "terminal") focusTerminal(threadRef, surface.activeTerminalId);
+  if (surface?.kind !== "terminal") return null;
+  const target = surface.actionTarget;
+  const terminalRef = target
+    ? { environmentId: target.environmentId, threadId: projectActionThreadId(target) }
+    : panelRef;
+  return { surface, threadRef: terminalRef, threadKey: scopedThreadKey(terminalRef) };
+}
+
+function panelOwnsTerminal(
+  panel: ReturnType<typeof activePanelTerminal>,
+  threadKey: string,
+  terminalId: string,
+) {
+  return panel?.threadKey === threadKey && panel.surface.terminalIds.includes(terminalId);
+}
+
+/** Focuses the active terminal of the right panel when it shows a terminal surface. */
+export function focusActivePanelTerminal(threadRef: ScopedThreadRef): void {
+  const panel = activePanelTerminal(threadRef);
+  if (panel) focusTerminal(panel.threadRef, panel.surface.activeTerminalId);
 }
 
 /**
@@ -132,10 +159,13 @@ export function restoreFocusOnThreadEnter(
   content: { readonly root: HTMLElement; readonly focusComposer: () => void },
 ): () => void {
   const threadKey = scopedThreadKey(threadRef);
+  const panel = activePanelTerminal(threadRef);
   const requestedByHandler =
     navigationRequestThreadKey === threadKey ||
     (lastEnteredThreadByRoot.get(content.root) === threadKey &&
-      pendingFocus?.threadKey === threadKey);
+      pendingFocus !== null &&
+      (pendingFocus.threadKey === threadKey ||
+        panelOwnsTerminal(panel, pendingFocus.threadKey, pendingFocus.terminalId)));
   if (!requestedByHandler) pendingFocus = null;
   lastEnteredThreadByRoot.set(content.root, threadKey);
   navigationRequestThreadKey = null;
@@ -146,8 +176,15 @@ export function restoreFocusOnThreadEnter(
     if (!element) return;
     const terminal = Array.from(focusTargets).find((target) => target.element?.contains(element));
     if (terminal) {
-      if (scopedThreadKey(terminal.threadRef) === threadKey)
-        lastThreadFocus.set(threadKey, { terminalId: terminal.terminalId });
+      const terminalKey = scopedThreadKey(terminal.threadRef);
+      if (
+        terminalKey === threadKey ||
+        panelOwnsTerminal(activePanelTerminal(threadRef), terminalKey, terminal.terminalId)
+      )
+        lastThreadFocus.set(threadKey, {
+          threadRef: terminal.threadRef,
+          terminalId: terminal.terminalId,
+        });
     } else if (
       content.root.contains(element) &&
       element.closest('[data-workspace-area="composer"]')
@@ -161,22 +198,18 @@ export function restoreFocusOnThreadEnter(
       useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
       threadRef,
     );
-    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-    const panelTerminal = panel.isOpen
-      ? panel.surfaces.find((surface) => surface.id === panel.activeSurfaceId)
-      : null;
     if (previous === "composer") {
       content.focusComposer();
     } else if (
       previous &&
-      ((drawer.terminalOpen &&
+      ((scopedThreadKey(previous.threadRef) === threadKey &&
+        drawer.terminalOpen &&
         drawer.terminalGroups
           .find((group) => group.id === drawer.activeTerminalGroupId)
           ?.terminalIds.includes(previous.terminalId)) ||
-        (panelTerminal?.kind === "terminal" &&
-          panelTerminal.terminalIds.includes(previous.terminalId)))
+        panelOwnsTerminal(panel, scopedThreadKey(previous.threadRef), previous.terminalId))
     ) {
-      focusTerminal(threadRef, previous.terminalId);
+      focusTerminal(previous.threadRef, previous.terminalId);
     } else if (drawer.terminalOpen && drawer.activeTerminalId) {
       focusTerminal(threadRef, drawer.activeTerminalId);
     } else content.focusComposer();

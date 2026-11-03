@@ -4302,7 +4302,7 @@
   ],
   "159ddd0d146a0f22": "Acompanhando: o agente é ativado quando as verificações terminam, alguém comenta ou o branch entra em conflito. Clique para parar.",
   "1cbc8b5db51b4c77": "Mesclar",
-  "353b08f4363dbb2c": "Pending",
+  "353b08f4363dbb2c": "Pendente",
   "7342bfc328008926": "Running",
   "fae3639874428042": "Tasks",
   "291bc7eb04e08b2e": "All done",
@@ -12138,7 +12138,6 @@
   "37ffec8201f153c1": "Falhou",
   "984b361806ce8d25": "Despertou",
   "c6e8abc00ae470d2": "Pronta",
-  "353b08f4363dbb2c": "Pendente",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} issue vinculada} other {{count} issues vinculadas}}",
   "8cf699ae75fd8067": "Fixadas",
@@ -13206,5 +13205,7 @@
   "be5a329d077a9a60": "Excluir uma conversa principal também exclui suas conversas paralelas.",
   "291105698d50de0e": "Restaurar uma conversa principal também pode restaurar conversas paralelas fora da seleção.",
   "7bb03c812c7095ae": "Resultado parcial: Concluídas: {succeeded}{failed, plural, =0 {} other {, Com falha: {failed}}}{interrupted, plural, =0 {} other {, Interrompidas: {interrupted}}}, Com falha inesperada: {unexpected}, Sem tentativa: {notAttempted}.",
-  "1c5a8d3511257911": "Esta conversa foi removida do arquivo."
+  "1c5a8d3511257911": "Esta conversa foi removida do arquivo.",
+  "b5927127e289c0a8": "Não foi possível executar {name} em {environment}",
+  "c62a0c9e2a477626": "A partir de {source}"
 }

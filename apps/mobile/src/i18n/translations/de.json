@@ -5814,5 +5814,6 @@
   "2904af0ccb229a6b": "Erfolgreich: {succeeded}.",
   "be5a329d077a9a60": "Beim Löschen eines Elternthreads werden auch seine Nebenunterhaltungen gelöscht.",
   "291105698d50de0e": "Beim Wiederherstellen eines Elternthreads können auch nicht ausgewählte Nebenunterhaltungen wiederhergestellt werden.",
-  "1c5a8d3511257911": "Diese Unterhaltung wurde aus dem Archiv entfernt."
+  "1c5a8d3511257911": "Diese Unterhaltung wurde aus dem Archiv entfernt.",
+  "b5927127e289c0a8": "{name} konnte auf {environment} nicht ausgeführt werden"
 }

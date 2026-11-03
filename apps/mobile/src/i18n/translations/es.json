@@ -5808,5 +5808,6 @@
   "2904af0ccb229a6b": "Con éxito: {succeeded}.",
   "be5a329d077a9a60": "Eliminar un hilo principal también elimina sus chats laterales.",
   "291105698d50de0e": "Al restaurar un hilo principal también se pueden restaurar chats laterales que no estén seleccionados.",
-  "1c5a8d3511257911": "Esta conversación se ha retirado del archivo."
+  "1c5a8d3511257911": "Esta conversación se ha retirado del archivo.",
+  "b5927127e289c0a8": "No se pudo ejecutar {name} en {environment}"
 }
