@@ -166,8 +166,10 @@ vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: () => state.localEffects.push("refresh-archive"),
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
-  releaseComposerDraftUploads: (ref: ScopedThreadRef) =>
-    state.localEffects.push(`release-uploads:${ref.threadId}`),
+  permanentlyDiscardComposerDraft: (ref: ScopedThreadRef) => {
+    state.localEffects.push(`release-uploads:${ref.threadId}`);
+    state.localEffects.push(`clear-draft:${ref.threadId}`);
+  },
 }));
 vi.mock("../localApi", () => ({
   readLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
