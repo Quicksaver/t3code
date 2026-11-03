@@ -446,7 +446,9 @@ Native child creation inherits the parent's persisted archive/delete state under
 
 **Worktree branch:** `feat/archive-settings-ux`
 
-The standalone source is `8b542b987c80edf7515ce1a5979a63858d5d7b55`, directly above pinned upstream `a21d788752695764028e6d26ba924f3963e05806`. PR #12708 remains closed and unmerged. The web panel retains upstream Settings scopes and native rows share the minute clock. Permanent deletion clears retained panel/preview state, and unarchive invalidates stale Archive Undo. Native Archive itself has no Undo; Settle retains its upstream Undo. Archive reservations use collision-safe keys and ordinary scoped identities for dismissal.
+The native grouped Archive list uses upstream's cross-platform scroll wrapper and shared AppBar refresh menu. Archive retains its Settings layout, standalone search, tag-filtered snapshots and scoped action reservations.
+
+The standalone source is `54fd6d61988ee47e8b8a4be4b18ee93aae105dba`, based on pinned upstream `d694c44d07842a2b403b6c4dd98950ba6e1c6339`. PR #12708 remains closed and unmerged. The web panel retains upstream Settings scopes and native rows share the minute clock. Permanent deletion clears retained panel/preview state, and unarchive invalidates stale Archive Undo. Native Archive itself has no Undo; Settle retains its upstream Undo. Archive reservations use collision-safe keys and ordinary scoped identities for dismissal.
 
 The Archive panel follows the shared Settings sections, cards and rows. Native Archive uses the shared Settings row layout in virtualized project sections, retaining swipe actions, long-press menus and header controls.
 
