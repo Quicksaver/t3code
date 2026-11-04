@@ -23,7 +23,10 @@ import {
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import {
+  formatWorkingDurationLabel,
+  threadRuntimeCanArchive,
+} from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import {
@@ -106,6 +109,10 @@ import {
   useSidebarRowSubscriptionLease,
   setFileDragActive,
 } from "../Sidebar.logic";
+import {
+  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+  SidebarSettledLifecycleControls,
+} from "../SidebarArchiveControls";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
   LINKED_ITEMS_PREVIEW_LIMIT,
@@ -159,6 +166,11 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
+const SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME = cn(
+  "-mr-1 inline-flex h-full items-center gap-1 px-1.5 text-xs",
+  SIDEBAR_LIFECYCLE_BUTTON_SURFACE_CLASS_NAME,
+);
+
 function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: MessageResolver) {
   const parts = formatRelativeTime(timestamp, nowMs, resolve);
   if (parts === null) return "";
@@ -641,6 +653,7 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
+  onArchive: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onPin: (threadRef: ScopedThreadRef) => void;
@@ -696,6 +709,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const messages = useMessages();
   const {
     isRenaming,
+    onArchive,
     onCancelRename,
     onCommitRename,
     onContextMenu,
@@ -725,6 +739,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread.environmentId,
     AuthOrchestrationOperateScope,
   );
+  const canUnsettle = props.settlementSupported && canTriageThread;
   const pendingSync = useAtomValue(
     threadEnvironment.pendingSyncAtom(thread.environmentId),
     (threads) => threads.has(thread.id),
@@ -1003,6 +1018,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
+  const handleArchiveClick = () => onArchive(threadRef);
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
   };
@@ -1439,7 +1455,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ) : (
               <span
                 className={cn(
-                  "relative ml-auto flex h-6 min-w-8 shrink-0 items-center justify-end",
+                  "group/sidebar-slim-status-slot relative ml-auto flex h-6 shrink-0 items-center justify-end",
+                  variantAction === "unsettle" && canUnsettle && canOperateThread
+                    ? "min-w-14"
+                    : "min-w-8",
                   props.sweepAction !== null && "hidden",
                   jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
                 )}
@@ -1447,7 +1466,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <span
                   className={cn(
                     "inline-flex justify-end tabular-nums text-secondary-label transition-opacity",
-                    !isWoke && "group-any-hover/sidebar-row:opacity-0",
+                    !isWoke &&
+                      (variantAction !== "unsettle" || canUnsettle || canOperateThread) &&
+                      "group-has-[:focus-visible]/sidebar-slim-status-slot:opacity-0 group-any-hover/sidebar-row:opacity-0",
                   )}
                 >
                   {pendingSync ? (
@@ -1519,30 +1540,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       <AlarmClockOffIcon className="mb-px size-3" />
                     </button>
                   )
-                ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
-                  <SharedTooltipTrigger
-                    side="right"
-                    render={
-                      <button
-                        type="button"
-                        aria-label={gt("Un-settle thread")}
-                        onClick={handleUnsettleClick}
-                        onPointerDown={handleActionPointerDown}
-                        className={cn(
-                          "pointer-events-none absolute inset-y-0 right-0 -mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100",
-                          isWoke && "group-any-hover/sidebar-row:static",
-                        )}
-                      />
-                    }
-                    label={
-                      <>
-                        <T>Un-settle thread</T>
-                      </>
-                    }
-                  >
-                    <Undo2Icon className="mb-px size-3.5" />
-                  </SharedTooltipTrigger>
-                ) : (
+                ) : variantAction === "unsettle" ? (
+                  canUnsettle || canOperateThread ? (
+                    <SidebarSettledLifecycleControls
+                      canUnsettle={canUnsettle}
+                      archiveDisabled={!threadRuntimeCanArchive(thread.runtime)}
+                      preserveWokeStatus={isWoke}
+                      onUnsettle={handleUnsettleClick}
+                      onUnsettlePointerDown={handleActionPointerDown}
+                      onArchive={canOperateThread ? handleArchiveClick : undefined}
+                    />
+                  ) : null
+                ) : !props.settlementSupported ? null : (
                   <SharedTooltipTrigger
                     side="right"
                     render={
@@ -1763,7 +1772,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             aria-label={gt("Settle thread")}
                             onClick={handleSettleClick}
                             onPointerDown={handleActionPointerDown}
-                            className="-mr-1 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            className={SIDEBAR_ROW_LIFECYCLE_BUTTON_CLASS_NAME}
                           />
                         }
                         label={
