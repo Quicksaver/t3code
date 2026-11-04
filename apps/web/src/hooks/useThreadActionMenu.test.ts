@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   effects: [] as string[],
   latestRun: null as { readonly status: string; readonly completedAt: string | null } | null,
   completed: deferred<void>(),
+  confirm: vi.fn<() => Promise<boolean>>(),
+  archive: vi.fn<() => Promise<void>>(),
   show: vi.fn<
     (
       items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
@@ -77,7 +79,7 @@ vi.mock("../localApi", () => ({
     dialogs: {
       confirm: async () => {
         recordEffect("confirm");
-        return false;
+        return state.confirm();
       },
     },
   }),
@@ -138,6 +140,7 @@ vi.mock("./useThreadActions", () => ({
         action,
         async () => {
           recordEffect(action === "markThreadUnread" ? "mark-unread" : action);
+          if (action === "archiveThread") await state.archive();
           return AsyncResult.success(undefined);
         },
       ]),
@@ -165,6 +168,8 @@ beforeEach(() => {
   state.effects = [];
   state.latestRun = null;
   state.completed = deferred<void>();
+  state.confirm.mockReset().mockResolvedValue(false);
+  state.archive.mockReset().mockResolvedValue(undefined);
   state.show.mockReset().mockResolvedValue(null);
 });
 
@@ -210,4 +215,32 @@ describe("thread menu mark unread", () => {
     const items = state.show.mock.calls[0]![0];
     expect(items.some((item) => item.id === "mark-unread")).toBe(offered);
   });
+});
+
+it("keeps the menu archive action pending through confirmation and mutation", async () => {
+  state.granted.add("secondary");
+  const confirmation = deferred<boolean>();
+  const mutationStarted = deferred<void>();
+  const mutation = deferred<void>();
+  state.confirm.mockReturnValue(confirmation.promise);
+  state.archive.mockImplementation(() => {
+    mutationStarted.resolve();
+    return mutation.promise;
+  });
+  const finished = vi.fn();
+  const run = createMenu().readMenu()!.run("archive").then(finished);
+
+  try {
+    await state.completed.promise;
+    expect(finished).not.toHaveBeenCalled();
+    confirmation.resolve(true);
+    await mutationStarted.promise;
+    expect(finished).not.toHaveBeenCalled();
+  } finally {
+    confirmation.resolve(false);
+    mutation.resolve();
+    await run;
+  }
+
+  expect(finished).toHaveBeenCalledOnce();
 });

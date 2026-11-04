@@ -49,6 +49,8 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 > Tip: If a scheduled task targets a thread, settle it instead of archiving—archiving causes scheduled runs to fail.
 
+On web and desktop, a settled thread can also be archived from its row. **Archive all** on the **Settled** header archives eligible settled threads in the current project scope, including threads behind **Show more**, and asks first when **Archive confirmation** is on. Threads hidden by tag filters, including delegated work following a hidden parent, are left out, as are threads whose provider is running or that this connection cannot change. A thread that becomes hidden, starts running, is un-settled, or is snoozed before its turn is skipped with a warning. Threads revealed while confirmation is open do not join that batch. Each archived thread shows its own **Undo**.
+
 ### Settlement rules and hooks
 
 - **Automatic settlement**: By default, environments settle threads after 7 days of inactivity or when their linked PR merges/closes (even while your apps are closed). Active work, pending questions/approvals, and waited-on background work block auto-settlement. Configure rules in **Settings → Threads** (per environment or **All environments**), including **Keep threads with a PR**.

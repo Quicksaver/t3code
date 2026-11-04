@@ -30,7 +30,11 @@ import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSett
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
-import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentScope,
+  useEnvironmentScopeDenied,
+} from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -619,6 +623,68 @@ describe("sidebar selection menu", () => {
     const settleItem = show.mock.lastCall?.[0].find((item: { id: string }) => item.id === "settle");
     expect(settleItem?.label).toBe("Settle (1)");
     selection.clearSelection();
+  });
+});
+
+describe("settled sidebar row actions", () => {
+  it.each([
+    { state: "writable", operate: true, denied: false, unsettle: 1, archive: 1 },
+    {
+      state: "offline with triage available",
+      operate: false,
+      denied: false,
+      unsettle: 1,
+      archive: 0,
+    },
+    { state: "read-only", operate: false, denied: true, unsettle: 0, archive: 0 },
+  ])("shows the permitted actions when $state", async ({ operate, denied, unsettle, archive }) => {
+    using cleanup = new DisposableStack();
+    for (const [hook, value] of [
+      [useEnvironmentScope, operate],
+      [useEnvironmentScopeDenied, denied],
+    ] as const) {
+      const mock = vi.mocked(hook);
+      const previous = mock.getMockImplementation();
+      cleanup.defer(() => {
+        if (previous) mock.mockImplementation(previous);
+        else mock.mockReset();
+      });
+      mock.mockReturnValue(value);
+    }
+    const activeProject = project("active");
+    const thread = makeThreadFixture({
+      environmentId: activeProject.environmentId,
+      projectId: activeProject.id,
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const shelf = screen.container.querySelector<HTMLElement>(
+      '[data-sidebar-row="shelf:settled"]',
+    )!;
+    if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
+    await expect.element(screen.getByText(thread.title, { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Un-settle thread" }).elements()).toHaveLength(
+      unsettle,
+    );
+    expect(screen.getByRole("button", { name: "Archive thread" }).elements()).toHaveLength(archive);
   });
 });
 
