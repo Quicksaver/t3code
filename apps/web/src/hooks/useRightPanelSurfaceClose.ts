@@ -3,6 +3,7 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -63,11 +64,17 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind === "terminal" &&
-      readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
+      readEnvironmentScope(
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? ref.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
-        terminalActions.closeTerminalSession(terminalId, ref);
+        const destination = surface.target
+          ? scopeThreadRef(surface.target.environmentId as EnvironmentId, ref.threadId)
+          : ref;
+        storeCloseTerminal(destination, terminalId);
+        terminalActions.closeTerminalSession(terminalId, destination);
       }
     }
     if (
@@ -142,7 +149,10 @@ export function useRightPanelSurfaceClose(input: {
     }
     if (
       surface.kind !== "terminal" ||
-      !readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
+      !readEnvironmentScope(
+        (surface.target?.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId,
+        AuthTerminalOperateScope,
+      )
     ) {
       finishClose([surface]);
       return;
