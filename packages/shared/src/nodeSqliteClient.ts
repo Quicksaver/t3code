@@ -37,6 +37,8 @@ export interface SqliteClientConfig {
   readonly readerWorker?: boolean | undefined;
   /** Ignored for in-memory databases. */
   readonly checkpointWorker?: boolean | undefined;
+  /** Additional database files, such as attached archives, to checkpoint on the same worker. */
+  readonly checkpointAdditionalPaths?: ReadonlyArray<string> | undefined;
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -497,7 +499,7 @@ const readSafeSqliteInteger = (value: unknown) => {
 const checkpointWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
-const { statSync } = require("node:fs");
+const { statSync, openSync, readSync, closeSync } = require("node:fs");
 let db;
 let frames;
 let checkpoint;
@@ -507,6 +509,52 @@ let generation = 0;
 let nextTruncateId = 0;
 let pendingTruncate;
 let pendingBarriers = 0;
+// Attached archives share worker ownership while main keeps its admission protocol.
+const archives = workerData.additionalPaths.map((filename) => ({ filename, statements: undefined }));
+const openArchive = (filename) => {
+  let file;
+  try {
+    file = openSync(filename, "r");
+  } catch (cause) {
+    if (cause.code === "ENOENT") return;
+    throw cause;
+  }
+  const header = Buffer.alloc(20);
+  let wal;
+  try {
+    // Rollback-mode readers can block WAL activation; inspect its header without a SQLite lock.
+    wal = readSync(file, header, 0, header.length, 0) === header.length &&
+      header[18] === 2 && header[19] === 2;
+  } finally {
+    closeSync(file);
+  }
+  if (!wal) return;
+  const db = new DatabaseSync(filename);
+  db.exec("PRAGMA busy_timeout = 0; PRAGMA checkpoint_fullfsync = ON;");
+  return {
+    frames: db.prepare("PRAGMA wal_checkpoint(NOOP)"),
+    checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
+  };
+};
+let archivePending = false;
+const checkArchives = () => {
+  archivePending = false;
+  for (const archive of archives) {
+    try {
+      const statements = archive.statements ??= openArchive(archive.filename);
+      if (statements === undefined) continue;
+      let state = statements.frames.get();
+      if (state.log - state.checkpointed >= workerData.frames) {
+        statements.checkpoint.get();
+        state = statements.frames.get();
+      }
+      if (state.log - state.checkpointed >= workerData.frames) archivePending = true;
+    } catch (cause) {
+      if ((cause.errcode & 0xff) !== 5) throw cause;
+      archivePending = true;
+    }
+  }
+};
 let idle;
 const initialize = () => {
   if (db !== undefined) return;
@@ -525,12 +573,13 @@ const atCeiling = (state) => state.log >= workerData.backpressureFrames;
 const exceedsSizeLimit = () =>
   journalSizeLimit >= 0 && statSync(workerData.filename + "-wal").size > journalSizeLimit;
 const schedule = (state, blocked) => {
-  if (blocked || state.log - state.checkpointed >= workerData.frames) {
+  if (blocked || archivePending || state.log - state.checkpointed >= workerData.frames) {
     idle = setTimeout(() => check(undefined, undefined, true), workerData.idleMs);
   }
 };
 const check = (id, nextJournalSizeLimit, force, nextGeneration = generation) => {
   initialize();
+  checkArchives();
   if (Number.isSafeInteger(nextGeneration)) generation = Math.max(generation, nextGeneration);
   if (Number.isSafeInteger(nextJournalSizeLimit)) journalSizeLimit = nextJournalSizeLimit;
   let state = frames.get();
@@ -616,6 +665,7 @@ parentPort.on("message", (request) => {
 const startCheckpointWorker = Effect.fnUntraced(function* (
   filename: string,
   writer: NodeSqlite.DatabaseSync,
+  additionalPaths: ReadonlyArray<string>,
 ) {
   const warn = (reason: string) =>
     Effect.logWarning(
@@ -643,6 +693,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
         eval: true,
         workerData: {
           filename,
+          additionalPaths: [...new Set(additionalPaths)].filter((path) => path !== filename),
           frames: CHECKPOINT_FRAMES,
           backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
           idleMs: CHECKPOINT_IDLE_MS,
@@ -733,7 +784,13 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       checkAgain = true;
       return;
     }
-    if (!force && !gated() && log - checkpointed < CHECKPOINT_FRAMES) return;
+    if (
+      !force &&
+      additionalPaths.length === 0 &&
+      !gated() &&
+      log - checkpointed < CHECKPOINT_FRAMES
+    )
+      return;
     inFlight = ++nextId;
     try {
       send({
@@ -791,7 +848,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     if ("id" in message && message.id === inFlight) inFlight = undefined;
     if (checkAgain && inFlight === undefined) {
       checkAgain = false;
-      request(true);
+      request(additionalPaths.length === 0);
     }
     wake();
   });
@@ -883,7 +940,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
     // Started after the close finalizer, so the worker stops before the writer closes.
     const checkpoint =
       options.checkpointWorker && isFileDatabase
-        ? yield* startCheckpointWorker(options.filename, db)
+        ? yield* startCheckpointWorker(
+            options.filename,
+            db,
+            options.checkpointAdditionalPaths ?? [],
+          )
         : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
