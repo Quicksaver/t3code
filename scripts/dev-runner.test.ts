@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
@@ -70,7 +71,108 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  it("loads environment files from the target checkout when the helper lives elsewhere", () => {
+    const target = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-dev-target-env-"));
+    try {
+      NodeFS.writeFileSync(NodePath.join(target, ".env"), "T3CODE_PORT_OFFSET=2718\n");
+      NodeFS.writeFileSync(
+        NodePath.join(target, ".env.local"),
+        "T3CODE_PORT_OFFSET=2719\nT3CODE_RELAY_URL=https://target.example.test\n",
+      );
+      const env = { ...process.env };
+      for (const key of ["T3CODE_PORT_OFFSET", "T3CODE_RELAY_URL", "VITE_T3CODE_RELAY_URL"]) {
+        delete env[key];
+      }
+      const helperUrl = new URL("./dev-runner.ts", import.meta.url).href;
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `await import(${JSON.stringify(helperUrl)}); process.stdout.write(JSON.stringify([process.env.T3CODE_PORT_OFFSET, process.env.VITE_T3CODE_RELAY_URL]));`,
+        ],
+        { cwd: target, env, encoding: "utf8", windowsHide: true },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepStrictEqual(JSON.parse(result.stdout), ["2719", "https://target.example.test"]);
+    } finally {
+      NodeFS.rmSync(target, { recursive: true, force: true });
+    }
+  });
+
   describe("createDevRunnerEnv", () => {
+    it.effect.each(["dev", "dev:server", "dev:desktop"] as const)(
+      "keeps IPv4 development URLs and profile isolation in %s mode",
+      (mode) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const env = yield* createDevRunnerEnv({
+            mode,
+            baseEnv: { T3CODE_DESKTOP_USER_DATA_DIR: "inherited-profile" },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: "/tmp/isolated-t3",
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+          assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
+          assert.equal(env.VITE_HTTP_URL, mode === "dev" ? undefined : "http://127.0.0.1:13773");
+          assert.equal(env.VITE_WS_URL, mode === "dev" ? undefined : "ws://127.0.0.1:13773");
+          assert.equal(
+            env.T3CODE_DESKTOP_USER_DATA_DIR,
+            mode === "dev:desktop" ? path.resolve("/tmp/isolated-t3/userdata/electron") : undefined,
+          );
+        }),
+    );
+
+    it.effect("accepts accumulated worktree cookies while preserving explicit header limits", () =>
+      Effect.gen(function* () {
+        const input = {
+          mode: "dev" as const,
+          baseEnv: { NODE_OPTIONS: "--max-old-space-size=4096" },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        };
+        const env = yield* createDevRunnerEnv(input);
+        const probe = `
+          const http = require('node:http');
+          const server = http.createServer((req, res) => res.end('ok'));
+          server.listen(0, '127.0.0.1', () => {
+            http.get({ host: '127.0.0.1', port: server.address().port,
+              headers: { Cookie: 'worktree=' + 'x'.repeat(20000) } }, res => {
+                res.resume();
+                res.on('end', () => { console.log(res.statusCode); server.close(); });
+              }).on('error', error => { console.error(error); server.close(); process.exitCode = 1; });
+          });
+        `;
+        const status = (nodeOptions: string | undefined) =>
+          NodeChildProcess.execFileSync(process.execPath, ["-e", probe], {
+            env: { ...process.env, NODE_OPTIONS: nodeOptions },
+            encoding: "utf8",
+            timeout: 10000,
+          }).trim();
+        assert.equal(status(""), "431");
+        assert.equal(status(env.NODE_OPTIONS), "200");
+        assert.include(env.NODE_OPTIONS!, "--max-old-space-size=4096");
+        const explicit = yield* createDevRunnerEnv({
+          ...input,
+          baseEnv: { NODE_OPTIONS: "--max-http-header-size=32768" },
+        });
+        assert.equal(explicit.NODE_OPTIONS, "--max-http-header-size=32768");
+      }),
+    );
+
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {
         const input = {
