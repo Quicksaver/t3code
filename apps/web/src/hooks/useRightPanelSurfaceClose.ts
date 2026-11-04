@@ -5,6 +5,7 @@ import {
   AuthPreviewOperateScope,
   AuthTerminalOperateScope,
   type ScopedThreadRef,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -17,6 +18,7 @@ import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
   selectActiveRightPanelSurface,
+  terminalTargetThreadRef,
   selectThreadRightPanelState,
   useRightPanelStore,
   type RightPanelSurface,
@@ -67,7 +69,9 @@ export function useRightPanelSurfaceClose(input: {
     if (
       surface.kind === "terminal" &&
       readEnvironmentScope(
-        surface.actionTarget?.environmentId ?? ref.environmentId,
+        surface.actionTarget?.environmentId ??
+          (surface.target?.environmentId as EnvironmentId | undefined) ??
+          ref.environmentId,
         AuthTerminalOperateScope,
       )
     ) {
@@ -82,8 +86,9 @@ export function useRightPanelSurfaceClose(input: {
             },
           });
         } else {
-          storeCloseTerminal(ref, terminalId);
-          terminalActions.closeTerminalSession(terminalId, ref);
+          const destination = surface.target ? terminalTargetThreadRef(ref, surface.target) : ref;
+          storeCloseTerminal(destination, terminalId);
+          terminalActions.closeTerminalSession(terminalId, destination);
         }
       }
     }
@@ -160,7 +165,9 @@ export function useRightPanelSurfaceClose(input: {
     if (
       surface.kind !== "terminal" ||
       !readEnvironmentScope(
-        surface.actionTarget?.environmentId ?? threadRef.environmentId,
+        surface.actionTarget?.environmentId ??
+          (surface.target?.environmentId as EnvironmentId | undefined) ??
+          threadRef.environmentId,
         AuthTerminalOperateScope,
       )
     ) {

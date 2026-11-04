@@ -16,14 +16,21 @@ export function ThreadHoverCard({
   title,
   children,
   footer,
+  wrapTitle = false,
 }: {
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  wrapTitle?: boolean;
 }) {
   return (
     <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
-      <div className="min-w-0 truncate text-xs leading-tight font-medium text-foreground">
+      <div
+        className={cn(
+          "min-w-0 text-xs leading-tight font-medium text-foreground",
+          wrapTitle ? "wrap-break-word" : "truncate",
+        )}
+      >
         {title}
       </div>
       <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">{children}</div>

@@ -1,3 +1,5 @@
+import { buildProjectScriptSettingsPatch } from "./projectScripts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { shortcutLabelForCommand } from "./keybindings";
 import { describe, expect, it } from "vite-plus/test";
 import { settleProjectScript, setupProjectScript } from "@t3tools/shared/projectScripts";
@@ -88,5 +90,88 @@ describe("projectScripts helpers", () => {
     expect(
       releaseClaimedRoles(holder, { ...input, runOnWorktreeCreate: false, runOnSettle: false }),
     ).toBe(holder);
+  });
+});
+
+describe("project script settings patches", () => {
+  const local = EnvironmentId.make("local");
+  const remote = EnvironmentId.make("remote");
+  const projectId = ProjectId.make("shared-id");
+  const script = {
+    id: "test",
+    name: "Test",
+    command: "vp test",
+    icon: "play" as const,
+    runOnWorktreeCreate: false,
+  };
+  const scripts = [script];
+  it.each([new Map(), new Map([[remote, { serverConfig: null }]])])(
+    "uses the legacy script patch before destination configuration is available",
+    (environments) => {
+      expect(
+        buildProjectScriptSettingsPatch({
+          environmentId: remote,
+          projectId,
+          scripts,
+          environments,
+        }),
+      ).toEqual({ projectScriptOverrides: { [projectId]: scripts } });
+    },
+  );
+  const config = (modern: boolean, customInstructions: string) => ({
+    serverConfig: {
+      environment: { capabilities: { projectSettingsOverrides: modern } },
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            sourceControlWritingStyle: {
+              mode: "custom" as const,
+              customInstructions,
+              followChangeRequestTemplates: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  it("preserves destination overrides when both environments use the same project id", () => {
+    const target = config(true, "Remote instructions");
+    const environments = new Map([
+      [local, config(false, "Local instructions")],
+      [remote, target],
+    ]);
+    expect(
+      buildProjectScriptSettingsPatch({
+        environmentId: remote,
+        projectId,
+        scripts,
+        environments,
+      }),
+    ).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          ...target.serverConfig.settings.projectSettingsOverrides[projectId],
+          defaultProjectScripts: scripts,
+        },
+      },
+    });
+  });
+
+  it("uses the destination legacy format even when the active environment is modern", () => {
+    const environments = new Map([
+      [local, config(true, "Local instructions")],
+      [remote, config(false, "Remote instructions")],
+    ]);
+    expect(
+      buildProjectScriptSettingsPatch({
+        environmentId: remote,
+        projectId,
+        scripts: [],
+        environments,
+      }),
+    ).toEqual({
+      projectScriptOverrides: { [projectId]: [] },
+    });
   });
 });

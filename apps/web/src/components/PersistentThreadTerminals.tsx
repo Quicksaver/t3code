@@ -4,6 +4,7 @@ import { serverEnvironment } from "../state/server";
 import {
   AuthTerminalOperateScope,
   type EnvironmentId,
+  type ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -18,6 +19,7 @@ import type { TerminalContextSelection } from "../lib/terminalContext";
 import { focusActiveDrawerTerminal, focusTerminal } from "../lib/terminalFocus";
 import { cn } from "~/lib/utils";
 import {
+  terminalTargetThreadRef,
   selectThreadRightPanelState,
   useRightPanelStore,
   type RightPanelSurface,
@@ -324,40 +326,54 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   const target = surface.actionTarget;
   const threadRef = target
     ? { environmentId: target.environmentId, threadId: projectActionThreadId(target) }
-    : ownerRef;
+    : surface.target
+      ? terminalTargetThreadRef(ownerRef, surface.target)
+      : ownerRef;
   const launchContext = target
     ? { cwd: target.projectCwd, worktreePath: null }
     : ownerLaunchContext;
   const destinationConfig = useAtomValue(
     serverEnvironment.configValueAtom(threadRef.environmentId),
   );
-  const keybindings = target
-    ? (destinationConfig?.keybindings ?? ownerKeybindings)
-    : ownerKeybindings;
-  const serverThread = useQuietThreadShell(threadRef);
-  const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
+  const keybindings =
+    target || surface.target
+      ? (destinationConfig?.keybindings ?? ownerKeybindings)
+      : ownerKeybindings;
+  const terminalThreadRef = threadRef;
+  const serverThread = useQuietThreadShell(surface.target || target ? null : ownerRef);
+  const draftThread = useComposerDraftStore((store) =>
+    surface.target || target ? null : store.getDraftThreadByRef(ownerRef),
+  );
   const projectRef = target
     ? scopeProjectRef(target.environmentId, target.projectId)
-    : serverThread
-      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-      : draftThread
-        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-        : null;
+    : surface.target
+      ? scopeProjectRef(
+          surface.target.environmentId as EnvironmentId,
+          surface.target.projectId as ProjectId,
+        )
+      : serverThread
+        ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+        : draftThread
+          ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+          : null;
   const project = useProject(projectRef);
   const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
+    environmentId: terminalThreadRef.environmentId,
+    threadId: terminalThreadRef.threadId,
   });
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
-  const worktreePath = resolveTerminalWorktreePath({
-    launchContext,
-    summary: activeSummary,
-    threadWorktreePath,
-  });
+  const worktreePath = surface.target
+    ? surface.target.worktreePath
+    : resolveTerminalWorktreePath({
+        launchContext,
+        summary: activeSummary,
+        threadWorktreePath,
+      });
   const cwd =
+    surface.target?.cwd ??
     launchContext?.cwd ??
     activeSummary?.cwd ??
     (project ? projectScriptCwd({ project: { cwd: project.workspaceRoot }, worktreePath }) : null);
@@ -375,13 +391,16 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       target?.label ?? resolveTerminalSessionLabel(terminalId, summary),
     );
     if (!project) continue;
-    const terminalWorktreePath = resolveTerminalWorktreePath({
-      launchContext,
-      summary,
-      threadWorktreePath,
-    });
+    const terminalWorktreePath = surface.target
+      ? surface.target.worktreePath
+      : resolveTerminalWorktreePath({
+          launchContext,
+          summary,
+          threadWorktreePath,
+        });
     terminalLaunchLocationsById.set(terminalId, {
       cwd:
+        surface.target?.cwd ??
         launchContext?.cwd ??
         summary?.cwd ??
         projectScriptCwd({
@@ -402,8 +421,8 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
     <ThreadTerminalDrawer
       mode="panel"
       visible={visible}
-      threadRef={threadRef}
-      threadId={threadRef.threadId}
+      threadRef={terminalThreadRef}
+      threadId={terminalThreadRef.threadId}
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}

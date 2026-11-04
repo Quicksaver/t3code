@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "./diffFileActions";
-import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
+import { fileSurfaceId, selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
 
 const THREAD_REF = scopeThreadRef(
   EnvironmentId.make("environment-local"),
@@ -30,7 +30,7 @@ describe("openDiffFilePrimaryAction", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({
       isOpen: true,
-      activeSurfaceId: "file:Dockerfile",
+      activeSurfaceId: fileSurfaceId("Dockerfile"),
     });
     expect(openInEditor).not.toHaveBeenCalled();
   });
@@ -108,6 +108,40 @@ describe("openDiffFilePrimaryAction", () => {
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
     ).toMatchObject({ isOpen: false });
+    expect(openInEditor).not.toHaveBeenCalled();
+  });
+  it("reuses the default File surface beside a sibling-worktree surface", () => {
+    const openInEditor = vi.fn();
+    useRightPanelStore.getState().openFile(THREAD_REF, "Dockerfile");
+    useRightPanelStore
+      .getState()
+      .openFile(THREAD_REF, "Dockerfile", undefined, "/repo.worktrees/sibling/frontend");
+
+    openDiffFilePrimaryAction({
+      threadRef: THREAD_REF,
+      filePath: "frontend/Dockerfile",
+      activeCwd: "/repo/frontend",
+      repositoryRoot: "/repo",
+      openInEditor,
+    });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: fileSurfaceId("Dockerfile"),
+      surfaces: [
+        expect.objectContaining({
+          kind: "file",
+          relativePath: "Dockerfile",
+        }),
+        expect.objectContaining({
+          kind: "file",
+          cwd: "/repo.worktrees/sibling/frontend",
+          relativePath: "Dockerfile",
+        }),
+      ],
+    });
     expect(openInEditor).not.toHaveBeenCalled();
   });
 });

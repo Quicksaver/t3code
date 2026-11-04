@@ -68,6 +68,7 @@ const BitbucketApiOperation = Schema.Literals([
   "resolveRepository",
   "getRepository",
   "getBranchingModel",
+  "getCommitAvatarUrl",
   "getPullRequest",
   "listPullRequests",
   "createRepository",
@@ -327,6 +328,28 @@ const RawBitbucketBranchingModelSchema = Schema.Struct({
   ),
 });
 
+const RawBitbucketCommitSchema = Schema.Struct({
+  author: Schema.optional(
+    Schema.Struct({
+      user: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            links: Schema.optional(
+              Schema.Struct({
+                avatar: Schema.optional(
+                  Schema.Struct({
+                    href: TrimmedNonEmptyString,
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+
 const BitbucketUserSchema = Schema.Struct({
   username: Schema.optional(TrimmedNonEmptyString),
   display_name: Schema.optional(TrimmedNonEmptyString),
@@ -352,7 +375,7 @@ export class BitbucketApi extends Context.Service<
     readonly listPullRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProvider.SourceControlProviderContext;
-      readonly headSelector: string;
+      readonly headSelector?: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
@@ -367,6 +390,11 @@ export class BitbucketApi extends Context.Service<
       readonly context?: SourceControlProvider.SourceControlProviderContext;
       readonly repository: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, BitbucketApiError>;
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProvider.SourceControlProviderContext;
+      readonly sha: string;
+    }) => Effect.Effect<string | null, BitbucketApiError>;
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;
@@ -1065,11 +1093,18 @@ export const make = Effect.gen(function* () {
       return resolveRepository(input).pipe(
         Effect.flatMap((repository) => {
           const states = toBitbucketStates(input.state);
+          const sourceBranch =
+            input.source?.refName ??
+            (input.headSelector === undefined
+              ? null
+              : SourceControlProvider.sourceBranch({ headSelector: input.headSelector }));
           const query: Record<string, string | ReadonlyArray<string>> = {
             pagelen: String(Math.max(1, Math.min(input.limit ?? 20, 50))),
             sort: "-updated_on",
             q: bitbucketQueryString([
-              `source.branch.name = "${SourceControlProvider.sourceBranch(input).replaceAll('"', '\\"')}"`,
+              ...(sourceBranch
+                ? [`source.branch.name = "${sourceBranch.replaceAll('"', '\\"')}"`]
+                : []),
               bitbucketStateFilter(states),
             ]),
             state: states,
@@ -1094,6 +1129,22 @@ export const make = Effect.gen(function* () {
     }),
     getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
       return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    }),
+    getCommitAvatarUrl: Effect.fn("BitbucketApi.getCommitAvatarUrl")(function (input) {
+      return resolveRepository(input).pipe(
+        Effect.flatMap((repository) =>
+          executeJson(
+            "getCommitAvatarUrl",
+            HttpClientRequest.get(
+              apiUrl(
+                `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/commit/${encodeURIComponent(input.sha)}`,
+              ),
+            ),
+            RawBitbucketCommitSchema,
+          ),
+        ),
+        Effect.map((commit) => commit.author?.user?.links?.avatar?.href ?? null),
+      );
     }),
     createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
       return requireRepositoryLocator(input.repository).pipe(

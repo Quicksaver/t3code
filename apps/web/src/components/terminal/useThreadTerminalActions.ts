@@ -14,7 +14,12 @@ import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
-import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import {
+  terminalTargetThreadRef,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -32,10 +37,13 @@ export interface TerminalLaunchLocation {
 export function useThreadTerminalActions(
   ownerRef: ScopedThreadRef | null,
   destination?: ProjectActionDestination,
+  target?: Extract<RightPanelSurface, { kind: "terminal" }>["target"],
 ) {
   const threadRef = destination
     ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
-    : ownerRef;
+    : target && ownerRef
+      ? terminalTargetThreadRef(ownerRef, target)
+      : ownerRef;
   const openTerminalCommand = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalCommand = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -45,11 +53,16 @@ export function useThreadTerminalActions(
   );
   const projectRef = destination
     ? scopeProjectRef(destination.environmentId, destination.projectId)
-    : serverThread
-      ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
-      : draftThread
-        ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
-        : null;
+    : target
+      ? scopeProjectRef(
+          target.environmentId as ScopedThreadRef["environmentId"],
+          target.projectId as NonNullable<typeof serverThread>["projectId"],
+        )
+      : serverThread
+        ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+        : draftThread
+          ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
+          : null;
   const project = useProject(projectRef);
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const knownSessions = useKnownTerminalSessions({
@@ -84,15 +97,19 @@ export function useThreadTerminalActions(
   };
 
   const defaultLaunchLocation = (): TerminalLaunchLocation | null =>
-    project
-      ? {
-          cwd: projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
-            worktreePath: threadWorktreePath,
-          }),
-          worktreePath: threadWorktreePath,
-        }
-      : null;
+    destination
+      ? { cwd: destination.projectCwd, worktreePath: null }
+      : target
+        ? { cwd: target.cwd, worktreePath: target.worktreePath }
+        : project
+          ? {
+              cwd: projectScriptCwd({
+                project: { cwd: project.workspaceRoot },
+                worktreePath: threadWorktreePath,
+              }),
+              worktreePath: threadWorktreePath,
+            }
+          : null;
 
   /** place mounts the destination before the server open resolves. */
   const launchTerminal = (input: {

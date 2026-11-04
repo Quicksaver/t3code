@@ -1,3 +1,4 @@
+import { useEnvironmentScope } from "../../state/session";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -25,6 +26,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { MAX_TERMINALS_PER_GROUP } from "../../types";
 import {
+  terminalTargetThreadRef,
   selectThreadRightPanelState,
   type RightPanelSurface,
   useRightPanelStore,
@@ -121,7 +123,20 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const terminalActions = useThreadTerminalActions(activeThreadRef);
   const panelActionTarget =
     activeRightPanelSurface?.kind === "terminal" ? activeRightPanelSurface.actionTarget : undefined;
-  const panelTerminalActions = useThreadTerminalActions(activeThreadRef, panelActionTarget);
+  const panelTarget =
+    activeRightPanelSurface?.kind === "terminal" ? activeRightPanelSurface.target : undefined;
+  const panelTerminalActions = useThreadTerminalActions(
+    activeThreadRef,
+    panelActionTarget,
+    panelTarget,
+  );
+  const canOperatePanelTerminal = useEnvironmentScope(
+    panelActionTarget?.environmentId ??
+      (panelTarget?.environmentId as EnvironmentId | undefined) ??
+      activeThreadRef?.environmentId ??
+      null,
+    AuthTerminalOperateScope,
+  );
 
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
@@ -329,7 +344,9 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     if (!activeThreadRef) return;
     const launched = panelTerminalActions.launchTerminal({
       place: (terminalId) =>
-        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, panelActionTarget),
+        useRightPanelStore
+          .getState()
+          .openTerminal(activeThreadRef, terminalId, panelActionTarget ?? panelTarget),
     });
     if (!launched) return;
     focusActivePanelTerminal(activeThreadRef);
@@ -378,10 +395,12 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     const destination = surface.actionTarget;
     const terminalRef = destination
       ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
-      : target;
+      : surface.target
+        ? terminalTargetThreadRef(target, surface.target)
+        : target;
     if (!readEnvironmentScope(terminalRef.environmentId, AuthTerminalOperateScope)) return;
     terminalActions.closeTerminalSession(terminalId, terminalRef);
-    if (!destination) storeCloseTerminal(target, terminalId);
+    if (!destination) storeCloseTerminal(terminalRef, terminalId);
     store.closeTerminal(target, surface.id, terminalId);
     focusActivePanelTerminal(target);
   };
@@ -471,6 +490,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     },
   } satisfies ChatShortcutCommands;
   return {
+    canOperatePanelTerminal,
     shortcuts,
     activatePanelTerminalStable,
     addTerminalContextToDraftStable,
