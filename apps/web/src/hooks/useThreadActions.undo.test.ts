@@ -19,6 +19,7 @@ const commands = vi.hoisted(() => ({
   snooze: vi.fn(),
   unsnooze: vi.fn(),
 }));
+const waitForShell = vi.hoisted(() => vi.fn<(target: unknown) => Promise<boolean>>());
 const router = vi.hoisted(() => {
   const listeners = new Set<(event: { action: { type: string } }) => void>();
   return {
@@ -72,6 +73,7 @@ vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
   readEnvironmentServerConfigLoaded: () => true,
   readThreadShell: () => (shellLoaded.current ? threadShell : null),
+  waitForThreadShell: waitForShell,
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => {
@@ -117,6 +119,7 @@ beforeEach(() => {
   }
   router.navigate.mockClear();
   router.state.location.href = "/";
+  waitForShell.mockReset().mockResolvedValue(true);
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
   threadShell.snoozedUntil = null;
@@ -230,6 +233,58 @@ describe("archive Undo", () => {
       expect.objectContaining({
         to: "/$environmentId/$threadId",
         params: { environmentId: target.environmentId, threadId: target.threadId },
+      }),
+    );
+  });
+
+  it("stays put when the archived thread was not open", async () => {
+    const actions = useThreadActions();
+    await actions.archiveThread(target);
+    await currentUndo()();
+    expect(commands.unarchive).toHaveBeenCalledOnce();
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(waitForShell).not.toHaveBeenCalled();
+  });
+
+  it("waits for restored client data before returning to the archived thread", async () => {
+    router.state.matches[0]!.params = target;
+    await useThreadActions().archiveThread(target);
+    let deliverShell!: (ready: boolean) => void;
+    let signalWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      signalWaiting = resolve;
+    });
+    waitForShell.mockImplementation(() => {
+      signalWaiting();
+      return new Promise((resolve) => {
+        deliverShell = resolve;
+      });
+    });
+    const undo = currentUndo()();
+    await waiting;
+    expect(waitForShell).toHaveBeenCalledWith(target);
+    expect(commands.unarchive).toHaveBeenCalledOnce();
+    expect(router.navigate).not.toHaveBeenCalled();
+    deliverShell(true);
+    await undo;
+    expect(router.navigate).toHaveBeenCalledExactlyOnceWith({
+      to: "/$environmentId/$threadId",
+      params: target,
+    });
+  });
+
+  it("reports restored data that never arrives without opening a missing-thread route", async () => {
+    const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
+    router.state.matches[0]!.params = target;
+    await useThreadActions().archiveThread(target);
+    waitForShell.mockResolvedValue(false);
+    await currentUndo()();
+    expect(commands.unarchive).toHaveBeenCalledOnce();
+    expect(router.navigate).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Failed to undo archive",
+        description: expect.stringContaining("The thread was restored"),
       }),
     );
   });

@@ -185,6 +185,8 @@ settle every thread in that section between it and the one you release on.
 The **Un-settle** and **Wake** buttons work the same way in their sections.
 Press `Escape` while dragging to cancel.
 
+On web and desktop, a settled thread can also be archived from its row. **Archive all** on the **Settled** header archives eligible settled threads in the current project scope, including threads behind **Show more**, and asks first when **Archive confirmation** is on. Threads hidden by tag filters, including delegated work following a hidden parent, are left out, as are threads whose provider is running or that this connection cannot change. A thread that becomes hidden, starts running, is un-settled, or is snoozed before its turn is skipped with a warning. Threads revealed while confirmation is open do not join that batch. Each archived thread shows its own **Undo**.
+
 By default, environments settle inactive threads after seven days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
