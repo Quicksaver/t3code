@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -55,6 +56,30 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     );
   },
 );
+
+it.effect("preserves FULL auto-vacuum on an existing database", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-vacuum-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  const database = new NodeSqlite.DatabaseSync(dbPath);
+  try {
+    database.exec(
+      "PRAGMA auto_vacuum = FULL; CREATE TABLE existing_content(id INTEGER PRIMARY KEY)",
+    );
+    database.exec("INSERT INTO existing_content VALUES (1)");
+  } finally {
+    database.close();
+  }
+
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const mode = yield* sql<{ readonly auto_vacuum: number }>`PRAGMA auto_vacuum`;
+    assert.equal(mode[0]?.auto_vacuum, 1);
+    assert.deepEqual([...(yield* sql`SELECT id FROM existing_content`)], [{ id: 1 }]);
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
 
 it.effect("drops planner statistics a database already has", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));

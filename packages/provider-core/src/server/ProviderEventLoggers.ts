@@ -5,6 +5,7 @@ import type * as Effect from "effect/Effect";
 export interface EventNdjsonLogger {
   readonly filePath: string;
   readonly write: (event: unknown, threadId: ThreadId | null) => Effect.Effect<void>;
+  readonly closeThread?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly close: () => Effect.Effect<void>;
 }
 
