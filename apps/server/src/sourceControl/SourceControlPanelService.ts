@@ -54,6 +54,7 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { sanitizeErrorCause } from "../diagnostics/ErrorCause.ts";
@@ -461,7 +462,7 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
     const tempDir = yield* fileSystem.makeTempDirectory({ prefix: "t3-vcs-index-" });
     return yield* Effect.gen(function* () {
       const tempIndexPath = path.join(tempDir, "index");
-      const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
+      const env = { ...(yield* HostProcess.Environment), GIT_INDEX_FILE: tempIndexPath };
       yield* fileSystem.copyFile(sourceIndexPath, tempIndexPath).pipe(
         Effect.catch(() =>
           run(input.operations.tempIndexReadTree, input.cwd, ["read-tree", "HEAD"], {
@@ -561,7 +562,7 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
         );
       return yield* Effect.gen(function* () {
         const tempIndexPath = path.join(tempDir, "index");
-        const env = { ...globalThis.process.env, GIT_INDEX_FILE: tempIndexPath };
+        const env = { ...(yield* HostProcess.Environment), GIT_INDEX_FILE: tempIndexPath };
         const headResult = yield* runResult(
           "vcs.panel.commitStaged.tempIndexResolveHead",
           cwd,
