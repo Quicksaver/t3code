@@ -8,7 +8,13 @@ import {
   ThreadId,
   type OrchestrationV2ThreadDetailSnapshot,
 } from "@t3tools/contracts";
-import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/platform";
+import {
+  ConnectionCatalogDocument,
+  ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+  Persistence,
+  StoredOrchestrationThreadSnapshot,
+} from "@t3tools/client-runtime/platform";
+import { EnvironmentQueryStore } from "@t3tools/client-runtime/state/query-persistence";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -30,9 +36,10 @@ const emptyCatalog = {
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
 const encodeCatalog = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+const encodeThread = Schema.encodeSync(Schema.fromJsonString(StoredOrchestrationThreadSnapshot));
 
 it.effect(
-  "restores a saved thread from the published version 7 cache alongside the desktop catalog",
+  "upgrades the published version 7 cache for queries while preserving threads and the desktop catalog",
   () => {
     const target = new BearerConnectionTarget({
       environmentId: EnvironmentId.make("saved-mac"),
@@ -51,10 +58,32 @@ it.effect(
       },
     };
     const records = new Map<IDBValidKey, unknown>();
+    records.set(
+      `${target.environmentId}:${snapshot.projection.thread.id}`,
+      encodeThread({
+        schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+        environmentId: target.environmentId,
+        threadId: snapshot.projection.thread.id,
+        snapshot,
+      }),
+    );
+    records.set(`${target.environmentId}:v1:pull-requests`, {
+      environmentId: target.environmentId,
+      payload: "saved query",
+      updatedAt: 0,
+    });
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const createIndex = vi.fn();
     const database = Object.assign(new EventTarget(), {
       version: 7,
       close,
-      transaction: () => {
+      objectStoreNames: { contains: (name: string) => stores.has(name) },
+      createObjectStore: (name: string) => {
+        stores.add(name);
+        return { createIndex };
+      },
+      transaction: (storeName: string) => {
+        if (!stores.has(storeName)) throw new DOMException("Missing store", "NotFoundError");
         const transaction = new EventTarget();
         return Object.assign(transaction, {
           objectStore: () => ({
@@ -91,23 +120,34 @@ it.effect(
       open: (_name: string, version: number) => {
         const request = Object.assign(new EventTarget(), {
           result: database,
+          transaction: { objectStore: () => ({ clear: () => records.clear() }) },
           error:
             version < 7
               ? new DOMException("Requested version is below the installed version", "VersionError")
               : null,
         });
-        queueMicrotask(() => request.dispatchEvent(new Event(request.error ? "error" : "success")));
+        queueMicrotask(() => {
+          if (request.error === null && version > database.version) {
+            request.dispatchEvent(
+              Object.assign(new Event("upgradeneeded"), { oldVersion: database.version }),
+            );
+            database.version = version;
+          }
+          request.dispatchEvent(new Event(request.error ? "error" : "success"));
+        });
         return request;
       },
     });
     return Effect.gen(function* () {
       const targets = yield* Effect.gen(function* () {
         const cache = yield* Persistence.EnvironmentCacheStore;
+        const queries = yield* EnvironmentQueryStore;
+        expect(yield* queries!.load(target.environmentId, "pull-requests")).toEqual(
+          Option.some("saved query"),
+        );
         expect(
-          Option.isNone(
-            yield* cache.loadThread(target.environmentId, snapshot.projection.thread.id),
-          ),
-        ).toBe(true);
+          yield* cache.loadThread(target.environmentId, snapshot.projection.thread.id),
+        ).toEqual(Option.some(snapshot));
         yield* cache.saveThread(target.environmentId, snapshot);
         return yield* (yield* Persistence.ConnectionTargetStore).list;
       }).pipe(Effect.provide(ConnectionStorage.layer));
@@ -123,6 +163,11 @@ it.effect(
       }).pipe(Effect.provide(ConnectionStorage.layer));
       expect(write).not.toHaveBeenCalled();
       expect(close).toHaveBeenCalledTimes(2);
+      expect(createIndex).toHaveBeenCalledExactlyOnceWith("environment-updated", [
+        "environmentId",
+        "updatedAt",
+        "bytes",
+      ]);
     });
   },
 );
@@ -405,7 +450,9 @@ describe("upgradeConnectionDatabase", () => {
 
     ConnectionStorage.upgradeConnectionDatabase(database, transaction, 0);
 
-    expect(stores).toEqual(new Set(["catalog", "shell", "thread", "server-config", "vcs-refs", "query"]));
+    expect(stores).toEqual(
+      new Set(["catalog", "shell", "thread", "server-config", "vcs-refs", "query"]),
+    );
     expect(transaction.objectStore).not.toHaveBeenCalled();
     expect(clear).not.toHaveBeenCalled();
   });

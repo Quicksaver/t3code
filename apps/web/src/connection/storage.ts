@@ -43,9 +43,8 @@ import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-// The installed fork has already published version 7. Lower versions fail to
-// open the connection cache and the browser catalog stored in it.
-const DATABASE_VERSION = 7;
+// Version 7 is already installed; adding the query store needs a newer version.
+const DATABASE_VERSION = 8;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
