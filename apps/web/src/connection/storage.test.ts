@@ -483,11 +483,12 @@ describe("upgradeConnectionDatabase", () => {
   it("does not clear the empty thread store when creating a new database", () => {
     const stores = new Set<string>();
     const clear = vi.fn();
+    const createIndex = vi.fn();
     const database = {
       objectStoreNames: { contains: (name: string) => stores.has(name) },
       createObjectStore: vi.fn((name: string) => {
         stores.add(name);
-        return { createIndex: vi.fn() };
+        return { createIndex };
       }),
     } as unknown as IDBDatabase;
     const transaction = {
@@ -499,32 +500,49 @@ describe("upgradeConnectionDatabase", () => {
     expect(stores).toEqual(
       new Set(["catalog", "shell", "thread", "server-config", "vcs-refs", "query"]),
     );
+    expect(createIndex).toHaveBeenCalledWith("environment-updated", [
+      "environmentId",
+      "updatedAt",
+      "bytes",
+    ]);
     expect(transaction.objectStore).not.toHaveBeenCalled();
     expect(clear).not.toHaveBeenCalled();
   });
 
-  it("clears existing thread snapshots when upgrading to archive-time cache eviction", () => {
-    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
-    const clear = vi.fn();
-    const database = {
-      objectStoreNames: { contains: (name: string) => stores.has(name) },
-      createObjectStore: vi.fn((name: string) => {
-        stores.add(name);
-        return { createIndex: vi.fn() };
-      }),
-    } as unknown as IDBDatabase;
-    const transaction = {
-      objectStore: vi.fn(() => ({ clear })),
-    } as unknown as IDBTransaction;
+  it.each([
+    { oldVersion: 4, hasQueryStore: false },
+    { oldVersion: 5, hasQueryStore: false },
+    { oldVersion: 5, hasQueryStore: true },
+  ])(
+    "upgrades version $oldVersion with query store $hasQueryStore",
+    ({ oldVersion, hasQueryStore }) => {
+      const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+      if (hasQueryStore) stores.add("query");
+      const clear = vi.fn();
+      const createIndex = vi.fn();
+      const database = {
+        objectStoreNames: { contains: (name: string) => stores.has(name) },
+        createObjectStore: vi.fn((name: string) => {
+          stores.add(name);
+          return { createIndex };
+        }),
+      } as unknown as IDBDatabase;
+      const transaction = {
+        objectStore: vi.fn(() => ({ clear })),
+      } as unknown as IDBTransaction;
 
-    ConnectionStorage.upgradeConnectionDatabase(database, transaction, 4);
+      ConnectionStorage.upgradeConnectionDatabase(database, transaction, oldVersion);
 
-    expect(transaction.objectStore).toHaveBeenCalledWith("thread");
-    expect(clear).toHaveBeenCalledOnce();
-  });
+      expect(stores.has("query")).toBe(true);
+      expect(createIndex).toHaveBeenCalledTimes(hasQueryStore ? 0 : 1);
+      expect(database.createObjectStore).toHaveBeenCalledTimes(hasQueryStore ? 0 : 1);
+      expect(transaction.objectStore).toHaveBeenCalledExactlyOnceWith("thread");
+      expect(clear).toHaveBeenCalledOnce();
+    },
+  );
 
   it("does not clear thread snapshots after the migration has already run", () => {
-    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs"]);
+    const stores = new Set(["catalog", "shell", "thread", "server-config", "vcs-refs", "query"]);
     const clear = vi.fn();
     const database = {
       objectStoreNames: { contains: (name: string) => stores.has(name) },
@@ -539,6 +557,7 @@ describe("upgradeConnectionDatabase", () => {
 
     ConnectionStorage.upgradeConnectionDatabase(database, transaction, 7);
 
+    expect(database.createObjectStore).not.toHaveBeenCalled();
     expect(transaction.objectStore).not.toHaveBeenCalled();
     expect(clear).not.toHaveBeenCalled();
   });
