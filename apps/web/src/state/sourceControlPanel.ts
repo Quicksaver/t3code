@@ -16,24 +16,25 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { flushBackgroundActivityReport } from "../lib/backgroundActivityReporter";
 
 import { useAtomCommand } from "./use-atom-command";
 import { useAtomQueryRunner } from "./use-atom-query-runner";
 import { vcsEnvironment } from "./vcs";
 
-export class SourceControlPanelCommandInterrupted extends Error {
-  constructor() {
-    super("Source control panel command was interrupted.");
-    this.name = "SourceControlPanelCommandInterrupted";
+export class SourceControlPanelCommandInterrupted extends Schema.TaggedError<SourceControlPanelCommandInterrupted>()(
+  "SourceControlPanelCommandInterrupted",
+  {},
+) {
+  override get message(): string {
+    return "Source control panel command was interrupted.";
   }
 }
 
-export function isSourceControlPanelCommandInterrupted(
-  value: unknown,
-): value is SourceControlPanelCommandInterrupted {
-  return value instanceof SourceControlPanelCommandInterrupted;
-}
+export const isSourceControlPanelCommandInterrupted = Schema.is(
+  SourceControlPanelCommandInterrupted,
+);
 
 async function unwrapPanelCommand<TResult>(
   result: AtomCommandResult<TResult, unknown>,

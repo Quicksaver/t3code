@@ -1,13 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - Node's native realpath expands Windows 8.3 aliases.
 import * as NodeFS from "node:fs";
 
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 
-class NativeRealPathError extends Data.TaggedError("NativeRealPathError")<{
-  readonly path: string;
-}> {}
+class NativeRealPathError extends Schema.TaggedError<NativeRealPathError>()("NativeRealPathError", {
+  path: Schema.String,
+}) {}
 
 /**
  * Return the native canonical form of an existing path when possible.
