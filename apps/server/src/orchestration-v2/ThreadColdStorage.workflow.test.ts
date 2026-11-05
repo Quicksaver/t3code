@@ -56,22 +56,23 @@ const stores = Layer.mergeAll(
   EffectOutbox.layer,
   TurnItemPositionStore.layer,
 );
+const configLayer = Layer.effect(
+  ServerConfig.ServerConfig,
+  ProviderReplayHarness.makeReplayServerConfig("workflow-cold-storage").pipe(Effect.orDie),
+);
 const coldLayer = ThreadColdStorage.layer.pipe(
   Layer.provideMerge(EventSink.layerFromStores.pipe(Layer.provideMerge(stores))),
   Layer.provideMerge(
     Layer.mergeAll(
       ThreadCommandExecutor.layer,
-      Layer.effect(
-        ServerConfig.ServerConfig,
-        ProviderReplayHarness.makeReplayServerConfig("workflow-cold-storage").pipe(Effect.orDie),
-      ),
       Layer.succeed(
         ProviderEventLoggers.ProviderEventLoggers,
         ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
   ),
-  Layer.provideMerge(Sqlite.layerMemory),
+  // The attached archive must close before the scoped config deletes its fixture directory.
+  Layer.provideMerge(Sqlite.layerMemory.pipe(Layer.provideMerge(configLayer))),
   Layer.provideMerge(NodeServices.layer),
 );
 

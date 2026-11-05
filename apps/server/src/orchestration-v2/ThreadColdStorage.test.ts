@@ -96,7 +96,10 @@ const StorageServicesLayer = EventSink.layerFromStores.pipe(
     ),
   ),
 );
-const BaseLayer = StorageServicesLayer.pipe(Layer.provideMerge(Sqlite.layerMemory));
+// Close the SQLite connection and its attached archive before deleting the fixture directory.
+const BaseLayer = StorageServicesLayer.pipe(
+  Layer.provideMerge(Sqlite.layerMemory.pipe(Layer.provideMerge(configLayer))),
+);
 const TestLayer = ThreadColdStorage.layer.pipe(Layer.provideMerge(BaseLayer));
 const FileTestLayer = ThreadColdStorage.layer.pipe(
   Layer.provideMerge(StorageServicesLayer),
