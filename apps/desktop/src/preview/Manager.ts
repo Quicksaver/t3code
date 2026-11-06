@@ -104,6 +104,7 @@ export interface PreviewTabState {
   controller: "human" | "agent" | "none";
   capturing: boolean;
   favicon?: DesktopPreviewFavicon;
+  captureRequestIds?: ReadonlyArray<string>;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
 }
@@ -372,7 +373,13 @@ interface ManagedListeners {
 }
 
 // Each still-image request owns a separate, short-lived rendering lease.
-type FrameCaptureConsumer = "picture-in-picture" | "recording" | symbol;
+type FrameCaptureConsumer =
+  | "picture-in-picture"
+  | "recording"
+  | { readonly kind: "still-image" | "agent-screenshot" };
+
+const needsUnthrottledGuest = (consumer: FrameCaptureConsumer) =>
+  typeof consumer === "string" || consumer.kind === "still-image";
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -544,6 +551,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const recordingInputListenersRef = yield* Ref.make<ReadonlySet<RecordingInputListener>>(
     new Set(),
   );
+  const captureRequests = new Map<
+    string,
+    {
+      readonly tabId: string;
+      readonly webContentsId: number;
+      readonly ready: Deferred.Deferred<void>;
+    }
+  >();
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
@@ -702,7 +717,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) => {
       const current = sessions.get(tabId);
-      if (!current || current.unthrottledWebContentsIds.has(wc.id)) {
+      if (
+        !current ||
+        ![...current.consumers].some(needsUnthrottledGuest) ||
+        current.unthrottledWebContentsIds.has(wc.id)
+      ) {
         return Effect.succeed([undefined, sessions] as const);
       }
       return setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
@@ -757,6 +776,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const consumers = new Set(current.consumers);
         consumers.delete(consumer);
         if (consumers.size > 0) {
+          const unthrottledWebContentsIds = [...consumers].some(needsUnthrottledGuest)
+            ? current.unthrottledWebContentsIds
+            : new Set<number>();
+          if (unthrottledWebContentsIds !== current.unthrottledWebContentsIds)
+            yield* restoreFrameCaptureWebContentsBackgroundThrottling(
+              current.unthrottledWebContentsIds,
+            );
           return [
             consumer === "picture-in-picture" ? current.scope : undefined,
             replaceMap(sessions, (copy) => {
@@ -764,6 +790,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 ...current,
                 scope: consumer === "picture-in-picture" ? null : current.scope,
                 consumers,
+                unthrottledWebContentsIds,
                 lastPictureInPictureFingerprint:
                   consumer === "picture-in-picture"
                     ? null
@@ -1934,6 +1961,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         controller: current?.controller ?? "none",
         capturing: current?.capturing ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
+        ...(current?.captureRequestIds ? { captureRequestIds: current.captureRequestIds } : {}),
         ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
       };
@@ -2274,6 +2302,67 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const publishCaptureRequests = Effect.fnUntraced(function* (tabId: string) {
+    const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+      const current = tabs.get(tabId);
+      if (!current) return [undefined, tabs] as const;
+      const state = {
+        ...current,
+        captureRequestIds: [...captureRequests].flatMap(([id, request]) =>
+          request.tabId === tabId ? [id] : [],
+        ),
+      };
+      return [state, replaceMap(tabs, (copy) => copy.set(tabId, state))] as const;
+    });
+    if (next) yield* emitIfCurrent(tabId, next);
+  });
+
+  const captureReady = Effect.fn("PreviewManager.captureReady")(function* (
+    tabId: string,
+    webContentsId: number,
+    requestId: string,
+  ) {
+    const request = captureRequests.get(requestId);
+    if (request?.tabId !== tabId || request.webContentsId !== webContentsId) return;
+    const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+    if (tab?.webContentsId === webContentsId)
+      yield* Deferred.succeed(request.ready, undefined).pipe(Effect.asVoid);
+  });
+
+  const captureAgentScreenshot = Effect.fn("PreviewManager.captureAgentScreenshot")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    capture: (signal: AbortSignal) => Promise<unknown>,
+  ) {
+    const consumer = { kind: "agent-screenshot" } as const;
+    const requestId = yield* random.uuidV4();
+    const ready = yield* Deferred.make<void>();
+    return yield* Effect.acquireUseRelease(
+      startFrameCapture(tabId, consumer),
+      () =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            captureRequests.set(requestId, { tabId, webContentsId: wc.id, ready });
+          }),
+          () =>
+            publishCaptureRequests(tabId).pipe(
+              Effect.andThen(Deferred.await(ready)),
+              // The renderer must commit the guest's in-viewport position before the first
+              // native copy: an offscreen copy can stall until the capture deadline.
+              Effect.andThen(Effect.tryPromise(capture)),
+              // ServerBrowserPage gives the whole snapshot ten seconds, including preparation.
+              Effect.timeout("8 seconds"),
+            ),
+          () =>
+            Effect.gen(function* () {
+              captureRequests.delete(requestId);
+              yield* publishCaptureRequests(tabId);
+            }),
+        ),
+      () => stopFrameCapture(tabId, consumer),
+    );
+  });
+
   // The scheme is read after the session attaches so a concurrent setColorScheme is not
   // overwritten with a stale snapshot.
   const restoreControlSession = Effect.fn("PreviewManager.restoreControlSession")(
@@ -2288,7 +2377,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }
       if (afterAttach.serverTab) {
         yield* listenToBrowserHost;
-        browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
+        browserHost.attach(afterAttach.serverTab, {
+          webContents: wc,
+          debugger: control.debugger,
+          captureScreenshot: (_params, capture) => captureAgentScreenshot(tabId, wc, capture),
+        });
       }
       if (afterAttach.colorScheme !== "system") {
         yield* attemptPromise({ operation: "applyColorScheme", tabId, webContentsId: wc.id }, () =>
@@ -2451,7 +2544,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     wc: Electron.WebContents,
   ) {
-    const consumer = Symbol("still-image");
+    const consumer = { kind: "still-image" } as const;
     return yield* Effect.acquireUseRelease(
       startFrameCapture(tabId, consumer),
       () =>
@@ -2701,7 +2794,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             if (current.consumers.has(consumer)) {
               return [false, sessions] as const;
             }
-            if (!current.unthrottledWebContentsIds.has(wc.id)) {
+            if (needsUnthrottledGuest(consumer) && !current.unthrottledWebContentsIds.has(wc.id)) {
               yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false);
             }
             let scope = current.scope;
@@ -2716,7 +2809,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   ...current,
                   scope,
                   consumers: new Set([...current.consumers, consumer]),
-                  unthrottledWebContentsIds: new Set([...current.unthrottledWebContentsIds, wc.id]),
+                  unthrottledWebContentsIds: new Set([
+                    ...current.unthrottledWebContentsIds,
+                    ...(needsUnthrottledGuest(consumer) ? [wc.id] : []),
+                  ]),
                 });
               }),
             ] as const;
@@ -2724,13 +2820,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (sessions.size === 0) {
             yield* setFrameCaptureBackgroundThrottling(false);
           }
-          yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
-            Effect.onError(() =>
-              sessions.size === 0
-                ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
-                : Effect.void,
-            ),
-          );
+          // Agent screenshots need presentation, not a page visibility override.
+          if (needsUnthrottledGuest(consumer)) {
+            yield* setFrameCaptureWebContentsBackgroundThrottling(wc, false).pipe(
+              Effect.onError(() =>
+                sessions.size === 0
+                  ? setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore)
+                  : Effect.void,
+              ),
+            );
+          }
           const scope =
             consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
           if (scope !== null) {
@@ -2742,7 +2841,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               copy.set(tabId, {
                 scope,
                 consumers: new Set([consumer]),
-                unthrottledWebContentsIds: new Set([wc.id]),
+                unthrottledWebContentsIds: new Set(needsUnthrottledGuest(consumer) ? [wc.id] : []),
                 lastPictureInPictureFingerprint: null,
               });
             }),
@@ -3396,6 +3495,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   return {
     cancelPickElement,
+    captureReady,
     captureScreenshot,
     closeTab,
     copyArtifactToClipboard,
@@ -3603,6 +3703,11 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly captureReady: (
+      tabId: string,
+      webContentsId: number,
+      requestId: string,
+    ) => Effect.Effect<void>;
     readonly prepareWebview: (webContents: Electron.WebContents) => Effect.Effect<void>;
     readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -3734,6 +3839,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   return PreviewManager.of({
     setMainWindow: operations.setMainWindow,
+    captureReady: operations.captureReady,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
       function* (scope, persistent, namespace) {

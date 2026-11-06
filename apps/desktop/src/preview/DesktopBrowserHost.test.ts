@@ -70,6 +70,8 @@ const makeDebuggee = (
       }),
   });
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+    isDestroyed: () => false,
+    capturePage: async () => ({ isEmpty: () => true }),
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
@@ -78,6 +80,10 @@ const makeDebuggee = (
     tab: {
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
+      captureScreenshot: (
+        _params: Record<string, unknown>,
+        capture: (signal: AbortSignal) => Promise<unknown>,
+      ) => Effect.tryPromise(capture),
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
@@ -214,7 +220,15 @@ describe("DesktopBrowserHost", () => {
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
+      const prepared: Array<unknown> = [];
+      host.attach(key, {
+        ...debuggee.tab,
+        captureScreenshot: (params, capture) =>
+          Effect.tryPromise((signal) => {
+            prepared.push(params["id"]);
+            return capture(signal);
+          }),
+      });
       const replies = yield* watchReplies(host);
 
       yield* command(host, 1, "Page.captureScreenshot");
@@ -222,6 +236,7 @@ describe("DesktopBrowserHost", () => {
       yield* command(host, 3, "DOM.enable");
       yield* settle;
       expect(debuggee.sent).toEqual([1, 3]);
+      expect(prepared).toEqual([1]);
 
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(1);
@@ -258,12 +273,25 @@ describe("DesktopBrowserHost", () => {
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
+      let cancelled = 0;
+      host.attach(key, {
+        ...debuggee.tab,
+        captureScreenshot: (_params, capture) =>
+          Effect.tryPromise(capture).pipe(
+            Effect.onInterrupt(() =>
+              Effect.sync(() => {
+                cancelled += 1;
+              }),
+            ),
+          ),
+      });
 
       yield* command(host, 1, "Page.captureScreenshot");
       yield* command(host, 2, "Page.captureScreenshot");
       yield* settle;
       yield* host.handleCommandLine(encodeJson({ type: "release", ...key }));
+      yield* settle;
+      expect(cancelled).toBe(1);
       yield* command(host, 3, "Page.captureScreenshot");
       expect(debuggee.sent).toEqual([1]);
 
