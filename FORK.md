@@ -103,10 +103,11 @@ The shared ledger retains the published pre-V2 tail through 68, followed by this
 | 96 | `RepairBooleanSettledOverride` | upstream `077_RepairBooleanSettledOverride.ts` |
 | 97 | `DropOrchestrationEventCorrelationIndex` | upstream `078_DropOrchestrationEventCorrelationIndex.ts` |
 | 98 | `DelegatedRecoveryIndexes` | upstream `079_DelegatedRecoveryIndexes.ts` |
+| 99 | `ScheduledTaskThreadMode` | upstream `080_ScheduledTaskThreadMode.ts` |
 
 `apps/server/src/persistence/Migrations.ts` imports the source files under these IDs. Upstream ledger entries relocate to their canonical main IDs with their timestamps and existing schema work preserved. The normalizer removes exact divergent upstream markers, replays missing fork migrations in order, and records relocated markers in one transaction. Upstream preview ledgers are reconciled before that normalization. The startup guard refuses missing or mismatched V2 migrations instead of silently skipping schema.
 
-Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. New upstream 78 and 79 append at main 97 and 98. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published SQL body changes. Tests cover fresh databases, the published 96 upgrade, complete upstream 79 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls.
+Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. Upstream migration 80 appends at main 99, preserving the installed tail through 98. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published SQL body changes. Tests cover fresh databases, the published 98 upgrade, complete upstream 80 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls.
 
 ## Installed Profile Startup Compatibility
 
