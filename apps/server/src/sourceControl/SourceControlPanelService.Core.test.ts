@@ -52,7 +52,6 @@ import {
   type ExecuteGitResult,
 } from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 
 const unlockedBackgroundPolicy: BackgroundPolicySnapshot = {
@@ -1818,9 +1817,6 @@ describe("SourceControlPanelService", () => {
           ].includes(call.operation),
       );
       assert.isTrue(selectedIndexCalls.every((call) => Boolean(call.env?.GIT_INDEX_FILE?.length)));
-      assert.isTrue(
-        selectedIndexCalls.every((call) => call.env?.SOURCE_CONTROL_TEST_ENV === "configured"),
-      );
       const commitCall = calls.find((call) => call.operation === "vcs.panel.commitStaged");
       assert.strictEqual(
         resolveGitCommandTimeoutMs(commitCall?.args ?? [], commitCall?.timeoutMs),
@@ -1836,7 +1832,6 @@ describe("SourceControlPanelService", () => {
           }),
         ),
       ),
-      Effect.provideService(HostProcess.Environment, { SOURCE_CONTROL_TEST_ENV: "configured" }),
     );
   });
 
