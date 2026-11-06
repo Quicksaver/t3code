@@ -115,7 +115,11 @@ import {
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import {
+  CommandReceiptStoreV2,
+  type CommandReceiptV2,
+  lifecycleOwnedByAncestor,
+} from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
   readForkHistoryItems,
@@ -456,6 +460,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getSubagentChildThreads: (
+    ...args: Parameters<ProjectionStoreV2["Service"]["getSubagentChildThreads"]>
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, OrchestratorV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
@@ -5083,6 +5090,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             } satisfies PendingOrchestrationEffectV2,
           ]);
         }
+      }
+    }
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const children = yield* projectionStore
+        .getSubagentChildThreads(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (children.length > 0) {
+        const cascade = yield* EffectOutbox.subagentLifecycleEffect(
+          command.commandId,
+          command.threadId,
+          command.type === "thread.archive" ? "archive" : "unarchive",
+        );
+        yield* Ref.update(effects, (existing) => [...existing, cascade]);
       }
     }
 
@@ -14568,6 +14589,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             planThreadDeletion({
               command: deletion,
               projection,
+              cascadeToSubagents:
+                (yield* projectionStore
+                  .getSubagentChildThreads(deletion.threadId, { includeDeleted: true })
+                  .pipe(mapDispatchError(deletion))).length > 0,
               attachmentIds: yield* projectionStore
                 .getThreadAttachmentIds(deletion.threadId)
                 .pipe(mapDispatchError(command)),
@@ -14982,6 +15007,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    const cascade = yield* EffectOutbox.SubagentLifecycle;
+    if (
+      cascade !== undefined &&
+      (command.type === "thread.archive" || command.type === "thread.unarchive")
+    ) {
+      const lifecycle = yield* commandReceipts
+        .getLatestLifecycle(command.threadId)
+        .pipe(mapDispatchError(command));
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const owned =
+        lifecycle !== null &&
+        (yield* lifecycleOwnedByAncestor(
+          lifecycle,
+          thread,
+          cascade.ancestorThreadId,
+          commandReceipts,
+          projectionStore.getThread,
+        ).pipe(mapDispatchError(command)));
+      if (
+        thread.deletedAt !== null ||
+        (command.type === "thread.archive"
+          ? thread.archivedAt !== null ||
+            (lifecycle !== null && lifecycle.resultSequence > cascade.sourceSequence && !owned)
+          : thread.archivedAt === null || !owned)
+      ) {
+        const sequence = yield* eventSink
+          .latestSequence({ threadId: command.threadId })
+          .pipe(mapDispatchError(command));
+        // An acknowledgement must not become the child's latest lifecycle choice.
+        yield* commandReceipts
+          .insertIfAbsent({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            commandType: "subagent-threads.cascade",
+            acceptedAt: yield* DateTime.now,
+            resultSequence: sequence,
+            status: "accepted",
+            error: null,
+          })
+          .pipe(mapDispatchError(command));
+        return { sequence, storedEvents: [] };
+      }
     }
 
     const plan = yield* dispatchOnce(command, sideChatIds).pipe(
@@ -15804,6 +15875,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       function (threadId) {
         return projectionStore
           .listAppOwnedChildThreadIds(threadId)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
+    getSubagentChildThreads: Effect.fn("OrchestratorV2.getSubagentChildThreads")(
+      function (threadId, options) {
+        return projectionStore
+          .getSubagentChildThreads(threadId, options)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       },
     ),
