@@ -2539,7 +2539,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               Effect.andThen(Deferred.await(ready)),
               // The renderer must commit the guest's in-viewport position before the first
               // native copy: an offscreen copy can stall until the capture deadline.
-              Effect.andThen(Effect.tryPromise(capture)),
+              Effect.andThen(
+                Effect.tryPromise({
+                  try: capture,
+                  catch: (cause) => new DesktopBrowserHost.DesktopBrowserCaptureError({ cause }),
+                }),
+              ),
               // ServerBrowserPage gives the whole snapshot ten seconds, including preparation.
               Effect.timeout("8 seconds"),
             ),

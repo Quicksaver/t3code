@@ -33,6 +33,12 @@ const FOCUS_IDLE = "5 seconds";
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
 
+export class DesktopBrowserCaptureError extends Schema.TaggedError<DesktopBrowserCaptureError>()(
+  "DesktopBrowserCaptureError",
+  { cause: Schema.Defect() },
+) {}
+const isCaptureError = Schema.is(DesktopBrowserCaptureError);
+
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
   readonly tabId: string;
@@ -364,7 +370,7 @@ export const make = Effect.gen(function* () {
         )
           .catch((cause: unknown) => {
             // Preserve native CDP errors across the Effect/Promise boundary.
-            throw Cause.isUnknownError(cause) ? cause.cause : cause;
+            throw Cause.isUnknownError(cause) || isCaptureError(cause) ? cause.cause : cause;
           })
           // Cancellation releases preparation, but Chromium still owns the pending capture.
           .finally(() =>

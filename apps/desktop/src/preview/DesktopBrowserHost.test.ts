@@ -26,6 +26,11 @@ const decodeCdpMessage = Schema.decodeUnknownSync(
   ),
 );
 const key = { threadId: "thread-1", tabId: "tab-1" };
+const tryCapture = (capture: (signal: AbortSignal) => Promise<unknown>) =>
+  Effect.tryPromise({
+    try: capture,
+    catch: (cause) => new DesktopBrowserHost.DesktopBrowserCaptureError({ cause }),
+  });
 /** Sends a page command whose id the fake debugger records as it receives it. */
 const command = (
   host: DesktopBrowserHost.DesktopBrowserHost["Service"],
@@ -101,7 +106,7 @@ const makeDebuggee = (
       captureScreenshot: (
         _params: Record<string, unknown>,
         capture: (signal: AbortSignal) => Promise<unknown>,
-      ) => Effect.tryPromise(capture),
+      ) => tryCapture(capture),
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
@@ -325,7 +330,7 @@ describe("DesktopBrowserHost", () => {
       host.attach(key, {
         ...debuggee.tab,
         captureScreenshot: (params, capture) =>
-          Effect.tryPromise((signal) => {
+          tryCapture((signal) => {
             prepared.push(params["id"]);
             return capture(signal);
           }),
@@ -378,7 +383,7 @@ describe("DesktopBrowserHost", () => {
       host.attach(key, {
         ...debuggee.tab,
         captureScreenshot: (_params, capture) =>
-          Effect.tryPromise(capture).pipe(
+          tryCapture(capture).pipe(
             Effect.onInterrupt(() =>
               Effect.sync(() => {
                 cancelled += 1;
