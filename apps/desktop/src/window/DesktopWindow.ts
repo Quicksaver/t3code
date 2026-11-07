@@ -41,6 +41,7 @@ import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { keepsDetachedMenuShortcut, makeDetachedPanelWindows } from "./DetachedPanelWindows.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -143,6 +144,12 @@ export class DesktopWindow extends Context.Service<
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
     readonly syncAppearance: Effect.Effect<void>;
+    readonly detachedPanels: {
+      readonly sync: (visible: readonly string[]) => Effect.Effect<void>;
+      readonly reveal: (name: string) => Effect.Effect<void>;
+      readonly focus: (name: string) => Effect.Effect<void>;
+      readonly close: (name: string) => Effect.Effect<void>;
+    };
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -399,6 +406,7 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const mainWindowMutex = yield* Semaphore.make(1);
   const pendingMainReveals = new WeakMap<Electron.BrowserWindow, Effect.Effect<void>>();
   const revealMain = Effect.fn("desktop.window.revealMain")((window: Electron.BrowserWindow) =>
@@ -423,8 +431,183 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const openSafeExternalUrl = (url: string) => {
+    if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+      void runPromise(electronShell.openExternal(url));
+    }
+  };
+
+  const contextMenuContents = new WeakSet<Electron.WebContents>();
+  const installContextMenu = (
+    ownerWindow: Electron.BrowserWindow,
+    contents: Electron.WebContents,
+  ): void => {
+    if (contextMenuContents.has(contents)) return;
+    contextMenuContents.add(contents);
+    contents.on("context-menu", (event, params) => {
+      event.preventDefault();
+      if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
+      // Right-clicking a guest may leave native editing roles targeting the host renderer.
+      contents.focus();
+
+      const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+
+      if (params.misspelledWord) {
+        for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
+          menuTemplate.push({
+            label: suggestion,
+            click: () => {
+              if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
+            },
+          });
+        }
+        if (params.dictionarySuggestions.length === 0) {
+          menuTemplate.push({ label: "No suggestions", enabled: false });
+        }
+        menuTemplate.push({ type: "separator" });
+      }
+
+      if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
+        menuTemplate.push(
+          {
+            label: "Copy Link",
+            click: () => {
+              void runPromise(electronShell.copyText(params.linkURL));
+            },
+          },
+          { type: "separator" },
+        );
+      }
+
+      const mailtoAddress = parseMailtoAddress(params.linkURL);
+      if (Option.isSome(mailtoAddress)) {
+        menuTemplate.push(
+          {
+            label: "Copy Email Address",
+            click: () => {
+              void runPromise(electronShell.copyText(mailtoAddress.value));
+            },
+          },
+          { type: "separator" },
+        );
+      }
+
+      if (params.mediaType === "image") {
+        menuTemplate.push({
+          label: "Copy Image",
+          click: () => {
+            void runPromise(
+              Effect.tryPromise({
+                try: () => copyContextMenuImage(contents, params),
+                catch: (cause) => new ContextMenuImageCopyError({ cause }),
+              }).pipe(Effect.catch(() => logWindowWarning("failed to copy context-menu image"))),
+            );
+          },
+        });
+        menuTemplate.push({ type: "separator" });
+      }
+
+      menuTemplate.push(
+        { role: "cut", enabled: params.editFlags.canCut },
+        { role: "copy", enabled: params.editFlags.canCopy },
+        { role: "paste", enabled: params.editFlags.canPaste },
+        { role: "selectAll", enabled: params.editFlags.canSelectAll },
+      );
+
+      void runPromise(
+        electronMenu.popupTemplate({
+          window: ownerWindow,
+          template: menuTemplate,
+          ...(params.frame ? { frame: params.frame } : {}),
+        }),
+      );
+    });
+    contents.on("did-create-window", (popup) => {
+      installContextMenu(popup, popup.webContents);
+    });
+  };
+
+  /** Preview webviews may attach to the main window and to detached panel windows. */
+  const installWebviewHost = (window: Electron.BrowserWindow): void => {
+    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (
+        typeof params.partition !== "string" ||
+        !previewManager.isBrowserPartition(params.partition)
+      ) {
+        event.preventDefault();
+        return;
+      }
+      webPreferences.sandbox = true;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = false;
+      webPreferences.disableHtmlFullscreenWindowResize = true;
+      if (previewPasskeys.bridgeEnabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PASSKEY_BRIDGE_ARGUMENT,
+        ];
+      }
+      if (!primaryPaste.enabled) {
+        webPreferences.additionalArguments = [
+          ...(webPreferences.additionalArguments ?? []),
+          PRIMARY_PASTE_DISABLED_ARGUMENT,
+        ];
+      }
+    });
+    window.webContents.on("did-attach-webview", (_event, contents) => {
+      installContextMenu(window, contents);
+      void runPromise(previewManager.prepareWebview(contents));
+    });
+  };
+
+  const detachedWindowIds = new Set<number>();
+  let detachedIconOption: { icon: string } | Record<string, never> = {};
+  const detachedPanels = makeDetachedPanelWindows({
+    isQuitting: () => runSync(Ref.get(desktopState.quitting)),
+    windowOptions: () => ({
+      ...detachedIconOption,
+      backgroundColor: getInitialWindowBackgroundColor(Electron.nativeTheme.shouldUseDarkColors),
+      title: environment.displayName,
+    }),
+    displays: () => Electron.screen.getAllDisplays().map((display) => display.workArea),
+    setMainRendererUnthrottled: (unthrottled) => {
+      runFork(previewManager.setDetachedWindowsShown(unthrottled));
+    },
+    onWindowCreated: (window) => {
+      const windowId = window.id;
+      detachedWindowIds.add(windowId);
+      window.once("closed", () => detachedWindowIds.delete(windowId));
+      installWebviewHost(window);
+      void runPromise(previewManager.addWebviewHost(window));
+      void runPromise(
+        Effect.gen(function* () {
+          const main = yield* electronWindow.main;
+          if (Option.isSome(main) && !main.value.isDestroyed() && !window.isDestroyed()) {
+            window.webContents.setZoomFactor(main.value.webContents.getZoomFactor());
+          }
+        }),
+      );
+    },
+    onExternalUrl: openSafeExternalUrl,
+    keepsMenuShortcut: (input) =>
+      keepsDetachedMenuShortcut(
+        input,
+        environment.platform,
+        PreviewManager.isPreviewEditingShortcut(input, environment.platform),
+      ),
+  });
+  const isDetachedWindow = (window: Electron.BrowserWindow) => detachedWindowIds.has(window.id);
+
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
-  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
+  // A focused detached panel window has no app renderer of its own, so events go to the main window.
+  const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(
+    Effect.filterOrElse(
+      (window) => Option.isNone(window) || !isDetachedWindow(window.value),
+      () => electronWindow.main,
+    ),
+    Effect.flatMap(withoutSplash),
+  );
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -448,6 +631,7 @@ export const make = Effect.gen(function* () {
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
+    detachedIconOption = iconOption;
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
     const persistedBounds = persistedSettings.mainWindowBounds;
@@ -617,132 +801,14 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
-    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-      if (
-        typeof params.partition !== "string" ||
-        !previewManager.isBrowserPartition(params.partition)
-      ) {
-        event.preventDefault();
-        return;
-      }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = false;
-      webPreferences.disableHtmlFullscreenWindowResize = true;
-      if (previewPasskeys.bridgeEnabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PASSKEY_BRIDGE_ARGUMENT,
-        ];
-      }
-      if (!primaryPaste.enabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PRIMARY_PASTE_DISABLED_ARGUMENT,
-        ];
-      }
-    });
-
-    const contextMenuContents = new WeakSet<Electron.WebContents>();
-    const installContextMenu = (
-      ownerWindow: Electron.BrowserWindow,
-      contents: Electron.WebContents,
-    ): void => {
-      if (contextMenuContents.has(contents)) return;
-      contextMenuContents.add(contents);
-      contents.on("context-menu", (event, params) => {
-        event.preventDefault();
-        if (contents.isDestroyed() || ownerWindow.isDestroyed()) return;
-        // Right-clicking a guest may leave native editing roles targeting the host renderer.
-        contents.focus();
-
-        const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
-
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-            menuTemplate.push({
-              label: suggestion,
-              click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
-              },
-            });
-          }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
-
-        if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
-          menuTemplate.push(
-            {
-              label: "Copy Link",
-              click: () => {
-                void runPromise(electronShell.copyText(params.linkURL));
-              },
-            },
-            { type: "separator" },
-          );
-        }
-
-        const mailtoAddress = parseMailtoAddress(params.linkURL);
-        if (Option.isSome(mailtoAddress)) {
-          menuTemplate.push(
-            {
-              label: "Copy Email Address",
-              click: () => {
-                void runPromise(electronShell.copyText(mailtoAddress.value));
-              },
-            },
-            { type: "separator" },
-          );
-        }
-
-        if (params.mediaType === "image") {
-          menuTemplate.push({
-            label: "Copy Image",
-            click: () => {
-              void runPromise(
-                Effect.tryPromise({
-                  try: () => copyContextMenuImage(contents, params),
-                  catch: (cause) => new ContextMenuImageCopyError({ cause }),
-                }).pipe(Effect.catch(() => logWindowWarning("failed to copy context-menu image"))),
-              );
-            },
-          });
-          menuTemplate.push({ type: "separator" });
-        }
-
-        menuTemplate.push(
-          { role: "cut", enabled: params.editFlags.canCut },
-          { role: "copy", enabled: params.editFlags.canCopy },
-          { role: "paste", enabled: params.editFlags.canPaste },
-          { role: "selectAll", enabled: params.editFlags.canSelectAll },
-        );
-
-        void runPromise(
-          electronMenu.popupTemplate({
-            window: ownerWindow,
-            template: menuTemplate,
-            ...(params.frame ? { frame: params.frame } : {}),
-          }),
-        );
-      });
-      contents.on("did-create-window", (popup) => {
-        installContextMenu(popup, popup.webContents);
-      });
-    };
+    installWebviewHost(window);
     installContextMenu(window, window.webContents);
-    window.webContents.on("did-attach-webview", (_event, contents) => {
-      installContextMenu(window, contents);
-      void runPromise(previewManager.prepareWebview(contents));
-    });
+    detachedPanels.attach(window);
 
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
-        void runPromise(electronShell.openExternal(url));
-      }
+    window.webContents.setWindowOpenHandler((details) => {
+      const detachedResponse = detachedPanels.windowOpenResponse(details);
+      if (detachedResponse !== null) return detachedResponse;
+      openSafeExternalUrl(details.url);
       return { action: "deny" };
     });
     window.webContents.on("will-navigate", (event, url) => {
@@ -979,7 +1045,7 @@ export const make = Effect.gen(function* () {
         return;
       firstRevealComplete = true;
       pendingMainReveals.delete(window);
-      window.webContents.setBackgroundThrottling(true);
+      yield* previewManager.enableMainWindowThrottling().pipe(Effect.ignore);
       if (persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
       yield* dismissConnectingSplash;
@@ -1203,9 +1269,21 @@ export const make = Effect.gen(function* () {
     syncAppearance: Effect.gen(function* () {
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
       yield* electronWindow.syncAllAppearance((window) =>
-        syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
+        isDetachedWindow(window)
+          ? Effect.sync(() => {
+              if (!window.isDestroyed()) {
+                window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+              }
+            })
+          : syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    detachedPanels: {
+      sync: (visible) => Effect.sync(() => detachedPanels.sync(visible)),
+      reveal: (name) => Effect.sync(() => detachedPanels.reveal(name)),
+      focus: (name) => Effect.sync(() => detachedPanels.focus(name)),
+      close: (name) => Effect.sync(() => detachedPanels.close(name)),
+    },
   });
 });
 

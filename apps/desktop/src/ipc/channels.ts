@@ -138,3 +138,11 @@ export const RECEIVE_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:receive-provider-
 export const CANCEL_PROVIDER_AUTH_CALLBACK_CHANNEL = "desktop:cancel-provider-auth-callback";
 export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-storage";
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
+
+export const DETACHED_PANELS_SYNC_CHANNEL = "desktop:detached-panels-sync";
+export const DETACHED_PANELS_REVEAL_CHANNEL = "desktop:detached-panels-reveal";
+export const DETACHED_PANELS_FOCUS_CHANNEL = "desktop:detached-panels-focus";
+export const DETACHED_PANELS_CLOSE_CHANNEL = "desktop:detached-panels-close";
+export const DETACHED_PANELS_CLOSE_REQUESTED_CHANNEL = "desktop:detached-panels-close-requested";
+export const DETACHED_PANELS_BOUNDS_CHANNEL = "desktop:detached-panels-bounds";
+export const DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL = "desktop:detached-panels-preview-command";

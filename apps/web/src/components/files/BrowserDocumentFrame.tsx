@@ -283,7 +283,9 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
-    if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
+    const doc = frame.ownerDocument;
+    const view = doc.defaultView ?? window;
+    if (doc.activeElement !== frame || view.navigator.userActivation?.isActive === false) return;
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
       open(linkRequest.url, linkRequest);
@@ -312,8 +314,10 @@ export function HtmlRenderDocument(props: {
     const onMessage = (event: MessageEvent) => {
       if (event.source === frame.contentWindow) onFrameMessage(frame, event);
     };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    // The frame posts to its own parent, which is a detached panel window when detached.
+    const view = frame.ownerDocument.defaultView ?? window;
+    view.addEventListener("message", onMessage);
+    return () => view.removeEventListener("message", onMessage);
   }, []);
   return (
     <>

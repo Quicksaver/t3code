@@ -52,11 +52,30 @@ export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()
   }
 }
 
+type ClipboardView = Window & typeof globalThis;
+
+let resolveClipboardView: (() => ClipboardView | null) | null = null;
+
+/**
+ * The window whose clipboard copies use, such as a focused detached panel window: Chromium
+ * rejects clipboard writes from a document that does not have focus.
+ */
+export function setClipboardViewResolver(resolver: (() => ClipboardView | null) | null): void {
+  resolveClipboardView = resolver;
+}
+
+/** A focused detached window, or undefined for this window's own globals. */
+function detachedClipboardView(): ClipboardView | undefined {
+  return resolveClipboardView?.() ?? undefined;
+}
+
 function writeTextWithExecCommand(
   value: string,
   extraFlavors?: Readonly<Record<string, string>>,
+  view = detachedClipboardView(),
 ): boolean {
-  if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
+  const document = view?.document ?? globalThis.document;
+  if (document === undefined || typeof document.execCommand !== "function") return false;
 
   const textarea = document.createElement("textarea");
   textarea.value = value;
@@ -123,15 +142,20 @@ export async function writeTextToClipboard(
       ),
     };
 
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-    if (writeTextWithExecCommand(value, extraFlavors)) return true;
+  const view = detachedClipboardView();
+  const navigator = view?.navigator ?? globalThis.navigator;
+  if (navigator === undefined || !navigator.clipboard?.writeText) {
+    if (writeTextWithExecCommand(value, extraFlavors, view)) return true;
     throw new ClipboardApiUnavailableError({
       target,
     });
   }
+  // Items and blobs come from the clipboard's own realm.
+  const ClipboardItem = view?.ClipboardItem ?? globalThis.ClipboardItem;
+  const Blob = view?.Blob ?? globalThis.Blob;
 
   try {
-    if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+    if (extraFlavors && ClipboardItem !== undefined && navigator.clipboard.write) {
       try {
         await navigator.clipboard.write([
           new ClipboardItem({
@@ -172,11 +196,13 @@ export async function writeTextToClipboard(
 }
 
 export async function readTextFromClipboard(target = "text"): Promise<string> {
-  if (
-    typeof window === "undefined" ||
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.readText
-  ) {
+  if (typeof window === "undefined") {
+    throw new ClipboardReadUnavailableError({
+      target,
+    });
+  }
+  const navigator = detachedClipboardView()?.navigator ?? globalThis.navigator;
+  if (navigator === undefined || !navigator.clipboard?.readText) {
     throw new ClipboardReadUnavailableError({
       target,
     });

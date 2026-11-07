@@ -1,6 +1,7 @@
 import {
   PanelBottomIcon,
   PanelRightIcon,
+  SquareArrowOutUpRightIcon,
   SquareMenuIcon,
   Maximize2Icon,
   Minimize2Icon,
@@ -10,6 +11,7 @@ import { memo, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
@@ -170,6 +172,33 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   );
 });
 
+/** Moves the active panel tab into its own window. Desktop only. */
+export const RightPanelDetachControl = memo(function RightPanelDetachControl({
+  onDetach,
+}: {
+  onDetach: () => void;
+}) {
+  const label = "Open in new window";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            className="shrink-0 [-webkit-app-region:no-drag]"
+            onClick={onDetach}
+            aria-label={label}
+            variant="ghost"
+            size="icon-sm"
+          >
+            <SquareArrowOutUpRightIcon className="size-4" />
+          </Button>
+        }
+      />
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
+  );
+});
+
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
@@ -193,6 +222,8 @@ export function WorkspaceTitlebarControls(props: {
   readonly animationsActive: boolean;
   readonly maximized: boolean;
   readonly onToggleMaximized: () => void;
+  /** Present while the active tab can move into its own window. */
+  readonly onDetach?: (() => void) | undefined;
   readonly children: ReactNode;
 }) {
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
@@ -209,7 +240,7 @@ export function WorkspaceTitlebarControls(props: {
           aria-hidden={!props.rightPanelOpen}
           // Fading out on close would show it beside the thread details toggle that replaces it.
           className={cn(
-            "flex shrink-0",
+            "flex shrink-0 gap-1",
             props.rightPanelOpen &&
               props.animationsActive &&
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
@@ -219,6 +250,7 @@ export function WorkspaceTitlebarControls(props: {
           )}
           inert={!props.rightPanelOpen}
         >
+          {props.onDetach ? <RightPanelDetachControl onDetach={props.onDetach} /> : null}
           <RightPanelMaximizeControl
             maximized={props.maximized}
             onToggle={props.onToggleMaximized}

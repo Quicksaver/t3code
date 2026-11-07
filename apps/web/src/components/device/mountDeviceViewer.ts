@@ -51,13 +51,15 @@ export function mountDeviceViewer<V extends MountableViewer>(
   },
 ) {
   const { viewerRef, interactionRef } = options;
+  // A detached panel window has its own pixel ratio and focus.
+  const view = host.ownerDocument.defaultView ?? window;
   let disposed = false;
   let trackpad: ReturnType<typeof bindPhoneTrackpad> | null = null;
   let stopTrackpadEnd: (() => void) | undefined;
   let mounted: DeviceViewerReady | null = null;
   const resize = () => {
     const { width, height } = host.getBoundingClientRect();
-    viewerRef.current?.resize(width, height, window.devicePixelRatio);
+    viewerRef.current?.resize(width, height, view.devicePixelRatio);
   };
   const stopObserving = observeResize(host, resize);
   const blur = () => {
@@ -66,7 +68,7 @@ export function mountDeviceViewer<V extends MountableViewer>(
     if (viewerRef.current) options.cancelInput?.(viewerRef.current);
   };
   options.onInputCancel(blur);
-  window.addEventListener("blur", blur);
+  view.addEventListener("blur", blur);
   void options
     .load()
     .then((create) => {
@@ -103,7 +105,7 @@ export function mountDeviceViewer<V extends MountableViewer>(
     options.onResetReady(null);
     options.onFrameListener(null);
     stopObserving();
-    window.removeEventListener("blur", blur);
+    view.removeEventListener("blur", blur);
     viewerRef.current?.dispose();
     viewerRef.current = null;
   };

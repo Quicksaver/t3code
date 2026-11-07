@@ -2,6 +2,8 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { DevicePlatform, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
+import { isSurfaceDetached } from "./detachedPanels/detachedPanelStore";
+
 export interface PreviewMiniPlayerPosition {
   readonly x: number;
   readonly y: number;
@@ -54,6 +56,12 @@ export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): str
     : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
 }
 
+function miniPlayerSourceSurfaceId(source: PreviewMiniPlayerSource): string {
+  return source.kind === "browser"
+    ? `browser:${source.tabId}`
+    : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+}
+
 export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({
   kind: "browser",
   tabId,
@@ -63,6 +71,8 @@ export const usePreviewMiniPlayerStore = create<PreviewMiniPlayerStoreState>()((
   byThreadKey: {},
   open: (ref, source) =>
     set((state) => {
+      // A detached window already shows this source; it never floats as well.
+      if (isSurfaceDetached(ref, miniPlayerSourceSurfaceId(source))) return state;
       const threadKey = scopedThreadKey(ref);
       const current = state.byThreadKey[threadKey];
       if (

@@ -780,7 +780,7 @@ function TerminalSessionViewport({
       if (
         hasTerminalWriteAccess() &&
         visibleRef.current &&
-        mount.contains(document.activeElement)
+        mount.contains(mount.ownerDocument.activeElement)
       ) {
         terminal.focus();
       }
@@ -1091,7 +1091,7 @@ function TerminalSessionViewport({
 
     return () => {
       cancelled = true;
-      const hadFocus = mount.contains(document.activeElement);
+      const hadFocus = mount.contains(mount.ownerDocument.activeElement);
       teardown?.();
       if (hasTerminalWriteAccess() && hadFocus && mount.isConnected) {
         mount.focus({ preventScroll: true });

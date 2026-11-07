@@ -71,6 +71,7 @@ import {
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
 import * as PreviewIpc from "./methods/preview.ts";
+import * as DetachedPanelsIpc from "./methods/detachedPanels.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import * as WebLinksIpc from "./methods/webLinks.ts";
 import {
@@ -158,6 +159,10 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(syncHtmlFullscreen);
+  yield* ipc.handle(DetachedPanelsIpc.sync);
+  yield* ipc.handle(DetachedPanelsIpc.reveal);
+  yield* ipc.handle(DetachedPanelsIpc.focus);
+  yield* ipc.handle(DetachedPanelsIpc.close);
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

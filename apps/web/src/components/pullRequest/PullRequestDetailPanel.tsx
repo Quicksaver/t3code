@@ -5,6 +5,8 @@ import {
   type PullRequestAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
+import { useDetachedPanelWindow } from "~/detachedPanels/detachedPanelContext";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -543,22 +545,33 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
+  const detachedWindow = useDetachedPanelWindow();
   const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
-    const command = resolveShortcutCommand(event, keybindings, {
-      context: getShortcutContext(),
-    });
+    // The main document's retained focus says nothing about a detached window; read its own event.
+    const context = detachedWindow
+      ? {
+          ...getShortcutContext(),
+          terminalFocus: false,
+          previewFocus: false,
+          composerFocus: false,
+          editableFocus: isEditableFocused(event.target),
+        }
+      : getShortcutContext();
+    const command = resolveShortcutCommand(event, keybindings, { context });
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
   });
+  // A detached panel hears its shortcut in its own window, and only there.
+  const shortcutWindow = detachedWindow?.window ?? window;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, []);
+    shortcutWindow.addEventListener("keydown", onKeyDown, true);
+    return () => shortcutWindow.removeEventListener("keydown", onKeyDown, true);
+  }, [shortcutWindow]);
   const autoMergeKey = `${pullRequestKey}:${detail?.autoMergeMethod ?? ""}`;
   const [seenAutoMergeKey, setSeenAutoMergeKey] = useState<string | null>(null);
   if (seenAutoMergeKey !== autoMergeKey) {

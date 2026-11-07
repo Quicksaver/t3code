@@ -323,6 +323,51 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   downloadUpdate: () => ipcRenderer.invoke(IpcChannels.UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: (expectedVersion) =>
     ipcRenderer.invoke(IpcChannels.UPDATE_INSTALL_CHANNEL, expectedVersion),
+  detachedPanels: {
+    sync: (visible) => ipcRenderer.invoke(IpcChannels.DETACHED_PANELS_SYNC_CHANNEL, { visible }),
+    reveal: (name) => ipcRenderer.invoke(IpcChannels.DETACHED_PANELS_REVEAL_CHANNEL, name),
+    focus: (name) => ipcRenderer.invoke(IpcChannels.DETACHED_PANELS_FOCUS_CHANNEL, name),
+    close: (name) => ipcRenderer.invoke(IpcChannels.DETACHED_PANELS_CLOSE_CHANNEL, name),
+    onCloseRequested: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, name: unknown) => {
+        if (typeof name === "string") listener(name);
+      };
+      ipcRenderer.on(IpcChannels.DETACHED_PANELS_CLOSE_REQUESTED_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DETACHED_PANELS_CLOSE_REQUESTED_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
+    onBoundsChanged: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (typeof payload !== "object" || payload === null) return;
+        const { name, bounds } = payload as { name?: unknown; bounds?: unknown };
+        if (typeof name !== "string" || typeof bounds !== "object" || bounds === null) return;
+        listener({ name, bounds: bounds as Parameters<typeof listener>[0]["bounds"] });
+      };
+      ipcRenderer.on(IpcChannels.DETACHED_PANELS_BOUNDS_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.DETACHED_PANELS_BOUNDS_CHANNEL, wrappedListener);
+      };
+    },
+    onPreviewCommand: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+        if (typeof payload !== "object" || payload === null) return;
+        const { tabId, command } = payload as { tabId?: unknown; command?: unknown };
+        if (typeof tabId !== "string" || typeof command !== "string") return;
+        listener({ tabId, command });
+      };
+      ipcRenderer.on(IpcChannels.DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
+  },
   cliCommand: {
     getState: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_GET_STATE_CHANNEL),
     install: () => ipcRenderer.invoke(IpcChannels.CLI_COMMAND_INSTALL_CHANNEL),

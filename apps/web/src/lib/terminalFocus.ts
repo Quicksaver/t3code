@@ -264,5 +264,6 @@ export function focusTerminalViewport(input: {
   if (!input.canOperate || !input.visible) return false;
   input.mount.focus({ preventScroll: true });
   input.surface?.focus();
-  return input.mount.contains(document.activeElement);
+  // A detached panel window has its own active element.
+  return input.mount.contains(input.mount.ownerDocument.activeElement);
 }

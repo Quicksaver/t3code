@@ -9,17 +9,22 @@ import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import type { ClosedDetachedPanel } from "./detachedPanels/detachedPanelStore";
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
 import { type RightPanelSurface } from "./rightPanelStore";
 
-export type ClosedView =
+export type ClosedView = (
   | {
       kind: "panel-tab";
       threadRef: ScopedThreadRef;
       surface: Exclude<RightPanelSurface, { kind: "terminal" }>;
     }
-  | { kind: "browser"; threadRef: ScopedThreadRef; snapshot: PreviewSessionSnapshot };
+  | { kind: "browser"; threadRef: ScopedThreadRef; snapshot: PreviewSessionSnapshot }
+) & {
+  /** Set when the tab was in its own window, so reopening it detaches it again. */
+  detached?: ClosedDetachedPanel;
+};
 
 export type ClosedViewEntry = ClosedView & { id: string };
 

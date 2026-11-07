@@ -1050,6 +1050,49 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+/** `window.open` names with this prefix become detached panel windows; the desktop denies other names. */
+export const DESKTOP_DETACHED_PANEL_WINDOW_PREFIX = "t3-detached-panel:";
+
+export const DesktopDetachedPanelWindowNameSchema = Schema.String.check(Schema.isMaxLength(2048));
+
+export const DesktopDetachedPanelBoundsSchema = Schema.Struct({
+  x: Schema.Int,
+  y: Schema.Int,
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DesktopDetachedPanelBounds = typeof DesktopDetachedPanelBoundsSchema.Type;
+
+export const DesktopDetachedPanelSyncInputSchema = Schema.Struct({
+  visible: Schema.Array(DesktopDetachedPanelWindowNameSchema),
+});
+
+/** A panel command a detached browser's focused page captured, for that tab's view. */
+export interface DesktopDetachedPreviewCommandEvent {
+  readonly tabId: string;
+  readonly command: string;
+}
+
+export interface DesktopDetachedPanelBoundsEvent {
+  readonly name: string;
+  readonly bounds: DesktopDetachedPanelBounds;
+}
+
+/** Detached panel windows: the renderer opens them; the desktop shows, hides and closes them. */
+export interface DesktopDetachedPanelsBridge {
+  /** Shows the named windows without focusing them and hides every other detached window. */
+  sync: (visible: readonly string[]) => Promise<void>;
+  /** Shows a hidden or minimized window without taking focus. */
+  reveal: (name: string) => Promise<void>;
+  focus: (name: string) => Promise<void>;
+  /** Closes without a close request; for re-attaching or a surface the app closed. */
+  close: (name: string) => Promise<void>;
+  /** The user asked to close the window; the renderer decides whether its surface closes. */
+  onCloseRequested: (listener: (name: string) => void) => () => void;
+  onBoundsChanged: (listener: (event: DesktopDetachedPanelBoundsEvent) => void) => () => void;
+  onPreviewCommand: (listener: (event: DesktopDetachedPreviewCommandEvent) => void) => () => void;
+}
+
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
@@ -1168,6 +1211,7 @@ export interface DesktopBridge {
   /** With a version, installs only that downloaded build. */
   installUpdate: (expectedVersion?: string) => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  detachedPanels?: DesktopDetachedPanelsBridge;
   cliCommand: {
     getState: () => Promise<DesktopCliCommandState>;
     install: () => Promise<DesktopCliCommandState>;

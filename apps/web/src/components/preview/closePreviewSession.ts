@@ -6,7 +6,10 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+
 import { useClosedViewStore } from "~/closedViewStore";
+import { closedDetachedPanel } from "~/detachedPanels/detachedPanelStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 
 interface ClosePreviewSessionInput<E> {
@@ -30,10 +33,15 @@ export async function closePreviewSession<E>(
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
   } else if (input.snapshot) {
+    const detached = closedDetachedPanel(
+      scopedThreadKey(input.threadRef),
+      `browser:${input.tabId}`,
+    );
     useClosedViewStore.getState().remember({
       kind: "browser",
       threadRef: input.threadRef,
       snapshot: input.snapshot,
+      ...(detached ? { detached } : {}),
     });
   }
   return result;

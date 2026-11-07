@@ -302,6 +302,14 @@ To choose what the thread details card shows, right-click the card or open
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
 back the standard rows.
 
+## Open panel tabs in their own windows
+
+In the desktop app, you can move a right-panel tab, such as a terminal, a browser, a device, Files or a diff, into its own window. Choose **Open in new window** beside the panel's maximize button, or right-click the tab. The tab stays in the panel as a placeholder with **Show window** and **Re-attach**.
+
+A detached window belongs to its thread. It shows while that thread is open and hides when you switch to another thread, a new draft or the pull requests page. Settings opens over the thread, so its windows stay visible. When you reopen T3 Code, a thread's windows come back at their last size and position the first time you open that thread. On macOS, a detached window that shows while T3 Code is in full screen opens in its own full-screen space, and macOS switches to it.
+
+Only the tab's own shortcuts work in its window, such as splitting or closing a terminal. App shortcuts stay with the main window. Closing the window closes the tab, with the same confirmation as closing it in the panel; **Re-attach** or **Move back to panel** returns it instead. A tab that [`mod+shift+t`](./keybindings.md) reopens comes back in its window. A browser reloads its page when it moves between the panel and a window. Side chats stay in the panel.
+
 ## Side chats
 
 A side chat lets you ask a question about a thread without adding to it. It starts

@@ -60,6 +60,7 @@ import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { useDetachedPanelStore } from "../detachedPanels/detachedPanelStore";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -413,6 +414,8 @@ export function useThreadActions() {
       return archiveResult;
     }
     expireThreadUndos(threadRef, LIST_PLACEMENT_UNDO_KINDS);
+    // An archived conversation keeps its panel, but its windows close; its tabs re-open in the panel.
+    useDetachedPanelStore.getState().removeThread(scopedThreadKey(threadRef));
     const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);

@@ -65,6 +65,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
+  DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL,
   MENU_ACTION_CHANNEL,
   PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL,
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
@@ -512,6 +513,11 @@ export const previewWindowOpenAction = (details: {
     : "navigate";
 };
 
+const DETACHED_HOST_FORWARDED_COMMANDS = new Set([
+  "preview.focusUrl",
+  ...PAGE_FIRST_FORWARDED_COMMANDS,
+]);
+
 const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platform): boolean =>
   input.type === "keyDown" &&
   input.key.toLowerCase() === "r" &&
@@ -620,6 +626,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
+  // Detached panel windows render through the main renderer and may host preview webviews.
+  const detachedHostWebContentsIds = new Set<number>();
+  let detachedWindowsShown = false;
+  let mainWindowRevealed = false;
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -718,9 +728,38 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
+    if (enabled && detachedWindowsShown) return;
     const mainWindow = yield* Ref.get(mainWindowRef);
     if (Option.isNone(mainWindow)) return;
     yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+  });
+  const setDetachedWindowsShown = Effect.fn("PreviewManager.setDetachedWindowsShown")(function* (
+    shown: boolean,
+  ) {
+    detachedWindowsShown = shown;
+    if (shown) return yield* setFrameCaptureBackgroundThrottling(false);
+    // Before the first reveal the window stays unthrottled so it can paint.
+    if (mainWindowRevealed && (yield* SynchronizedRef.get(frameCaptureSessionsRef)).size === 0) {
+      yield* setFrameCaptureBackgroundThrottling(true);
+    }
+  });
+  const enableMainWindowThrottling = Effect.fn("PreviewManager.enableMainWindowThrottling")(
+    function* () {
+      mainWindowRevealed = true;
+      if ((yield* SynchronizedRef.get(frameCaptureSessionsRef)).size === 0) {
+        yield* setFrameCaptureBackgroundThrottling(true);
+      }
+    },
+  );
+  const addWebviewHost = Effect.fn("PreviewManager.addWebviewHost")(function* (
+    window: BrowserWindow,
+  ) {
+    if (window.isDestroyed()) return;
+    const webContentsId = window.webContents.id;
+    detachedHostWebContentsIds.add(webContentsId);
+    yield* attempt({ operation: "addWebviewHost" }, () => {
+      window.once("closed", () => detachedHostWebContentsIds.delete(webContentsId));
+    });
   });
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
@@ -1582,9 +1621,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           shiftKey: input.shift,
           altKey: input.alt,
         });
-      if (forwarded && host) {
-        // The page keeps these keys. Only the main-frame preload can report one it
-        // left unhandled, so a focused iframe (e.g. Google Docs' input) keeps its own find or zoom.
+      const detachedHost = host ? detachedHostWebContentsIds.has(host.id) : false;
+      const routed =
+        forwarded && (!detachedHost || DETACHED_HOST_FORWARDED_COMMANDS.has(forwarded.command));
+      if (forwarded && host && routed) {
+        // The page keeps find and zoom until the main-frame preload reports them unhandled.
         if (PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
         event.preventDefault();
         if (!input.isAutoRepeat) {
@@ -1596,7 +1637,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             // DOM focus in the renderer cannot by itself release the guest's native keyboard focus.
             host.focus();
           }
-          host.send(MENU_ACTION_CHANNEL, forwarded.command);
+          if (!detachedHost) host.send(MENU_ACTION_CHANNEL, forwarded.command);
+          else if (currentMainWindow && !currentMainWindow.isDestroyed()) {
+            currentMainWindow.webContents.send(DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL, {
+              tabId,
+              command: forwarded.command,
+            });
+          }
         }
         return;
       }
@@ -1617,7 +1664,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (Option.isNone(keys)) return;
       const forwarded = findForwardedShortcut(keys.value);
       if (!forwarded || !PAGE_FIRST_FORWARDED_COMMANDS.has(forwarded.command)) return;
-      host.send(MENU_ACTION_CHANNEL, forwarded.command);
+      if (!detachedHostWebContentsIds.has(host.id))
+        host.send(MENU_ACTION_CHANNEL, forwarded.command);
+      else if (currentMainWindow && !currentMainWindow.isDestroyed()) {
+        currentMainWindow.webContents.send(DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL, {
+          tabId,
+          command: forwarded.command,
+        });
+      }
     };
     yield* Scope.addFinalizer(
       scope,
@@ -1714,6 +1768,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* Ref.set(mainWindowRef, Option.some(window));
         currentMainWindow = window;
         frameCaptureWindowOpen = true;
+        mainWindowRevealed = false;
         window.once("closed", () => {
           if (currentMainWindow !== window) return;
           currentMainWindow = undefined;
@@ -1876,7 +1931,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (Option.isSome(mainWindow) &&
+        wc.hostWebContents !== mainWindow.value.webContents &&
+        !detachedHostWebContentsIds.has(wc.hostWebContents?.id ?? -1))
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
@@ -3741,6 +3798,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setShown,
     setColorScheme,
     setMainWindow,
+    setDetachedWindowsShown,
+    enableMainWindowThrottling,
+    addWebviewHost,
     setForwardedShortcuts: (shortcuts: ReadonlyArray<PreviewForwardedShortcut>) =>
       Effect.sync(() => {
         forwardedShortcuts = shortcuts;
@@ -3907,6 +3967,12 @@ export class PreviewManager extends Context.Service<
   PreviewManager,
   {
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
+    /** Keeps the main renderer unthrottled while a detached panel window it drives is shown. */
+    readonly setDetachedWindowsShown: (shown: boolean) => Effect.Effect<void, PreviewManagerError>;
+    /** Throttles the main renderer after its first reveal, unless a capture or detached window needs it. */
+    readonly enableMainWindowThrottling: () => Effect.Effect<void, PreviewManagerError>;
+    /** Accepts preview webviews hosted by a detached panel window until it closes. */
+    readonly addWebviewHost: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly setForwardedShortcuts: (
       shortcuts: ReadonlyArray<PreviewForwardedShortcut>,
     ) => Effect.Effect<void>;
@@ -4086,6 +4152,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   return PreviewManager.of({
     setMainWindow: operations.setMainWindow,
     captureReady: operations.captureReady,
+    setDetachedWindowsShown: operations.setDetachedWindowsShown,
+    enableMainWindowThrottling: operations.enableMainWindowThrottling,
+    addWebviewHost: operations.addWebviewHost,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
       function* (scope, persistent, namespace) {

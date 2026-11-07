@@ -799,7 +799,9 @@ Main ports the pinned PR around upstream's DesktopBrowserHost screenshot queue, 
 
 **Worktree branch:** `feat/detachable-panels`
 
-Worktree: `E:/Projects/t3code.worktrees/detachable-panels`. Its local, unpublished source is `3db5148746e66b3ddfb6bf74a491e45b1d0ccd17`, directly above `base/main` at `ae142932d07c0596cf0497dd28cfee07ae7c0722`. Tracking remains unset; no upstream PR is planned.
+Detached browser find and zoom follow upstream page-first behavior in the owning window. Upstream dialog focus, terminal/Linux paste preferences, i18n and PR reveals remain in force. The superseded diff reset and detached-only zoom restriction are removed.
+
+Worktree: `E:/Projects/t3code.worktrees/detachable-panels`. Its local, unpublished source is `e1934de47cf70da55091632fc30b96177e91aafb`, directly above `base/main` at `f313d0a6cb843551fb60e57a454a71e71a3a8c04`. Tracking remains unset; no upstream PR is planned.
 
 Desktop users can move a right-panel tab (terminal, browser, device, Files, file, diff, pull requests) into its own OS window with **Open in new window** beside the panel's maximize control or from the tab context menu. Detached windows are same-origin popups rendered by the main renderer through React portals, so they share its stores and WebSocket connection; the existing `RightPanelSurfaceContent` renders unchanged inside them. The panel keeps a placeholder tab with **Show window** and **Re-attach**. Web and mobile do not offer detaching.
 

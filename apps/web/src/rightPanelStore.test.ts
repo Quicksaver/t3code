@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -93,6 +93,55 @@ describe("rightPanelStore", () => {
         .getState()
         .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
     ).toEqual(["diff", "device", "files"]);
+  });
+
+  it("publishes every explicit activation, including of the tab already active", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    const opened = useRightPanelStore.getState().surfaceActivation;
+    store.activateSurface(refA, "diff");
+    store.revealSurface(refA, "diff");
+    const revealed = useRightPanelStore.getState().surfaceActivation;
+    store.openFile(refA, "src/app.ts", 5);
+    store.openFile(refA, "src/app.ts", 10);
+    const reopenedFile = useRightPanelStore.getState().surfaceActivation;
+    store.moveSurface(refA, "diff", 0);
+
+    expect(opened?.surfaceId).toBe("diff");
+    expect(revealed).toEqual({
+      threadKey: scopedThreadKey(refA),
+      surfaceId: "diff",
+      revision: (opened?.revision ?? 0) + 2,
+    });
+    expect(reopenedFile).toEqual({
+      threadKey: scopedThreadKey(refA),
+      surfaceId: fileSurfaceId("src/app.ts"),
+      revision: (opened?.revision ?? 0) + 4,
+    });
+    expect(useRightPanelStore.getState().surfaceActivation).toBe(reopenedFile);
+  });
+
+  it("names the surface an in-place navigation replaced", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openFile(refA, "README.md");
+    expect(useRightPanelStore.getState().surfaceActivation?.replaces).toBeUndefined();
+
+    store.open(refA, "files");
+    store.openFile(refA, "src", undefined, undefined, { replacing: "files" });
+    expect(useRightPanelStore.getState().surfaceActivation).toMatchObject({
+      surfaceId: fileSurfaceId("src"),
+      replaces: "files",
+    });
+
+    store.navigateFolder(refA, fileSurfaceId("src"), "src/lib", "src/lib");
+    expect(useRightPanelStore.getState().surfaceActivation).toMatchObject({
+      surfaceId: fileSurfaceId("src/lib"),
+      replaces: fileSurfaceId("src"),
+    });
+
+    store.navigateFolder(refA, fileSurfaceId("src/lib"), "src/app.ts", "src/app.ts", true);
+    expect(useRightPanelStore.getState().surfaceActivation?.replaces).toBeUndefined();
   });
 
   it("does not save an incidental Files replacement when opening an existing file", () => {
@@ -552,7 +601,19 @@ describe("rightPanelStore", () => {
           "env-1:thread-A": {
             isOpen: true,
             activeSurfaceId: "terminal:term-1",
-            surfaces: [{ id: "terminal:term-1", kind: "terminal", resourceId: "term-1" }],
+            surfaces: [
+              {
+                id: "terminal:term-1",
+                kind: "terminal",
+                resourceId: "term-1",
+                target: {
+                  environmentId: "old-env",
+                  projectId: "old-project",
+                  cwd: "/old/checkout",
+                  worktreePath: null,
+                },
+              },
+            ],
           },
         },
       }),
@@ -1413,7 +1474,12 @@ describe("rightPanelStore", () => {
     const cwd = "/repo/worktrees/feature";
     const state = () =>
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-    store.openFile(refA, "src/main.ts", 12, cwd);
+    store.open(refA, "files");
+    store.openFile(refA, "src/main.ts", 12, cwd, { replacing: "files" });
+    expect(useRightPanelStore.getState().surfaceActivation).toMatchObject({
+      surfaceId: fileSurfaceId("src/main.ts", cwd),
+      replaces: "files",
+    });
     store.navigateFolder(refA, fileSurfaceId("src/main.ts", cwd), "src", "src/main.ts", true);
     expect(state().activeSurfaceId).toBe(fileSurfaceId("src", cwd));
     expect(state().surfaces.at(-1)).toMatchObject({ kind: "file", cwd, relativePath: "src" });

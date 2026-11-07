@@ -65,7 +65,7 @@ import { randomUUID } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
 import { previewBridge } from "./previewBridge";
-import { subscribePreviewAction } from "./previewActionBus";
+import { PREVIEW_COMMAND_ACTIONS, subscribePreviewAction } from "./previewActionBus";
 import { closePreviewSession } from "./closePreviewSession";
 import { openPreviewSession } from "./openPreviewSession";
 import { showPreviewPopup } from "./showPreviewPopup";
@@ -102,6 +102,7 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { useDetachedPanelWindow } from "~/detachedPanels/detachedPanelContext";
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -147,16 +148,17 @@ function ServerTabFileNotShown(props: {
   );
 }
 
-function focusPreviewWebview(runtimeTabId: string) {
-  document
+function focusPreviewWebview(runtimeTabId: string, ownerDocument: Document) {
+  ownerDocument
     .querySelector<HTMLElement>(`[data-preview-viewport="${CSS.escape(runtimeTabId)}"] webview`)
     ?.focus();
 }
 
-function focusPreviewPage(runtimeTabId: string) {
-  const active = document.activeElement;
-  if (active && active !== document.body && !active.closest("[data-preview-panel-mode]")) return;
-  focusPreviewWebview(runtimeTabId);
+function focusPreviewPage(runtimeTabId: string, ownerDocument: Document) {
+  const active = ownerDocument.activeElement;
+  if (active && active !== ownerDocument.body && !active.closest("[data-preview-panel-mode]"))
+    return;
+  focusPreviewWebview(runtimeTabId, ownerDocument);
 }
 
 export function PreviewView({
@@ -166,6 +168,8 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
+  const detachedWindow = useDetachedPanelWindow();
+  const ownerDocument = detachedWindow?.window.document ?? document;
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
@@ -265,7 +269,7 @@ export function PreviewView({
     if (runtimeTabId && previewBridge) {
       await previewBridge.navigate(runtimeTabId, resolvedUrl);
       rememberPreviewUrl(threadRef, resolvedUrl);
-      focusPreviewPage(runtimeTabId);
+      focusPreviewPage(runtimeTabId, ownerDocument);
       return activeProfileId;
     }
     const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
@@ -385,7 +389,7 @@ export function PreviewView({
   // Otherwise focus falls to the body and the next find shortcut misses the preview.
   const closeFind = () => {
     setFind(null);
-    if (runtimeTabId) focusPreviewPage(runtimeTabId);
+    if (runtimeTabId) focusPreviewPage(runtimeTabId, ownerDocument);
   };
 
   const handleZoomIn = () => {
@@ -792,8 +796,7 @@ export function PreviewView({
       return;
     }
     // Capture app focus before main moves it into guest webContents.
-    const previouslyFocused =
-      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+    const previouslyFocused = ownerDocument.activeElement as HTMLElement | null;
     const pickRequest = { cancelled: false };
     let submitted = false;
     pickActiveRef.current = pickRequest;
@@ -834,7 +837,7 @@ export function PreviewView({
       if (pickRequest.cancelled) return;
       // Main's WebContents.focus() cannot move the embedder's DOM focus into a guest, so key
       // presses would stay in the app; only focusing the <webview> element hands them to the page.
-      focusPreviewWebview(runtimeTabId);
+      focusPreviewWebview(runtimeTabId, ownerDocument);
       const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // The accepted pick must survive further clicks, tab changes, and unmount; stop cancellation here.
@@ -943,21 +946,25 @@ export function PreviewView({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview and desktop menu actions while the view is visible
   useEffect(() => {
     if (!visible) return;
-    const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
-    // A focused page swallows its own keydowns, so the desktop forwards these
-    // shortcuts from the guest as menu actions instead.
-    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "preview.focusUrl") onPreviewAction("focus-url");
-      if (action === "preview.zoomIn") onPreviewAction("zoom-in");
-      if (action === "preview.zoomOut") onPreviewAction("zoom-out");
-      if (action === "preview.resetZoom") onPreviewAction("reset-zoom");
-      if (action === "preview.find") onPreviewAction("find");
-    });
+    // A detached view hears only its own window's actions, and the commands its page forwarded.
+    const unsubscribeAction = subscribePreviewAction(
+      (action) => onPreviewAction(action),
+      detachedWindow?.window,
+    );
+    const unsubscribeMenu = detachedWindow
+      ? window.desktopBridge?.detachedPanels?.onPreviewCommand(({ tabId, command }) => {
+          const action = PREVIEW_COMMAND_ACTIONS[command];
+          if (tabId === runtimeTabId && action !== undefined) onPreviewAction(action);
+        })
+      : window.desktopBridge?.onMenuAction((action) => {
+          const previewAction = PREVIEW_COMMAND_ACTIONS[action];
+          if (previewAction !== undefined) onPreviewAction(previewAction);
+        });
     return () => {
       unsubscribeAction();
       unsubscribeMenu?.();
     };
-  }, [visible]);
+  }, [detachedWindow, runtimeTabId, visible]);
 
   return (
     <div
@@ -990,7 +997,9 @@ export function PreviewView({
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
         onPictureInPicture={
-          tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
+          tabId && (isServerTab || previewBridge) && !detachedWindow
+            ? handlePictureInPicture
+            : undefined
         }
         pictureInPicture={miniPlayerTabId === tabId}
         pictureInPictureDisabled={

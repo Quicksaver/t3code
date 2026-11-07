@@ -959,20 +959,38 @@ describe("PreviewManager", () => {
   );
 
   effectIt.effect.each([
-    ["darwin", true],
-    ["linux", false],
-    ["win32", false],
+    ["darwin", true, false],
+    ["linux", false, false],
+    ["win32", false, false],
+    ["darwin", true, true],
+    ["linux", false, true],
+    ["win32", false, true],
   ] as const)(
-    "lets the page and its iframes claim the find and zoom shortcuts before the host acts on %s",
-    ([platform, usesMeta]) =>
+    "lets the page and its iframes claim find and zoom on %s with meta %s and detached %s",
+    ([platform, usesMeta, detached]) =>
       withManager(
         (manager) =>
           Effect.gen(function* () {
             const preview = makeFaviconWebContents();
             const send = vi.fn();
+            const mainSend = vi.fn();
+            const host = { id: 71, isDestroyed: () => false, send };
+            if (detached) {
+              yield* manager.setMainWindow({
+                isDestroyed: () => false,
+                once: vi.fn(),
+                webContents: { send: mainSend },
+              } as never);
+              yield* manager.addWebviewHost({
+                isDestroyed: () => false,
+                once: vi.fn(),
+                webContents: host,
+              } as never);
+            }
+            const routedSend = detached ? mainSend : send;
             const mainFrame = { processId: 1, routingId: 1 };
             Object.assign(preview.webContents, {
-              hostWebContents: { isDestroyed: () => false, send },
+              hostWebContents: host,
               mainFrame,
               focusedFrame: mainFrame,
             });
@@ -1031,7 +1049,11 @@ describe("PreviewManager", () => {
                 altKey: false,
               },
             );
-            expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", "preview.find");
+            expect(routedSend).toHaveBeenCalledExactlyOnceWith(
+              detached ? "desktop:detached-panels-preview-command" : "desktop:menu-action",
+              detached ? { tabId: "tab_page_find", command: "preview.find" } : "preview.find",
+            );
+            if (detached) expect(send).not.toHaveBeenCalled();
 
             Object.assign(preview.webContents, { focusedFrame: { processId: 1, routingId: 2 } });
             beforeInput(
@@ -1039,7 +1061,7 @@ describe("PreviewManager", () => {
               { ...findKey, shift: false, alt: false } as never,
             );
             expect(preventDefault).not.toHaveBeenCalled();
-            expect(send).toHaveBeenCalledOnce();
+            expect(routedSend).toHaveBeenCalledOnce();
 
             Object.assign(preview.webContents, { focusedFrame: mainFrame });
             yield* manager.setForwardedShortcuts([
@@ -1056,7 +1078,7 @@ describe("PreviewManager", () => {
                 altKey: true,
               },
             );
-            expect(send).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
+            expect(routedSend).toHaveBeenCalledTimes(usesMeta ? 2 : 1);
           }),
         platform,
       ),
@@ -2258,6 +2280,48 @@ describe("PreviewManager", () => {
         yield* manager.stopRecording("tab_capture_throttling_2");
         expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
         expect(secondWebContents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("keeps the main window unthrottled while a detached panel window shows", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const setBackgroundThrottling = vi.fn();
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const host = makeTestHostWebContents();
+        const guest = makeTestPreviewWebContents(capturePage, 43, host);
+        fromId.mockImplementation((id) => (id === 43 ? guest : null));
+
+        yield* manager.createTab("tab_detached_throttling");
+        yield* manager.registerWebview("tab_detached_throttling", 43);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling },
+        } as never);
+
+        yield* manager.setDetachedWindowsShown(true);
+        yield* manager.startRecording("tab_detached_throttling");
+        host.displayMediaHandler()?.({ frame: host.mainFrame }, () => {});
+        yield* manager.stopRecording("tab_detached_throttling");
+        // Hidden before the first reveal: the window stays unthrottled so it can paint.
+        yield* manager.setDetachedWindowsShown(false);
+        expect(setBackgroundThrottling.mock.calls).toEqual([[false], [false]]);
+
+        yield* manager.enableMainWindowThrottling();
+        yield* manager.setDetachedWindowsShown(true);
+        yield* manager.setDetachedWindowsShown(false);
+        expect(setBackgroundThrottling.mock.calls).toEqual([
+          [false],
+          [false],
+          [true],
+          [false],
+          [true],
+        ]);
       }),
     ),
   );
