@@ -12,6 +12,7 @@ import {
 import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
 import * as DateTime from "effect/DateTime";
 
+import * as Persistence from "../platform/persistence.ts";
 import {
   type AtomCommand,
   createAtomCommandScheduler,
@@ -22,6 +23,14 @@ import {
 } from "./runtime.ts";
 import { waitForTitleRegenerationOutcome } from "./threadTitleRegeneration.ts";
 import {
+  cachedThreadGeneration,
+  cachedThreadSequenceEpoch,
+  evictCachedThread,
+  isCachedThreadEvicted,
+  retainCachedThreadUnsafe,
+} from "./threadCache.ts";
+import {
+  type ArchiveThreadInput,
   type InterruptThreadTurnInput,
   type UpdateThreadMetadataInput,
   archiveThread,
@@ -74,8 +83,43 @@ export type LoadEarlierThreadHistoryInput = {
   readonly workAnchorId?: string;
 };
 
+export const archiveThreadAndEvictCache = Effect.fn(
+  "EnvironmentCommands.archiveThreadAndEvictCache",
+)(function* (input: ArchiveThreadInput) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const cache = yield* Persistence.EnvironmentCacheStore;
+  const environmentId = supervisor.target.environmentId;
+  const { threadId } = input;
+  return yield* Effect.uninterruptibleMask((restore) => {
+    // Retain the cache state across dispatch so its generation stays comparable.
+    const release = retainCachedThreadUnsafe(cache, environmentId, threadId);
+    const generation = cachedThreadGeneration(cache, environmentId, threadId);
+    const epoch = cachedThreadSequenceEpoch(cache, environmentId);
+    return Effect.gen(function* () {
+      const result = yield* restore(archiveThread(input));
+      // Close the route-teardown race if shell/detail events arrive late, without
+      // overriding a newer authoritative revival. A sequence reset makes this
+      // receipt incomparable, leaving eviction to the shell and detail paths.
+      yield* evictCachedThread(
+        cache,
+        environmentId,
+        threadId,
+        () =>
+          cachedThreadSequenceEpoch(cache, environmentId) === epoch &&
+          (cachedThreadGeneration(cache, environmentId, threadId) === generation ||
+            isCachedThreadEvicted(cache, environmentId, threadId)),
+        result.sequence,
+      );
+      return result;
+    }).pipe(Effect.ensuring(Effect.sync(release)));
+  });
+});
+
 export function createThreadEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | SecureRandom.SecureRandom | R, E>,
+  runtime: Atom.AtomRuntime<
+    EnvironmentRegistry | Persistence.EnvironmentCacheStore | SecureRandom.SecureRandom | R,
+    E
+  >,
   snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
@@ -186,7 +230,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     archive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:archive",
-      execute: archiveThread,
+      execute: (input: ArchiveThreadInput) => archiveThreadAndEvictCache(input),
       scheduler,
       concurrency,
     }),

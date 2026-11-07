@@ -37,6 +37,8 @@ export interface SqliteClientConfig {
   readonly readerWorker?: boolean | undefined;
   /** Runs the writer and WAL checkpoints off the event loop. Ignored for in-memory databases. */
   readonly writerWorker?: boolean | undefined;
+  /** Additional database files, such as attached archives, to checkpoint on the same worker. */
+  readonly checkpointAdditionalPaths?: ReadonlyArray<string> | undefined;
 }
 
 // SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
@@ -546,11 +548,59 @@ const WRITER_BACKSTOP_FRAMES = 10_000;
 const checkpointWorkerSource = `
 const { parentPort, workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
+const { openSync, readSync, closeSync } = require("node:fs");
 let db;
 let frames;
 let passive;
 let idle;
+// Attached archives share worker ownership while main keeps its admission protocol.
+const archives = workerData.additionalPaths.map((filename) => ({ filename, statements: undefined }));
+const openArchive = (filename) => {
+  let file;
+  try {
+    file = openSync(filename, "r");
+  } catch (cause) {
+    if (cause.code === "ENOENT") return;
+    throw cause;
+  }
+  const header = Buffer.alloc(20);
+  let wal;
+  try {
+    // Rollback-mode readers can block WAL activation; inspect its header without a SQLite lock.
+    wal = readSync(file, header, 0, header.length, 0) === header.length &&
+      header[18] === 2 && header[19] === 2;
+  } finally {
+    closeSync(file);
+  }
+  if (!wal) return;
+  const db = new DatabaseSync(filename);
+  db.exec("PRAGMA busy_timeout = 0; PRAGMA checkpoint_fullfsync = ON;");
+  return {
+    frames: db.prepare("PRAGMA wal_checkpoint(NOOP)"),
+    checkpoint: db.prepare("PRAGMA wal_checkpoint(PASSIVE)"),
+  };
+};
+let archivePending = false;
+const checkArchives = () => {
+  archivePending = false;
+  for (const archive of archives) {
+    try {
+      const statements = archive.statements ??= openArchive(archive.filename);
+      if (statements === undefined) continue;
+      let state = statements.frames.get();
+      if (state.log - state.checkpointed >= workerData.frames) {
+        statements.checkpoint.get();
+        state = statements.frames.get();
+      }
+      if (state.log - state.checkpointed >= workerData.frames) archivePending = true;
+    } catch (cause) {
+      if ((cause.errcode & 0xff) !== 5) throw cause;
+      archivePending = true;
+    }
+  }
+};
 const check = (force) => {
+  checkArchives();
   if (db === undefined) {
     db = new DatabaseSync(workerData.filename);
     db.exec("PRAGMA busy_timeout = 5000;");
@@ -568,7 +618,7 @@ const check = (force) => {
   // The WAL restarts only once every frame is checkpointed, so catch up when writes pause.
   // A reader pinning the WAL stops progress; the next write retries instead of a timer loop.
   const progressed = !force || state.checkpointed > before.checkpointed;
-  if (state.log > state.checkpointed && progressed) {
+  if ((state.log > state.checkpointed && progressed) || archivePending) {
     idle = setTimeout(() => run(true), workerData.idleMs);
   }
   parentPort.postMessage({ type: "checked", log: state.log, checkpointed: state.checkpointed });
@@ -581,7 +631,12 @@ const run = (force) => {
     parentPort.postMessage({ type: "failed", message: String(error && error.message ? error.message : error) });
   }
 };
-parentPort.on("message", () => run(false));
+parentPort.on("message", (message) => {
+  if (message === "barrier") {
+    run(false);
+    parentPort.postMessage("barrier");
+  } else run(false);
+});
 `;
 
 const sqliteVersion = () => {
@@ -594,7 +649,10 @@ const sqliteVersion = () => {
 };
 
 // Returns the writer's per-statement notification, or undefined when the writer checkpoints alone.
-const startCheckpointWorker = Effect.fnUntraced(function* (filename: string) {
+const startCheckpointWorker = Effect.fnUntraced(function* (
+  filename: string,
+  additionalPaths: ReadonlyArray<string>,
+) {
   const warn = (reason: string) =>
     Effect.logWarning("SQLite checkpoint worker unavailable; the writer checkpoints its own WAL", {
       reason,
@@ -610,7 +668,12 @@ const startCheckpointWorker = Effect.fnUntraced(function* (filename: string) {
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {
         eval: true,
-        workerData: { filename, frames: CHECKPOINT_FRAMES, idleMs: CHECKPOINT_IDLE_MS },
+        workerData: {
+          filename,
+          additionalPaths: [...new Set(additionalPaths)].filter((path) => path !== filename),
+          frames: CHECKPOINT_FRAMES,
+          idleMs: CHECKPOINT_IDLE_MS,
+        },
       }),
   );
   if (Result.isFailure(started)) {
@@ -807,7 +870,10 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const opened = yield* writerConnection;
   // Started after the writer, so it stops first and the writer's close can checkpoint.
   if (writerWorker && options.readonly !== true) {
-    checkpointAfterWrite = yield* startCheckpointWorker(options.filename);
+    checkpointAfterWrite = yield* startCheckpointWorker(
+      options.filename,
+      options.checkpointAdditionalPaths ?? [],
+    );
     if (checkpointAfterWrite !== undefined) {
       yield* opened.executeUnprepared(
         `PRAGMA wal_autocheckpoint = ${WRITER_BACKSTOP_FRAMES}`,

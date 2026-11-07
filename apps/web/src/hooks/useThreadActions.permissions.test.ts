@@ -166,6 +166,7 @@ vi.mock("../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: () => state.localEffects.push("refresh-archive"),
 }));
 vi.mock("../lib/composerDraftUploads", () => ({
+  releaseArchivedComposerDraftUploads: () => state.localEffects.push("release-uploads"),
   releaseComposerDraftUploads: (ref: ScopedThreadRef) =>
     state.localEffects.push(`release-uploads:${ref.threadId}`),
 }));

@@ -620,3 +620,136 @@ it.effect("keeps writes moving while an outside reader pins the WAL, then trims 
     }).pipe(Effect.provide(SqliteClient.layer({ filename, writerWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+const withCheckpointClient = <A, E>(
+  use: (
+    sql: SqlClient.SqlClient,
+    filename: string,
+  ) => Effect.Effect<A, E, SqlClient.SqlClient | FileSystem.FileSystem | Path.Path>,
+  additionalFilenames: ReadonlyArray<string> = [],
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-checkpoint-" });
+    const filename = path.join(directory, "state.sqlite");
+    return yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA journal_mode = WAL`;
+      return yield* use(sql, filename);
+    }).pipe(
+      Effect.provide(
+        SqliteClient.layer({
+          filename,
+          writerWorker: true,
+          checkpointAdditionalPaths: additionalFilenames.map((name) => path.join(directory, name)),
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          worker.off("message", onReply);
+          reject(error);
+        };
+        const onReply = (reply: unknown) => {
+          if (reply !== "barrier") return;
+          worker.off("message", onReply);
+          worker.off("error", onError);
+          resolve();
+        };
+        worker.on("message", onReply);
+        worker.once("error", onError);
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+        worker.postMessage("barrier");
+      }),
+  );
+
+it.effect("checkpoints an attached archive while the main database is idle", () =>
+  withCheckpointClient(
+    (sql, filename) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const archive = path.join(path.dirname(filename), "archive.sqlite");
+        const worker = checkpointWorkers.at(-1)!;
+        yield* checkpointWorkerReply(worker);
+        assert.isFalse(yield* fs.exists(archive));
+        yield* sql`CREATE TABLE main_probe(value TEXT)`;
+        yield* sql`INSERT INTO main_probe VALUES ('kept')`;
+        yield* checkpointWorkerReply(worker);
+        const mainWal = yield* sql<{ readonly log: number; readonly checkpointed: number }>`
+          PRAGMA main.wal_checkpoint(NOOP)
+        `;
+        assert.isBelow(mainWal[0]!.checkpointed, mainWal[0]!.log);
+        yield* sql.unsafe("ATTACH DATABASE ? AS cold_archive", [archive]);
+        yield* sql`PRAGMA cold_archive.journal_mode = WAL`;
+        const limit = 1024 * 1024;
+        yield* sql.unsafe(`PRAGMA cold_archive.journal_size_limit = ${limit}`);
+        yield* sql`CREATE TABLE cold_archive.pages(payload BLOB)`;
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+          INSERT INTO cold_archive.pages(payload) SELECT randomblob(4000) FROM n
+        `;
+        yield* checkpointWorkerReply(worker);
+        const wal = yield* sql<{
+          readonly log: number;
+          readonly checkpointed: number;
+        }>`PRAGMA cold_archive.wal_checkpoint(NOOP)`;
+        assert.isAbove(wal[0]!.log, 1000);
+        assert.equal(wal[0]!.checkpointed, wal[0]!.log);
+        yield* sql`INSERT INTO cold_archive.pages(payload) VALUES (x'00')`;
+        assert.isAtMost(Number((yield* fs.stat(`${archive}-wal`)).size), limit);
+        const rows = yield* sql<{
+          readonly count: number;
+        }>`SELECT count(*) AS count FROM cold_archive.pages`;
+        assert.equal(rows[0]?.count, 1201);
+      }),
+    ["archive.sqlite"],
+  ),
+);
+
+it.effect("keeps checkpointing after a transient archive schema lock", () =>
+  withCheckpointClient(
+    (sql, filename) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const archive = path.join(path.dirname(filename), "archive.sqlite");
+        const worker = checkpointWorkers.at(-1)!;
+        yield* checkpointWorkerReply(worker);
+        yield* Effect.gen(function* () {
+          const lock = yield* Effect.acquireRelease(
+            Effect.sync(() => new NodeSqlite.DatabaseSync(archive)),
+            (db) => Effect.sync(() => db.close()),
+          );
+          lock.exec("BEGIN EXCLUSIVE");
+          yield* checkpointWorkerReply(worker);
+          lock.exec("ROLLBACK");
+        }).pipe(Effect.scoped);
+        yield* fs.remove(archive);
+        const backstop = yield* sql<{ readonly wal_autocheckpoint: number }>`
+          PRAGMA wal_autocheckpoint
+        `;
+        assert.equal(backstop[0]?.wal_autocheckpoint, 10_000);
+        yield* sql.unsafe("ATTACH DATABASE ? AS cold_archive", [archive]);
+        yield* sql`PRAGMA cold_archive.journal_mode = WAL`;
+        yield* sql`CREATE TABLE cold_archive.pages(payload BLOB)`;
+        yield* sql`
+          WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+          INSERT INTO cold_archive.pages(payload) SELECT randomblob(4000) FROM n
+        `;
+        yield* checkpointWorkerReply(worker);
+        const wal = yield* sql<{ readonly log: number; readonly checkpointed: number }>`
+          PRAGMA cold_archive.wal_checkpoint(NOOP)
+        `;
+        assert.isAbove(wal[0]!.log, 1000);
+        assert.equal(wal[0]!.checkpointed, wal[0]!.log);
+      }).pipe(Effect.scoped),
+    ["archive.sqlite"],
+  ),
+);

@@ -57,6 +57,10 @@ vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn
 vi.mock("../uiStateStore", () => ({ useUiStateStore: () => vi.fn() }));
 vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
+vi.mock("../lib/composerDraftUploads", () => ({
+  releaseArchivedComposerDraftUploads: vi.fn(),
+  releaseComposerDraftUploads: vi.fn(),
+}));
 const threadShell = vi.hoisted(() => ({
   title: "Thread",
   pinOrderKey: "a0",

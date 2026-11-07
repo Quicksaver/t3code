@@ -1,4 +1,4 @@
-import * as NodeSqlite from "node:sqlite";
+import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -43,6 +43,36 @@ const removeAbandonedCopies = Effect.fn("removeAbandonedCopies")(function* (dire
   }
 });
 
+// VACUUM INTO copies off the event loop. Its connection's auto_vacuum setting
+// makes NONE-mode sources incremental without writing them; FULL and INCREMENTAL
+// sources keep their mode. Cold storage can then reclaim pages in short steps.
+const SNAPSHOT_WORKER_SOURCE = `
+const { workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const source = new DatabaseSync(workerData.sourcePath, { readOnly: true });
+try {
+  // Changing an auto-vacuum mode that is already on would write the source.
+  if (source.prepare("PRAGMA auto_vacuum").get().auto_vacuum === 0) {
+    source.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  }
+  source.prepare("VACUUM INTO ?").run(workerData.snapshotPath);
+} finally {
+  source.close();
+}
+`;
+
+const snapshotInWorker = (sourcePath: string, snapshotPath: string) =>
+  new Promise<void>((resolve, reject) => {
+    const worker = new NodeWorkerThreads.Worker(SNAPSHOT_WORKER_SOURCE, {
+      eval: true,
+      workerData: { sourcePath, snapshotPath },
+    });
+    worker.once("error", reject);
+    worker.once("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error(`V1 snapshot worker exited with code ${code}`)),
+    );
+  });
+
 /** Its copied legacy tables remain the source for lazy transcript import. */
 export const initializeV2Database = Effect.fn("initializeV2Database")(function* (
   destinationPath: string,
@@ -61,14 +91,7 @@ export const initializeV2Database = Effect.fn("initializeV2Database")(function* 
     });
     const snapshotPath = path.join(temporaryDirectory, "snapshot.sqlite");
     yield* Effect.tryPromise({
-      try: async () => {
-        const database = new NodeSqlite.DatabaseSync(sourcePath, { readOnly: true });
-        try {
-          await NodeSqlite.backup(database, snapshotPath);
-        } finally {
-          database.close();
-        }
-      },
+      try: () => snapshotInWorker(sourcePath, snapshotPath),
       catch: (cause) => new V2DatabaseImportError({ sourcePath, destinationPath, cause }),
     });
     // Publish only a complete snapshot, without replacing an existing V2 database.
