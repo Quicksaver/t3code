@@ -64,14 +64,16 @@ export function BrowserSurfaceSlot(props: {
     const panel = element.closest('[data-preview-panel-mode="inline"]');
     if (panel) observed.push(panel);
     // Sidebar width changes move the slot without changing its size or column offset.
-    observed.push(...document.querySelectorAll('[data-slot="sidebar-gap"]'));
+    observed.push(...element.ownerDocument.querySelectorAll('[data-slot="sidebar-gap"]'));
     const stopObserving = observeResize(observed, update);
-    window.addEventListener("resize", update);
-    window.addEventListener("scroll", update, true);
+    // A detached panel window lays the slot out in its own viewport.
+    const view = element.ownerDocument.defaultView ?? window;
+    view.addEventListener("resize", update);
+    view.addEventListener("scroll", update, true);
     return () => {
       stopObserving();
-      window.removeEventListener("resize", update);
-      window.removeEventListener("scroll", update, true);
+      view.removeEventListener("resize", update);
+      view.removeEventListener("scroll", update, true);
       if (updateRef.current === update) updateRef.current = null;
       lease.release();
     };

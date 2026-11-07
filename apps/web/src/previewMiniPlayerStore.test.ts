@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
+import { useDetachedPanelStore } from "./detachedPanels/detachedPanelStore";
 import {
   browserMiniPlayerSource,
   selectThreadPreviewMiniPlayer,
@@ -15,6 +16,7 @@ const tabB = browserMiniPlayerSource("tab-b");
 
 beforeEach(() => {
   usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
+  useDetachedPanelStore.setState({ byName: {} });
 });
 
 describe("previewMiniPlayerStore", () => {
@@ -45,5 +47,18 @@ describe("previewMiniPlayerStore", () => {
     expect(
       selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refB),
     ).toMatchObject({ source: tabB });
+  });
+
+  it("never floats a source that is open in its own window", () => {
+    useDetachedPanelStore.getState().detach(refA, "browser:tab-a");
+    usePreviewMiniPlayerStore.getState().open(refA, tabA);
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toBeNull();
+
+    usePreviewMiniPlayerStore.getState().open(refA, tabB);
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA)?.source,
+    ).toEqual(tabB);
   });
 });

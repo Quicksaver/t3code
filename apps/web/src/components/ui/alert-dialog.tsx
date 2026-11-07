@@ -13,6 +13,7 @@ import {
   renderRetainedPopup,
   useDialogActionInitialFocus,
 } from "~/components/ui/dialog";
+import { usePortalContainer } from "~/components/ui/portalContainer";
 
 function AlertDialog<Payload>(props: AlertDialogPrimitive.Root.Props<Payload>) {
   return (
@@ -75,8 +76,9 @@ function AlertDialogPopup({
       />
     ),
   });
+  const defaultPortalContainer = usePortalContainer();
   return (
-    <AlertDialogPortal container={portalContainer}>
+    <AlertDialogPortal container={portalContainer ?? defaultPortalContainer}>
       <AlertDialogBackdrop />
       <AlertDialogViewport
         className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}

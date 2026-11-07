@@ -63,4 +63,43 @@ describe("installFileEditorDismissal", () => {
 
     expect(window.getSelection()?.toString()).toBe("Assistant reply");
   });
+
+  it.each(["adopted from the main document", "created in the detached document"])(
+    "blurs a detached window's editor node %s on Escape",
+    (origin) => {
+      const frame = document.createElement("iframe");
+      document.body.append(frame);
+      using _frame = { [Symbol.dispose]: () => frame.remove() };
+      const doc = frame.contentDocument!;
+      const root = doc.createElement("div");
+      doc.body.append(root);
+      const shadow = root.appendChild(doc.createElement("diffs-container")).attachShadow({
+        mode: "open",
+      });
+      const content = (
+        origin === "created in the detached document" ? doc : document
+      ).createElement("div");
+      content.setAttribute("data-content", "");
+      content.tabIndex = 0;
+      shadow.append(content);
+      content.focus();
+      expect(shadow.activeElement).toBe(content);
+      const onDismiss = vi.fn();
+      using _dismissal = {
+        [Symbol.dispose]: installFileEditorDismissal({
+          root,
+          editor: { setSelections: () => {} },
+          isBlocked: () => false,
+          onDismiss,
+        }),
+      };
+
+      content.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }),
+      );
+
+      expect(onDismiss).toHaveBeenCalledOnce();
+      expect(shadow.activeElement).toBeNull();
+    },
+  );
 });

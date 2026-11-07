@@ -5,6 +5,10 @@ import type { ClosedView, ClosedViewEntry } from "./closedViewStore";
 import type { PullRequestListPreferences } from "./components/pullRequest/pullRequestListPreferences";
 import { openPreviewSession } from "./components/preview/openPreviewSession";
 import {
+  isDetachedPanelsSupported,
+  useDetachedPanelStore,
+} from "./detachedPanels/detachedPanelStore";
+import {
   rightPanelHostRef,
   type RightPanelSurface,
   selectThreadRightPanelState,
@@ -116,6 +120,7 @@ export async function reopenClosedView(
     });
     if (result._tag === "Failure") return false;
     panels.openBrowser(ref, result.value.tabId);
+    redetach(view, `browser:${result.value.tabId}`);
     return true;
   }
   const surface = view.surface;
@@ -164,5 +169,12 @@ export async function reopenClosedView(
     default:
       panels.open(ref, surface.kind);
   }
+  redetach(view, surface.id);
   return true;
+}
+
+/** A tab closed from its own window reopens in a window at its last bounds. */
+function redetach(view: ClosedView, surfaceId: string) {
+  if (!view.detached || !isDetachedPanelsSupported()) return;
+  useDetachedPanelStore.getState().detach(view.threadRef, surfaceId, view.detached.bounds);
 }

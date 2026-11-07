@@ -168,6 +168,8 @@ export function useBrowserViewportResize(options: {
     dragVersionRef.current += 1;
     const pointerId = event.pointerId;
     const target = event.currentTarget;
+    // The rail may sit in a detached panel window, which delivers its own pointer events.
+    const view = target.ownerDocument.defaultView ?? window;
     const startX = event.clientX;
     const startY = event.clientY;
     const startWidth = effectiveViewport.width;
@@ -209,9 +211,9 @@ export function useBrowserViewportResize(options: {
       setDragViewport({ sourceKey: sourceViewportKey, width, height, direction });
     };
     function cleanup() {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
+      view.removeEventListener("pointermove", move);
+      view.removeEventListener("pointerup", finish);
+      view.removeEventListener("pointercancel", cancel);
       dragCleanupRef.current = null;
       try {
         target.releasePointerCapture(pointerId);
@@ -239,9 +241,9 @@ export function useBrowserViewportResize(options: {
       clearDrag();
     }
     dragCleanupRef.current = cleanup;
-    window.addEventListener("pointermove", move, { passive: false });
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", cancel);
+    view.addEventListener("pointermove", move, { passive: false });
+    view.addEventListener("pointerup", finish);
+    view.addEventListener("pointercancel", cancel);
   };
 
   return {

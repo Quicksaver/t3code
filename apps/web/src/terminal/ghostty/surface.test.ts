@@ -91,6 +91,9 @@ describe("GhosttyTerminalSurface visibility", () => {
       value = "";
       private readonly captures = new Set<number>();
 
+      get ownerDocument() {
+        return document;
+      }
       setAttribute() {}
       append(...children: TerminalTestElement[]) {
         for (const child of children) child.parentElement = this;
@@ -145,6 +148,9 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal("document", {
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
+      get defaultView() {
+        return window;
+      },
     });
     vi.stubGlobal(
       "window",
@@ -160,6 +166,8 @@ describe("GhosttyTerminalSurface visibility", () => {
         matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
       }),
     );
+    // A getter, not an Object.assign value: tests re-stub navigator after creating the harness.
+    Object.defineProperty(window, "navigator", { get: () => navigator, configurable: true });
     vi.stubGlobal(
       "ResizeObserver",
       class {

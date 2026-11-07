@@ -40,6 +40,7 @@ import {
 } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
+import { useDetachedPanelWindow } from "~/detachedPanels/detachedPanelContext";
 
 const platformLabel = (platform: DevicePlatform) =>
   platform === "ios" ? "iOS Simulators" : "Android Emulators";
@@ -134,6 +135,7 @@ export function DevicePanel(props: {
     }
   };
 
+  const detachedWindow = useDetachedPanelWindow();
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
@@ -258,7 +260,7 @@ export function DevicePanel(props: {
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
               visible={props.visible}
-              onFloat={floatActive}
+              onFloat={detachedWindow ? undefined : floatActive}
               onClose={() => closeActive(false)}
               onPowerOff={() => closeActive(true)}
             />

@@ -16,10 +16,10 @@ function dismissFileEditorInteraction({
   editor.setSelections([]);
 
   const file = root.querySelector<HTMLElement>("diffs-container");
-  const activeElement = file?.shadowRoot?.activeElement;
-  if (activeElement instanceof HTMLElement) {
-    activeElement.blur();
-  }
+  // In a detached panel window the editor holds nodes from either realm: it creates some in the
+  // main document and adopts them. Check the capability, not a realm's constructor.
+  const activeElement = file?.shadowRoot?.activeElement as { blur?: unknown } | null | undefined;
+  if (typeof activeElement?.blur === "function") (activeElement as HTMLElement).blur();
 }
 
 function isFileEditorFocused(root: HTMLElement): boolean {
@@ -44,10 +44,12 @@ export function installFileEditorDismissal({
     dismissFileEditorInteraction({ root, editor, onDismiss });
   };
 
-  document.addEventListener("pointerdown", handlePointerDown, true);
-  document.addEventListener("keydown", handleKeyDown, true);
+  // A detached panel window delivers its own pointer and key events.
+  const doc = root.ownerDocument;
+  doc.addEventListener("pointerdown", handlePointerDown, true);
+  doc.addEventListener("keydown", handleKeyDown, true);
   return () => {
-    document.removeEventListener("pointerdown", handlePointerDown, true);
-    document.removeEventListener("keydown", handleKeyDown, true);
+    doc.removeEventListener("pointerdown", handlePointerDown, true);
+    doc.removeEventListener("keydown", handleKeyDown, true);
   };
 }

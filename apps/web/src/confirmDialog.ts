@@ -7,20 +7,47 @@ export type ConfirmDialogState =
       readonly message: string;
       readonly variant: ConfirmDialogVariant;
       readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+      readonly container: HTMLElement | null;
     }
   | {
       readonly status: "closing";
       readonly message: string;
       readonly variant: ConfirmDialogVariant;
       readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+      readonly container: HTMLElement | null;
     };
 
 type PendingConfirmation = {
   readonly message: string;
   readonly variant: ConfirmDialogVariant;
   readonly initialFocus: ConfirmDialogOptions["initialFocus"];
+  readonly container: HTMLElement | null;
   readonly resolve: (confirmed: boolean) => void;
 };
+
+let requestContainer: HTMLElement | null = null;
+let resolveDefaultContainer: (() => HTMLElement | null) | null = null;
+
+/** Where a confirmation renders when its request names no container, such as the focused window. */
+export function setConfirmDialogContainerResolver(
+  resolver: (() => HTMLElement | null) | null,
+): void {
+  resolveDefaultContainer = resolver;
+}
+
+/**
+ * Confirmations requested synchronously inside `run` render in `container`, such as a
+ * detached panel window whose close the user asked for.
+ */
+export function withConfirmDialogContainer<T>(container: HTMLElement, run: () => T): T {
+  const previous = requestContainer;
+  requestContainer = container;
+  try {
+    return run();
+  } finally {
+    requestContainer = previous;
+  }
+}
 
 const idleState: ConfirmDialogState = { status: "idle" };
 let state: ConfirmDialogState = idleState;
@@ -73,6 +100,7 @@ export function requestConfirmDialog(
       message,
       variant: options?.variant ?? "default",
       initialFocus: options?.initialFocus,
+      container: requestContainer ?? resolveDefaultContainer?.() ?? null,
       resolve,
     } satisfies PendingConfirmation;
     if (activeConfirmation || state.status === "closing") {
@@ -86,6 +114,7 @@ export function requestConfirmDialog(
       message,
       variant: pending.variant,
       initialFocus: pending.initialFocus,
+      container: pending.container,
     });
   });
 
@@ -107,6 +136,7 @@ export function respondToConfirmDialog(confirmed: boolean): void {
     message: state.message,
     variant: state.variant,
     initialFocus: state.initialFocus,
+    container: state.container,
   });
 }
 
@@ -125,7 +155,30 @@ export function completeConfirmDialogClose(): void {
     message: next.message,
     variant: next.variant,
     initialFocus: next.initialFocus,
+    container: next.container,
   });
+}
+
+/**
+ * Cancels confirmations shown or waiting in `container`, such as a detached panel window that
+ * hid or closed. Its dialog can no longer be answered or finish closing, so the queue advances now.
+ */
+export function cancelConfirmDialogsIn(container: HTMLElement): void {
+  const cancelled = queuedConfirmations.filter((pending) => pending.container === container);
+  queuedConfirmations = queuedConfirmations.filter((pending) => pending.container !== container);
+  for (const pending of cancelled) pending.resolve(false);
+  if (activeConfirmation?.container === container) {
+    activeConfirmation.resolve(false);
+    activeConfirmation = null;
+    publish({
+      status: "closing",
+      message: state.status === "idle" ? "" : state.message,
+      variant: state.status === "idle" ? "default" : state.variant,
+      container,
+      initialFocus: state.status === "idle" ? undefined : state.initialFocus,
+    });
+  }
+  if (state.status === "closing" && state.container === container) completeConfirmDialogClose();
 }
 
 export function resetConfirmDialogForTests(): void {

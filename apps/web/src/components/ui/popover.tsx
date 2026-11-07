@@ -3,6 +3,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { cn } from "~/lib/utils";
 
 import { renderClosingPositioner } from "./closing-positioner";
+import { usePortalContainer } from "./portalContainer";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
@@ -59,11 +60,12 @@ function PopoverPopup({
   width?: keyof typeof popoverPopupWidthClassName;
   touchBackdrop?: boolean;
 }) {
+  const portalContainer = usePortalContainer();
   // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
   // guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
-    <PopoverPrimitive.Portal keepMounted={keepMounted}>
+    <PopoverPrimitive.Portal keepMounted={keepMounted} container={portalContainer}>
       {touchBackdrop ? (
         // On touch, the backdrop consumes outside taps so closing cannot also activate the control beneath.
         <PopoverPrimitive.Backdrop

@@ -5,6 +5,7 @@ import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { usePortalContainer } from "~/components/ui/portalContainer";
 
 const ComboboxContext = React.createContext<{
   chipsRef: React.RefObject<Element | null> | null;
@@ -150,11 +151,12 @@ function ComboboxPopup({
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
   collisionAvoidance?: ComboboxPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
+  const portalContainer = usePortalContainer();
   const { chipsRef, multiple } = React.use(ComboboxContext);
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
 
   return (
-    <ComboboxPrimitive.Portal>
+    <ComboboxPrimitive.Portal container={portalContainer}>
       <ComboboxPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

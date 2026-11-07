@@ -137,6 +137,11 @@ export interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
+  /** Present where tabs can move into their own windows (desktop conversations). */
+  detachedSurfaceIds?: ReadonlySet<string>;
+  canDetachSurface?: (surface: RightPanelSurface) => boolean;
+  onDetachSurface?: (surface: RightPanelSurface) => void;
+  onReattachSurface?: (surface: RightPanelSurface) => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
@@ -194,6 +199,8 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   .join(",");
 
 type TabContextMenuAction =
+  | "detach"
+  | "reattach"
   | "rename"
   | "copy-path"
   | "toggle-mute"
@@ -432,7 +439,7 @@ function RightPanelEmptyState(props: {
   );
 }
 
-function surfaceTitle(
+export function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
@@ -1010,6 +1017,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (surfaceIndex < 0) return;
 
     const items: ContextMenuItem<TabContextMenuAction>[] = [];
+    if (props.detachedSurfaceIds?.has(surface.id)) {
+      if (props.onReattachSurface) items.push({ id: "reattach", label: "Move back to panel" });
+    } else if (props.onDetachSurface && props.canDetachSurface?.(surface)) {
+      items.push({ id: "detach", label: "Open in new window" });
+    }
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: "Rename" });
     if (surface.kind === "file" && surface.attachment === undefined) {
@@ -1048,6 +1060,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
     const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
     switch (action) {
+      case "detach":
+        props.onDetachSurface?.(surface);
+        break;
+      case "reattach":
+        props.onReattachSurface?.(surface);
+        break;
       case "rename":
         setRenamingDevice(surface.id);
         break;
