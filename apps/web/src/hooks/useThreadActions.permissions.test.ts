@@ -170,6 +170,9 @@ vi.mock("../lib/composerDraftUploads", () => ({
     state.localEffects.push(`release-uploads:${ref.threadId}`);
     state.localEffects.push(`clear-draft:${ref.threadId}`);
   },
+  releaseArchivedComposerDraftUploads: () => state.localEffects.push("release-uploads"),
+  releaseComposerDraftUploads: (ref: ScopedThreadRef) =>
+    state.localEffects.push(`release-uploads:${ref.threadId}`),
 }));
 vi.mock("../localApi", () => ({
   readLocalApi: () => ({ dialogs: { confirm: state.confirm } }),

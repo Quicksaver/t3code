@@ -36,8 +36,10 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ThreadColdStorage from "./ThreadColdStorage.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -198,6 +200,114 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("restores cold threads for reads and commands, but not for deletion", () => {
+  const threadId = ThreadId.make("thread:thread-management:cold");
+  const calls: Array<string> = [];
+  const childThreadIds = [ThreadId.make("thread:thread-management:cold-child")];
+  const readSteps: Array<string> = [];
+  let readFailure: "hydration" | "query" | undefined;
+  const hydrationFailure = new LegacyV1ThreadImporter.LegacyV1ThreadImportError({
+    operation: "hydrate",
+    threadId,
+  });
+  const queryFailure = new Orchestrator.OrchestratorProjectionError({
+    threadId,
+    cause: "query failed",
+  });
+  const rejection = new Orchestrator.OrchestratorDispatchError({
+    commandId: CommandId.make("command:thread-management:unarchive"),
+    commandType: "thread.unarchive",
+    cause: "rejected",
+  });
+  const testLayer = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+    Layer.provide(
+      Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+        ensureTranscript: (id) =>
+          Effect.suspend(() => {
+            expect(id).toBe(threadId);
+            readSteps.push("hydrate");
+            return readFailure === "hydration"
+              ? Effect.fail(hydrationFailure)
+              : Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 });
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadSnapshot: () => Effect.succeed({ snapshotSequence: 1 } as never),
+        getThreadRecords: () => Effect.succeed({} as never),
+        listAppOwnedChildThreadIds: () =>
+          Effect.suspend(() => {
+            readSteps.push("query");
+            return readFailure === "query"
+              ? Effect.fail(queryFailure)
+              : Effect.succeed(childThreadIds);
+          }),
+        dispatch: (command) =>
+          command.type === "thread.unarchive"
+            ? Effect.fail(rejection)
+            : Effect.succeed({ sequence: 1, storedEvents: [] }),
+      }),
+    ),
+    Layer.provide(
+      Layer.succeed(ThreadColdStorage.ThreadColdStorage, {
+        withHot: (_threadId, use, options) =>
+          Effect.sync(() => calls.push(options?.unarchive === true ? "unarchive" : "hot")).pipe(
+            Effect.andThen(use),
+          ),
+        ensureAttachmentHot: () => Effect.void,
+        scheduleArchive: () => Effect.sync(() => calls.push("schedule")),
+        archive: () => Effect.void,
+        purge: () => Effect.void,
+        reconcile: Effect.void,
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    yield* service.getThreadSnapshot(threadId);
+    yield* service.getThreadRecords(threadId, []);
+    yield* service.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("command:thread-management:delete"),
+      threadId,
+    });
+    yield* service.dispatch({
+      type: "thread.metadata.update",
+      commandId: CommandId.make("command:thread-management:rename"),
+      threadId,
+      title: "Renamed",
+    });
+    const error = yield* Effect.flip(
+      service.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("command:thread-management:unarchive"),
+        threadId,
+      }),
+    );
+    expect(error).toBe(rejection);
+    readSteps.length = 0;
+    expect(yield* service.listAppOwnedChildThreadIds(threadId)).toEqual(childThreadIds);
+    expect(readSteps).toEqual(["hydrate", "query"]);
+    readFailure = "hydration";
+    readSteps.length = 0;
+    const hydrationError = yield* Effect.flip(service.listAppOwnedChildThreadIds(threadId));
+    expect(hydrationError).toBeInstanceOf(Orchestrator.OrchestratorProjectionError);
+    expect(hydrationError).toMatchObject({ threadId, cause: hydrationFailure });
+    expect(readSteps).toEqual(["hydrate"]);
+    readFailure = "query";
+    readSteps.length = 0;
+    expect(yield* Effect.flip(service.listAppOwnedChildThreadIds(threadId))).toBe(queryFailure);
+    expect(readSteps).toEqual(["hydrate", "query"]);
+    // Shell-only reads and deletion leave cold rows alone; an unarchive, even a
+    // failed one, queues the cold-archive effect that settles its bundle.
+    expect(calls).toEqual(["hot", "hot", "unarchive", "schedule"]);
+  }).pipe(Effect.provide(testLayer));
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {

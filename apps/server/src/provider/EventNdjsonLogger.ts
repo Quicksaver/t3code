@@ -69,6 +69,7 @@ export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 export interface EventNdjsonLogStore {
   readonly filePath: string;
   readonly logger: (stream: EventNdjsonStream) => ProviderEventLoggers.EventNdjsonLogger;
+  readonly closeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly close: () => Effect.Effect<void>;
 }
 
@@ -148,7 +149,7 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
   return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
 }
 
-function resolveThreadSegment(raw: string | null | undefined): string {
+export function resolveThreadLogSegment(raw: string | null | undefined): string {
   if (typeof raw !== "string") return GLOBAL_THREAD_SEGMENT;
   const normalized = toSafeThreadAttachmentSegment(raw);
   if (normalized === null) return GLOBAL_THREAD_SEGMENT;
@@ -716,6 +717,17 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     yield* Scope.close(timerScope, Exit.void);
   });
 
+  const closeThread = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const threadSegment = resolveThreadLogSegment(threadId);
+    yield* flush(false, false);
+    yield* SynchronizedRef.update(stateRef, (state) => {
+      if (!state.sinks.has(threadSegment)) return state;
+      const sinks = new Map(state.sinks);
+      sinks.delete(threadSegment);
+      return { ...state, sinks };
+    });
+  });
+
   const loggerViews = new Map<EventNdjsonStream, ProviderEventLoggers.EventNdjsonLogger>();
   const logger = (stream: EventNdjsonStream): ProviderEventLoggers.EventNdjsonLogger => {
     const existing = loggerViews.get(stream);
@@ -734,7 +746,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
       const bytes = Buffer.byteLength(line);
-      const threadSegment = resolveThreadSegment(threadId);
+      const threadSegment = resolveThreadLogSegment(threadId);
       const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
           return Effect.succeed([{ flush: false }, state] as const);
@@ -766,11 +778,12 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
     const view = {
       filePath,
       write,
+      closeThread,
       close: () => Effect.void,
     } satisfies ProviderEventLoggers.EventNdjsonLogger;
     loggerViews.set(stream, view);
     return view;
   };
 
-  return { filePath, logger, close } satisfies EventNdjsonLogStore;
+  return { filePath, logger, closeThread, close } satisfies EventNdjsonLogStore;
 });

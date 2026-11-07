@@ -27,6 +27,7 @@ const RPC_AGGREGATES = {
   [ORCHESTRATION_V2_WS_METHODS.getThreadTitles]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getWorktreeThreadIds]: "orchestration",
+  [ORCHESTRATION_V2_WS_METHODS.getActiveThreadIds]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getOlderSettledThreads]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.launchThread]: "orchestration",

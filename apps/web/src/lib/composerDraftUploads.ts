@@ -73,3 +73,14 @@ export function releaseProjectDraftUploads(
     }
   }
 }
+
+/**
+ * Release recreatable image uploads. Files have no persisted local bytes, so a
+ * completed or pending upload may be the surviving draft's only copy after reload.
+ */
+export function releaseArchivedComposerDraftUploads(threadRef: ScopedThreadRef): void {
+  const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+  if (draft) {
+    releaseDraftAttachments(draft.images);
+  }
+}

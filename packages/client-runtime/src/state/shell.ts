@@ -30,7 +30,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
-import { subscribeDynamicWithSession } from "../rpc/client.ts";
+import { request, subscribeDynamicWithSession } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
@@ -42,6 +42,18 @@ import {
   sameThreadPullRequests,
 } from "./shellReducer.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
+import {
+  evictCachedThread,
+  cachedThreadGeneration,
+  cachedThreadActiveSequence,
+  isCachedThreadEvicted,
+  isCachedThreadLive,
+  observeActiveCachedThreads,
+  restoreCachedThread,
+  reviveCachedThread,
+  reviveSequencedEviction,
+  retainCachedThreadUnsafe,
+} from "./threadCache.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentShellStatus = "empty" | "cached" | "synchronizing" | "live";
@@ -58,6 +70,8 @@ export interface EnvironmentShellState {
   readonly generation: number;
   /** Sequences of the thread removals applied since the latest authoritative snapshot. */
   readonly removedAt: ReadonlyMap<ThreadId, number>;
+  /** Omitted active threads cannot be classified as archived by their absence. */
+  readonly omitsThreads?: boolean;
 }
 
 const EMPTY_REMOVALS: ReadonlyMap<ThreadId, number> = new Map();
@@ -107,13 +121,18 @@ interface ShellSubscription {
 
 function shellIdentity(
   environment: Pick<ExecutionEnvironmentDescriptor, "serverVersion" | "databaseMigration">,
-  flags: { readonly shellThreadFamilies?: boolean; readonly shellOlderSettled?: boolean },
+  flags: {
+    readonly shellThreadFamilies?: boolean;
+    readonly shellOlderSettled?: boolean;
+    readonly shellThreadMembership?: boolean;
+  },
 ): ShellOriginIdentity {
   const omitIdleSubagents = flags.shellThreadFamilies === true;
   return {
     serverVersion: environment.serverVersion,
     // Migrations rewrite projections without events, so a migrated server reloads.
     databaseMigration: environment.databaseMigration ?? null,
+    shellThreadMembership: flags.shellThreadMembership === true,
     omitIdleSubagents,
     omitOlderSettled: flags.shellOlderSettled === true && omitIdleSubagents,
   };
@@ -137,7 +156,8 @@ function sameShellIdentity(left: ShellOriginIdentity, right: ShellOriginIdentity
     left.serverVersion === right.serverVersion &&
     left.databaseMigration === right.databaseMigration &&
     left.omitIdleSubagents === right.omitIdleSubagents &&
-    left.omitOlderSettled === right.omitOlderSettled
+    left.omitOlderSettled === right.omitOlderSettled &&
+    (left.shellThreadMembership === true) === (right.shellThreadMembership === true)
   );
 }
 
@@ -169,6 +189,85 @@ interface LiveShell {
   readonly snapshot: OrchestrationV2ShellSnapshot;
   // Read together with the rows, so a save never pairs them with another snapshot's origin.
   readonly origin: Persistence.ShellCacheOrigin | undefined;
+}
+
+// Shell deltas update threads in place, so a positional comparison detects an
+// unchanged membership without allocating on every batch.
+function sameThreadIds(
+  left: OrchestrationV2ShellSnapshot["threads"],
+  right: OrchestrationV2ShellSnapshot["threads"],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index]!.id !== right[index]!.id) return false;
+  }
+  return true;
+}
+
+// Records the active threads an applied item removed. A thread that is active
+// again by the end of the batch was archived and restored within it, which the
+// net membership comparison cannot see. Ordinary updates skip this work.
+function collectRemovedThreadIds(
+  item: OrchestrationV2ShellStreamItem,
+  previous: OrchestrationV2ShellSnapshot,
+  next: OrchestrationV2ShellSnapshot,
+  removed: Set<ThreadId>,
+): void {
+  if (previous.threads === next.threads) return;
+  switch (item.kind) {
+    case "thread.removed":
+      if (next.threads.length < previous.threads.length) removed.add(item.threadId);
+      return;
+    case "thread.updated":
+      if (item.location === "archive" && next.threads.length < previous.threads.length) {
+        removed.add(item.thread.id);
+      }
+      return;
+    case "snapshot": {
+      const nextThreadIds = new Set(next.threads.map((thread) => thread.id));
+      for (const thread of previous.threads) {
+        if (!nextThreadIds.has(thread.id)) removed.add(thread.id);
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+// Coalesced archive/unarchive updates can keep membership unchanged. Record the
+// authoritative active sequence so a late archive acknowledgement cannot evict it.
+// Ignore enrichment and stale deltas; a lower snapshot resets the sequence space.
+function activeObservation(
+  item: OrchestrationV2ShellStreamItem,
+  previous: OrchestrationV2ShellSnapshot | undefined,
+):
+  | {
+      readonly threadIds: ReadonlyArray<ThreadId>;
+      readonly sequence: number;
+      readonly reset: boolean;
+    }
+  | undefined {
+  if (item.kind === "snapshot") {
+    return item.resolvedRepositoryIdentityRoots === undefined
+      ? {
+          threadIds: item.snapshot.threads.map((thread) => thread.id),
+          sequence: item.snapshot.snapshotSequence,
+          reset:
+            previous !== undefined && item.snapshot.snapshotSequence < previous.snapshotSequence,
+        }
+      : undefined;
+  }
+  if (
+    item.kind === "thread.updated" &&
+    item.location === "active" &&
+    previous !== undefined &&
+    item.sequence > previous.snapshotSequence
+  ) {
+    return { threadIds: [item.thread.id], sequence: item.sequence, reset: false };
+  }
+  return undefined;
 }
 
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
@@ -204,7 +303,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const origin = yield* Ref.make(cachedOrigin);
   const reloadRequests = yield* Queue.unbounded<void>();
   const latestLive = yield* Ref.make<Option.Option<LiveShell>>(Option.none());
+  const pendingThreadEvictions = yield* Ref.make<ReadonlySet<ThreadId>>(new Set());
+  const omittedThreadIds = new Set<ThreadId>();
   const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
+  const listPersistedThreadIds = cache
+    .listThreadIds(environmentId)
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not list cached thread details.").pipe(
+          Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
+          Effect.as<ReadonlyArray<ThreadId>>([]),
+        ),
+      ),
+    );
 
   const persistenceLock = yield* Semaphore.make(1);
   let lastPersisted: LiveShell | undefined;
@@ -299,35 +410,70 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Server items and deferred link fills both read the snapshot and write it back; one at a
   // time, so neither can overwrite what the other wrote in between.
   const snapshotWriteLock = yield* Semaphore.make(1);
+  let pendingHttpReconciliation = false;
 
+  // HTTP and socket application share the snapshot lock and cache lifecycle boundary.
   const applyLocked = Effect.fnUntraced(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
-    /** What an authoritative snapshot among the items descends from. */
     identity: ShellOriginIdentity | null,
-    /** Set for an HTTP snapshot: the rows that still wait for their pull request links. */
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
+    const omitsThreads =
+      identity?.omitIdleSubagents === true || identity?.omitOlderSettled === true;
+    const session = (yield* Ref.get(activeSubscription))?.session;
     const initial = yield* SubscriptionRef.get(state);
-    // No socket has confirmed an HTTP snapshot, so it never makes the shell live.
     const fromHttp = pendingLinkIds !== undefined;
+    const supportsMembership = identity?.shellThreadMembership === true && session !== undefined;
+    if (fromHttp) {
+      pendingHttpReconciliation =
+        omitsThreads && identity?.shellThreadMembership === true && !supportsMembership;
+    }
     const disconnected = initial.status === "empty" || initial.status === "cached";
     let waiting = yield* Ref.get(awaitingCompletion);
-    let next = initial;
-    let receivedAuthoritativeSnapshot = false;
+    let next =
+      (initial.omitsThreads === true) === omitsThreads ? initial : { ...initial, omitsThreads };
+    let receivedSnapshot = false;
     let snapshotRequired = false;
+    let receivedAuthoritativeSnapshot = false;
+    let completedCachedResume = false;
+    const removedThreadIds = new Set<ThreadId>();
+    const sequencedEvictions = new Set<ThreadId>();
     let deltas: Array<ShellStreamEvent> = [];
     const flushDeltas = () => {
       if (deltas.length > 0 && Option.isSome(next.snapshot)) {
         let sequence = next.snapshot.value.snapshotSequence;
+        const activeIds = deltas.some(
+          (delta) =>
+            delta.kind === "thread.removed" ||
+            (delta.kind === "thread.updated" && delta.location !== "active"),
+        )
+          ? new Set(next.snapshot.value.threads.map((thread) => thread.id))
+          : undefined;
         let removedAt: Map<ThreadId, number> | undefined;
         for (const delta of deltas) {
           if (delta.sequence <= sequence) continue;
           switch (delta.kind) {
             case "thread.removed":
+              activeIds?.delete(delta.threadId);
+              removedThreadIds.add(delta.threadId);
               removedAt ??= new Map(next.removedAt);
               removedAt.set(delta.threadId, delta.sequence);
               break;
             case "thread.updated":
+              if (delta.location === "active") {
+                activeIds?.add(delta.thread.id);
+                const revivals = observeActiveCachedThreads(
+                  cache,
+                  environmentId,
+                  [delta.thread.id],
+                  delta.sequence,
+                  false,
+                );
+                for (const threadId of revivals) sequencedEvictions.add(threadId);
+              } else if (activeIds?.delete(delta.thread.id)) {
+                removedThreadIds.add(delta.thread.id);
+              }
+              break;
             case "project.updated":
             case "project.removed":
               break;
@@ -340,7 +486,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ...next,
           removedAt: removedAt ?? next.removedAt,
           snapshot: Option.some(applyShellStreamEvents(next.snapshot.value, deltas)),
-          status: waiting ? "synchronizing" : "live",
+          status:
+            fromHttp && disconnected ? "cached" : waiting || fromHttp ? "synchronizing" : "live",
           error: Option.none(),
         };
       }
@@ -358,13 +505,16 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       // Snapshots can reset the cursor; completion markers change the sync status.
       flushDeltas();
       if (item.kind === "synchronized") {
+        completedCachedResume ||=
+          (pendingHttpReconciliation || (waiting && next.generation === 0)) &&
+          Option.isSome(next.snapshot);
+        pendingHttpReconciliation = false;
         waiting = false;
         if (Option.isSome(next.snapshot)) {
           next = {
             ...next,
             status: "live",
             error: Option.none(),
-            // A cache resume that caught up is as current as a snapshot for generation readers.
             generation: next.generation === 0 ? ++lastShellGeneration : next.generation,
           };
         }
@@ -378,8 +528,24 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ? undefined
           : { resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots },
       );
-      if (authoritative) receivedAuthoritativeSnapshot = true;
+      if (Option.isSome(next.snapshot) && next.omitsThreads !== true) {
+        collectRemovedThreadIds(item, next.snapshot.value, nextSnapshot, removedThreadIds);
+      }
+      const observed = activeObservation(item, Option.getOrUndefined(next.snapshot));
+      if (observed !== undefined) {
+        const revivals = observeActiveCachedThreads(
+          cache,
+          environmentId,
+          observed.threadIds,
+          observed.sequence,
+          observed.reset,
+        );
+        for (const threadId of revivals) sequencedEvictions.add(threadId);
+      }
+      receivedSnapshot = true;
+      receivedAuthoritativeSnapshot ||= authoritative;
       next = {
+        omitsThreads: next.omitsThreads === true,
         snapshot: Option.some(nextSnapshot),
         status:
           fromHttp && disconnected ? "cached" : waiting || fromHttp ? "synchronizing" : "live",
@@ -402,29 +568,214 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         identity === null ? undefined : { ...identity, snapshotAt: yield* Clock.currentTimeMillis };
       yield* Ref.set(origin, nextOrigin);
     }
-    if (next === initial) return;
-    if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
+
+    if (next === initial || Option.isNone(next.snapshot)) return;
+    if (pendingLinkIds !== undefined) {
       pendingLinkRows = new Set(
         next.snapshot.value.threads.filter((thread) => pendingLinkIds.has(thread.id)),
       );
     }
-    if (Option.isSome(next.snapshot)) {
+    yield* Ref.set(latestLive, Option.some({ snapshot: next.snapshot.value, origin: nextOrigin }));
+    const nextSnapshot = next.snapshot.value;
+    const previousThreads = Option.match(initial.snapshot, {
+      onNone: () => undefined,
+      onSome: (snapshot) => snapshot.threads,
+    });
+    const membershipChanged =
+      previousThreads !== undefined &&
+      (previousThreads.length !== nextSnapshot.threads.length ||
+        ((receivedSnapshot || removedThreadIds.size > 0) &&
+          !sameThreadIds(previousThreads, nextSnapshot.threads)));
+    const pendingEvictions = yield* Ref.get(pendingThreadEvictions);
+    // A saved shell can finish replay without a new snapshot, so reconcile its saved details then.
+    const reconcileThreads = receivedAuthoritativeSnapshot || completedCachedResume;
+    // Partial shells validate only known omissions, without fetching their shells
+    // or bodies. Open details own disk eviction and may postdate this snapshot.
+    const persistedThreadIds =
+      reconcileThreads && (next.omitsThreads !== true || supportsMembership)
+        ? yield* listPersistedThreadIds
+        : [];
+    const membershipEvictions = new Map<ThreadId, { generation: number; sequence: number }>();
+    if (reconcileThreads && next.omitsThreads === true) {
+      const listedIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+      for (const thread of previousThreads ?? []) omittedThreadIds.add(thread.id);
+      for (const id of persistedThreadIds) {
+        if (!isCachedThreadLive(cache, environmentId, id)) omittedThreadIds.add(id);
+      }
+      for (const id of listedIds) omittedThreadIds.delete(id);
+      const candidates = supportsMembership ? [...omittedThreadIds] : [];
+      for (let offset = 0; offset < candidates.length; offset += 200) {
+        const threadIds = candidates.slice(offset, offset + 200);
+        // An unretained generation can be collected while the membership RPC is in flight.
+        for (const id of threadIds) {
+          yield* Effect.acquireRelease(
+            Effect.sync(() => retainCachedThreadUnsafe(cache, environmentId, id)),
+            (release) => Effect.sync(release),
+          );
+        }
+        const generations = new Map(
+          threadIds.map((id) => [id, cachedThreadGeneration(cache, environmentId, id)]),
+        );
+        const membership = yield* request(ORCHESTRATION_V2_WS_METHODS.getActiveThreadIds, {
+          threadIds,
+        }).pipe(
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.asSome,
+          Effect.catch((error) =>
+            Effect.logWarning("Could not validate active thread membership.").pipe(
+              Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
+              Effect.as(Option.none()),
+            ),
+          ),
+        );
+        if (Option.isNone(membership)) continue;
+        const sessionChanged =
+          Option.getOrNull(yield* SubscriptionRef.get(supervisor.session)) !== session;
+        if (membership.value.snapshotSequence < nextSnapshot.snapshotSequence || sessionChanged) {
+          yield* Effect.logDebug("Discarded active thread membership response.").pipe(
+            Effect.annotateLogs({
+              environmentId,
+              sessionChanged,
+              membershipSequence: membership.value.snapshotSequence,
+              shellSequence: nextSnapshot.snapshotSequence,
+            }),
+          );
+          continue;
+        }
+        const { snapshotSequence, threadIds: activeIds } = membership.value;
+        const active = new Set(activeIds);
+        observeActiveCachedThreads(cache, environmentId, activeIds, snapshotSequence, false);
+        for (const id of threadIds) {
+          const unchanged =
+            cachedThreadGeneration(cache, environmentId, id) === generations.get(id);
+          if (active.has(id)) {
+            if (unchanged)
+              yield* reviveCachedThread(
+                cache,
+                environmentId,
+                id,
+                () => cachedThreadGeneration(cache, environmentId, id) === generations.get(id),
+              );
+          } else if (unchanged || isCachedThreadEvicted(cache, environmentId, id)) {
+            membershipEvictions.set(id, {
+              generation: generations.get(id)!,
+              sequence: snapshotSequence,
+            });
+          }
+        }
+      }
+    }
+
+    if (
+      membershipChanged ||
+      removedThreadIds.size > 0 ||
+      pendingEvictions.size > 0 ||
+      membershipEvictions.size > 0 ||
+      persistedThreadIds.length > 0
+    ) {
+      const nextThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+      const evictionCandidates = new Set<ThreadId>();
+      for (const threadId of removedThreadIds) evictionCandidates.add(threadId);
+      for (const threadId of membershipEvictions.keys()) evictionCandidates.add(threadId);
+      if (membershipChanged && next.omitsThreads !== true) {
+        for (const thread of previousThreads) evictionCandidates.add(thread.id);
+      }
+      for (const threadId of next.omitsThreads === true ? [] : persistedThreadIds) {
+        if (!isCachedThreadLive(cache, environmentId, threadId)) evictionCandidates.add(threadId);
+      }
+      const freshEvictions = new Set(evictionCandidates);
+      for (const threadId of pendingEvictions) evictionCandidates.add(threadId);
+      for (const threadId of nextThreadIds) {
+        evictionCandidates.delete(threadId);
+      }
+      // Advance cache tombstones before publishing the new shell so detail
+      // observers cannot enqueue an obsolete write in the transition window.
+      // Keep failed disk removals pending while the shell still omits the thread;
+      // a later snapshot or event can then retry instead of stranding stale data.
+      const evictionResults = yield* Effect.forEach(evictionCandidates, (threadId) => {
+        const validated = membershipEvictions.get(threadId);
+        return evictCachedThread(
+          cache,
+          environmentId,
+          threadId,
+          () =>
+            validated === undefined
+              ? freshEvictions.has(threadId) ||
+                isCachedThreadEvicted(cache, environmentId, threadId)
+              : cachedThreadGeneration(cache, environmentId, threadId) === validated.generation &&
+                !isCachedThreadLive(cache, environmentId, threadId),
+          validated?.sequence,
+        ).pipe(Effect.map((removed) => [threadId, removed] as const));
+      });
       yield* Ref.set(
-        latestLive,
-        Option.some({ snapshot: next.snapshot.value, origin: nextOrigin }),
+        pendingThreadEvictions,
+        new Set(
+          evictionResults
+            .filter(
+              ([threadId, removed]) =>
+                !removed && isCachedThreadEvicted(cache, environmentId, threadId),
+            )
+            .map(([threadId]) => threadId),
+        ),
       );
+      if (membershipChanged) {
+        const previousThreadIds = new Set(previousThreads.map((thread) => thread.id));
+        yield* Effect.forEach(
+          nextThreadIds,
+          (threadId) =>
+            previousThreadIds.has(threadId)
+              ? Effect.void
+              : reviveCachedThread(cache, environmentId, threadId),
+          { discard: true },
+        );
+      }
+      yield* Effect.forEach(
+        removedThreadIds,
+        (threadId) =>
+          nextThreadIds.has(threadId)
+            ? restoreCachedThread(cache, environmentId, threadId)
+            : Effect.void,
+        { discard: true },
+      );
+    }
+    if (sequencedEvictions.size > 0) {
+      const activeThreadIds = new Set(nextSnapshot.threads.map((thread) => thread.id));
+      yield* Effect.forEach(
+        sequencedEvictions,
+        (threadId) =>
+          activeThreadIds.has(threadId)
+            ? reviveSequencedEviction(cache, environmentId, threadId)
+            : Effect.void,
+        { discard: true },
+      );
+    }
+
+    // Open details own disk eviction, but known UI rows still need archive cleanup.
+    if (membershipEvictions.size > 0) {
+      const removedAt = new Map(next.removedAt);
+      for (const [threadId, validated] of membershipEvictions) {
+        if (
+          cachedThreadActiveSequence(cache, environmentId, threadId) <= validated.sequence &&
+          (isCachedThreadEvicted(cache, environmentId, threadId) ||
+            (isCachedThreadLive(cache, environmentId, threadId) &&
+              cachedThreadGeneration(cache, environmentId, threadId) === validated.generation))
+        ) {
+          omittedThreadIds.delete(threadId);
+          removedAt.set(threadId, validated.sequence);
+        }
+      }
+      next = { ...next, removedAt };
     }
     yield* SubscriptionRef.set(state, next);
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
       yield* Queue.offer(persistence, next.snapshot.value);
     }
-  });
+  }, Effect.scoped);
 
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     entries: ReadonlyArray<readonly [RpcSession, OrchestrationV2ShellStreamItem]>,
   ) {
-    // Read under the lock: items buffered across a session change must not land on the
-    // rows the next session loaded.
+    // Buffered items belong only to the session that admitted them.
     const subscription = yield* Ref.get(activeSubscription);
     yield* applyLocked(
       entries.flatMap(([session, item]) => (session === subscription?.session ? [item] : [])),
@@ -652,6 +1003,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             : null;
         yield* Ref.set(activeSubscription, { session, identity });
         yield* Ref.set(awaitingCompletion, true);
+        yield* SubscriptionRef.update(state, (current) => ({
+          ...current,
+          omitsThreads: omitIdleSubagents || omitOlderSettled,
+        }));
         yield* setSynchronizing;
 
         // Rows from a recent server snapshot with the same omissions and server build resume

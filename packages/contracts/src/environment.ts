@@ -201,6 +201,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
    */
   shellThreadFamilies: Schema.optionalKey(Schema.Boolean),
   shellOlderSettled: Schema.optionalKey(Schema.Boolean),
+  shellThreadMembership: Schema.optionalKey(Schema.Boolean),
   /** Publishes a pull request refresh when linked-thread answers change; older servers need polling. */
   linkedThreadRefreshes: Schema.optionalKey(Schema.Boolean),
 });
