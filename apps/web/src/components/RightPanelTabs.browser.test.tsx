@@ -103,6 +103,8 @@ describe("RightPanelTabs", () => {
           onAddBrowserInProfile={noop}
           onAddTerminal={noop}
           onAddDiff={noop}
+          onAddSourceControl={noop}
+          sourceControlAvailable={false}
           onAddFiles={noop}
           onAddPullRequest={noop}
           onAddPullRequests={noop}
@@ -176,6 +178,8 @@ function panel(activeSurface: RightPanelSurface) {
     onAddBrowserInProfile: noop,
     onAddTerminal: noop,
     onAddDiff: noop,
+    onAddSourceControl: noop,
+    sourceControlAvailable: false,
     onAddFiles: noop,
     onAddPullRequest: noop,
     onAddPullRequests: noop,

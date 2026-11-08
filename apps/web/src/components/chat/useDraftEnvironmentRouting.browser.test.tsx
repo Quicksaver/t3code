@@ -66,6 +66,7 @@ function setup() {
     skills: [],
   };
   const input: Parameters<typeof useDraftEnvironmentRouting>[0] = {
+    activeThreadRef: null,
     draftId,
     draftThread: store.getDraftSession(draftId),
     envLocked: false,

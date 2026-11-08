@@ -1231,7 +1231,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Keep both sidebar implementations (default and legacy) on the same quiet
    zinc hierarchy: zinc-50 navigation, zinc-25 hover, and white selected/raised
    surfaces. */
-[data-app-sidebar] {
+[data-app-sidebar],
+[data-conversation-surface] {
   --background: var(--color-zinc-25);
   --foreground: var(--color-zinc-900);
   --card: var(--color-white);
@@ -1560,7 +1561,8 @@ html[data-theme-id="t3-chat"] {
   }
 }
 
-html[data-theme-id] [data-app-sidebar] {
+html[data-theme-id] [data-app-sidebar],
+html[data-theme-id] [data-conversation-surface] {
   --background: var(--app-theme-canvas);
   --foreground: var(--app-theme-text);
   --card: var(--app-theme-surface);
@@ -1590,7 +1592,8 @@ html[data-theme-id] [data-app-sidebar] {
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
    keeps that color while hovered. Do not neutralize this branded edge. */
-html[data-theme-id="t3-chat"] [data-app-sidebar] {
+html[data-theme-id="t3-chat"] [data-app-sidebar],
+html[data-theme-id="t3-chat"] [data-conversation-surface] {
   @variant dark {
     border-color: var(--contrast-sidebar-border);
   }
@@ -1598,7 +1601,8 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
 
 /* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
-[data-app-sidebar] {
+[data-app-sidebar],
+[data-conversation-surface] {
   --contrast-toolbar-foreground: color-mix(
     in oklab,
     color-mix(
