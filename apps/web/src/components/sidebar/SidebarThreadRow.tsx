@@ -1,5 +1,7 @@
 import { useAtomMount } from "@effect/atom-react";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
+import { WorkingIndicator } from "../WorkingIndicator";
+import { conversationItemStyles } from "./conversationItemStyles";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -983,19 +985,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    conversationItemStyles.surface,
+    "group/sidebar-row overflow-hidden",
     variantAction === "unsettle" &&
       !props.isActive &&
       "[&:not(:hover):not(:focus-within)_*]:text-secondary-label",
     props.isActive
-      ? "bg-sidebar-row-active text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
+      ? conversationItemStyles.active
       : isSelected || props.sweepAction !== null
-        ? "bg-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
+        ? conversationItemStyles.selected
         : hasUnsentDraft
           ? cn(draftSurfaceClassName, "text-sidebar-foreground")
           : shouldRecede
-            ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+            ? conversationItemStyles.receded
+            : conversationItemStyles.idle,
     shouldRecede &&
       (status === "preparing" || status === "working") &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
@@ -1055,12 +1058,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       aria-hidden
       className={cn(
         "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
-        shouldRecede ? "font-normal" : "font-medium",
+        shouldRecede ? "font-normal" : conversationItemStyles.title,
         variant !== "slim"
           ? cn(
               "truncate",
               shouldRecede
-                ? "text-foreground/75 group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground"
+                ? conversationItemStyles.readTitle
                 : status === "failed" && !isUnread && !isWoke
                   ? "text-foreground/95"
                   : "text-foreground",
@@ -1346,8 +1349,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           topStatus.className,
                         )}
                       >
-                        <TopStatusIcon icon={topStatus.icon} className="size-3" />
-                        {topStatus.label}
+                        {topStatus.icon === "working" ? (
+                          <WorkingIndicator
+                            size="sm"
+                            label={topStatus.label}
+                            announce={!props.isRouteThread}
+                          />
+                        ) : (
+                          <>
+                            <TopStatusIcon icon={topStatus.icon} className="size-3" />
+                            {topStatus.label}
+                          </>
+                        )}
                       </span>
                     ) : (
                       <span className="text-xs">
@@ -1456,7 +1469,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {accessibleTitle}
           <div
             className={cn(
-              "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
+              "relative z-10 h-[4.875rem]",
+              conversationItemStyles.cardContent,
               metaLineEmpty && "h-auto",
             )}
           >
@@ -1469,9 +1483,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 label for the wider row controls. */}
               {pinIndicator}
               {props.projectDisplayName ? (
-                <span
-                  className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
-                >
+                <span className={cn("min-w-0 flex-1 truncate", conversationItemStyles.metadata)}>
                   {props.projectDisplayName}
                 </span>
               ) : (
@@ -1524,11 +1536,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             topStatus.className,
                           )}
                         >
-                          <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          {topStatus.icon === "working" ? (
+                            <WorkingIndicator
+                              label={topStatus.label}
+                              announce={!props.isRouteThread}
+                            />
+                          ) : (
+                            <TopStatusIcon icon={topStatus.icon} className="size-4" />
+                          )}
                           {/* Not a live region: a collapsed sidebar is inert, so
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
-                          {topStatus.label}
+                          {topStatus.icon !== "working" ? topStatus.label : null}
                           {status === "preparing" || status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />

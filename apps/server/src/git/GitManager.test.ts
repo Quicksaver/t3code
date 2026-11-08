@@ -1,4 +1,5 @@
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
@@ -56,7 +57,10 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -105,7 +109,7 @@ interface FakeProviderScenario {
 type FakeProviderCall =
   | {
       readonly operation: "listChangeRequests";
-      readonly headSelector: string;
+      readonly headSelector: string | undefined;
       readonly state: string;
       readonly limit: number | undefined;
     }
@@ -128,7 +132,7 @@ const listed = (calls: ReadonlyArray<FakeProviderCall>) =>
   calls.flatMap((call) => (call.operation === "listChangeRequests" ? [call] : []));
 
 const listedSelectors = (calls: ReadonlyArray<FakeProviderCall>) =>
-  listed(calls).map((call) => call.headSelector);
+  listed(calls).flatMap((call) => (call.headSelector === undefined ? [] : [call.headSelector]));
 
 const created = (calls: ReadonlyArray<FakeProviderCall>) =>
   calls.flatMap((call) =>
@@ -482,8 +486,12 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
         }).pipe(
           Effect.map(() =>
             (
-              prListQueueByHeadSelector.get(input.headSelector)?.shift() ??
-              scenario.prListByHeadSelector?.[input.headSelector] ??
+              (input.headSelector === undefined
+                ? undefined
+                : prListQueueByHeadSelector.get(input.headSelector)?.shift()) ??
+              (input.headSelector === undefined
+                ? undefined
+                : scenario.prListByHeadSelector?.[input.headSelector]) ??
               prListQueue.shift() ??
               scenario.prListOtherwise ??
               []
@@ -539,6 +547,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
                 );
           }),
         ),
+      getCommitAvatarUrl: () => Effect.succeed(null),
       createRepository: (input) =>
         Effect.fail(
           new SourceControlProviderFailure({
@@ -624,6 +633,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -722,7 +732,21 @@ function makeManager(input?: {
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+          resolve: () =>
+            Effect.succeed(
+              input?.sourceControlContext
+                ? {
+                    ...provider,
+                    listChangeRequests: (request) =>
+                      provider.listChangeRequests({
+                        ...request,
+                        ...(input.sourceControlContext
+                          ? { context: input.sourceControlContext }
+                          : {}),
+                      }),
+                  }
+                : provider,
+            ),
           discover: Effect.succeed([]),
         }),
       ),
@@ -796,6 +820,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           prListSequence: [oldPr, oldPr, newPr].map((pr) => [pr]),
         };
         const { manager } = yield* makeManager({ providerScenario });
+        const backgroundPolicy = yield* BackgroundPolicy.make().pipe(
+          Effect.provideService(HostPowerMonitor.HostPowerMonitor, yield* HostPowerMonitor.make()),
+          Effect.provide(ServerSettings.layerTest()),
+        );
         const context = yield* Layer.build(
           VcsStatusBroadcaster.layer.pipe(
             Layer.provide(
@@ -810,7 +838,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ),
             ),
             Layer.provide(
-              Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              Layer.succeed(BackgroundPolicy.BackgroundPolicy, {
+                ...backgroundPolicy,
                 shouldRunScopeWork: () => Effect.succeed(true),
               }),
             ),
@@ -1276,6 +1305,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         mergedAt: "2026-04-07T15:00:00Z",
         updatedAt: "2026-04-08T15:00:00.000Z",
       });
+    }),
+  );
+
+  it.effect("automatic branch PR discovery retains the provider-selected repository identity", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/upstream-pr"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/upstream-pr"]);
+      const { manager, providerCalls } = yield* makeManager({
+        sourceControlContext: {
+          provider: {
+            kind: SourceControlProviderKind.make("github"),
+            name: "GitHub",
+            baseUrl: "https://github.com",
+          },
+          remoteName: "origin",
+          remoteUrl: "https://github.com/my-fork/t3code.git",
+        },
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 12712,
+                title: "PR in the upstream repository",
+                url: "https://github.com/pingdotgg/t3code/pull/12712",
+                baseRefName: "main",
+                headRefName: "feature/upstream-pr",
+                state: "open",
+                updatedAt: "2026-09-28T12:00:00Z",
+              },
+            ],
+          ],
+        },
+      });
+      const first = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/upstream-pr",
+      });
+      const second = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/upstream-pr",
+      });
+      expect(first).toMatchObject({
+        number: 12712,
+        repositoryKey: "github.com/pingdotgg/t3code",
+      });
+      expect(second).toEqual(first);
+      const lookups = providerCalls.filter((call) => call.operation === "listChangeRequests");
+      expect(lookups).toHaveLength(1);
+      expect(lookups[0]).toMatchObject({ headSelector: "feature/upstream-pr" });
     }),
   );
 
@@ -2286,7 +2368,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
         expect(listed(providerCalls).length).toBeGreaterThan(0);
         for (const call of listed(providerCalls)) {
-          expect(call.headSelector.endsWith(branch)).toBe(true);
+          expect(call.headSelector?.endsWith(branch)).toBe(true);
           expect(call.state).toBe("all");
         }
       }),
@@ -6446,6 +6528,92 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           label: "Creating pull request...",
         }),
       ]);
+    }),
+  );
+  it.effect("status can omit provider-backed PR lookup while retaining remote sync state", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/panel-status"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/panel-status"]);
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 19,
+                title: "Panel PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/19",
+                baseRefName: "main",
+                headRefName: "feature/panel-status",
+              },
+            ],
+          ],
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir }, { includePullRequest: false });
+
+      expect(status.hasUpstream).toBe(true);
+      expect(status.aheadCount).toBe(0);
+      expect(status.behindCount).toBe(0);
+      expect(status.pr).toBeNull();
+      expect(providerCalls.filter((call) => call.operation === "listChangeRequests")).toHaveLength(
+        0,
+      );
+    }),
+  );
+
+  it.effect("PR-less remote status reads through its own cache until invalidated", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/panel-cache"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/panel-cache"]);
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [
+              {
+                number: 21,
+                title: "Panel cache PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/21",
+                baseRefName: "main",
+                headRefName: "feature/panel-cache",
+              },
+            ],
+          ],
+        },
+      });
+      const readSyncState = manager.remoteStatus({ cwd: repoDir }, { includePullRequest: false });
+
+      expect((yield* readSyncState)?.aheadCount).toBe(0);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "panel.txt"), "panel\n");
+      yield* runGit(repoDir, ["add", "panel.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Panel change"]);
+      expect((yield* readSyncState)?.aheadCount).toBe(0);
+      expect(providerCalls.filter((call) => call.operation === "listChangeRequests")).toHaveLength(
+        0,
+      );
+
+      yield* manager.invalidateRemoteStatus(repoDir);
+      expect(yield* readSyncState).toMatchObject({ aheadCount: 1, pr: null });
+      expect(providerCalls.filter((call) => call.operation === "listChangeRequests")).toHaveLength(
+        0,
+      );
+      // A PR-less read never stands in for a caller that wants the PR.
+      expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(21);
     }),
   );
 });
