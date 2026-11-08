@@ -1,0 +1,6 @@
+interface:
+  display_name: "Update Worktree Unattended"
+  short_description: "Update a single worktree and babysit it until green."
+
+policy:
+  allow_implicit_invocation: false
