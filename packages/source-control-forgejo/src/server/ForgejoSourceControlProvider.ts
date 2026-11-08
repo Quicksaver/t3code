@@ -397,18 +397,28 @@ export const make = Effect.gen(function* () {
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
     resolveRemoteWebHost,
+    getCommitAvatarUrl: Effect.fn("ForgejoSourceControlProvider.getCommitAvatarUrl")(function () {
+      return Effect.succeed(null);
+    }),
     listChangeRequests: Effect.fn("ForgejoSourceControlProvider.listChangeRequests")(
       function* (input) {
         const repo = yield* cli.resolveRepository(input);
-        const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const branch = SourceControlProvider.sourceBranch(input);
+        const source =
+          input.source ??
+          (input.headSelector
+            ? SourceControlProvider.sourceControlRefFromInput({
+                ...input,
+                headSelector: input.headSelector,
+              })
+            : undefined);
+        const branch = source?.refName ?? input.headSelector;
         const limit = input.limit ?? 20;
         const matching = (items: Iterable<ForgejoPull>) => {
           const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
           for (const item of items) {
             const normalized = toForgejoChangeRequest(item);
             if (
-              normalized.headRefName !== branch ||
+              (branch !== undefined && normalized.headRefName !== branch) ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )
@@ -417,6 +427,21 @@ export const make = Effect.gen(function* () {
           }
           return results;
         };
+        if (branch === undefined) {
+          const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
+          for (let page = 1; results.length < limit; page++) {
+            const items = yield* request(
+              {
+                ...input,
+                path: `${repositoryPath(repo.repository)}/pulls?state=${input.state === "merged" ? "closed" : input.state}&sort=recentupdate&limit=50&page=${page}`,
+              },
+              Schema.Array(ForgejoPullRequestSchema),
+            );
+            results.push(...matching(items));
+            if (items.length === 0) break;
+          }
+          return results.slice(0, limit);
+        }
         const key = `${repo.baseUrl}\n${repo.repository}`;
         let unfiltered = unfilteredPulls.get(key);
         let firstPage: ReadonlyArray<ForgejoPull> | undefined;
