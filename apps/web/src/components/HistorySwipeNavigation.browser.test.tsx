@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
+
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { SourceControlPanel } from "./source-control/SourceControlPanel";
 
 const navigateHistory = vi.hoisted(() => vi.fn());
 vi.mock("../navigationHistory", () => ({ canNavigateHistory: () => true, navigateHistory }));
@@ -71,4 +74,63 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).not.toHaveBeenCalled();
   });
+});
+
+vi.mock("./source-control/SourceControlEnvironmentPanel", () => ({
+  SourceControlEnvironmentChain: () => (
+    <div role="region" aria-label="Change block" style={{ width: 120, overflowX: "auto" }}>
+      <pre style={{ width: 600 }}>
+        <span>Wide changed line</span>
+      </pre>
+    </div>
+  ),
+}));
+
+it.each([
+  { label: "the panel at its left edge", inside: true, deltaX: -140 },
+  { label: "the panel at its right edge", inside: true, deltaX: 140 },
+  { label: "outside the panel, swiping back", inside: false, deltaX: -140 },
+  { label: "outside the panel, swiping forward", inside: false, deltaX: 140 },
+])("contains history swipes only within $label", async ({ inside, deltaX }) => {
+  vi.mocked(navigateHistory).mockClear();
+  const environmentId = EnvironmentId.make("history-swipe-environment");
+  await using screen = await render(
+    <>
+      <HistorySwipeNavigation />
+      <SourceControlPanel
+        environmentId={environmentId}
+        threadId={ThreadId.make("history-swipe-thread")}
+        cwd="/repo"
+        worktreePath={null}
+        environments={[
+          {
+            environmentId,
+            label: "This device",
+            isPrimary: true,
+            machine: "laptop",
+            cwd: "/repo",
+            connected: true,
+          },
+        ]}
+      />
+      <div>Conversation</div>
+    </>,
+  );
+  const changeBlock = screen.getByRole("region", { name: "Change block" }).element();
+  expect(changeBlock.scrollWidth).toBeGreaterThan(changeBlock.clientWidth);
+  changeBlock.scrollLeft = deltaX < 0 ? 0 : changeBlock.scrollWidth - changeBlock.clientWidth;
+  const target = screen.getByText(inside ? "Wide changed line" : "Conversation").element();
+  const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+
+  await act(() => {
+    target.dispatchEvent(wheel);
+    target.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaX: 0, deltaY: 0 }));
+  });
+
+  expect(wheel.defaultPrevented).toBe(false);
+  if (inside) {
+    expect(navigateHistory).not.toHaveBeenCalled();
+  } else {
+    expect(navigateHistory).toHaveBeenCalledExactlyOnceWith(deltaX < 0 ? "back" : "forward");
+  }
 });

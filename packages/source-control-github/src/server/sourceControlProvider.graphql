@@ -55,3 +55,22 @@ query PullRequestByNumber($owner: String!, $name: String!, $number: Int!) {
     }
   }
 }
+
+query RepositoryPullRequests(
+  $owner: String!
+  $name: String!
+  $states: [PullRequestState!]
+  $limit: Int!
+) {
+  repository(owner: $owner, name: $name) {
+    history: pullRequests(
+      states: $states
+      first: $limit
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      nodes {
+        ...PullRequestNode
+      }
+    }
+  }
+}

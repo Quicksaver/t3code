@@ -108,6 +108,14 @@ function unsupportedProvider(
         repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.repository),
         detail: `No ${kind} source control provider is registered.`,
       }),
+    getCommitAvatarUrl: (input) =>
+      new SourceControlProviderError({
+        provider: kind,
+        operation: "getCommitAvatarUrl",
+        cwd: input.cwd,
+        reference: SourceControlProvider.transportSafeSourceControlErrorValue(input.sha),
+        detail: `No ${kind} source control provider is registered.`,
+      }),
     createRepository: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -219,6 +227,9 @@ function bindProviderContext(
         ...input,
         context: input.context ?? context,
       });
+    }),
+    getCommitAvatarUrl: Effect.fnUntraced(function* (input) {
+      return yield* provider.getCommitAvatarUrl({ ...input, context: input.context ?? context });
     }),
     createRepository: Effect.fnUntraced(function* (input) {
       return yield* provider.createRepository(input);

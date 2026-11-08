@@ -43,6 +43,7 @@ import {
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import * as CheckoutCloner from "./CheckoutCloner.ts";
+import { type GitCommandTimeoutOverride, resolveGitCommandTimeoutMs } from "./GitCommandTimeout.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -53,7 +54,7 @@ export interface ExecuteGitInput {
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
-  readonly timeoutMs?: number | null;
+  readonly timeoutMs?: GitCommandTimeoutOverride;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   /** With appendTruncationMarker, line callbacks continue beyond the buffer cap for progress-only consumers. */
@@ -380,6 +381,7 @@ export class GitVcsDriver extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly invalidateRefs: (cwd: string) => Effect.Effect<void>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
@@ -444,6 +446,7 @@ export class GitVcsDriver extends Context.Service<
     readonly pruneWorktrees: (input: {
       readonly cwd: string;
     }) => Effect.Effect<void, GitCommandError>;
+    /** Absolute paths in Git's order, main checkout first, excluding prunable worktrees. */
     readonly listWorktreePaths: (cwd: string) => Effect.Effect<string[], GitCommandError>;
     readonly deleteLocalBranch: (
       input: GitDeleteLocalBranchInput,
@@ -576,7 +579,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       ...(options?.allowNonZeroExit !== undefined
         ? { allowNonZeroExit: options.allowNonZeroExit }
         : {}),
-      ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      timeoutMs: resolveGitCommandTimeoutMs(args, options?.timeoutMs),
       ...(options?.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options?.outputMode !== undefined ? { outputMode: options.outputMode } : {}),
       ...(options?.appendTruncationMarker !== undefined
