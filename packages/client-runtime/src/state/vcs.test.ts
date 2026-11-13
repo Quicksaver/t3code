@@ -386,17 +386,35 @@ describe("cached VCS refs", () => {
       Effect.gen(function* () {
         let diffReads = 0;
         let commitFileReads = 0;
+        let recoveryReads = 0;
+        const retryStarted = yield* Deferred.make<void>();
+        const completeRetry = yield* Deferred.make<void>();
         const client = {
           [WS_METHODS.vcsPanelReadFileDiff]: () =>
             Effect.sync(() => {
               diffReads++;
               return { path: "file.ts", staged: false, patch: "@@ -1 +1 @@" };
             }),
-          [WS_METHODS.vcsPanelCommitFiles]: () =>
-            Effect.sync(() => {
-              commitFileReads++;
-              return { files: [] };
-            }),
+          [WS_METHODS.vcsPanelCommitFiles]: (input: { readonly sha: string }) =>
+            input.sha === "b".repeat(40)
+              ? Effect.gen(function* () {
+                  if (++recoveryReads === 1) {
+                    return yield* new VcsProcessExitError({
+                      operation: "commitFiles",
+                      command: "git",
+                      cwd: "/repo",
+                      exitCode: 128,
+                      detail: "Could not read commit files.",
+                    });
+                  }
+                  yield* Deferred.succeed(retryStarted, undefined);
+                  yield* Deferred.await(completeRetry);
+                  return { files: [] };
+                })
+              : Effect.sync(() => {
+                  commitFileReads++;
+                  return { files: [] };
+                }),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target: TARGET,
@@ -472,6 +490,32 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(nextFiles)).toBe(true);
         expect(diffReads).toBe(2);
         expect(commitFileReads).toBe(1);
+
+        const recoverable = atoms.panelCommitFiles({
+          environmentId: TARGET.environmentId,
+          input: { cwd: "/repo", sha: "b".repeat(40) },
+        });
+        const readRecoverable = () =>
+          Effect.promise(() => executeAtomQuery(registry, recoverable, { reportFailure: false }));
+        expect(AsyncResult.isFailure(yield* readRecoverable())).toBe(true);
+        flushTasks();
+        expect(AsyncResult.isFailure(yield* readRecoverable())).toBe(true);
+        expect(recoveryReads).toBe(1);
+        flushTasks();
+
+        registry.refresh(recoverable);
+        const retry = yield* readRecoverable().pipe(Effect.forkChild);
+        const firstEvent = yield* Effect.raceFirst(
+          Deferred.await(retryStarted).pipe(Effect.as("started")),
+          Fiber.join(retry).pipe(Effect.as("settled")),
+        );
+        expect(firstEvent).toBe("started");
+        expect(retry.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(completeRetry, undefined);
+        expect(AsyncResult.isSuccess(yield* Fiber.join(retry))).toBe(true);
+        flushTasks();
+        expect(AsyncResult.isSuccess(yield* readRecoverable())).toBe(true);
+        expect(recoveryReads).toBe(2);
       }),
     ),
   );
