@@ -31,6 +31,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeEventNdjsonLogStore } from "../provider/EventNdjsonLogger.ts";
@@ -1877,6 +1878,17 @@ it.effect("restores bundles across column changes and retired V1 projections", (
     const cold = yield* ThreadColdStorage.ThreadColdStorage;
     const sql = yield* SqlClient.SqlClient;
     const { threadId } = yield* seedArchivedThread("compat");
+    const quote = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("environment:cold"),
+      threadId,
+      messageId: MessageId.make("quoted-answer"),
+      text: "élan silver bird",
+      start: 0,
+      end: 16,
+      prefix: "",
+      suffix: "",
+    });
     yield* cold.archive(threadId, Effect.void);
     // A later migration added a column and dropped one the bundle still holds.
     yield* sql`
@@ -1890,7 +1902,16 @@ it.effect("restores bundles across column changes and retired V1 projections", (
     for (const chunk of chunks) {
       const rows = decodeChunkRows(NodeZlib.gunzipSync(chunk.data).toString("utf8"));
       const data = NodeZlib.gzipSync(
-        encodeChunkRows(rows.map((row) => ({ ...row, removed_column: "gone" }))),
+        encodeChunkRows(
+          rows.map(({ search_text: _searchText, ...row }) => ({
+            ...row,
+            removed_column: "gone",
+            payload_json: JSON.stringify({
+              ...(JSON.parse(String(row.payload_json)) as Record<string, unknown>),
+              text: quote,
+            }),
+          })),
+        ),
       );
       yield* sql`
         UPDATE cold_archive.archive_thread_chunks SET data = ${new Uint8Array(data)}
@@ -1925,6 +1946,17 @@ it.effect("restores bundles across column changes and retired V1 projections", (
       restored.map((row) => row.cold_test),
       ["defaulted"],
     );
+    const searchText = yield* sql<{ readonly search_text: string | null }>`
+      SELECT search_text FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}
+    `;
+    assert.equal(searchText[0]?.search_text, "élan silver bird");
+    const matches = yield* sql`
+      SELECT messages.message_id FROM orchestration_v2_message_search AS search
+      JOIN orchestration_v2_projection_messages AS messages ON messages.rowid = search.rowid
+      WHERE orchestration_v2_message_search MATCH '"élan silver bird"'
+        AND messages.thread_id = ${threadId}
+    `;
+    assert.lengthOf(matches, 1);
   }).pipe(Effect.provide(TestLayer)),
 );
 

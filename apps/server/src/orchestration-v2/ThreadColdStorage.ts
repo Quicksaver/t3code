@@ -32,6 +32,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { resolveThreadLogSegment } from "../provider/EventNdjsonLogger.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { readableSearchText } from "./messageSearchIndex.ts";
 import {
   LEGACY_V1_THREAD_TABLES,
   OBSOLETE_V1_ARCHIVE_TABLES,
@@ -40,6 +41,9 @@ import { ThreadCommandExecutor } from "./ThreadCommandExecutor.ts";
 
 const gzipAsync = NodeUtil.promisify(NodeZlib.gzip);
 const gunzipAsync = NodeUtil.promisify(NodeZlib.gunzip);
+const decodeMessageText = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ text: Schema.optionalKey(Schema.Unknown) })),
+);
 
 const ARCHIVE_SCHEMA = "cold_archive";
 const ARCHIVE_VERSION = 1;
@@ -844,7 +848,22 @@ const make = Effect.gen(function* () {
       );
       columnsByTable.set(table, columns);
     }
-    for (const row of rows) {
+    for (const storedRow of rows) {
+      let row = storedRow;
+      if (
+        table === "orchestration_v2_projection_messages" &&
+        columns.has("search_text") &&
+        row.search_text === undefined
+      ) {
+        // Migration 081 cannot backfill messages that were already cold.
+        const payload = yield* decodeMessageText(row.payload_json).pipe(
+          Effect.orElseSucceed(() => undefined),
+        );
+        row = {
+          ...row,
+          search_text: typeof payload?.text === "string" ? readableSearchText(payload.text) : null,
+        };
+      }
       // Bundles can outlive migrations: drop removed columns, default new ones.
       const present = Object.keys(row).filter((column) => columns.has(column));
       if (present.length === 0) continue;

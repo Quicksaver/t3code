@@ -2385,6 +2385,8 @@ describe("environment shell cold start", () => {
             return Stream.fromQueue(events);
           }),
         ),
+      [ORCHESTRATION_V2_WS_METHODS.getActiveThreadIds]: () =>
+        Effect.succeed({ snapshotSequence: HTTP_SEQUENCE + 20, threadIds: [] }),
     } as unknown as WsRpcProtocolClient;
     const makeSession = (): RpcSession.RpcSession => ({
       ...session(client),
@@ -2398,7 +2400,20 @@ describe("environment shell cold start", () => {
       early === undefined ? Option.some(makeSession()) : Option.none<RpcSession.RpcSession>(),
     );
     const prepared = yield* SubscriptionRef.make(
-      Option.some(early === undefined ? PREPARED : { ...PREPARED, descriptor: FAMILY_DESCRIPTOR }),
+      Option.some(
+        early === undefined
+          ? PREPARED
+          : {
+              ...PREPARED,
+              descriptor: {
+                ...FAMILY_DESCRIPTOR,
+                capabilities: {
+                  ...FAMILY_DESCRIPTOR.capabilities,
+                  shellThreadMembership: membership,
+                },
+              },
+            },
+      ),
     );
     const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
       target: TARGET,
@@ -2595,6 +2610,15 @@ describe("environment shell cold start", () => {
       subscribes: { afterSequence: HTTP_SEQUENCE, knownProjectIdentities: "identities-1" },
     },
     {
+      label: "partial rows with membership support",
+      origin: undefined,
+      serverResumes: false,
+      membership: true,
+      config: { ...FAMILY_CONFIG, shellThreadMembership: true },
+      loads: [FAMILY_FLAGS],
+      subscribes: { afterSequence: HTTP_SEQUENCE, knownProjectIdentities: "identities-1" },
+    },
+    {
       label: "rows the server can replay from",
       origin: { ...RECENT_ORIGIN, ...FAMILY_FLAGS },
       serverResumes: true,
@@ -2631,9 +2655,9 @@ describe("environment shell cold start", () => {
     },
   ])(
     "asks for the shell once the connection is prepared, with $label",
-    ({ origin, serverResumes, config, loads, subscribes, expires }) =>
+    ({ origin, serverResumes, config, loads, subscribes, expires, membership = false }) =>
       Effect.gen(function* () {
-        const h = yield* makeColdStart(origin, { serverResumes });
+        const h = yield* makeColdStart(origin, { serverResumes }, membership);
         expect(yield* Queue.take(h.loadOptions)).toEqual(loads[0]);
         if (!serverResumes) {
           // The rows are on screen before a socket exists, and are not live yet.
@@ -2649,6 +2673,7 @@ describe("environment shell cold start", () => {
           );
           expect(early.status).not.toBe("live");
           expect(early.generation).toBeGreaterThan(0);
+          if (membership) expect(yield* Ref.get(h.removed)).toEqual([]);
         }
         expect(yield* Queue.size(h.subscriptions)).toBe(0);
 
@@ -2670,6 +2695,9 @@ describe("environment shell cold start", () => {
 
         yield* Queue.offer(first.events, { kind: "synchronized" });
         yield* h.liveAt(subscribes.afterSequence);
+        if (membership) {
+          expect(yield* Ref.get(h.removed)).toEqual([ThreadId.make("cold-start-orphan")]);
+        }
         if (loads.length > 1) {
           yield* TestClock.adjust("500 millis");
           const saves = yield* Queue.takeAll(h.saved);
