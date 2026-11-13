@@ -785,6 +785,8 @@ This replacement follows the [maintainer's re-landing direction](https://github.
 
 **Worktree branch:** `terminal-preview-19/background-agent-snapshots`
 
+Agent capture preparation waits for renderer readiness while upstream retains queued-capture focus, painting until Chromium answers, cookie clearing and early navigation failures.
+
 The capture composition preserves upstream's shown-tab reporting and idle-tab capacity release. Human still-image consumers and agent presentation leases remain separate, and the removed browser test module stays removed. Current queue tests cover preparation, renderer acknowledgement and cancellation beside the new tab visibility state.
 
 [PR #21534](https://github.com/pingdotgg/t3code/pull/21534) is open, authored by upstream maintainer juliusmarminge, and **maintainer-owned / pull-only**. Its published source is `pingdotgg/t3code:terminal-preview-19/background-agent-snapshots`, fetched through `upstream`, at `59ab685ba20991988d2f8e520bf408e70830c825`. Windows and Mac retain a protected local branch tracking `upstream/terminal-preview-19/background-agent-snapshots`, without a checkout. Ownership records are in each clone's `<git-common-dir>/maintainer-protection/branches/terminal-preview-19--background-agent-snapshots/BRANCH_DETAILS.md` and `pr.md`. Only inspect and fetch/pull published source; do not edit, squash, rebase, commit, push, run automated fixes or alter its PR metadata or comments. Explicit force-fetch and local reset to the published head are permitted after maintainer rebases.
