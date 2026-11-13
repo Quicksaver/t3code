@@ -383,10 +383,19 @@ describe("cached VCS refs", () => {
   it.effect("releases settled panel reads while keeping commit file lists cached", () =>
     Effect.scoped(
       Effect.gen(function* () {
+        let diffReads = 0;
+        let commitFileReads = 0;
         const client = {
           [WS_METHODS.vcsPanelReadFileDiff]: () =>
-            Effect.succeed({ path: "file.ts", staged: false, patch: "@@ -1 +1 @@" }),
-          [WS_METHODS.vcsPanelCommitFiles]: () => Effect.succeed({ files: [] }),
+            Effect.sync(() => {
+              diffReads++;
+              return { path: "file.ts", staged: false, patch: "@@ -1 +1 @@" };
+            }),
+          [WS_METHODS.vcsPanelCommitFiles]: () =>
+            Effect.sync(() => {
+              commitFileReads++;
+              return { files: [] };
+            }),
         } as unknown as WsRpcProtocolClient;
         const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
           target: TARGET,
@@ -456,8 +465,12 @@ describe("cached VCS refs", () => {
         expect(AsyncResult.isSuccess(filesResult)).toBe(true);
         flushTasks();
 
-        expect(registry.getNodes().has(diff)).toBe(false);
-        expect(registry.getNodes().has(commitFiles)).toBe(true);
+        const nextDiff = yield* Effect.promise(() => executeAtomQuery(registry, diff));
+        const nextFiles = yield* Effect.promise(() => executeAtomQuery(registry, commitFiles));
+        expect(AsyncResult.isSuccess(nextDiff)).toBe(true);
+        expect(AsyncResult.isSuccess(nextFiles)).toBe(true);
+        expect(diffReads).toBe(2);
+        expect(commitFileReads).toBe(1);
       }),
     ),
   );

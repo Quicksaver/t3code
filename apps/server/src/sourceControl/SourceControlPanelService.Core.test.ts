@@ -157,7 +157,7 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
 });
 
 const FAKE_PROBE_FILES: Record<string, string> = {
-  "vcs.panel.commitStaged.mergeHead": "MERGE_HEAD",
+  "vcs.panel.commitStaged.mergeHead": "MERGE_HEAD\nCHERRY_PICK_HEAD\nREVERT_HEAD",
   "vcs.panel.commitStaged.indexPath": "index",
 };
 
@@ -238,7 +238,9 @@ function makeTestLayer(
                   });
                   return {
                     ...result,
-                    stdout: path.join(directory, FAKE_PROBE_FILES[input.operation]!),
+                    stdout: FAKE_PROBE_FILES[input.operation]!.split("\n")
+                      .map((file) => path.join(directory, file))
+                      .join("\n"),
                   };
                 }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.orDie),
             ),
@@ -2713,44 +2715,66 @@ describe("panel path selections", () => {
     }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 
-  it.live("rejects selected-file merge commits without changing merge state", () =>
-    Effect.gen(function* () {
-      const repo = yield* makeLiveRepository();
-      yield* repo.write("base.txt", "base\n");
-      yield* repo.git("add", "-A");
-      yield* repo.git("commit", "-m", "Base");
-      yield* repo.git("checkout", "-b", "feature");
-      yield* repo.write("feature.txt", "feature\n");
-      yield* repo.git("add", "-A");
-      yield* repo.git("commit", "-m", "Feature");
-      yield* repo.git("checkout", "main");
-      yield* repo.git("merge", "--no-commit", "--no-ff", "feature");
-      yield* repo.write("base.txt", "selected\n");
-      const head = yield* repo.git("rev-parse", "HEAD");
-      const status = yield* repo.git("status", "--porcelain");
-      const mergeHead = yield* repo.read(".git/MERGE_HEAD");
-      const index = yield* repo.git("ls-files", "--stage");
+  it.live.each([
+    { operation: "merge", marker: "MERGE_HEAD" },
+    { operation: "cherry-pick", marker: "CHERRY_PICK_HEAD" },
+    { operation: "revert", marker: "REVERT_HEAD" },
+  ] as const)(
+    "rejects selected-file $operation commits without changing operation state",
+    ({ operation, marker }) =>
+      Effect.gen(function* () {
+        const repo = yield* makeLiveRepository();
+        yield* repo.write("base.txt", "base\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Base");
+        yield* repo.git("checkout", "-b", "feature");
+        yield* repo.write("feature.txt", "feature\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Feature");
+        yield* repo.git("checkout", "main");
+        yield* repo.write("feature.txt", "main\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Main");
+        const started = yield* repo.git(operation, "feature").pipe(Effect.result);
+        assert.equal(started._tag, "Failure");
+        yield* repo.write("feature.txt", "resolved\n");
+        yield* repo.git("add", "feature.txt");
+        yield* repo.write("base.txt", "selected\n");
+        const head = yield* repo.git("rev-parse", "HEAD");
+        const status = yield* repo.git("status", "--porcelain");
+        const operationHead = yield* repo.read(`.git/${marker}`);
+        const index = yield* repo.git("ls-files", "--stage");
 
-      const result = yield* repo
-        .withService((service) =>
-          service.commitStaged({ cwd: repo.cwd, paths: ["base.txt"], message: "Partial merge" }),
-        )
-        .pipe(Effect.result);
+        const result = yield* repo
+          .withService((service) =>
+            service.commitStaged({
+              cwd: repo.cwd,
+              paths: ["base.txt"],
+              message: "Partial operation",
+            }),
+          )
+          .pipe(Effect.result);
 
-      assert.equal(result._tag, "Failure");
-      if (result._tag === "Failure") {
-        assert.include(result.failure.message, "Cannot commit selected files during a merge");
-      }
-      assert.equal(yield* repo.git("rev-parse", "HEAD"), head);
-      assert.equal(yield* repo.git("status", "--porcelain"), status);
-      assert.equal(yield* repo.read(".git/MERGE_HEAD"), mergeHead);
-      assert.equal(yield* repo.git("ls-files", "--stage"), index);
-      yield* repo.withService((service) =>
-        service.commitStaged({ cwd: repo.cwd, message: "Finish merge" }),
-      );
-      assert.lengthOf((yield* repo.git("rev-list", "--parents", "-n", "1", "HEAD")).split(" "), 3);
-      assert.isFalse(yield* repo.exists(".git/MERGE_HEAD"));
-    }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.include(
+            result.failure.message,
+            `Cannot commit selected files during a ${operation}`,
+          );
+        }
+        assert.equal(yield* repo.git("rev-parse", "HEAD"), head);
+        assert.equal(yield* repo.git("status", "--porcelain"), status);
+        assert.equal(yield* repo.read(`.git/${marker}`), operationHead);
+        assert.equal(yield* repo.git("ls-files", "--stage"), index);
+        yield* repo.withService((service) =>
+          service.commitStaged({ cwd: repo.cwd, message: "Finish operation" }),
+        );
+        assert.lengthOf(
+          (yield* repo.git("rev-list", "--parents", "-n", "1", "HEAD")).split(" "),
+          operation === "merge" ? 3 : 2,
+        );
+        assert.isFalse(yield* repo.exists(`.git/${marker}`));
+      }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 
   it.effect("reads bracketed path diffs without matching their siblings", () =>
