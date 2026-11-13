@@ -1987,8 +1987,8 @@ it.effect.each(["thread.archive", "thread.delete"] as const)(
             id: EventId.make(`event:delegation-completed:${operation}`),
             type: "subagent.updated",
             threadId,
-            occurredAt: run.createdAt,
-            payload: { ...task, status: "completed", completedAt: run.createdAt },
+            occurredAt: run.requestedAt,
+            payload: { ...task, status: "completed", completedAt: run.requestedAt },
           },
         ],
       });
