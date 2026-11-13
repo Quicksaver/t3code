@@ -14,7 +14,6 @@ import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
 
 import { npmReleaseDatabaseMigration } from "@t3tools/shared/cliRelease";
-import { migrationManifest } from "../apps/server/src/persistence/Migrations.ts";
 
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
 
@@ -133,10 +132,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.mjs" });
         assert.isUndefined(manifest.dependencies);
         assert.isUndefined(manifest.optionalDependencies);
-        assert.equal(
-          npmReleaseDatabaseMigration(manifest),
-          Math.max(...migrationManifest.map(([id]) => id)),
-        );
+        assert.equal(npmReleaseDatabaseMigration(manifest), 108);
 
         const installed = path.join(root, "installed");
         yield* fs.makeDirectory(installed);

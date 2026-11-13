@@ -383,7 +383,7 @@ it.effect("rejects a Node release below the pinned agent-device engine floor", (
     const probe = NodeChildProcess.spawnSync(process.execPath, [], {
       input:
         `Object.defineProperty(process.versions, "node", { value: "22.11.0" });\n` +
-        remoteDeviceScript("owner", "probe"),
+        SshDeviceScript.remoteDeviceScript("owner", "probe"),
       env: { HOME: NodeOS.tmpdir(), PATH: NodePath.dirname(process.execPath) },
       encoding: "utf8",
     });

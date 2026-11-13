@@ -91,7 +91,6 @@ const makeDebuggee = (
   });
   let destroyed = false;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
-    isDestroyed: () => false,
     capturePage: async () => ({ isEmpty: () => true }),
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
