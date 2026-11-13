@@ -125,7 +125,7 @@ describe("focusTerminal", () => {
     unregisterShown();
   });
 
-  it.each(["drawer", "remote panel"] as const)(
+  it.each(["thread terminal", "remote panel terminal"] as const)(
     "focuses a hidden %s once it is shown",
     (control) => {
       const ref = threadRef(`shown-later-${control}`);
@@ -136,7 +136,7 @@ describe("focusTerminal", () => {
         environmentLabel: "Mac",
         label: "Run on Mac",
       };
-      const remote = control === "remote panel";
+      const remote = control === "remote panel terminal";
       const target = remote
         ? scopeThreadRef(destination.environmentId, projectActionThreadId(destination))
         : ref;
@@ -288,6 +288,7 @@ describe("focusTerminal", () => {
 
     const leaveFirst = enterThread(ref, ownerDocument);
     focusTerminal(target, remote ? "drawer" : "remembered");
+    focusTerminalOnNavigation(ref, "drawer");
     leaveFirst();
     drawer.mockClear();
     focus.mockClear();
@@ -296,6 +297,14 @@ describe("focusTerminal", () => {
     expect(drawer).toHaveBeenCalledTimes(remote ? 0 : 1);
     expect(focus).toHaveBeenCalledTimes(remote ? 1 : 0);
     leaveSecond();
+    if (remote) {
+      useRightPanelStore.getState().close(ref);
+      drawer.mockClear();
+      focus.mockClear();
+      using _leave = { [Symbol.dispose]: enterThread(ref, ownerDocument) };
+      expect(drawer).toHaveBeenCalledTimes(1);
+      expect(focus).not.toHaveBeenCalled();
+    }
     unregisterDrawer();
   });
 
