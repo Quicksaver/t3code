@@ -545,6 +545,7 @@ describe("rightPanelStore", () => {
   });
 
   it("upgrades saved single-session terminal surfaces to split-capable surfaces", () => {
+    expect(useRightPanelStore.persist.getOptions().version).toBeGreaterThanOrEqual(16);
     expect(
       migratePersistedRightPanelState({
         byThreadKey: {
