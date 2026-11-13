@@ -39,7 +39,7 @@ A branch section whose heading is marked `(Currently Inactive)` and that names a
 
 Every repository-local skill above includes matching `agents/openai.yaml` metadata for its user-facing name, description, and invocation policy. Keep that metadata paired with the corresponding `SKILL.md` when a skill is renamed, added, or removed.
 
-The customization inventory retains 11 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The SSH Android SDK and agent background capture maintainer inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
+The customization inventory retains 11 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The SSH Android SDK, agent background capture and project usage breakdown inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
 
 Primary files:
 
@@ -55,6 +55,8 @@ Primary files:
 - `.agents/skills/update-unattended/SKILL.md`
 
 ### Upstream maintainer ownership
+
+Externally owned / pull-only contributions use the same ownership records, Git guards, refresh rules and read-only integration policy as maintainer-owned inputs. Their contributor ownership does not imply upstream maintainer approval.
 
 A customization marked **maintainer-owned / pull-only** is excluded from local edits, squashing, rebasing, commits, pushes, PR title/description updates and automated review fixes. Only fetch/pull the maintainer's published branch. Its published source and PR link remain registered; a protected local tracking branch may be retained without a checkout. Do not start implementation, verification, review, commit or publication work on these branches. Only inspect or fetch/pull published maintainer source and maintain local ownership records unless the user explicitly changes this restriction. A new evidence comment requires an explicit user request and must not rewrite the original description. Check the ownership marker in the branch's ignored BRANCH_DETAILS.md and .piz/pr.md before any workflow; for a source registered without a checkout, use its records under `<git-common-dir>/maintainer-protection/branches/`. This restriction takes precedence over publication and update procedures above. Older implementation and verification details describe the local integration input until a maintainer revision is pulled; they are not proof of that revision. An unpublished rebuild supplied as a patch is not obtained by pulling the original PR branch. Synchronizing published history, including forced resynchronization after a maintainer rebase, is allowed. Integration fixes and validation belong on `main`; documentation commits belong on `main` and `base/fork`.
 
@@ -285,6 +287,16 @@ The current diff against `909e4c948278afc2b3e1e665075fb1755a13f894` changes `app
 Main combines the SDK selection with the SSH stdin transport and Node bootstrap option. SDK tests invoke the shared environment function, so they exercise the same setup used by ordinary device commands. The npm fixture supplies its own complete SDK, keeping npm failure assertions independent of SDK availability.
 
 The maintainer rebuilt the change against current upstream, retained runnable-adb validation and replaced mocked table coverage with focused real-shell/filesystem regressions. Four added cases cover an adb-only SDK, a selected adb that exits nonzero, directories in place of tools, and SDK consistency with later SSH commands. Existing Java discovery and argument handling remain; lifecycle tests removed upstream are not restored. The published description reports ten focused tests and changed-files checks passing, plus 34 isolated Linux localhost SSH probes and both independent SDK-selection follow-ups using marker tool stubs. These are maintainer-published results, not fresh local verification. Real SDK/emulator boot, macOS/iOS execution and remote/relay/tunnel connections remain outside that evidence.
+
+## Project Usage Breakdown (externally owned)
+
+**Worktree branch:** `t3/project-usage-breakdown`
+
+[PR #29931](https://github.com/pingdotgg/t3code/pull/29931) is open and unmerged, authored by saphid, and **externally owned / pull-only** under the maintainer-owned workflow policy above. Its published source is `saphid/t3code:t3/project-usage-breakdown`, pinned at `0c8b5f1340b8b3cb8be15e8696147762a75bd27d`, with upstream base `7bf2a43c09855965bf740f2f204809a2075bc807`. Windows and Mac retain a protected local branch tracking `upstream/pr-29931`, fetched from upstream's `refs/pull/29931/head`, without a checkout. Ownership records live in each clone's `<git-common-dir>/maintainer-protection/branches/t3--project-usage-breakdown/BRANCH_DETAILS.md` and `pr.md`. Only inspect and fetch/pull published source; integration fixes and validation belong on `main`.
+
+Usage offers Project beside Model and Day for both Cost and Tokens on web/desktop and mobile. Project attribution follows T3 provider sessions, including worktrees and historical sessions retained after recovery. Ambiguous bindings and unattributed activity remain in No project; project rows reconcile with overall totals. Selected environments, periods and model filters apply to the breakdown. Project filters, thread/account drill-downs and budgets are outside this contribution. Costs remain API-equivalent estimates rather than subscription charges.
+
+The published head is a merge commit whose second parent is its upstream base. Integrate its complete final diff against that parent rather than replaying upstream history. Preserve current main's newer usage and project-store behavior when adapting that diff. There are no migrations or provider-adapter changes.
 
 ## Pairing Token Navigation
 
