@@ -637,9 +637,11 @@ Archive all collection and mutation-time revalidation use upstream parent-aware 
 
 **Worktree branch:** `feat/cross-environment-project-actions`
 
+Terminal completion-time focus composes upstream's current focus restoration with destination ownership and side-chat hosting. PR-link settlement remains upstream-owned.
+
 Remote action groups use upstream's shared AppBar project menu on both iOS and Android. Destination permissions, terminal ownership and completion-time focus remain shared with web and desktop.
 
-The standalone source is `8a991a7c8d03eae5bec7b29c1913d28d81933557`, based on pinned upstream `ae142932d07c0596cf0497dd28cfee07ae7c0722`. Close callbacks retain their original panel owner. Completion-time focus follows the current side-chat host when navigation changes hosting during a pending launch. The configurable thread-details card retains its Scripts visibility gate and supplies the destination project and thread context to the relocated action control. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
+The standalone source is `7c29e5669e164931756081bb15c549fd60f55528`, based on pinned upstream `f313d0a6cb843551fb60e57a454a71e71a3a8c04`. Close callbacks retain their original panel owner. Completion-time focus follows the current side-chat host when navigation changes hosting during a pending launch. The configurable thread-details card retains its Scripts visibility gate and supplies the destination project and thread context to the relocated action control. No PR exists. Destination terminal routing uses upstream's extracted terminal-controls hook, and native draft headers retain destination availability checks.
 
 Project-action terminal identity derives from the destination project ID; each RPC receives the destination environment separately. Launch and split explicitly focus the destination terminal. Native terminal selection after shell exit retains destination project metadata and that same project identity.
 
