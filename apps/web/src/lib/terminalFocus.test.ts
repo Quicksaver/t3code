@@ -24,10 +24,13 @@ const threadRef = (threadId: string) =>
   scopeThreadRef(EnvironmentId.make("env"), ThreadId.make(threadId));
 
 // Node has no DOM; entry only listens on the root's document for focus changes.
-const enterThread = (ref: ReturnType<typeof threadRef>) =>
+const enterThread = (
+  ref: ReturnType<typeof threadRef>,
+  ownerDocument = Object.assign(new EventTarget(), { activeElement: null as Element | null }),
+) =>
   restoreFocusOnThreadEnter(ref, {
     root: {
-      ownerDocument: Object.assign(new EventTarget(), { activeElement: null }),
+      ownerDocument,
     } as unknown as HTMLElement,
     focusComposer: () => {},
   });
@@ -122,20 +125,42 @@ describe("focusTerminal", () => {
     unregisterShown();
   });
 
-  it("focuses a registered hidden target once it is shown", () => {
-    const ref = threadRef("shown-later");
-    let canFocus = false;
-    const focus = vi.fn(() => canFocus);
-    const unregister = registerTerminalFocusTarget({ threadRef: ref, terminalId: "a", focus });
+  it.each(["drawer", "remote panel"] as const)(
+    "focuses a hidden %s once it is shown",
+    (control) => {
+      const ref = threadRef(`shown-later-${control}`);
+      const destination = {
+        environmentId: EnvironmentId.make("destination"),
+        projectId: ProjectId.make("focus-pending"),
+        projectCwd: "/destination",
+        environmentLabel: "Mac",
+        label: "Run on Mac",
+      };
+      const remote = control === "remote panel";
+      const target = remote
+        ? scopeThreadRef(destination.environmentId, projectActionThreadId(destination))
+        : ref;
+      const root = {
+        ownerDocument: Object.assign(new EventTarget(), { activeElement: null }),
+      } as unknown as HTMLElement;
+      const enter = () => restoreFocusOnThreadEnter(ref, { root, focusComposer: () => {} });
+      const leave = enter();
+      if (remote) useRightPanelStore.getState().openTerminal(ref, "a", destination);
+      let canFocus = false;
+      const focus = vi.fn(() => canFocus);
+      const unregister = registerTerminalFocusTarget({ threadRef: target, terminalId: "a", focus });
 
-    focusTerminal(ref, "a");
-    canFocus = true;
-    consumePendingTerminalFocus(ref, "a");
-    consumePendingTerminalFocus(ref, "a");
+      focusTerminal(target, "a");
+      leave();
+      using _leave = { [Symbol.dispose]: enter() };
+      canFocus = true;
+      consumePendingTerminalFocus(target, "a");
+      consumePendingTerminalFocus(target, "a");
 
-    expect(focus).toHaveBeenCalledTimes(2);
-    unregister();
-  });
+      expect(focus).toHaveBeenCalledTimes(2);
+      unregister();
+    },
+  );
 
   it("drops a parked request once a newer one targets another thread", () => {
     const parked = threadRef("parked");
@@ -222,24 +247,54 @@ describe("focusTerminal", () => {
     unregisterPanel();
   });
 
-  it("re-entering a thread after in-thread terminal actions focuses the drawer", () => {
-    const ref = threadRef("re-entered");
+  it.each(["drawer", "remote panel"] as const)("restores the %s after re-entering", (control) => {
+    const ref = threadRef(`re-entered-${control}`);
+    const destination = {
+      environmentId: EnvironmentId.make("destination"),
+      projectId: ProjectId.make("focus-return"),
+      projectCwd: "/destination",
+      environmentLabel: "Mac",
+      label: "Run on Mac",
+    };
+    const remote = control === "remote panel";
+    const target = remote
+      ? scopeThreadRef(destination.environmentId, projectActionThreadId(destination))
+      : ref;
+    if (remote) useRightPanelStore.getState().openTerminal(ref, "drawer", destination);
     useTerminalUiStateStore.getState().ensureTerminal(ref, "drawer", { open: true, active: true });
+    const ownerDocument = Object.assign(new EventTarget(), {
+      activeElement: null as Element | null,
+    });
+    const element = { contains: (active: unknown) => active === element } as HTMLElement;
     const drawer = vi.fn(() => true);
     const unregisterDrawer = registerTerminalFocusTarget({
       threadRef: ref,
       terminalId: "drawer",
       focus: drawer,
     });
+    const focus = vi.fn(() => {
+      ownerDocument.activeElement = element;
+      ownerDocument.dispatchEvent(new Event("focusin"));
+      return true;
+    });
+    using _target = {
+      [Symbol.dispose]: registerTerminalFocusTarget({
+        threadRef: target,
+        terminalId: remote ? "drawer" : "remembered",
+        element,
+        focus,
+      }),
+    };
 
-    const leaveFirst = enterThread(ref);
-    focusTerminal(ref, "drawer");
-    focusTerminalOnNavigation(ref, "drawer");
+    const leaveFirst = enterThread(ref, ownerDocument);
+    focusTerminal(target, remote ? "drawer" : "remembered");
     leaveFirst();
     drawer.mockClear();
-    const leaveSecond = enterThread(ref);
+    focus.mockClear();
+    const leaveSecond = enterThread(ref, ownerDocument);
 
-    expect(drawer).toHaveBeenCalledTimes(1);
+    expect(drawer).toHaveBeenCalledTimes(remote ? 0 : 1);
+    expect(focus).toHaveBeenCalledTimes(remote ? 1 : 0);
     leaveSecond();
     unregisterDrawer();
   });
