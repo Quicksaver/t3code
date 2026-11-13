@@ -99,7 +99,7 @@ The shared ledger retains the published pre-V2 tail through 68, followed by this
 | 92 | `ExcludeAttachmentPlaceholdersFromSearch` | upstream `074_ExcludeAttachmentPlaceholdersFromSearch.ts` |
 | 93 | `SubagentDeliveryState` | upstream `075_SubagentDeliveryState.ts` |
 | 94 | `ProjectionProjectsPinArchive` | upstream `076_ProjectionProjectsPinArchive.ts` |
-| 95 | `DropMagiTables` | base/fork `081_DropMagiTables.ts` |
+| 95 | `DropMagiTables` | base/fork `090_DropMagiTables.ts` |
 | 96 | `RepairBooleanSettledOverride` | upstream `077_RepairBooleanSettledOverride.ts` |
 | 97 | `DropOrchestrationEventCorrelationIndex` | upstream `078_DropOrchestrationEventCorrelationIndex.ts` |
 | 98 | `DelegatedRecoveryIndexes` | upstream `079_DelegatedRecoveryIndexes.ts` |
@@ -816,7 +816,7 @@ Worktree runtime verification covered Windows and macOS on the reviewed branch. 
 
 **Worktree branch:** `none`
 
-Magi weighted consensus no longer has fork code. It runs entirely as the `$magi` skill system in `~/.codex/skills` (`magi`, `magi-arbitrator-*`, `magi-config-*` and the `personality-*` lenses), whose `scripts/magi.ts` keeps each run in a per-machine store and dispatches participants as ordinary T3 delegated tasks. With its branch retired, keep registering the published Magi migrations when assembling main, with bodies taken from the previous main tip: IDs 72 `MagiV2Projections`, 73 `MagiV2ArmClearingAndParticipants` and 86 `MagiAgentOnly`, as listed under Published Database Compatibility. Installed ledgers already record them, and fresh databases still need the same sequence. Base/fork's `081_DropMagiTables.ts` follows upstream migration 80 `ScheduledTaskThreadMode` in this standalone branch and removes those tables. Its published assembled-main ID remains 95. Migration 86 keeps its published prompt conversion in `Migrations/magiArbitratorPrompt.ts`, including the frozen default text, so replay does not depend on the retired Magi runtime or current contracts.
+Magi weighted consensus no longer has fork code. It runs entirely as the `$magi` skill system in `~/.codex/skills` (`magi`, `magi-arbitrator-*`, `magi-config-*` and the `personality-*` lenses), whose `scripts/magi.ts` keeps each run in a per-machine store and dispatches participants as ordinary T3 delegated tasks. With its branch retired, keep registering the published Magi migrations when assembling main, with bodies taken from the previous main tip: IDs 72 `MagiV2Projections`, 73 `MagiV2ArmClearingAndParticipants` and 86 `MagiAgentOnly`, as listed under Published Database Compatibility. Installed ledgers already record them, and fresh databases still need the same sequence. Base/fork's `090_DropMagiTables.ts` follows upstream migration 89 `ShellThreadReadIndexes` in this standalone branch and removes those tables. Its published assembled-main ID remains 95. Migration 86 keeps its published prompt conversion in `Migrations/magiArbitratorPrompt.ts`, including the frozen default text, so replay does not depend on the retired Magi runtime or current contracts.
 
 After every upstream update, recheck that system for incompatibilities or stale instructions introduced by the update: `orchestrator_capabilities` targets and options, async `delegate_task` dispatch and completion waking, fresh delegates for each review and confirming turn with prior findings and objections carried in the brief, and participants' ability to run `magi.ts respond` and write its run directory. Adjust the skills or the script in `~/.codex` when any of these changed.
 
