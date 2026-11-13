@@ -3,7 +3,7 @@ import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { useRightPanelStore } from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
 import {
@@ -15,7 +15,6 @@ import {
   registerTerminalFocusTarget,
   restoreFocusOnThreadEnter,
 } from "./terminalFocus";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 
 // The drawer's collapsed shape: a 0fr grid row that clips the viewport, which
 // stays focusable, around a surface whose input refuses focus while hidden.
