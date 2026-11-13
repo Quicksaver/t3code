@@ -113,6 +113,14 @@ function activePanelTerminal(threadRef: ScopedThreadRef) {
   return { surface, threadRef: terminalRef, threadKey: scopedThreadKey(terminalRef) };
 }
 
+function panelOwnsTerminal(
+  panel: ReturnType<typeof activePanelTerminal>,
+  threadKey: string,
+  terminalId: string,
+) {
+  return panel?.threadKey === threadKey && panel.surface.terminalIds.includes(terminalId);
+}
+
 /** Focuses the active terminal of the right panel when it shows a terminal surface. */
 export function focusActivePanelTerminal(threadRef: ScopedThreadRef): void {
   const panel = activePanelTerminal(threadRef);
@@ -157,8 +165,7 @@ export function restoreFocusOnThreadEnter(
     (lastEnteredThreadByRoot.get(content.root) === threadKey &&
       pendingFocus !== null &&
       (pendingFocus.threadKey === threadKey ||
-        (pendingFocus.threadKey === panel?.threadKey &&
-          panel.surface.terminalIds.includes(pendingFocus.terminalId))));
+        panelOwnsTerminal(panel, pendingFocus.threadKey, pendingFocus.terminalId)));
   if (!requestedByHandler) pendingFocus = null;
   lastEnteredThreadByRoot.set(content.root, threadKey);
   navigationRequestThreadKey = null;
@@ -170,11 +177,9 @@ export function restoreFocusOnThreadEnter(
     const terminal = Array.from(focusTargets).find((target) => target.element?.contains(element));
     if (terminal) {
       const terminalKey = scopedThreadKey(terminal.threadRef);
-      const currentPanel = activePanelTerminal(threadRef);
       if (
         terminalKey === threadKey ||
-        (terminalKey === currentPanel?.threadKey &&
-          currentPanel.surface.terminalIds.includes(terminal.terminalId))
+        panelOwnsTerminal(activePanelTerminal(threadRef), terminalKey, terminal.terminalId)
       )
         lastThreadFocus.set(threadKey, {
           threadRef: terminal.threadRef,
@@ -202,8 +207,7 @@ export function restoreFocusOnThreadEnter(
         drawer.terminalGroups
           .find((group) => group.id === drawer.activeTerminalGroupId)
           ?.terminalIds.includes(previous.terminalId)) ||
-        (scopedThreadKey(previous.threadRef) === panel?.threadKey &&
-          panel.surface.terminalIds.includes(previous.terminalId)))
+        panelOwnsTerminal(panel, scopedThreadKey(previous.threadRef), previous.terminalId))
     ) {
       focusTerminal(previous.threadRef, previous.terminalId);
     } else if (drawer.terminalOpen && drawer.activeTerminalId) {
