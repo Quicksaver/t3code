@@ -527,31 +527,37 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
       paths: readonly string[],
       body: (env: NodeJS.ProcessEnv) => Effect.Effect<A, E>,
     ) {
-      const mergeHeadPath = yield* run("vcs.panel.commitStaged.mergeHead", cwd, [
+      const operationHeads = [
+        { head: "MERGE_HEAD", operation: "merge" },
+        { head: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
+        { head: "REVERT_HEAD", operation: "revert" },
+      ] as const;
+      const headPaths = (yield* run("vcs.panel.commitStaged.mergeHead", cwd, [
         "rev-parse",
-        "--git-path",
-        "MERGE_HEAD",
-      ]);
-      const isMerging = yield* fileSystem
-        .exists(path.resolve(cwd, mergeHeadPath.trim()))
-        .pipe(
-          Effect.mapError((cause) =>
-            gitError(
-              "vcs.panel.commitStaged.mergeHead",
-              cwd,
-              ["commit"],
-              "Could not check whether a merge is in progress.",
-              cause,
-            ),
+        ...operationHeads.flatMap(({ head }) => ["--git-path", head]),
+      ]))
+        .trim()
+        .split(/\r?\n/u);
+      const inProgress = yield* Effect.findFirst(operationHeads, (_, index) =>
+        fileSystem.exists(path.resolve(cwd, headPaths[index] ?? "")),
+      ).pipe(
+        Effect.mapError((cause) =>
+          gitError(
+            "vcs.panel.commitStaged.mergeHead",
+            cwd,
+            ["commit"],
+            "Could not check whether a merge, cherry-pick or revert is in progress.",
+            cause,
           ),
-        );
-      if (isMerging) {
+        ),
+      );
+      if (Option.isSome(inProgress)) {
+        const { operation } = inProgress.value;
         return yield* new GitCommandError({
           operation: "vcs.panel.commitStaged",
           cwd,
           command: "git commit",
-          detail:
-            "Cannot commit selected files during a merge. Commit all files to finish the merge.",
+          detail: `Cannot commit selected files during a ${operation}. Commit all files to finish the ${operation}.`,
         });
       }
       const tempDir = yield* fileSystem
