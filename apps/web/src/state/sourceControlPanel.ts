@@ -11,6 +11,8 @@ import type {
   VcsPanelWorkingTreeFileEnrichmentResult,
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
+import { useContext } from "react";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -49,16 +51,13 @@ async function unwrapPanelCommand<TResult>(
 }
 
 export function useSourceControlPanelApi(environmentId: EnvironmentId) {
+  const registry = useContext(RegistryContext);
   const readPanelSnapshot = useAtomCommand(vcsEnvironment.readPanelSnapshot, {
     reportFailure: false,
   });
   const panelSnapshot = useAtomQueryRunner(vcsEnvironment.panelSnapshot, {
     refresh: true,
     reportFailure: false,
-  });
-  const retryPanelCommitFiles = useAtomQueryRunner(vcsEnvironment.panelCommitFiles, {
-    reportFailure: false,
-    refresh: true,
   });
   const panelCommitFiles = useAtomQueryRunner(vcsEnvironment.panelCommitFiles, {
     reportFailure: false,
@@ -175,11 +174,10 @@ export function useSourceControlPanelApi(environmentId: EnvironmentId) {
       // Post-mutation reads must not join a coalesced panelSnapshot that began earlier.
       readPanelSnapshot: (input: VcsPanelSnapshotInput) =>
         runPanelCommand<typeof input, VcsPanelSnapshotResult>(readPanelSnapshot, input),
-      commitFiles: (input: Parameters<typeof panelCommitFiles>[0]["input"], retry = false) =>
-        runPanelCommand<typeof input, VcsPanelCommitFilesResult>(
-          retry ? retryPanelCommitFiles : panelCommitFiles,
-          input,
-        ),
+      commitFiles: (input: Parameters<typeof panelCommitFiles>[0]["input"], retry = false) => {
+        if (retry) registry.refresh(vcsEnvironment.panelCommitFiles({ environmentId, input }));
+        return runPanelCommand<typeof input, VcsPanelCommitFilesResult>(panelCommitFiles, input);
+      },
       branchDetails: (input: Parameters<typeof panelBranchDetails>[0]["input"]) =>
         runPanelCommand<typeof input, VcsPanelBranchDetails>(panelBranchDetails, {
           ...input,
