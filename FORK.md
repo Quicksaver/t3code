@@ -68,7 +68,7 @@ When tearing down a maintainer-owned worktree, remove its branch from the guard 
 
 **Worktree branch:** `none`
 
-The installed Windows and Mac databases use the published fork migration IDs 1 through 99 in `effect_sql_migrations`. Preserve every published ID and migration body, including historical lineage, archive and Magi schema, when assembling main. Preserving schema does not restore retired features. Standalone branch migrations must not replace published main IDs. Read installed ledgers read-only and verify upgrades against isolated databases.
+The installed Windows and Mac databases use the published fork migration IDs 1 through 108 in `effect_sql_migrations`. Preserve every published ID and migration body, including historical lineage, archive and Magi schema, when assembling main. Preserving schema does not restore retired features. Standalone branch migrations must not replace published main IDs. Read installed ledgers read-only and verify upgrades against isolated databases.
 
 The shared ledger retains the published pre-V2 tail through 68, followed by this canonical main sequence:
 
@@ -115,10 +115,13 @@ The shared ledger retains the published pre-V2 tail through 68, followed by this
 | 106 | `ProjectionProjectsCustomTitle` | upstream `087_ProjectionProjectsCustomTitle.ts` |
 | 107 | `TurnItemTypeStatusIndex` | upstream `088_TurnItemTypeStatusIndex.ts` |
 | 108 | `ShellThreadReadIndexes` | upstream `089_ShellThreadReadIndexes.ts` |
+| 109 | `AuthConnectDevices` | upstream `090_AuthConnectDevices.ts` |
+| 110 | `AuthConnectDeniedRequests` | upstream `091_AuthConnectDeniedRequests.ts` |
+| 111 | `QueuedTurnInputIndexJsonValid` | upstream `092_QueuedTurnInputIndexJsonValid.ts` |
 
 `apps/server/src/persistence/Migrations.ts` imports the source files under these IDs. Upstream ledger entries relocate to their canonical main IDs with their timestamps and existing schema work preserved. The normalizer removes exact divergent upstream markers, replays missing fork migrations in order, and records relocated markers in one transaction. Upstream preview ledgers are reconciled before that normalization. The startup guard refuses missing or mismatched V2 migrations instead of silently skipping schema.
 
-Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. Upstream migration 80 appends at main 99. Upstream 81–89 append at main 100–108, preserving the installed tail through 99. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published SQL body changes. Tests cover fresh databases, the published 99 upgrade, complete upstream 89 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls. The npm launcher reads canonical IDs from the migration registry, since historical source filenames do not represent the published fork ledger.
+Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. Upstream migration 80 appends at main 99. Upstream 81–89 append at main 100–108 and upstream 90–92 at main 109–111, preserving the installed tail through 108. Upstream later added a `json_valid` guard to its migration 86 (main 105) and re-guards databases that ran the unguarded index with its migration 92 (main 111); its regression test runs at those main IDs. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published fork SQL body changes. Tests cover fresh databases, the published 108 upgrade, complete upstream 92 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls. The npm launcher reads canonical IDs from the migration registry, since historical source filenames do not represent the published fork ledger.
 
 ## Installed Profile Startup Compatibility
 
