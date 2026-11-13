@@ -457,9 +457,11 @@ Native child creation inherits the parent's persisted archive/delete state under
 
 **Worktree branch:** `feat/archive-settings-ux`
 
+Archive retains upstream's native refresh wrapper, settlement behavior and web announcements alongside scoped action reservations and permanent draft cleanup. Native Settings uses the current settings-page navigation preset. Title regeneration uses the shared regenerateTitle command.
+
 The native grouped Archive list uses upstream's cross-platform scroll wrapper and shared AppBar refresh menu. Successful permanent parent deletion also discards its side-chat drafts. Archive resolves family support when the confirmed operation executes, so capabilities arriving while confirmation is open are respected. Archive retains its Settings layout, standalone search, tag-filtered snapshots and scoped action reservations.
 
-The standalone source is `11a74ebf0b080bcbd1bbbf4ccf25b275ab731c42`, based on pinned upstream `ae142932d07c0596cf0497dd28cfee07ae7c0722`. PR #12708 remains closed and unmerged. The web panel retains upstream Settings scopes and native rows share the minute clock. Permanent deletion clears retained panel/preview state, and unarchive invalidates stale Archive Undo. Native Archive itself has no Undo; Settle retains its upstream Undo. Archive reservations use collision-safe keys and ordinary scoped identities for dismissal.
+The standalone source is `1892285339d8cbde0b04b03db97c60710a2d4920`, based on pinned upstream `f313d0a6cb843551fb60e57a454a71e71a3a8c04`. PR #12708 remains closed and unmerged. The web panel retains upstream Settings scopes and native rows share the minute clock. Permanent deletion clears retained panel/preview state, and unarchive invalidates stale Archive Undo. Native Archive itself has no Undo; Settle retains its upstream Undo. Archive reservations use collision-safe keys and ordinary scoped identities for dismissal.
 
 The Archive panel follows the shared Settings sections, cards and rows. Native Archive uses the shared Settings row layout in virtualized project sections, retaining swipe actions, long-press menus and header controls.
 
