@@ -162,7 +162,8 @@ function useThreadActionExecutor() {
       return "failed";
     };
     if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-      if (latestPendingActions.current.get(key) === pending) latestPendingActions.current.delete(key);
+      if (latestPendingActions.current.get(key) === pending)
+        latestPendingActions.current.delete(key);
       return fail("This connection cannot change threads.");
     }
     selectionHaptic();
@@ -224,7 +225,8 @@ function useThreadActionExecutor() {
         return "succeeded";
       },
       () => {
-        if (latestPendingActions.current.get(key) === pending) latestPendingActions.current.delete(key);
+        if (latestPendingActions.current.get(key) === pending)
+          latestPendingActions.current.delete(key);
       },
     );
     return result;
