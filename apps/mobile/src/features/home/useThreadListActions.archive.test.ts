@@ -350,7 +350,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
     mocks.serverConfigs.set("environment", {
       environment: { capabilities: { threadTitleRegeneration: true } },
     });
-    mocks.threadCommands.mutations.updateMetadata.mockReturnValueOnce(
+    mocks.threadCommands.mutations.regenerateTitle.mockReturnValueOnce(
       new Promise<typeof success>((resolve) => {
         completeFirst = resolve;
       }),
@@ -359,7 +359,7 @@ describe("useThreadListActions merged archive and settlement contract", () => {
 
     const first = actions.regenerateThreadTitle(firstThread);
     await expect(actions.regenerateThreadTitle(secondThread)).resolves.toBe(true);
-    expect(mocks.threadCommands.mutations.updateMetadata).toHaveBeenCalledTimes(2);
+    expect(mocks.threadCommands.mutations.regenerateTitle).toHaveBeenCalledTimes(2);
 
     completeFirst(success);
     await expect(first).resolves.toBe(true);
