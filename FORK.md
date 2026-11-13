@@ -104,10 +104,19 @@ The shared ledger retains the published pre-V2 tail through 68, followed by this
 | 97 | `DropOrchestrationEventCorrelationIndex` | upstream `078_DropOrchestrationEventCorrelationIndex.ts` |
 | 98 | `DelegatedRecoveryIndexes` | upstream `079_DelegatedRecoveryIndexes.ts` |
 | 99 | `ScheduledTaskThreadMode` | upstream `080_ScheduledTaskThreadMode.ts` |
+| 100 | `ProjectionMessageSearchText` | upstream `081_ProjectionMessageSearchText.ts` |
+| 101 | `TurnItemConversationIndex` | upstream `082_TurnItemConversationIndex.ts` |
+| 102 | `CommandReadIndexes` | upstream `083_CommandReadIndexes.ts` |
+| 103 | `LastExecutedRunIndex` | upstream `084_LastExecutedRunIndex.ts` |
+| 104 | `TurnItemCounts` | upstream `085_TurnItemCounts.ts` |
+| 105 | `QueuedTurnInputIndex` | upstream `086_QueuedTurnInputIndex.ts` |
+| 106 | `ProjectionProjectsCustomTitle` | upstream `087_ProjectionProjectsCustomTitle.ts` |
+| 107 | `TurnItemTypeStatusIndex` | upstream `088_TurnItemTypeStatusIndex.ts` |
+| 108 | `ShellThreadReadIndexes` | upstream `089_ShellThreadReadIndexes.ts` |
 
 `apps/server/src/persistence/Migrations.ts` imports the source files under these IDs. Upstream ledger entries relocate to their canonical main IDs with their timestamps and existing schema work preserved. The normalizer removes exact divergent upstream markers, replays missing fork migrations in order, and records relocated markers in one transaction. Upstream preview ledgers are reconciled before that normalization. The startup guard refuses missing or mismatched V2 migrations instead of silently skipping schema.
 
-Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. Upstream migration 80 appends at main 99, preserving the installed tail through 98. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published SQL body changes. Tests cover fresh databases, the published 98 upgrade, complete upstream 80 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls.
+Cold storage is already published at main 71, Magi schema at 72 and 73, agent cleanup at 86, table cleanup at 95 and boolean-settlement repair at 96. Upstream migration 80 appends at main 99. Upstream 81–89 append at main 100–108, preserving the installed tail through 99. The frozen historical prompt helper uses Effect's Digest service while preserving its SHA-256 output. No published SQL body changes. Tests cover fresh databases, the published 98 upgrade, complete upstream 80 relocation, previews, rollback and repeated startup. `seedUpstreamLedger` prepares actual upstream schemas and ledgers for those controls.
 
 ## Installed Profile Startup Compatibility
 
@@ -564,7 +573,7 @@ Unsent composer drafts remain local when their thread is archived. Archive relea
 
 The `ThreadStorageLifecycle` schema is already published at main migration 71. Published fork migrations 35, 41 and 47 created pre-V2 tables under the same names, so migration 71 retains those tables under `legacy_v1_*` names before creating the V2 schema. Its SQL body and every other published migration remain frozen. The standalone branch's migration 81 is not registered again. Pre-V2 `archive.sqlite` bundles have no V2 restoration path; unarchive needed histories with a compatible pre-V2 build before upgrading.
 
-The one-time V1 database copy runs `VACUUM INTO` in a worker thread and preserves its complete ledger. The main migration normalizer then reconciles upstream markers and applies the unapplied published fork tail. New upstream migration 80 runs at main 99, after the installed ledger through 98.
+The one-time V1 database copy runs `VACUUM INTO` in a worker thread and preserves its complete ledger. The main migration normalizer then reconciles upstream markers and applies the unapplied published fork tail. Upstream migrations 81–89 append at main 100–108, after the installed ledger through 99. Normal upgrades commit each migration independently; divergent upstream ledger relocation remains atomic.
 
 The connection cache opens at IndexedDB version 8 so installed version-7 profiles acquire upstream's query store and environment-updated index. The guarded version-7 archive-eviction boundary remains unchanged. Upstream pending-question safeguards remain in force. Partial shell snapshots do not establish archive membership: capability-gated membership checks validate omitted saved and visible threads without warming cold history, and cache-generation checks protect revived details from stale removal retries.
 
