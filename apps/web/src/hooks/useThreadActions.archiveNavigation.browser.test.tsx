@@ -73,7 +73,10 @@ vi.mock("./useHandleNewThread", async () => {
     },
   };
 });
-vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
+vi.mock("../terminalUiStateStore", async (original) => ({
+  ...(await original<typeof import("../terminalUiStateStore")>()),
+  useTerminalUiStateStore: () => vi.fn(),
+}));
 vi.mock("../uiStateStore", async (original) => ({
   ...(await original<typeof import("../uiStateStore")>()),
   useUiStateStore: () => vi.fn(),
