@@ -853,7 +853,9 @@ const make = Effect.gen(function* () {
       if (
         table === "orchestration_v2_projection_messages" &&
         columns.has("search_text") &&
-        row.search_text === undefined
+        row.search_text === undefined &&
+        typeof row.payload_json === "string" &&
+        row.payload_json.includes("t3-citation://")
       ) {
         // Migration 081 cannot backfill messages that were already cold.
         const payload = yield* decodeMessageText(row.payload_json).pipe(
