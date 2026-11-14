@@ -892,7 +892,7 @@ const enrichProjectShells = Effect.fn("ws.orchestrationV2.enrichProjectShells")(
     ),
 );
 
-export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
+const openThreadSubscription = Effect.fn("ws.orchestrationV2.openThreadSubscription")(
   function* (input: {
     readonly threadId: ThreadId;
     readonly afterSequence?: number;
@@ -913,17 +913,6 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
-    yield* threadManagement.ensureLegacyTranscript(input.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestrationV2GetThreadProjectionError({
-            threadId: input.threadId,
-            message: `Failed to hydrate migrated thread ${input.threadId}`,
-            cause,
-          }),
-      ),
-    );
-
     const eventStreamFrom = (afterSequence: number) =>
       threadManagement
         .streamStoredEventsFrom({
@@ -1122,6 +1111,28 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     }
 
     return yield* snapshotThenLive();
+  },
+);
+
+const isGetThreadProjectionError = Schema.is(OrchestrationV2GetThreadProjectionError);
+
+/** Keeps the thread hot, restoring it from cold storage, while its snapshot or replay is read. */
+export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
+  function* (input: Parameters<typeof openThreadSubscription>[0]) {
+    const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    return yield* threadManagement
+      .withThreadReadable(input.threadId, openThreadSubscription(input))
+      .pipe(
+        Effect.mapError((cause) =>
+          isGetThreadProjectionError(cause)
+            ? cause
+            : new OrchestrationV2GetThreadProjectionError({
+                threadId: input.threadId,
+                message: `Failed to prepare thread ${input.threadId}`,
+                cause,
+              }),
+        ),
+      );
   },
 );
 
@@ -1876,6 +1887,7 @@ export const layerWsRpc = (
           shellThreadFamilies: true,
           threadLinkMetadata: true,
           shellOlderSettled: true,
+          shellThreadMembership: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
           threadFind: true,
@@ -2110,6 +2122,16 @@ export const layerWsRpc = (
             { worktreePath: input.worktreePath },
             "Failed to load the worktree's threads",
           ).pipe(Effect.map(({ threads }) => ({ threadIds: threads.map((thread) => thread.id) }))),
+        [ORCHESTRATION_V2_WS_METHODS.getActiveThreadIds]: (input) =>
+          threadManagement.getActiveThreadIds(input.threadIds).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to validate active thread membership.",
+                  cause,
+                }),
+            ),
+          ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(

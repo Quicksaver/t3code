@@ -167,6 +167,9 @@ import {
   withLateConfigDiscovery,
 } from "./ws.ts";
 
+const withThreadReadable: ThreadManagement.ThreadManagementService["Service"]["withThreadReadable"] =
+  (_threadId, read) => read;
+
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
 
@@ -349,7 +352,7 @@ const resumeSkipsUnknownTypes = (scope: "thread" | "shell") =>
     });
     const items = yield* subscription.pipe(
       Effect.provideService(ThreadManagement.ThreadManagementService, {
-        ensureLegacyTranscript: () => Effect.void,
+        withThreadReadable,
         getShellSnapshot: () => Effect.die("shell resume must not load a full snapshot"),
         listActiveSubagentThreadIds: () => Effect.succeed([]),
         streamStoredEventsFrom: (
@@ -435,7 +438,7 @@ it.effect("coalesces streaming replay before synchronization and the live tail",
     }).pipe(
       Effect.flatMap(Stream.runCollect),
       Effect.provideService(ThreadManagement.ThreadManagementService, {
-        ensureLegacyTranscript: () => Effect.void,
+        withThreadReadable,
         streamStoredEventsFrom: () =>
           Stream.unwrap(
             insert(4, "Next", false).pipe(
@@ -660,7 +663,7 @@ it.effect("shares each live event item across subscribers and dedupes bodies per
         Effect.flatMap(Stream.runCollect),
         Effect.map((items) => Array.from(items)),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable,
           streamStoredEventsFrom: () => Stream.fromIterable(live),
         } as unknown as ThreadManagement.ThreadManagementService["Service"]),
       );
@@ -2003,7 +2006,7 @@ it.effect.each([
       });
       const exit = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable,
           getThreadSnapshot: () => Effect.die("snapshot"),
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),
@@ -2074,7 +2077,7 @@ it.effect.each(["thread", "shell"] as const)(
       }).pipe(
         Effect.provideService(Statement.CurrentTransformer, gateReplayRead),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable,
           getThreadSnapshot: () => Effect.die("snapshot"),
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),
@@ -2194,7 +2197,7 @@ it.effect.each([
       });
       const exit = yield* subscription.pipe(
         Effect.provideService(ThreadManagement.ThreadManagementService, {
-          ensureLegacyTranscript: () => Effect.void,
+          withThreadReadable,
           getThreadSnapshot: () => Effect.die("snapshot"),
           listActiveShellIndex: () => Effect.die("snapshot"),
           readShellSnapshot: () => Effect.die("snapshot"),

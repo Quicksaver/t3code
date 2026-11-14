@@ -44,7 +44,7 @@ import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -63,6 +63,7 @@ const QUERY_PRUNE_BATCH_ROWS = 32;
 const QUERY_PRUNE_BATCH_BYTES = 1024 * 1024;
 const CATALOG_KEY = "document";
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
+const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 6;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
 const StoredThreadSnapshotJson = Schema.fromJsonString(StoredThreadSnapshot);
@@ -113,6 +114,7 @@ function persistenceError(
     | "load-thread"
     | "save-thread"
     | "remove-thread"
+    | "list-threads"
     | "load-server-config"
     | "save-server-config"
     | "load-vcs-refs"
@@ -128,6 +130,38 @@ function persistenceError(
   });
 }
 
+export function upgradeConnectionDatabase(
+  database: IDBDatabase,
+  transaction: IDBTransaction | null,
+  oldVersion: number,
+) {
+  if (!database.objectStoreNames.contains(CATALOG_STORE_NAME)) {
+    database.createObjectStore(CATALOG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SHELL_STORE_NAME)) {
+    database.createObjectStore(SHELL_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(THREAD_STORE_NAME)) {
+    database.createObjectStore(THREAD_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
+    database.createObjectStore(SERVER_CONFIG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
+    database.createObjectStore(VCS_REFS_STORE_NAME);
+  }
+
+  if (!database.objectStoreNames.contains(QUERY_STORE_NAME)) {
+    database
+      .createObjectStore(QUERY_STORE_NAME)
+      .createIndex(QUERY_UPDATED_INDEX_NAME, ["environmentId", "updatedAt", "bytes"]);
+  }
+
+  if (oldVersion > 0 && oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
+    transaction?.objectStore(THREAD_STORE_NAME).clear();
+  }
+}
+
 const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
@@ -138,27 +172,8 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
     }
     try {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-      request.addEventListener("upgradeneeded", () => {
-        if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
-          request.result.createObjectStore(CATALOG_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(SHELL_STORE_NAME)) {
-          request.result.createObjectStore(SHELL_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(THREAD_STORE_NAME)) {
-          request.result.createObjectStore(THREAD_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
-          request.result.createObjectStore(SERVER_CONFIG_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
-          request.result.createObjectStore(VCS_REFS_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(QUERY_STORE_NAME)) {
-          request.result
-            .createObjectStore(QUERY_STORE_NAME)
-            .createIndex(QUERY_UPDATED_INDEX_NAME, ["environmentId", "updatedAt", "bytes"]);
-        }
+      request.addEventListener("upgradeneeded", (event) => {
+        upgradeConnectionDatabase(request.result, request.transaction, event.oldVersion);
       });
       request.addEventListener("error", () => {
         resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
@@ -306,6 +321,29 @@ function removeDatabaseValueOnConnection(
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValue"));
 }
 
+function readDatabaseKeysInRangeOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  range: IDBKeyRange,
+) {
+  return Effect.callback<ReadonlyArray<IDBValidKey>, ConnectionTransientError>((resume) => {
+    try {
+      const request = database
+        .transaction(storeName, "readonly")
+        .objectStore(storeName)
+        .getAllKeys(range);
+      request.addEventListener("error", () => {
+        resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
+      });
+      request.addEventListener("success", () => {
+        resume(Effect.succeed(request.result));
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("read", cause)));
+    }
+  }).pipe(Effect.withSpan("web.connectionStorage.readDatabaseKeysInRange"));
+}
+
 function removeDatabaseValuesInRangeOnConnection(
   database: IDBDatabase,
   storeName: string,
@@ -415,6 +453,12 @@ function saveQueryOnConnection(
       resume(Effect.fail(catalogError("write", cause)));
     }
   }).pipe(Effect.withSpan("web.connectionStorage.saveQuery"));
+}
+
+function readDatabaseKeysInRange(database: DatabaseHandle, storeName: string, range: IDBKeyRange) {
+  return withDatabase(database, (opened) =>
+    readDatabaseKeysInRangeOnConnection(opened, storeName, range),
+  );
 }
 
 function readDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
@@ -1048,6 +1092,22 @@ export const layer = Layer.effectContext(
             THREAD_STORE_NAME,
             threadCacheKey(environmentId, threadId),
           ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause)));
+        },
+      ),
+      listThreadIds: Effect.fn("Persistence.EnvironmentCacheStore.listThreadIds")(
+        function (environmentId) {
+          return readDatabaseKeysInRange(
+            database,
+            THREAD_STORE_NAME,
+            IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:￿`),
+          ).pipe(
+            Effect.map((keys) =>
+              keys.flatMap((key) =>
+                typeof key === "string" ? [ThreadId.make(key.slice(environmentId.length + 1))] : [],
+              ),
+            ),
+            Effect.mapError((cause) => persistenceError("list-threads", cause)),
+          );
         },
       ),
       clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {
