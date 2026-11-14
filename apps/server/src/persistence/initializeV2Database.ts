@@ -33,7 +33,10 @@ const { workerData } = require("node:worker_threads");
 const { DatabaseSync } = require("node:sqlite");
 const database = new DatabaseSync(workerData.sourcePath, { readOnly: true });
 try {
-  database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  // Changing a mode that is already on writes the read-only source; FULL and INCREMENTAL copy as-is.
+  if (database.prepare("PRAGMA auto_vacuum").get().auto_vacuum === 0) {
+    database.exec("PRAGMA auto_vacuum = INCREMENTAL");
+  }
   database.prepare("VACUUM INTO ?").run(workerData.snapshotPath);
 } finally {
   database.close();
