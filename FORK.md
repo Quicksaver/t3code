@@ -39,7 +39,7 @@ A branch section whose heading is marked `(Currently Inactive)` and that names a
 
 Every repository-local skill above includes matching `agents/openai.yaml` metadata for its user-facing name, description, and invocation policy. Keep that metadata paired with the corresponding `SKILL.md` when a skill is renamed, added, or removed.
 
-The customization inventory retains 10 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The agent background capture and project usage breakdown inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
+The customization inventory retains 9 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The agent background capture and project usage breakdown inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
 
 Primary files:
 
@@ -767,17 +767,13 @@ Primary file:
 
 Mobile configuration tests preserve the fork signing team independently of upstream hosted app-link associations. Upstream hosted domains authorize upstream-signed apps; a locally signed fork is not added to those associations by its configuration.
 
-## Human Preview Screenshot Restoration
+## Human Preview Screenshot Restoration (Retired)
 
-**Worktree branch:** `fix/restore-preview-background-screenshots`
+**Worktree branch:** `none`
 
-Only human Browser Screenshot capture uses this customization. Historical native proof remains revision-specific; current-head source review, human approval and native freshness acceptance remain outstanding.
+[PR #36671](https://github.com/pingdotgg/t3code/pull/36671) merged on 2026-11-14 as `8a45c51d8b2796ebda1621e51becef1645e41f70`. This human Screenshot customization is retired from local fork assembly. Do not restore its worktree, protection or integration input without a new user request. The separate maintainer-owned agent background capture input remains active.
 
-Worktree: `C:/Users/Quicksaver/.t3/worktrees/t3code/t3-ea8af355`. Published source `e89758f287e5d01953bafebbd26fb53765f37613` is directly above pinned upstream `f313d0a6cb843551fb60e57a454a71e71a3a8c04`. Human native Screenshot freshness and rendering cleanup are maintained in open [PR #22335](https://github.com/pingdotgg/t3code/pull/22335). Required CI checks and same-head source checks pass. The wider desktop suite retains one Windows path assertion reproduced in the pinned upstream control. The PR template headings were corrected and acknowledged, but current-head source review remains paused and human approval remains outstanding. Native acceptance on Electron 44.10.1 remains unverified. Main distinguishes still-image leases, which unthrottle the guest, from agent leases, which only request presentation. Finishing the last human/recording/PiP consumer restores guest throttling even while an agent capture continues; each remaining consumer retains its own main-window frame lease.
-
-Historical complete-app human Screenshot UI comparisons used genuine imported history on Windows, macOS and Linux. Windows BEFORE failed hidden, overlapping-hidden and display-off-hidden captures; AFTER saved fresh PNGs. Both macOS revisions saved fresh PNGs in the measured cases, including locked with the display off. Linux Docker/Xvfb with Openbox and software rendering improved from 5/8 to 8/8 fresh PNGs. Linux physical display sleep/lock, hardware GPU, Wayland and installed AppImage behavior remain unverified. The [Windows/macOS proof](https://a78jhjubak.ufs.sh/f/I453M2Lveob9q0WglAFGC4MSykUPb9LBiREZdDrxIuOpeYA6), [Linux proof](https://a78jhjubak.ufs.sh/f/I453M2Lveob9qyMdfcFGC4MSykUPb9LBiREZdDrxIuOpeYA6) and PR retain the measured results and limits.
-
-This replacement follows the [maintainer's re-landing direction](https://github.com/pingdotgg/t3code/pull/19931#issuecomment-6287018517). Original [PR #19931](https://github.com/pingdotgg/t3code/pull/19931) remains merged, closed, linked and untouched. Open [PR #21534](https://github.com/pingdotgg/t3code/pull/21534) covers agent/CDP screenshots and explicitly excludes this human Screenshot path.
+Origin retains `fix/desktop-human-background-screenshots` at the final maintainer head `dab0ad7d715a5027c010735b6c9cc89bf71b6c97`, `fix/restore-preview-background-screenshots` at `e89758f287e5d01953bafebbd26fb53765f37613`, and the original `fix/preview-background-screenshots`. Earlier exact source revisions, including the superseded unpublished review fix, are recoverable under `origin/recovery/screenshot-retirement-20261114/`. These are historical recovery sources, not fork assembly inputs.
 
 ## Agent Background Capture (maintainer-owned)
 
