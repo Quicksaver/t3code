@@ -1,0 +1,6 @@
+interface:
+  display_name: "Update Unattended"
+  short_description: "Update and build our fork, get it ready to install across the fleet."
+
+policy:
+  allow_implicit_invocation: false
