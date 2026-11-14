@@ -4,7 +4,7 @@ Load this reference only when inspecting or seeding local T3 state directly.
 
 ## Select the correct database
 
-When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata`. Hot projections and runtime state are stored in `statev2.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/statev2.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
 
 The server copies the V1 `state.sqlite` into `statev2.sqlite` only when `statev2.sqlite` is missing. After the first start, edits to `state.sqlite` change nothing.
 
@@ -49,7 +49,7 @@ node apps/server/scripts/t3-sqlite-state.ts exec \
 
 Use one statement per invocation for both `query` and `exec`; the helper wraps writes in a transaction and prints the backup path after a successful mutation. Use a single insert with multiple value rows when a fixture needs several records.
 
-Cold archive manifests and chunks are authoritative recovery data. Prefer `--database archive` for queries only. Exercise archive and restore behavior through application commands and APIs instead of constructing or changing archive bundles directly; only use archive writes for a deliberately isolated corruption or compatibility fixture.
+Cold bundles are authoritative recovery data. Prefer `--database archive` for queries only. Exercise archive and restore behavior through application commands and APIs instead of constructing or changing archive bundles directly; only use archive writes for a deliberately isolated corruption or compatibility fixture.
 
 ## Seed projection data carefully
 

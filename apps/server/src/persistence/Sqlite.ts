@@ -101,7 +101,10 @@ const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
 const layerSetup = makeLayerSetup(runMigrations());
 
 const makeLayerFromPath = <E, R>(makeSetup: (dbPath: string) => Layer.Layer<never, E, R>) =>
-  Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
+  Effect.fn("makeSqlitePersistenceLive")(function* (
+    dbPath: string,
+    checkpointAdditionalPaths: ReadonlyArray<string> = [],
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
@@ -113,6 +116,7 @@ const makeLayerFromPath = <E, R>(makeSetup: (dbPath: string) => Layer.Layer<neve
         readerWorker: true,
         // A slow disk then delays writes instead of freezing every client.
         writerWorker: true,
+        checkpointAdditionalPaths,
         spanAttributes: {
           "db.name": path.basename(dbPath),
           "service.name": "t3code-server",
@@ -140,13 +144,16 @@ export const layerMemory = Layer.provideMerge(
 );
 
 const makeLayerConfig = <E, R>(
-  fromPath: (dbPath: string) => Layer.Layer<SqlClient.SqlClient, E, R>,
+  fromPath: (
+    dbPath: string,
+    checkpointAdditionalPaths: ReadonlyArray<string>,
+  ) => Layer.Layer<SqlClient.SqlClient, E, R>,
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const { dbPath } = yield* ServerConfig.ServerConfig;
+      const { dbPath, archiveDbPath } = yield* ServerConfig.ServerConfig;
       yield* initializeV2Database(dbPath);
-      return fromPath(dbPath);
+      return fromPath(dbPath, [archiveDbPath]);
     }),
   );
 

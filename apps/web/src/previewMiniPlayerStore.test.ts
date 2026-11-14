@@ -9,6 +9,7 @@ import {
 } from "./previewMiniPlayerStore";
 
 const refA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
+const refB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 const tabA = browserMiniPlayerSource("tab-a");
 const tabB = browserMiniPlayerSource("tab-b");
 
@@ -30,5 +31,19 @@ describe("previewMiniPlayerStore", () => {
       width: null,
       lastInteraction: "drag",
     });
+  });
+
+  it("removes only the targeted thread lifecycle state", () => {
+    usePreviewMiniPlayerStore.getState().open(refA, tabA);
+    usePreviewMiniPlayerStore.getState().open(refB, tabB);
+
+    usePreviewMiniPlayerStore.getState().removeThread(refA);
+
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toBeNull();
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refB),
+    ).toMatchObject({ source: tabB });
   });
 });
