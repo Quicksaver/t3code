@@ -364,13 +364,15 @@ export function HostedBrowserWebview(props: {
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!clientSettingsHydrated || !bridge || !serverDriven || !fullDetail) return;
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() =>
+    // A detached window paints on its own frame clock, which can lag the main window's.
+    const view = wrapperRef.current?.ownerDocument.defaultView ?? window;
+    let frame = view.requestAnimationFrame(() => {
+      frame = view.requestAnimationFrame(() =>
         withDesktopTab(runtimeTabId, () => bridge.setCaptureDrawn(runtimeTabId, true)),
       );
     });
     return () => {
-      cancelAnimationFrame(frame);
+      view.cancelAnimationFrame(frame);
       withDesktopTab(runtimeTabId, () => bridge.setCaptureDrawn(runtimeTabId, false));
     };
   }, [clientSettingsHydrated, fullDetail, runtimeTabId, serverDriven]);
