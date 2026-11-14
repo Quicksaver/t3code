@@ -39,7 +39,7 @@ A branch section whose heading is marked `(Currently Inactive)` and that names a
 
 Every repository-local skill above includes matching `agents/openai.yaml` metadata for its user-facing name, description, and invocation policy. Keep that metadata paired with the corresponding `SKILL.md` when a skill is renamed, added, or removed.
 
-The customization inventory retains 11 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The agent background capture and project usage breakdown inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
+The customization inventory retains 10 customization worktrees, including `base/fork`, plus the `base/main` control and the `main` assembly checkout. The agent background capture and project usage breakdown inputs are registered as protected tracking branches without a checkout. Maintainer-owned entries remain inactive for branch maintenance but eligible for read-only integration into `main`. Technical review and CI do not establish external contribution eligibility or maintainer approval.
 
 Primary files:
 
@@ -445,13 +445,11 @@ Archive, restore and delete cascade through existing native and app-owned subage
 
 ## Subagent creation lifecycle (Currently Inactive)
 
-**Worktree branch:** `fix/subagent-creation-lifecycle`
+**Worktree branch:** `none`
 
-[PR #20074](https://github.com/pingdotgg/t3code/pull/20074) is closed and unmerged, and remains closed and unmerged, and remains maintainer-owned / pull-only. The local branch is synchronized to the complete published head `c5e91fb122924fd9b2b29cc5d53a02be003435d6`, based on upstream `071239804e375078dd3fae3b14704b4def57e048`. Do not edit, commit, push, run review fixes or change the original PR. Its link and tracking remain in place.
+Retired at the user's request after replacement [PR #36670](https://github.com/pingdotgg/t3code/pull/36670) closed unmerged. Upstream could not reproduce the bug on current main with the real Codex provider, and our fixture-based evidence did not establish a reachable real sequence. No active worktree, local source branch, protected ownership record or assembly input remains for this customization. Unattended updates must not restore or integrate it without a new user request.
 
-The published implementation includes the maintainer's self-parent deadlock correction and current native branch-correction coverage. Main preserves the parent-before-child locking and lifecycle inheritance around newer provider normalization.
-
-Native child creation inherits the parent's persisted archive/delete state under parent-before-child shared locking. Archive inheritance also clears a stale child archive time when the persisted parent has been restored. Fork lineage stays independent, and fresh delegation under an archived or deleted parent is rejected. These creation-time guarantees are independent of the descendant cascade implementation.
+Recovery sources remain on origin: `fix/subagent-creation-lifecycle` at `c5e91fb122924fd9b2b29cc5d53a02be003435d6` for closed, unmerged [PR #20074](https://github.com/pingdotgg/t3code/pull/20074), and `fix/subagent-lifecycle-inheritance` at `91555bd53d04c731b7c8fc4b52389ca03312202b` for #36670.
 
 ## Archive Settings UX
 
