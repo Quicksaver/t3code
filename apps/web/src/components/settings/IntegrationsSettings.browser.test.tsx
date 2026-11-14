@@ -83,6 +83,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
   useEnvironments: () => ({
     isReady: true,
     networkStatus: "online" as const,
+    environmentIds: new Set([environmentId]),
     environments,
     presentationById: new Map(),
   }),
