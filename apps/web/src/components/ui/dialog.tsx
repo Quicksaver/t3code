@@ -11,7 +11,6 @@ import {
   useState,
 } from "react";
 import { cn } from "~/lib/utils";
-import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
@@ -21,7 +20,7 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { usePortalContainer } from "~/components/ui/portalContainer";
+import { usePortalContainer, usePortalTitlebarHeight } from "~/components/ui/portalContainer";
 
 const ControlledOpenContext = createContext<boolean | undefined>(undefined);
 
@@ -152,7 +151,7 @@ function DialogPopup({
     ),
   });
   // macOS has no CSS window-controls overlay, so use the platform titlebar height.
-  const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const nativeTitlebarHeight = usePortalTitlebarHeight();
   const portalContainer = usePortalContainer();
   return (
     <DialogPortal container={portalContainer}>
