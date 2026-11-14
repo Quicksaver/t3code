@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
     alert: vi.fn(),
     canSettle: vi.fn(),
     canSnooze: vi.fn(),
+    clearComposerDraft: vi.fn(),
     impactAsync: vi.fn(),
     refreshArchivedThreadsForEnvironment: vi.fn(),
     serverConfigs: new Map<string, unknown>(),
@@ -117,6 +118,10 @@ vi.mock("../../state/threads", () => ({
   steadyNavigationThreadShellsAtom: mocks.threadShellsAtom,
   steadyShellsHoldingAtom: {},
   threadEnvironment: mocks.threadCommands.commands,
+}));
+
+vi.mock("../../state/use-composer-drafts", () => ({
+  clearComposerDraft: mocks.clearComposerDraft,
 }));
 
 vi.mock("../../state/use-thread-outbox", () => ({
