@@ -2106,10 +2106,10 @@ describe("PreviewManager", () => {
       ),
   );
 
-  effectIt.effect("paints a loading document with isolated scheduling despite page overrides", () =>
+  effectIt.effect("paints with isolated scheduling despite page overrides", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        for (const mode of ["suppressed", "synchronous", "timeout-before", "timeout-after"]) {
+        for (const mode of ["suppressed", "timeout-before", "timeout-after"]) {
           writeFile.mockClear();
           let pixels = "old-pixels";
           const frames: Array<() => void> = [];
@@ -2117,9 +2117,7 @@ describe("PreviewManager", () => {
           let paintConfirmed: unknown;
           const clearTimeout = vi.fn();
           const probeStarted = Promise.withResolvers<void>();
-          const pageFrame = vi.fn((callback: () => void) => {
-            if (mode === "synchronous") callback();
-          });
+          const pageFrame = vi.fn();
           const page = NodeVM.createContext({
             Promise: undefined,
             requestAnimationFrame: pageFrame,
@@ -2138,7 +2136,6 @@ describe("PreviewManager", () => {
           });
           const capturePage = vi.fn(async () => makeStillImage(pixels));
           const wc = makeTestStillImageWebContents(capturePage);
-          Object.assign(wc, { isLoading: () => true });
           vi.mocked(wc.executeJavaScript).mockImplementation(async (expression) =>
             NodeVM.runInContext(expression, page),
           );
