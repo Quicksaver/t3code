@@ -531,6 +531,8 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
         { head: "MERGE_HEAD", operation: "merge" },
         { head: "CHERRY_PICK_HEAD", operation: "cherry-pick" },
         { head: "REVERT_HEAD", operation: "revert" },
+        // A conflicted multi-commit `cherry-pick --no-commit` writes only the sequencer.
+        { head: "sequencer", operation: "cherry-pick or revert" },
       ] as const;
       const headPaths = (yield* run("vcs.panel.commitStaged.mergeHead", cwd, [
         "rev-parse",
@@ -538,8 +540,31 @@ const make = Effect.fn("makeSourceControlPanelService")(function* () {
       ]))
         .trim()
         .split(/\r?\n/u);
-      const inProgress = yield* Effect.findFirst(operationHeads, (_, index) =>
-        fileSystem.exists(path.resolve(cwd, headPaths[index] ?? "")),
+      // Reftable keeps CHERRY_PICK_HEAD and REVERT_HEAD as refs with no file under .git. A
+      // same-named branch resolves to its full name; an ambiguity warning would blank stdout.
+      const operationRefs = new Set<string>(["CHERRY_PICK_HEAD", "REVERT_HEAD"]);
+      const isOperationRef = (head: string) =>
+        run(
+          "vcs.panel.commitStaged.operationRef",
+          cwd,
+          [
+            "-c",
+            "core.warnAmbiguousRefs=false",
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--symbolic-full-name",
+            head,
+          ],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((ref) => ref.trim() === head));
+      const inProgress = yield* Effect.findFirst(operationHeads, ({ head }, index) =>
+        fileSystem.exists(path.resolve(cwd, headPaths[index] ?? "")).pipe(
+          Effect.filterOrElse(
+            (exists) => exists || !operationRefs.has(head),
+            () => isOperationRef(head),
+          ),
+        ),
       ).pipe(
         Effect.mapError((cause) =>
           gitError(
