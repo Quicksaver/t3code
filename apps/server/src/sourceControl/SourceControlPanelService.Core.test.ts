@@ -156,8 +156,13 @@ const emptyProvider = SourceControlProvider.SourceControlProvider.of({
     ),
 });
 
+const OPERATION_PROBES = new Set([
+  "vcs.panel.commitStaged.mergeHead",
+  "vcs.panel.commitStaged.operationRef",
+]);
+
 const FAKE_PROBE_FILES: Record<string, string> = {
-  "vcs.panel.commitStaged.mergeHead": "MERGE_HEAD\nCHERRY_PICK_HEAD\nREVERT_HEAD",
+  "vcs.panel.commitStaged.mergeHead": "MERGE_HEAD\nCHERRY_PICK_HEAD\nREVERT_HEAD\nsequencer",
   "vcs.panel.commitStaged.indexPath": "index",
 };
 
@@ -1763,7 +1768,7 @@ describe("SourceControlPanelService", () => {
 
       assert.deepStrictEqual(
         calls
-          .filter((call) => call.operation !== "vcs.panel.commitStaged.mergeHead")
+          .filter((call) => !OPERATION_PROBES.has(call.operation))
           .map((call) => ({ operation: call.operation, args: call.args })),
         [
           {
@@ -1813,7 +1818,7 @@ describe("SourceControlPanelService", () => {
         (call) =>
           call.operation.startsWith("vcs.panel.commitStaged") &&
           ![
-            "vcs.panel.commitStaged.mergeHead",
+            ...OPERATION_PROBES,
             "vcs.panel.commitStaged.indexPath",
             "vcs.panel.commitStaged.selectedDeletions",
             "vcs.panel.commitStaged.syncIndex",
@@ -2012,9 +2017,7 @@ describe("SourceControlPanelService", () => {
         .pipe(Effect.flip);
 
       assert.deepStrictEqual(
-        calls
-          .filter((call) => call.operation !== "vcs.panel.commitStaged.mergeHead")
-          .map((call) => call.operation),
+        calls.filter((call) => !OPERATION_PROBES.has(call.operation)).map((call) => call.operation),
         [
           "vcs.panel.commitStaged.tempIndexResolveHead",
           "vcs.panel.commitStaged.indexPath",
@@ -2127,7 +2130,7 @@ describe("SourceControlPanelService", () => {
 
         assert.deepStrictEqual(
           calls
-            .filter((call) => call.operation !== "vcs.panel.commitStaged.mergeHead")
+            .filter((call) => !OPERATION_PROBES.has(call.operation))
             .map((call) => ({ operation: call.operation, args: call.args })),
           [
             {
@@ -2226,7 +2229,7 @@ describe("SourceControlPanelService", () => {
 
       assert.deepStrictEqual(
         calls
-          .filter((call) => call.operation !== "vcs.panel.commitStaged.mergeHead")
+          .filter((call) => !OPERATION_PROBES.has(call.operation))
           .slice(0, 4)
           .map((call) => ({
             operation: call.operation,
@@ -2660,7 +2663,9 @@ it.effect("shares repository scans across enrichment batches", () => {
 });
 
 describe("panel path selections", () => {
-  const makeLiveRepository = Effect.fn("makeLiveRepository")(function* () {
+  const makeLiveRepository = Effect.fn("makeLiveRepository")(function* (
+    options: { readonly refFormat?: "reftable" } = {},
+  ) {
     const liveGit = yield* GitVcsDriver;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -2673,7 +2678,11 @@ describe("panel path selections", () => {
       fileSystem.writeFileString(path.join(cwd, name), contents);
     const read = (name: string) => fileSystem.readFileString(path.join(cwd, name));
     const exists = (name: string) => fileSystem.exists(path.join(cwd, name));
-    yield* git("init", "--initial-branch=main");
+    yield* git(
+      "init",
+      "--initial-branch=main",
+      ...(options.refFormat ? [`--ref-format=${options.refFormat}`] : []),
+    );
     yield* git("config", "user.email", "test@example.com");
     yield* git("config", "user.name", "Test User");
     yield* git("config", "commit.gpgsign", "false");
@@ -2715,15 +2724,31 @@ describe("panel path selections", () => {
     }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 
+  // Reftable (Git 2.45+) keeps CHERRY_PICK_HEAD and REVERT_HEAD as refs with no file under .git.
+  const gitSupportsReftable = Effect.fn("gitSupportsReftable")(function* () {
+    const version = (yield* (yield* GitVcsDriver).execute({
+      operation: "test.gitVersion",
+      cwd: ".",
+      args: ["--version"],
+    })).stdout;
+    const [, major, minor] = /(\d+)\.(\d+)/u.exec(version) ?? [];
+    return Number(major) > 2 || (Number(major) === 2 && Number(minor) >= 45);
+  });
+
   it.live.each([
-    { operation: "merge", marker: "MERGE_HEAD" },
-    { operation: "cherry-pick", marker: "CHERRY_PICK_HEAD" },
-    { operation: "revert", marker: "REVERT_HEAD" },
+    { operation: "merge", marker: "MERGE_HEAD", refs: "files" },
+    { operation: "cherry-pick", marker: "CHERRY_PICK_HEAD", refs: "files" },
+    { operation: "revert", marker: "REVERT_HEAD", refs: "files" },
+    { operation: "cherry-pick", marker: "CHERRY_PICK_HEAD", refs: "reftable" },
+    { operation: "revert", marker: "REVERT_HEAD", refs: "reftable" },
   ] as const)(
-    "rejects selected-file $operation commits without changing operation state",
-    ({ operation, marker }) =>
+    "rejects selected-file $operation commits without changing operation state ($refs)",
+    ({ operation, marker, refs }, ctx) =>
       Effect.gen(function* () {
-        const repo = yield* makeLiveRepository();
+        if (refs === "reftable" && !(yield* gitSupportsReftable())) {
+          return ctx.skip("Needs Git 2.45 or later for reftable.");
+        }
+        const repo = yield* makeLiveRepository(refs === "reftable" ? { refFormat: refs } : {});
         yield* repo.write("base.txt", "base\n");
         yield* repo.git("add", "-A");
         yield* repo.git("commit", "-m", "Base");
@@ -2742,7 +2767,7 @@ describe("panel path selections", () => {
         yield* repo.write("base.txt", "selected\n");
         const head = yield* repo.git("rev-parse", "HEAD");
         const status = yield* repo.git("status", "--porcelain");
-        const operationHead = yield* repo.read(`.git/${marker}`);
+        const operationHead = yield* repo.git("rev-parse", "--verify", marker);
         const index = yield* repo.git("ls-files", "--stage");
 
         const result = yield* repo
@@ -2764,7 +2789,7 @@ describe("panel path selections", () => {
         }
         assert.equal(yield* repo.git("rev-parse", "HEAD"), head);
         assert.equal(yield* repo.git("status", "--porcelain"), status);
-        assert.equal(yield* repo.read(`.git/${marker}`), operationHead);
+        assert.equal(yield* repo.git("rev-parse", "--verify", marker), operationHead);
         assert.equal(yield* repo.git("ls-files", "--stage"), index);
         yield* repo.withService((service) =>
           service.commitStaged({ cwd: repo.cwd, message: "Finish operation" }),
@@ -2773,7 +2798,64 @@ describe("panel path selections", () => {
           (yield* repo.git("rev-list", "--parents", "-n", "1", "HEAD")).split(" "),
           operation === "merge" ? 3 : 2,
         );
-        assert.isFalse(yield* repo.exists(`.git/${marker}`));
+        assert.equal(
+          (yield* repo.git("rev-parse", "--verify", "--quiet", marker).pipe(Effect.result))._tag,
+          "Failure",
+        );
+      }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
+  );
+
+  it.live(
+    "rejects selected-file commits during a conflicted multi-commit no-commit cherry-pick",
+    () =>
+      Effect.gen(function* () {
+        const repo = yield* makeLiveRepository();
+        yield* repo.write("a.txt", "base a\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Base");
+        yield* repo.git("checkout", "-b", "feature");
+        yield* repo.write("a.txt", "feature a\n");
+        yield* repo.git("commit", "-am", "Feature one");
+        yield* repo.write("later.txt", "later\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Feature two");
+        yield* repo.git("checkout", "main");
+        yield* repo.write("a.txt", "main a\n");
+        yield* repo.write("selected.txt", "selected\n");
+        yield* repo.git("add", "-A");
+        yield* repo.git("commit", "-m", "Main");
+        yield* repo.write("selected.txt", "changed\n");
+        const started = yield* repo
+          .git("cherry-pick", "--no-commit", "feature~1", "feature")
+          .pipe(Effect.result);
+        assert.equal(started._tag, "Failure");
+        // Only the sequencer records this operation.
+        assert.isFalse(yield* repo.exists(".git/CHERRY_PICK_HEAD"));
+        assert.isTrue(yield* repo.exists(".git/sequencer/todo"));
+        const head = yield* repo.git("rev-parse", "HEAD");
+        const index = yield* repo.git("ls-files", "--stage");
+        const todo = yield* repo.read(".git/sequencer/todo");
+
+        const result = yield* repo
+          .withService((service) =>
+            service.commitStaged({
+              cwd: repo.cwd,
+              paths: ["selected.txt"],
+              message: "Partial operation",
+            }),
+          )
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.include(
+            result.failure.message,
+            "Cannot commit selected files during a cherry-pick or revert",
+          );
+        }
+        assert.equal(yield* repo.git("rev-parse", "HEAD"), head);
+        assert.equal(yield* repo.git("ls-files", "--stage"), index);
+        assert.equal(yield* repo.read(".git/sequencer/todo"), todo);
       }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 

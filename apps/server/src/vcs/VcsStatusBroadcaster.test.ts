@@ -2090,6 +2090,38 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
+  it.effect("a refresh after a fetch reads without joining a queued upstream refresh", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusRefreshUpstreamValues: [],
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const fetchStarted = yield* Deferred.make<void>();
+      const finishFetch = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(fetchStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishFetch)),
+      );
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(fetchStarted);
+      state.beforeRemoteStatus = Effect.void;
+      const afterFetch = yield* broadcaster
+        .refreshStatus("/repo", { refreshUpstream: false })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.succeed(finishFetch, undefined);
+      yield* Fiber.join(first);
+      yield* Fiber.join(afterFetch);
+
+      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [true, false]);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
   it.effect("a failed refresh releases interrupted waiters and runs the shared follow-up", () => {
     const state: Parameters<typeof layerTestFor>[0] = {
       currentLocalStatus: baseLocalStatus,
