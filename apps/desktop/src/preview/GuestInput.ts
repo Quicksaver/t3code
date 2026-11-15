@@ -174,6 +174,7 @@ export const sendPageCommand = async (
   method: string,
   params: Record<string, unknown>,
   sessionId?: string,
+  signal?: AbortSignal,
 ): Promise<unknown> => {
   if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
     return sendPointerCommand(webContents, debuggee, method, params, sessionId);
@@ -188,6 +189,25 @@ export const sendPageCommand = async (
   if (method === "Page.stopLoading") {
     webContents.stop();
     return {};
+  }
+  if (method === "Page.captureScreenshot" && signal) {
+    const screenshot = debuggee.sendCommand(method, params);
+    let settled = false;
+    const settle = () => {
+      settled = true;
+    };
+    void screenshot.then(settle, settle);
+    // CDP requests a fresh frame, but a hidden Electron guest needs copy requests to
+    // present it. Discard these potentially stale copies and return only CDP's pixels.
+    const draw = async () => {
+      for (;;) {
+        if (settled || signal.aborted || webContents.isDestroyed()) return;
+        const copy = await webContents.capturePage(undefined, { stayHidden: true });
+        if (copy.isEmpty()) return;
+      }
+    };
+    void draw().catch(() => undefined);
+    return screenshot;
   }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params);
