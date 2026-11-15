@@ -1,9 +1,11 @@
 import {
+  type ProjectId,
   type ProviderInstanceConfig,
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
+  type UsageProject,
   type UsageSource,
   type UsagePricing,
   type UsageSummary,
@@ -63,6 +65,7 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
+import * as UsageProjectAttribution from "./UsageProjectAttribution.ts";
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
@@ -88,6 +91,13 @@ const transcriptReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
 
 const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
+);
+
+// Provider threads key native sessions by driver kind (claudeAgent), not usage provider (claude).
+const driverKindByProvider = new Map(
+  BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
+    driver.usage === undefined ? [] : [[driver.usage.provider, driver.driverKind] as const],
+  ),
 );
 
 const transcriptFormats = new Map(
@@ -186,6 +196,7 @@ export const make = Effect.gen(function* () {
     });
   const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
+  const projectAttribution = yield* UsageProjectAttribution.UsageProjectAttribution;
 
   const fileCache: ScanCache = new Map();
   // Reads from concurrent windows can still hold the original record after it is corrected.
@@ -899,10 +910,18 @@ export const make = Effect.gen(function* () {
       );
       return { scannedDirs: scanned, fromMemory };
     });
-    const [{ scannedDirs, fromMemory }] = yield* Effect.all(
-      [collect, provisional ? Effect.void : ensureRates(false)],
-      { concurrency: 2 },
+    const [{ scannedDirs, fromMemory }, , sessionProjects] = yield* Effect.all(
+      [
+        collect,
+        provisional ? Effect.void : ensureRates(false),
+        // Without projects the summary omits its breakdown; totals never depend on it.
+        projectAttribution.read.pipe(
+          Effect.catch((error) => Effect.logWarning(error.message).pipe(Effect.as(null))),
+        ),
+      ],
+      { concurrency: 3 },
     );
+    const referencedProjects = new Map<ProjectId, UsageProject>();
 
     const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
     const modelAliases = resolveModelAliases(settings.usageModelAliases);
@@ -999,6 +1018,25 @@ export const make = Effect.gen(function* () {
       priceOverrides,
       modelAliases,
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      ...(sessionProjects === null
+        ? {}
+        : {
+            attributeProject: (record: UsageRecord, transcriptPath?: string) => {
+              const driverKind = driverKindByProvider.get(record.provider);
+              // Pi binds threads to the session file, rather than the header's display id.
+              const nativeId =
+                record.provider === "pi"
+                  ? transcriptPath?.replace(/\.jsonl\.zst$/, ".jsonl")
+                  : record.sessionId;
+              const project =
+                driverKind === undefined || nativeId === undefined || nativeId.length === 0
+                  ? undefined
+                  : sessionProjects.get(UsageProjectAttribution.sessionKey(driverKind, nativeId));
+              if (project === undefined) return null;
+              referencedProjects.set(project.projectId, project);
+              return project.projectId;
+            },
+          }),
     });
 
     const windowEndMs =
@@ -1095,7 +1133,7 @@ export const make = Effect.gen(function* () {
             eventOccurrences.set(key, occurrence);
             usageRecord = { ...record, dedupeKey: key + ":" + occurrence };
           }
-          if (aggregator.add(usageRecord, dir)) {
+          if (aggregator.add(usageRecord, dir, file.path)) {
             counted = true;
             if (record.sessionId.length > 0) sessionIds.add(record.sessionId);
           }
@@ -1162,6 +1200,9 @@ export const make = Effect.gen(function* () {
       pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      ...(aggregated.projectTotals === undefined
+        ? {}
+        : { projectTotals: aggregated.projectTotals, projects: [...referencedProjects.values()] }),
     } satisfies UsageSummary;
     return { summary, fromMemory };
   });
