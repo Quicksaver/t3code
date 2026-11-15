@@ -125,6 +125,7 @@ it.each([
   { label: "outside the panel, swiping forward", inside: false, deltaX: 140 },
 ])("contains history swipes only within $label", async ({ inside, deltaX }) => {
   vi.mocked(navigateHistory).mockClear();
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   const environmentId = EnvironmentId.make("history-swipe-environment");
   await using screen = await render(
     <>
