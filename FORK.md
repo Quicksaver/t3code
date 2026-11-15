@@ -809,7 +809,7 @@ Main ports the pinned PR around upstream's DesktopBrowserHost screenshot queue, 
 
 Detached browser find and zoom follow upstream page-first behavior in the owning window. Upstream dialog focus, terminal/Linux paste preferences, i18n and PR reveals remain in force. The superseded diff reset and detached-only zoom restriction are removed.
 
-Worktree: `E:/Projects/t3code.worktrees/detachable-panels`. Its local, unpublished source is `e1934de47cf70da55091632fc30b96177e91aafb`, directly above `base/main` at `f313d0a6cb843551fb60e57a454a71e71a3a8c04`. Tracking remains unset; no upstream PR is planned.
+Worktree: `E:/Projects/t3code.worktrees/detachable-panels`. Its local, unpublished source is `2325dadd4b98bb33cbc47915b8cc2f8704eeae35`: baseline `07dc869688` plus follow-ups for detached overlay titlebar insets, detached capture draw timing and main-window capture frames for hidden detached windows, directly above `base/main` at `4d6ebbdba855c7941966c50d3749f4eecc533488`. Tracking remains unset; no upstream PR is planned.
 
 Desktop users can move a right-panel tab (terminal, browser, device, Files, file, diff, pull requests) into its own OS window with **Open in new window** beside the panel's maximize control or from the tab context menu. Detached windows are same-origin popups rendered by the main renderer through React portals, so they share its stores and WebSocket connection; the existing `RightPanelSurfaceContent` renders unchanged inside them. The panel keeps a placeholder tab with **Show window** and **Re-attach**. Web and mobile do not offer detaching.
 
@@ -839,7 +839,7 @@ Focused regression coverage:
 vp test run apps/desktop/src/window/DetachedPanelWindows.test.ts apps/desktop/src/preview/Manager.test.ts apps/web/src/detachedPanels apps/web/src/rightPanelStore.test.ts apps/web/src/confirmDialog.test.ts apps/web/src/previewMiniPlayerStore.test.ts apps/web/src/hooks/useCopyToClipboard.test.ts apps/web/src/lib/editableFocus.browser.test.ts apps/web/src/components/files/fileEditorDismissal.browser.test.tsx
 ```
 
-Main resolves each detached Version Control view's repository independently of the active panel tab. Detached terminal new, split, close and focus actions retain the cross-environment action's destination, even when another tab is active. File opens retain both their checkout cwd and the replaced surface identity, so a detached explorer follows navigation without losing sibling-checkout routing.
+Main resolves each detached Version Control view's repository per rendered surface, independently of the active panel tab, and titles its window "Version Control". Detached split, activation, close and focus act on the detached surface's own cross-environment destination even when another tab is active: `launchTerminal` accepts a per-call destination override, since the hook-level destination follows the active surface. New terminal surfaces keep following the active tab. `openFile` carries both the checkout cwd and the replaced surface identity, so a detached explorer follows navigation without losing sibling-checkout routing; detachable store tests build file ids with `fileSurfaceId` because Version Control encodes them as tuples.
 
 Worktree runtime verification covered Windows and macOS on the reviewed branch. The detached device panel, Linux behavior, macOS menu shortcuts and minimized Dock tiles remain unverified. macOS full screen retains the system's space-switching behavior described in the user guide.
 
