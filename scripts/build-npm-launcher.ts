@@ -14,7 +14,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
-import { migrationManifest } from "../apps/server/src/persistence/Migrations.ts";
 
 import { windowsSystemTar } from "./lib/windows-tar.ts";
 
@@ -47,7 +46,18 @@ export function npmLauncherPackageManifest(version: string, databaseMigration: n
   };
 }
 
-const latestServerMigrationId = Math.max(0, ...migrationManifest.map(([id]) => id));
+const latestServerMigrationId = Effect.fn("latestServerMigrationId")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const manifestPath = yield* path.fromFileUrl(
+    new URL("../apps/server/src/persistence/Migrations.ts", import.meta.url),
+  );
+  const source = yield* fs.readFileString(manifestPath);
+  const ids = Array.from(source.matchAll(/^\s*\[(\d+), "\w+", Migration\d+\],$/gm), (match) =>
+    Number(match[1]),
+  );
+  return Math.max(0, ...ids);
+});
 
 export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: {
   readonly version: string;
@@ -69,7 +79,7 @@ export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: 
   yield* fs.writeFileString(
     path.join(stageDir, "package.json"),
     `${yield* encodePackageJson(
-      npmLauncherPackageManifest(input.version, latestServerMigrationId),
+      npmLauncherPackageManifest(input.version, yield* latestServerMigrationId()),
     )}\n`,
   );
   yield* fs.copyFile(path.join(sourceDir, "t3.mjs"), path.join(stageDir, "bin/t3.mjs"));
