@@ -115,7 +115,7 @@ describe("rightPanelStore", () => {
     });
     expect(reopenedFile).toEqual({
       threadKey: scopedThreadKey(refA),
-      surfaceId: "file:src/app.ts",
+      surfaceId: fileSurfaceId("src/app.ts"),
       revision: (opened?.revision ?? 0) + 4,
     });
     expect(useRightPanelStore.getState().surfaceActivation).toBe(reopenedFile);
@@ -130,17 +130,17 @@ describe("rightPanelStore", () => {
     store.open(refA, "files");
     store.openFile(refA, "src", undefined, undefined, { replacing: "files" });
     expect(useRightPanelStore.getState().surfaceActivation).toMatchObject({
-      surfaceId: "file:src",
+      surfaceId: fileSurfaceId("src"),
       replaces: "files",
     });
 
-    store.navigateFolder(refA, "file:src", "src/lib", "src/lib");
+    store.navigateFolder(refA, fileSurfaceId("src"), "src/lib", "src/lib");
     expect(useRightPanelStore.getState().surfaceActivation).toMatchObject({
-      surfaceId: "file:src/lib",
-      replaces: "file:src",
+      surfaceId: fileSurfaceId("src/lib"),
+      replaces: fileSurfaceId("src"),
     });
 
-    store.navigateFolder(refA, "file:src/lib", "src/app.ts", "src/app.ts", true);
+    store.navigateFolder(refA, fileSurfaceId("src/lib"), "src/app.ts", "src/app.ts", true);
     expect(useRightPanelStore.getState().surfaceActivation?.replaces).toBeUndefined();
   });
 
