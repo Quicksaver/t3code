@@ -13,6 +13,7 @@ import { __setClientSettingsForTests } from "./hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "./previewStateStore";
 import { planNextReopen, type ReopenOwnerState, reopenClosedView } from "./reopenClosedView";
 import {
+  fileSurfaceId,
   hostRightPanel,
   selectThreadRightPanelState,
   type ThreadRightPanelState,
@@ -55,14 +56,14 @@ describe("reopenClosedView", () => {
       if (folderTrail === undefined) panels.openFile(threadRef, relativePath, line ?? undefined);
       else {
         panels.openFile(threadRef, folderTrail);
-        panels.navigateFolder(threadRef, `file:${folderTrail}`, relativePath, folderTrail);
+        panels.navigateFolder(threadRef, fileSurfaceId(folderTrail), relativePath, folderTrail);
       }
       const expected =
         relativePath === ""
           ? { kind: "files", id: "files", folderTrail }
           : {
               kind: "file",
-              id: `file:${relativePath}`,
+              id: fileSurfaceId(relativePath),
               relativePath,
               revealLine: line,
               revealRequestId: 1,
@@ -108,7 +109,7 @@ describe("reopenClosedView", () => {
     async ({ hosted, folderTrail }) => {
       const panels = useRightPanelStore.getState();
       panels.openFile(threadRef, "apps/web/src");
-      panels.navigateFolder(threadRef, "file:apps/web/src", "", "apps/web/src");
+      panels.navigateFolder(threadRef, fileSurfaceId("apps/web/src"), "", "apps/web/src");
       panels.closeSurface(threadRef, "files");
       const entry = useClosedViewStore.getState().entries[0]!;
       const hostRef = hosted
@@ -119,7 +120,7 @@ describe("reopenClosedView", () => {
         if (folderTrail === undefined) panels.open(threadRef, "files");
         else {
           panels.openFile(threadRef, folderTrail);
-          panels.navigateFolder(threadRef, `file:${folderTrail}`, "", folderTrail);
+          panels.navigateFolder(threadRef, fileSurfaceId(folderTrail), "", folderTrail);
         }
         panels.close(threadRef);
         const before = selectThreadRightPanelState(
