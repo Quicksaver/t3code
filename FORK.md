@@ -717,8 +717,6 @@ Version Control patch readers keep blank context lines and short gitlink summari
 
 The history-swipe containment browser test mocks a macOS platform, like upstream's own cases, because upstream ignores horizontal wheel ticks on other platforms.
 
-A remote switch whose derived local name collides with an existing local branch creates a suffixed tracking branch, which the branch tests. Upstream instead refuses that switch, so upstream's `refuses a remote switch that collides with a local branch` cases in `GitVcsDriverCore.test.ts` fail on the branch and on main. Choosing one behavior is an open Version Control decision.
-
 ## Mobile EAS Project Ownership
 
 **Worktree branch:** `none`
