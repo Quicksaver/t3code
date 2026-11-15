@@ -2760,6 +2760,17 @@ describe("panel path selections", () => {
         yield* repo.write("feature.txt", "main\n");
         yield* repo.git("add", "-A");
         yield* repo.git("commit", "-m", "Main");
+        // A same-named branch must not hide the operation or stand in for it.
+        yield* repo.git("branch", marker);
+        const markerRef = () =>
+          repo.git(
+            "-c",
+            "core.warnAmbiguousRefs=false",
+            "rev-parse",
+            "--verify",
+            "--symbolic-full-name",
+            marker,
+          );
         const started = yield* repo.git(operation, "feature").pipe(Effect.result);
         assert.equal(started._tag, "Failure");
         yield* repo.write("feature.txt", "resolved\n");
@@ -2767,7 +2778,6 @@ describe("panel path selections", () => {
         yield* repo.write("base.txt", "selected\n");
         const head = yield* repo.git("rev-parse", "HEAD");
         const status = yield* repo.git("status", "--porcelain");
-        const operationHead = yield* repo.git("rev-parse", "--verify", marker);
         const index = yield* repo.git("ls-files", "--stage");
 
         const result = yield* repo
@@ -2789,7 +2799,7 @@ describe("panel path selections", () => {
         }
         assert.equal(yield* repo.git("rev-parse", "HEAD"), head);
         assert.equal(yield* repo.git("status", "--porcelain"), status);
-        assert.equal(yield* repo.git("rev-parse", "--verify", marker), operationHead);
+        assert.equal(yield* markerRef(), marker);
         assert.equal(yield* repo.git("ls-files", "--stage"), index);
         yield* repo.withService((service) =>
           service.commitStaged({ cwd: repo.cwd, message: "Finish operation" }),
@@ -2798,10 +2808,7 @@ describe("panel path selections", () => {
           (yield* repo.git("rev-list", "--parents", "-n", "1", "HEAD")).split(" "),
           operation === "merge" ? 3 : 2,
         );
-        assert.equal(
-          (yield* repo.git("rev-parse", "--verify", "--quiet", marker).pipe(Effect.result))._tag,
-          "Failure",
-        );
+        assert.equal(yield* markerRef(), `refs/heads/${marker}`);
       }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 
