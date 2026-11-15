@@ -364,8 +364,10 @@ export function HostedBrowserWebview(props: {
   useEffect(() => {
     const bridge = window.desktopBridge?.preview;
     if (!clientSettingsHydrated || !bridge || !serverDriven || !fullDetail) return;
-    // A detached window paints on its own frame clock, which can lag the main window's.
-    const view = wrapperRef.current?.ownerDocument.defaultView ?? window;
+    // A detached window paints on its own frame clock, which can lag the main window's. A hidden
+    // one runs no frames, so it keeps the main window's rather than waiting out the host fallback.
+    const own = wrapperRef.current?.ownerDocument;
+    const view = own?.visibilityState === "visible" ? (own.defaultView ?? window) : window;
     let frame = view.requestAnimationFrame(() => {
       frame = view.requestAnimationFrame(() =>
         withDesktopTab(runtimeTabId, () => bridge.setCaptureDrawn(runtimeTabId, true)),
