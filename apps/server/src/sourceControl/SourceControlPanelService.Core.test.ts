@@ -2809,6 +2809,14 @@ describe("panel path selections", () => {
           operation === "merge" ? 3 : 2,
         );
         assert.equal(yield* markerRef(), `refs/heads/${marker}`);
+        yield* repo.withService((service) =>
+          service.commitStaged({
+            cwd: repo.cwd,
+            paths: ["base.txt"],
+            message: "Commit selected file after operation",
+          }),
+        );
+        assert.equal(yield* repo.git("show", "HEAD:base.txt"), "selected");
       }).pipe(Effect.scoped, Effect.provide(LiveGitDriverLayer)),
   );
 
