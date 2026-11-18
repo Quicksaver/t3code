@@ -81,7 +81,12 @@ it.effect("preserves installed status after probes and cleans failed agent activ
               ChildProcess.make(
                 platform === "win32" ? "powershell.exe" : "sh",
                 platform === "win32"
-                  ? ["-NoProfile", "-NonInteractive", "-Command", command.args.slice(-2).join(" ")]
+                  ? [
+                      "-NoProfile",
+                      "-NonInteractive",
+                      "-Command",
+                      `${command.args.slice(-2).join(" ")}; exit $LASTEXITCODE`,
+                    ]
                   : ["-c", command.args.slice(-2).join(" ")],
                 { stdin, env: { ...process.env, HOME: home } },
               ),
@@ -162,7 +167,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         stdin: input,
       },
     );
-    expect(exact.code).toBe(platform === "win32" ? 1 : 23);
+    expect(exact.code).toBe(23);
     const received = JSON.parse(exact.stdout);
     expect(received.args).toEqual(args);
     expect(received.input).toBe(input);

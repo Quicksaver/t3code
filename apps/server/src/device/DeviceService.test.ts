@@ -474,6 +474,16 @@ describe("device setup consent", () => {
       ["No compatible Node C:/private", "this host has no npm compatible with Node 22.12+."],
       ["npm probe failed: C:/private EACCES SIGTERM", "npm failed to run on this host."],
       [SYMLINK_HINT, SYMLINK_HINT, "start"],
+      [
+        "npm probe failed: C:/private",
+        "Connected over SSH, but npm failed to run on this host.",
+        "start",
+      ],
+      [
+        "Node 22.12 or newer C:/private",
+        "Connected over SSH, but this host's Node is older than 22.12.",
+        "agent-start",
+      ],
     ].map(([diagnostic, expected, step = "probe"]) => ({
       name: `a Windows host reporting ${diagnostic}`,
       exitCode: 1,

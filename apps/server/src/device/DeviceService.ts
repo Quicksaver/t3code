@@ -123,7 +123,12 @@ const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
 
 const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
   const message = sshProbeFailureMessage(error);
-  if (error.step === "probe" || message === SYMLINK_HINT) return message;
+  if (
+    error.step === "probe" ||
+    message === SYMLINK_HINT ||
+    sshProbeDiagnostics.some(([, guidance]) => message === `Connected over SSH, but ${guidance}`)
+  )
+    return message;
   if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
     return error.cause.message;
   return undefined;

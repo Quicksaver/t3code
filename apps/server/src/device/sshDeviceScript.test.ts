@@ -326,7 +326,10 @@ childProcess.spawnSync = (command, args, options) => command.endsWith('adb.exe')
         if (contents === undefined) await NodeFSP.rm(target, { recursive: true });
         else await NodeFSP.writeFile(target, contents);
         await checkNpm(sibling, fallback);
-        await rejects(invoke("probe"), `No compatible Node 22.12+ and npm pair: npm at ${npm}:`);
+        await rejects(
+          invoke("probe"),
+          `${file === "bin/npm-cli.js" ? "npm probe failed" : "No compatible Node 22.12+ and npm pair"}: npm at ${npm}:`,
+        );
       }
     } finally {
       await NodeFSP.rm(home, { recursive: true, force: true });

@@ -73,6 +73,7 @@ const runNpm = (args, options) => {
   for (const key of pathKeys) delete env[key];
   const directories = [path.dirname(process.execPath), ...inheritedPath.split(path.delimiter)];
   const failures = [];
+  let npmLaunchFailed = false;
   for (const directory of [...new Set(directories.filter(Boolean).map(dir => dir.replace(/^"|"$/g, '')))]) {
     const npmRoot = path.join(directory, 'node_modules', 'npm');
     const entry = path.join(npmRoot, 'bin', 'npm-cli.js');
@@ -95,11 +96,11 @@ const runNpm = (args, options) => {
       if (!nodeSupported(nodeVersion) || !semver.satisfies(nodeVersion, npm.engines.node)) { failures.push('npm ' + npm.version + ' at ' + entry + ' requires Node ' + npm.engines.node + '; found ' + nodeVersion + ' at ' + node); continue; }
       const pairedOptions = { ...options, env: { ...env, PATH: path.dirname(node) + path.delimiter + inheritedPath } };
       const probe = run(node, [entry, '--version'], pairedOptions);
-      if (probe.error || probe.status !== 0) { failures.push('npm at ' + entry + ': npm probe failed: ' + commandFailure(probe)); continue; }
+      if (probe.error || probe.status !== 0) { npmLaunchFailed = true; failures.push('npm at ' + entry + ': npm probe failed: ' + commandFailure(probe)); continue; }
       return args.length === 1 && args[0] === '--version' ? probe : run(node, [entry, ...args], pairedOptions);
     }
   }
-  if (failures.length) throw Error('No compatible Node ${NODE_MINIMUM}+ and npm pair: ' + failures.join('; '));
+  if (failures.length) throw Error((npmLaunchFailed ? 'npm probe failed: ' : 'No compatible Node ${NODE_MINIMUM}+ and npm pair: ') + failures.join('; '));
   throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
 };
 const commandFailure = result => [
