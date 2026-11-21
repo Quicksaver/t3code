@@ -287,7 +287,7 @@ This section is the shared routing policy for full verification runs. Keep platf
 
 **Worktree branch:** `fix/ssh-device-host-commands-v2`
 
-Owned [PR #36709](https://github.com/pingdotgg/t3code/pull/36709) replaces closed, unmerged #18172 and is the sole SSH command-transport input. The editable worktree at `E:/Projects/t3code.worktrees/ssh-device-host-commands` tracks `origin/fix/ssh-device-host-commands-v2`. Its published squash `5560564fd94` is directly above `base/main` and preserves the maintainer's merge resolution and npm startup fix.
+Owned [PR #36709](https://github.com/pingdotgg/t3code/pull/36709) replaces closed, unmerged #18172 and is the sole SSH command-transport input. The editable worktree at `E:/Projects/t3code.worktrees/ssh-device-host-commands` tracks `origin/fix/ssh-device-host-commands-v2`. Its published squash `43e6c34e713` is directly above `base/main` and preserves the maintainer's merge resolution and npm startup fix.
 
 The historical `fix/ssh-device-host-commands` source for closed, unmerged [PR #18172](https://github.com/pingdotgg/t3code/pull/18172) remains only on origin at `c616c4f0454375f8ab9a67049b6263db2157ec8c`, preserving its maintainer history and attribution. Its local branch, branch configuration, named backup refs and obsolete protection entry/installer seed were removed on both hosts. Do not recreate it as a local input or alter the origin branch or closed PR. Historical [native acceptance requirements](https://github.com/pingdotgg/t3code/pull/18172#issuecomment-6259889788) are not proof of the replacement.
 
