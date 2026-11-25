@@ -49,6 +49,8 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 > Tip: If a scheduled task targets a thread, settle it instead of archiving—archiving causes scheduled runs to fail.
 
+For archive search, restore, and deletion, see [Archive threads](./archive.md).
+
 ### Settlement rules and hooks
 
 - **Automatic settlement**: By default, environments settle threads after 7 days of inactivity or when their linked PR merges/closes (even while your apps are closed). Active work, pending questions/approvals, and waited-on background work block auto-settlement. Configure rules in **Settings → Threads** (per environment or **All environments**), including **Keep threads with a PR**.

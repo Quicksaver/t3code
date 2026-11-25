@@ -103,6 +103,7 @@ test(
 
       await runPromise(archiveOverMcp(app.baseUrl ?? "", thread.threadId));
 
+      await screen.getByRole("button", "demo").click();
       await expect(screen.getByRole("button", "Unarchive Archived elsewhere")).toBeVisible();
       await app.screenshot("archived-list");
     } finally {
