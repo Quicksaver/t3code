@@ -1,4 +1,12 @@
-import { redirect, useLocation } from "@tanstack/react-router";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  redirect,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -32,25 +40,39 @@ describe("AppRouteModal", () => {
   // regression: #42075. Navigation: Back (mod+[) leaves the Settings route without closing the dialog.
   it("commits a focused field when the route goes back", async () => {
     const onCommit = vi.fn();
-    function SettingsRoute() {
-      const pathname = useLocation({ select: (location) => location.pathname });
-      return pathname.startsWith("/settings") ? (
-        <AppRouteModal label="Settings">
-          <CommitOnBlurField onCommit={onCommit} />
-        </AppRouteModal>
-      ) : null;
-    }
-    await using screen = await render(<SettingsRoute />, { router: "/" });
-    // The app redirects /settings, and the router skips onBeforeNavigate after a redirect.
-    screen.router!.routeTree.update({
-      beforeLoad: ({ location }: { location: { pathname: string } }) => {
+    const root = createRootRoute();
+    const settings = createRoute({
+      getParentRoute: () => root,
+      path: "settings",
+      // The router skips onBeforeNavigate after a redirect.
+      beforeLoad: ({ location }) => {
         if (location.pathname === "/settings") throw redirect({ to: "/settings/general" });
       },
+      component: () => (
+        <AppRouteModal label="Settings">
+          <Outlet />
+        </AppRouteModal>
+      ),
     });
-    await screen.router!.navigate({ to: "/settings" });
+    const router = createRouter({
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "/" }),
+        settings.addChildren([
+          createRoute({
+            getParentRoute: () => settings,
+            path: "general",
+            component: () => <CommitOnBlurField onCommit={onCommit} />,
+          }),
+        ]),
+      ]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+    // Let the router match both routes and reproduce the Settings redirect.
+    await using _screen = await render(<RouterProvider router={router} />, { router: false });
+    await router.navigate({ to: "/settings" });
 
     await page.getByRole("textbox", { name: "Instructions" }).fill("Keep titles short");
-    screen.router!.history.back();
+    router.history.back();
 
     await expect.element(page.getByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
     expect(onCommit).toHaveBeenCalledWith("Keep titles short");

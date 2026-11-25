@@ -1,9 +1,10 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { T, useGT } from "gt-react";
 import { XIcon } from "lucide-react";
-import { useRouter } from "@tanstack/react-router";
+import { useMatches, useRouter } from "@tanstack/react-router";
 import {
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type CSSProperties,
@@ -52,21 +53,20 @@ export function AppRouteModal({
   // 1.5rem inset is shorter than the strip.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
   const router = useRouter();
+  const activePathname = useMatches({ select: (matches) => matches.at(-1)?.pathname });
+  const blurBeforeRouteChange = useEffectEvent(() => {
+    // The location can name a pending page, and the resolved location can lag the mounted page.
+    if (router.stores.pendingMatches.get().at(-1)?.pathname === activePathname) return;
+    if (document.activeElement?.matches("input, textarea, [contenteditable]")) {
+      blurFocusedWithin(popupRef.current);
+    }
+  });
   // Leaving the page without closing (Navigation: Back) unmounts a focused field during a
   // commit, when React no longer delivers its blur, so commit-on-blur rows would drop what was
   // typed. Blur text fields before the navigation renders; other controls keep their focus.
   // Not onBeforeNavigate: the router skips it while a past redirect is still recorded.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- router listener that blurs a field before navigation unmounts it
-  useEffect(
-    () =>
-      router.subscribe("onBeforeLoad", ({ pathChanged }) => {
-        const focused = document.activeElement;
-        if (pathChanged && focused?.matches("input, textarea, [contenteditable]")) {
-          blurFocusedWithin(popupRef.current);
-        }
-      }),
-    [router],
-  );
+  useEffect(() => router.subscribe("onBeforeLoad", () => blurBeforeRouteChange()), [router]);
 
   return (
     <DialogPrimitive.Root

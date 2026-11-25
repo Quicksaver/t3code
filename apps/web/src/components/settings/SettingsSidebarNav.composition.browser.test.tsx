@@ -1,19 +1,129 @@
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+  useLocation,
+} from "@tanstack/react-router";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import { AppRouteModal } from "../AppRouteModal";
+import { Input } from "../ui/input";
 import { SidebarProvider } from "../ui/sidebar";
+import { SettingsPageContainer, useSettingsSearchTarget } from "./settingsLayout";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 import { settingsNavGroups, SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
 vi.mock("./useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [
     { id: "theme", title: "Theme", to: "/settings/appearance" },
+    { id: "archive", title: "Archived threads", to: "/settings/archived" },
   ],
   useHasSecretProvidersEnvironment: () => false,
 }));
 vi.mock("../chat/GlobalVoiceInputIndicator", () => ({ GlobalVoiceInputIndicator: () => null }));
+
+function createSettingsSearchRouter(initialPath: string, loadGeneral?: () => Promise<void>) {
+  function SettingsRoute() {
+    const pathname = useLocation({ select: (location) => location.pathname });
+    return (
+      <AppRouteModal label="Settings">
+        <SidebarProvider defaultOpen>
+          <SettingsSidebarNav pathname={pathname} />
+          <Outlet />
+        </SidebarProvider>
+      </AppRouteModal>
+    );
+  }
+
+  function ArchiveSearch() {
+    const target = useSettingsSearchTarget<HTMLInputElement>("archive");
+    return (
+      <Input
+        ref={target}
+        id="archive"
+        nativeInput
+        type="search"
+        aria-label="Search archived conversations"
+      />
+    );
+  }
+
+  const root = createRootRoute({ component: SettingsRoute });
+  return createRouter({
+    routeTree: root.addChildren([
+      createRoute({
+        getParentRoute: () => root,
+        path: "/settings/general",
+        ...(loadGeneral && { loader: loadGeneral }),
+      }),
+      createRoute({
+        getParentRoute: () => root,
+        path: "/settings/archived",
+        component: () => (
+          <SettingsPageContainer>
+            <ArchiveSearch />
+          </SettingsPageContainer>
+        ),
+      }),
+    ]),
+    history: createMemoryHistory({ initialEntries: [initialPath] }),
+  });
+}
+
+it.each(["keyboard", "pointer"])(
+  "keeps focus in Archive after %s search selection",
+  async (input) => {
+    const router = createSettingsSearchRouter("/settings/general");
+    await page.viewport(1280, 800);
+    // Exercise the real navigation and hash removal with both Settings routes registered.
+    await using _screen = await render(<RouterProvider router={router} />, { router: false });
+    await expect.element(page.getByRole("dialog", { name: "Settings" })).toHaveFocus();
+    await page.getByRole("combobox", { name: "Search settings" }).fill("archive");
+    const result = page.getByRole("option", { name: /Archived threads/ });
+    await expect.element(result).toBeVisible();
+    if (input === "keyboard") {
+      await userEvent.keyboard("{Enter}");
+    } else {
+      await result.click();
+    }
+
+    await vi.waitFor(() => expect(router.state.resolvedLocation?.href).toBe("/settings/archived"));
+    await expect
+      .element(page.getByRole("searchbox", { name: "Search archived conversations" }))
+      .toHaveFocus();
+  },
+);
+
+it("keeps focus in Archive when Back cancels a pending route load", async () => {
+  const pendingGeneral = Promise.withResolvers<void>();
+  const router = createSettingsSearchRouter("/settings/archived", () => pendingGeneral.promise);
+  await page.viewport(1280, 800);
+  // Use registered routes so the pending location can differ from the active match.
+  await using _screen = await render(<RouterProvider router={router} />, { router: false });
+  using _load = { [Symbol.dispose]: () => pendingGeneral.resolve() };
+  await expect.element(page.getByRole("dialog", { name: "Settings" })).toHaveFocus();
+
+  void router.navigate({ to: "/settings/general" });
+  await expect
+    .element(page.getByRole("button", { name: "General" }))
+    .toHaveAttribute("aria-current", "page");
+  const search = page.getByRole("searchbox", { name: "Search archived conversations" });
+  const originalSearch = search.element() as HTMLInputElement;
+  originalSearch.focus();
+  await expect.element(search).toHaveFocus();
+  router.history.back();
+
+  await expect
+    .element(page.getByRole("button", { name: "Archive", exact: true }))
+    .toHaveAttribute("aria-current", "page");
+  expect(search.element()).toBe(originalSearch);
+  await expect.element(search).toHaveFocus();
+});
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(

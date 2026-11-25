@@ -16,6 +16,16 @@ Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong 
 | Turn           | One user-to-agent cycle (a run). Provider work can end before checkpoint and diff work settles.   |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
+## Thread lifecycle
+
+| Term            | Meaning                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------- |
+| Settled thread  | A live thread in the Settled section. Unsettling it or starting new work returns it to the active list. |
+| Archived thread | A thread removed from the live list whose history remains in Archive until it is restored or deleted.   |
+| Deleted thread  | A permanently removed thread.                                                                           |
+
+See the [Archive user guide](../user/archive.md).
+
 ## Orchestration
 
 | Term                    | Meaning                                                                                                   |

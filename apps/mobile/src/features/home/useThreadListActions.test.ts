@@ -198,7 +198,7 @@ vi.mock("../../state/threads", () => ({
 import { appAtomRegistry } from "../../state/atom-registry";
 import { composerDraftsAtom } from "../../state/use-composer-drafts";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
-import { useThreadListActions } from "./useThreadListActions";
+import { useArchivedThreadListActions, useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
@@ -302,6 +302,50 @@ describe("thread list operation permissions", () => {
     const deleted = new Promise<void>((resolve) => (state.onArchivedRefresh = resolve));
     confirm!();
     await deleted;
+
+    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
+    expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toEqual(["primary:other"]);
+  });
+
+  it("unarchives with only task permission and blocks a later revoked callback", async () => {
+    const actions = useArchivedThreadListActions();
+    const thread = makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" });
+    await actions.unarchiveThread(thread);
+    expect(state.requests).toEqual([expect.objectContaining({ action: "unarchive" })]);
+    state.requests = [];
+    state.scopes.get(primaryEnvironmentId)!.clear();
+
+    await actions.unarchiveThread(thread);
+
+    expect(state.requests).toEqual([]);
+  });
+
+  it("collects a revoked permission failure for a bulk action without a row alert", async () => {
+    const actions = useArchivedThreadListActions();
+    state.scopes.get(primaryEnvironmentId)!.clear();
+    const onFailure = vi.fn();
+
+    expect(await actions.deleteThread(makeThread(), { reportFailure: false, onFailure })).toBe(
+      "failed",
+    );
+    expect(state.requests).toEqual([]);
+    expect(state.alerts).toEqual([]);
+    expect(onFailure).toHaveBeenCalledWith("This connection cannot change threads.");
+  });
+
+  it("clears archived drafts after delete with only the task permission", async () => {
+    vi.stubEnv("EXPO_OS", "android");
+    const draft = { text: "unsent", attachments: [] };
+    appAtomRegistry.set(composerDraftsAtom, {
+      "primary:thread": draft,
+      "primary:side-chat": draft,
+      "primary:other": draft,
+    });
+    expect(
+      await useArchivedThreadListActions().deleteThread(makeThread(), {
+        deletedSideChatIds: [ThreadId.make("side-chat")],
+      }),
+    ).toBe("succeeded");
 
     expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
     expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toEqual(["primary:other"]);
