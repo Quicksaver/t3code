@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -37,8 +38,13 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { canonicalizeExistingPath } from "../utils/CanonicalPath.ts";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
+import { localWatchRefreshSignals, watchEventPath } from "./VcsLocalWatch.ts";
+import * as VcsProcess from "./VcsProcess.ts";
+
+export { localWatchRefreshSignals, shouldIgnoreWatchEventPath } from "./VcsLocalWatch.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -170,6 +176,18 @@ interface ActiveRemotePoller {
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
+interface ActiveLocalWatcher {
+  readonly fiber: Fiber.Fiber<void, never>;
+  readonly refreshCwds: ReadonlyMap<string, number>;
+}
+
+export function parseWorktreePaths(output: string): readonly string[] {
+  return output
+    .split(/\r?\n/u)
+    .flatMap((line) => (line.startsWith("worktree ") ? [line.slice("worktree ".length)] : []))
+    .filter((worktreePath) => worktreePath.length > 0);
+}
+
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
 }>("t3/vcs/VcsAutoPullPolicy", {
@@ -225,8 +243,10 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly getStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    /** Publishes only a changed status unless `forcePublish` asks subscribers to re-read. */
     readonly refreshLocalStatus: (
       cwd: string,
+      options?: { readonly forcePublish?: boolean },
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     /**
      * For a checkout someone is waiting on. Returns once the new branch is published, so the
@@ -235,7 +255,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshAfterCheckout: (cwd: string) => Effect.Effect<void>;
     readonly refreshStatus: (
       cwd: string,
-      options?: { readonly localOnly?: boolean },
+      options?: { readonly localOnly?: boolean; readonly refreshUpstream?: boolean },
     ) => Effect.Effect<VcsRefreshStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
@@ -264,6 +284,7 @@ export const make = Effect.gen(function* () {
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const vcsProcess = yield* Effect.serviceOption(VcsProcess.VcsProcess);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
@@ -334,14 +355,7 @@ export const make = Effect.gen(function* () {
   // Upstream details the turn-end refreshLocalStatus just read, handed once to the PR lookup that
   // follows it so the same no-fetch read is not repeated. Any remote write in between drops them.
   const upstreamReads = new Map<string, GitVcsDriver.GitRemoteStatusDetails>();
-  const localRefreshResults = new Map<
-    string,
-    {
-      readonly startedAt: number;
-      readonly local: VcsStatusLocalResult;
-      readonly includesBranchChanges: boolean;
-    }
-  >();
+  const localRefreshStarts = new Map<string, number>();
 
   // Keep watched snapshots and remote operations coherent until their consumers finish.
   const evictExcessStatuses = (cache: Map<string, CachedVcsStatus>, retainedCwd?: string) => {
@@ -356,7 +370,7 @@ export const make = Effect.gen(function* () {
       cache.delete(candidate);
       // A queued caller can read git again. Keep the monotonic request counter so it cannot
       // mistake an older result for a later request.
-      localRefreshResults.delete(candidate);
+      localRefreshStarts.delete(candidate);
       upstreamReads.delete(candidate);
     }
     return cache;
@@ -372,6 +386,7 @@ export const make = Effect.gen(function* () {
     next.set(cwd, status);
     return evictExcessStatuses(next, cwd);
   };
+  const watchersRef = yield* SynchronizedRef.make(new Map<string, ActiveLocalWatcher>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -419,7 +434,7 @@ export const make = Effect.gen(function* () {
       cwd: string,
       read: { readonly local: VcsStatusLocalResult; readonly includesBranchChanges: boolean },
       observation: number,
-      options?: { publish?: boolean },
+      options?: { publish?: boolean; forcePublish?: boolean },
     ) {
       const { local, includesBranchChanges } = read;
       const nextLocal = {
@@ -431,7 +446,10 @@ export const make = Effect.gen(function* () {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
         return [
-          [previous.local?.fingerprint !== nextLocal.fingerprint, previous.remote !== remote],
+          [
+            options?.forcePublish === true || previous.local?.fingerprint !== nextLocal.fingerprint,
+            previous.remote !== remote,
+          ],
           retainCachedStatus(cache, cwd, { local: nextLocal, remote }),
         ] as const;
       });
@@ -561,26 +579,41 @@ export const make = Effect.gen(function* () {
   }, Effect.scoped);
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string) {
+    function* (cwd: string, options?: { forcePublish?: boolean }) {
       const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
       localRefreshRequests.set(cwd, requestedAt);
       return yield* localRefreshLocks.withLock(
         cwd,
         Effect.gen(function* () {
-          const shared = localRefreshResults.get(cwd);
-          if (
-            shared !== undefined &&
-            shared.startedAt >= requestedAt &&
-            (shared.includesBranchChanges || !wantsBranchChanges(cwd))
-          ) {
-            return shared.local;
+          const sharedStartedAt = localRefreshStarts.get(cwd);
+          if (sharedStartedAt !== undefined && sharedStartedAt >= requestedAt) {
+            const local = (yield* getCachedStatus(cwd))?.local;
+            const branch = branches.get(cwd);
+            if (
+              local &&
+              (local.includesBranchChanges || !wantsBranchChanges(cwd)) &&
+              (branch === undefined ||
+                (branch.refName === local.value.refName && branch.isRepo === local.value.isRepo))
+            ) {
+              if (options?.forcePublish) {
+                yield* PubSub.publish(changesPubSub, {
+                  cwd,
+                  event: { _tag: "localUpdated", local: local.value },
+                });
+              }
+              return local.value;
+            }
           }
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
           const observation = ++branchObservation;
           const read = yield* readLocalStatus(cwd);
-          localRefreshResults.set(cwd, { startedAt, ...read });
-          return yield* updateCachedLocalStatus(cwd, read, observation, { publish: true });
+          const local = yield* updateCachedLocalStatus(cwd, read, observation, {
+            publish: true,
+            forcePublish: options?.forcePublish === true,
+          });
+          localRefreshStarts.set(cwd, startedAt);
+          return local;
         }),
       );
     },
@@ -588,10 +621,10 @@ export const make = Effect.gen(function* () {
 
   const refreshLocalStatus: VcsStatusBroadcaster["Service"]["refreshLocalStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshLocalStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     upstreamReads.delete(cwd);
-    const local = yield* refreshLocalStatusCore(cwd);
+    const local = yield* refreshLocalStatusCore(cwd, options);
     const cached = yield* getCachedStatus(cwd);
     // Divergence is local Git data; a slow forge lookup must not delay turn-end updates.
     if (cached?.remote?.value?.hasUpstream) {
@@ -765,11 +798,17 @@ export const make = Effect.gen(function* () {
   });
 
   const refreshRemoteAndLocalTotals = Effect.fn("VcsStatusBroadcaster.refreshRemoteAndLocalTotals")(
-    function* (cwd: string, policyCwd: string, refsBeforeLocalRead: string | null) {
+    function* (
+      cwd: string,
+      policyCwd: string,
+      refsBeforeLocalRead: string | null,
+      options?: { readonly refreshUpstream?: boolean },
+    ) {
       return yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
-          const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
+          const refreshUpstream =
+            options?.refreshUpstream !== false && !Duration.isZero(yield* automaticFetchInterval);
           // Bump the PR lookup epoch after earlier remote writers have finished.
           yield* workflow.invalidateStatus(cwd);
           const { remote: remoteRead } = yield* readRemoteStatus(cwd, { refreshUpstream });
@@ -818,7 +857,12 @@ export const make = Effect.gen(function* () {
     }
     const refsBeforeLocalRead = yield* workflow.readStatusRefreshRefs(cwd);
     yield* refreshLocalStatusCore(cwd);
-    const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    const { status, refs } = yield* refreshRemoteAndLocalTotals(
+      cwd,
+      rawCwd,
+      refsBeforeLocalRead,
+      options,
+    );
     return withRefsDigest(
       status,
       refs === null ? null : yield* workflow.readRefSnapshot(cwd, refs),
@@ -1059,7 +1103,10 @@ export const make = Effect.gen(function* () {
   const shareQueuedRefreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
   )(function* (rawCwd, options) {
-    if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
+    // Queued follow-ups fetch upstream, so a caller that just fetched reads without joining them.
+    if (options?.localOnly || options?.refreshUpstream === false) {
+      return yield* refreshStatus(rawCwd, options);
+    }
     const requested = yield* Deferred.make<VcsRefreshStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
@@ -1103,7 +1150,7 @@ export const make = Effect.gen(function* () {
           }
           const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
           // HEAD cannot certify working-tree totals, even when it has not moved.
-          localRefreshResults.delete(cwd);
+          localRefreshStarts.delete(cwd);
           yield* workflow.invalidateLocalStatus(cwd);
           yield* Ref.update(cacheRef, (cache) => {
             const previous = cache.get(cwd);
@@ -1253,6 +1300,175 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // Watchers key on the native canonical path: Git prints canonical worktree paths while a
+  // realpath can keep the caller's alias spelling or casing on Windows, so a direct subscription
+  // and a sibling registration for the same directory must resolve to one watcher.
+  const canonicalWatchPath = (watchPath: string) => canonicalizeExistingPath(fs, watchPath);
+
+  const worktreeWatchPaths = Effect.fn("VcsStatusBroadcaster.worktreeWatchPaths")(function* (
+    cwd: string,
+    rootWatchPath: string,
+  ) {
+    if (Option.isNone(vcsProcess)) return [];
+    const result = yield* vcsProcess.value
+      .run({
+        operation: "VcsStatusBroadcaster.worktrees",
+        command: "git",
+        args: ["worktree", "list", "--porcelain"],
+        cwd,
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 1_000_000,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (result === null || result.exitCode !== 0) return [];
+    const watchPaths = yield* Effect.forEach(parseWorktreePaths(result.stdout), (worktreePath) =>
+      Effect.gen(function* () {
+        const watchPath = yield* canonicalWatchPath(worktreePath);
+        if (watchPath === rootWatchPath) return null;
+        const exists = yield* fs.exists(watchPath).pipe(Effect.orElseSucceed(() => false));
+        return exists ? watchPath : null;
+      }),
+    );
+    return [...new Set(watchPaths.filter((watchPath): watchPath is string => watchPath !== null))];
+  });
+
+  const makeLocalWatchLoop = (watchCwd: string) =>
+    localWatchRefreshSignals(
+      fs.watch(watchCwd, { recursive: true }).pipe(
+        Stream.map((event) => watchEventPath(path, watchCwd, event.path)),
+        Stream.filter((relativePath): relativePath is string => relativePath !== null),
+      ),
+      (relativePaths) =>
+        Option.match(vcsProcess, {
+          onNone: () => Effect.succeed(true),
+          onSome: (process) =>
+            process
+              .run({
+                operation: "VcsStatusBroadcaster.watch.checkIgnore",
+                command: "git",
+                args: ["check-ignore", "-z", "--stdin"],
+                cwd: watchCwd,
+                stdin: `${relativePaths.join("\0")}\0`,
+                allowNonZeroExit: true,
+                timeoutMs: 5_000,
+                maxOutputBytes: 1_000_000,
+              })
+              .pipe(
+                Effect.map((result) => {
+                  if (result.exitCode !== 0) return true;
+                  const ignoredPaths = new Set(
+                    result.stdout.split("\0").filter((ignoredPath) => ignoredPath.length > 0),
+                  );
+                  return relativePaths.some((relativePath) => !ignoredPaths.has(relativePath));
+                }),
+                Effect.orElseSucceed(() => true),
+              ),
+        }),
+    ).pipe(
+      Stream.runForEach(() =>
+        Effect.gen(function* () {
+          const watchers = yield* SynchronizedRef.get(watchersRef);
+          const refreshCwds = watchers.get(watchCwd)?.refreshCwds;
+          if (!refreshCwds) return;
+          yield* Effect.forEach(
+            refreshCwds.keys(),
+            (refreshCwd) =>
+              refreshLocalStatusCore(refreshCwd, { forcePublish: true }).pipe(
+                Effect.ignoreCause({ log: true }),
+              ),
+            { concurrency: "unbounded", discard: true },
+          );
+        }),
+      ),
+      Effect.ignoreCause({ log: true }),
+    );
+
+  const retainLocalWatcher = Effect.fn("VcsStatusBroadcaster.retainLocalWatcher")(function* (
+    watchCwd: string,
+    refreshCwd: string,
+  ) {
+    yield* SynchronizedRef.modifyEffect(watchersRef, (activeWatchers) => {
+      const existing = activeWatchers.get(watchCwd);
+      const refreshCwds = new Map(existing?.refreshCwds);
+      refreshCwds.set(refreshCwd, (refreshCwds.get(refreshCwd) ?? 0) + 1);
+      const fiber =
+        existing && existing.fiber.pollUnsafe() === undefined
+          ? Effect.succeed(existing.fiber)
+          : makeLocalWatchLoop(watchCwd).pipe(Effect.forkIn(broadcasterScope));
+      return fiber.pipe(
+        Effect.map((fiber) => {
+          const nextWatchers = new Map(activeWatchers);
+          nextWatchers.set(watchCwd, { fiber, refreshCwds });
+          return [undefined, nextWatchers] as const;
+        }),
+      );
+    });
+  });
+
+  const releaseLocalWatcher = Effect.fn("VcsStatusBroadcaster.releaseLocalWatcher")(function* (
+    watchCwd: string,
+    refreshCwd: string,
+  ) {
+    const watcherToInterrupt = yield* SynchronizedRef.modify(watchersRef, (activeWatchers) => {
+      const existing = activeWatchers.get(watchCwd);
+      if (!existing) return [null, activeWatchers] as const;
+      const refreshCwds = new Map(existing.refreshCwds);
+      const count = refreshCwds.get(refreshCwd) ?? 0;
+      if (count > 1) refreshCwds.set(refreshCwd, count - 1);
+      else refreshCwds.delete(refreshCwd);
+      const nextWatchers = new Map(activeWatchers);
+      if (refreshCwds.size > 0) {
+        nextWatchers.set(watchCwd, { ...existing, refreshCwds });
+        return [null, nextWatchers] as const;
+      }
+      nextWatchers.delete(watchCwd);
+      return [existing.fiber, nextWatchers] as const;
+    });
+
+    if (watcherToInterrupt) {
+      yield* Fiber.interrupt(watcherToInterrupt).pipe(Effect.ignore);
+    }
+  });
+
+  const retainLocalWatchers = (watchCwds: ReadonlyArray<string>, refreshCwd: string) =>
+    Effect.forEach(
+      watchCwds,
+      (watchCwd) =>
+        Effect.acquireRelease(retainLocalWatcher(watchCwd, refreshCwd), () =>
+          releaseLocalWatcher(watchCwd, refreshCwd),
+        ),
+      { discard: true },
+    );
+
+  // Only the Version Control panel lists sibling worktrees, so other status subscribers skip their
+  // watchers and the refresh plus forced publish that each sibling edit costs. The panel announces
+  // itself through its `git-refs` activity scope, often after this subscription already exists
+  // because it shares the status subscription that other surfaces opened for the cwd.
+  const retainSiblingWatchersOnPanelDemand = Effect.fn(
+    "VcsStatusBroadcaster.retainSiblingWatchersOnPanelDemand",
+  )(function* (cwd: string, rootWatchPath: string, demandCwd: string) {
+    const streamScope = yield* Scope.Scope;
+    const panelScope = { type: "git-refs", cwd: demandCwd } as const;
+    let siblingScope: Scope.Closeable | null = null;
+    const followPanelDemand = Effect.gen(function* () {
+      const hasPanelDemand = yield* backgroundPolicy.hasDemand(panelScope);
+      if (hasPanelDemand === (siblingScope !== null)) return;
+      if (siblingScope !== null) {
+        const releasedScope = siblingScope;
+        siblingScope = null;
+        return yield* Scope.close(releasedScope, Exit.void);
+      }
+      const retainedScope = yield* Scope.fork(streamScope);
+      siblingScope = retainedScope;
+      const siblingCwds = yield* worktreeWatchPaths(cwd, rootWatchPath);
+      yield* retainLocalWatchers(siblingCwds, cwd).pipe(Scope.provide(retainedScope));
+    });
+    const { changes } = yield* backgroundPolicy.subscribe;
+    yield* followPanelDemand;
+    yield* Stream.runForEach(changes, () => followPanelDemand).pipe(Effect.forkScoped);
+  });
+
   const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input) =>
     Stream.unwrap(
       Effect.gen(function* () {
@@ -1273,6 +1489,9 @@ export const make = Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(changesPubSub);
         // Watch before reading so a checkout in between still publishes.
         yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
+        const watchPath = yield* canonicalWatchPath(cwd);
+        yield* retainLocalWatchers([watchPath], cwd);
+        yield* retainSiblingWatchersOnPanelDemand(cwd, watchPath, input.cwd);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;

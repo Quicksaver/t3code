@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import type * as DateTime from "effect/DateTime";
 
 import {
+  TrimmedString,
   TrimmedNonEmptyString,
   VcsProcessExitError,
   type SourceControlRepositoryVisibility,
@@ -228,6 +229,22 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   }
 }
 
+export class GitLabAvatarDecodeError extends Schema.TaggedError<GitLabAvatarDecodeError>()(
+  "GitLabAvatarDecodeError",
+  {
+    ...gitLabCliDecodeErrorContext,
+    operation: Schema.Literal("getCommitAvatarUrl"),
+  },
+) {
+  get detail(): string {
+    return "GitLab CLI returned invalid avatar JSON.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespaceDecodeError>()(
   "GitLabNamespaceDecodeError",
   {
@@ -272,6 +289,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestListDecodeError,
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
+  GitLabAvatarDecodeError,
   GitLabNamespaceDecodeError,
   GitLabMergeRequestBodyReadError,
 ]);
@@ -317,8 +335,9 @@ export class GitLabCli extends Context.Service<
 
     readonly listMergeRequests: (input: {
       readonly cwd: string;
-      readonly headSelector: string;
+      readonly headSelector?: string;
       readonly source?: SourceControlProvider.SourceControlRefSelector;
+      readonly repository?: string;
       readonly state: "open" | "closed" | "merged" | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
@@ -332,6 +351,12 @@ export class GitLabCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
     }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
+
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly email: string;
+      readonly providerBaseUrl: string;
+    }) => Effect.Effect<string | null, GitLabCliError>;
 
     readonly createRepository: (input: {
       readonly cwd: string;
@@ -386,6 +411,10 @@ const decodeGitLabProjectPath = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ path_with_namespace: TrimmedNonEmptyString })),
 );
 
+const RawGitLabAvatarSchema = Schema.Struct({
+  avatar_url: Schema.optional(Schema.NullOr(TrimmedString)),
+});
+
 const RawGitLabNamespaceSchema = Schema.Struct({
   id: Schema.Number,
 });
@@ -396,6 +425,7 @@ const decodeGitLabRepositoryCloneUrls = Schema.decodeEffect(
 const decodeGitLabDefaultBranch = Schema.decodeEffect(
   Schema.fromJsonString(RawGitLabDefaultBranchSchema),
 );
+const decodeGitLabAvatar = Schema.decodeEffect(Schema.fromJsonString(RawGitLabAvatarSchema));
 const decodeGitLabNamespace = Schema.decodeEffect(Schema.fromJsonString(RawGitLabNamespaceSchema));
 
 function normalizeRepositoryCloneUrls(
@@ -428,10 +458,13 @@ function normalizeHeadSelector(headSelector: string): string {
 }
 
 function sourceRefName(input: {
-  readonly headSelector: string;
+  readonly headSelector?: string;
   readonly source?: SourceControlProvider.SourceControlRefSelector;
-}): string {
-  return input.source?.refName ?? normalizeHeadSelector(input.headSelector);
+}): string | null {
+  return (
+    input.source?.refName ??
+    (input.headSelector === undefined ? null : normalizeHeadSelector(input.headSelector))
+  );
 }
 
 function toSummaryWithOptionalUpdatedAt(
@@ -516,6 +549,14 @@ export const hostOf = (value: string) =>
     .toLowerCase()
     .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
     .replace(/\/.*$/, "");
+
+function gitLabHostname(baseUrl: string): string | null {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return null;
+  }
+}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -637,6 +678,7 @@ export const make = Effect.gen(function* () {
   return GitLabCli.of({
     execute,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
+      const sourceBranch = sourceRefName(input);
       const limit = input.limit ?? 20;
       let pageSize = limit;
       let page = 1;
@@ -648,8 +690,8 @@ export const make = Effect.gen(function* () {
           args: [
             "mr",
             "list",
-            "--source-branch",
-            sourceRefName(input),
+            ...(input.repository ? ["--repo", input.repository] : []),
+            ...(sourceBranch ? ["--source-branch", sourceBranch] : []),
             ...stateArgs(input.state),
             "--per-page",
             String(pageSize),
@@ -763,6 +805,45 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
+      );
+    }),
+    getCommitAvatarUrl: Effect.fn("GitLabCli.getCommitAvatarUrl")(function (input) {
+      const email = input.email.trim();
+      if (!email || !email.includes("@")) {
+        return Effect.succeed(null);
+      }
+      const hostname = gitLabHostname(input.providerBaseUrl);
+      const query = new URLSearchParams({ email }).toString();
+
+      return execute({
+        cwd: input.cwd,
+        args: [
+          "api",
+          ...(hostname && hostname !== "gitlab.com" ? ["--hostname", hostname] : []),
+          `avatar?${query}`,
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitLabAvatar(raw).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitLabAvatarDecodeError({
+                  operation: "getCommitAvatarUrl",
+                  command: "glab",
+                  cwd: input.cwd,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+        // GitLab's official Avatar API may return external avatar-service URLs
+        // such as Gravatar/Libravatar. This is explicit opt-in behavior in the
+        // source-control settings, so pass through the provider response.
+        Effect.map((avatar) => {
+          const avatarUrl = avatar.avatar_url?.trim();
+          return avatarUrl && avatarUrl.length > 0 ? avatarUrl : null;
+        }),
       );
     }),
     createRepository: Effect.fn("GitLabCli.createRepository")(function (input) {

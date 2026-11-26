@@ -65,6 +65,7 @@ interface RightPanelActionsInput {
   readonly pullRequestsSurfaceAvailable: boolean;
   readonly gitCwd: string | null;
   readonly activeProjectCwd: string | null;
+  readonly activeFileCwd?: string | undefined;
   readonly onDiffPanelOpen: (() => void) | undefined;
 }
 
@@ -169,7 +170,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
   const openFileSurface = (relativePath: string) => {
     if (!activeThreadRef || !activeProject) return;
-    useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    useRightPanelStore
+      .getState()
+      .openFile(activeThreadRef, relativePath, undefined, input.activeFileCwd);
   };
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {

@@ -90,6 +90,7 @@ export function fakeSourceControlProvider(
     getRepositoryCloneUrls: unexpected(kind, "getRepositoryCloneUrls"),
     createRepository: unexpected(kind, "createRepository"),
     getDefaultBranch: unexpected(kind, "getDefaultBranch"),
+    getCommitAvatarUrl: unexpected(kind, "getCommitAvatarUrl"),
     checkoutChangeRequest: unexpected(kind, "checkoutChangeRequest"),
     ...overrides,
   };

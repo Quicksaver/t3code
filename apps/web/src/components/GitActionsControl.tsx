@@ -37,6 +37,7 @@ import {
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
+  GitBranchIcon,
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
@@ -159,6 +160,8 @@ interface GitActionsViewProps {
   showChanges?: boolean;
   onOpenChanges?: () => void;
   workspaceMutationId?: string | null;
+  /** Opens the Version Control surface. Absent when the surface is unavailable. */
+  onOpenSourceControl?: () => void;
 }
 
 interface GitActionsControlProps extends GitActionsViewProps {
@@ -1006,12 +1009,14 @@ function CheckoutGitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
+  onOpenSourceControl,
 }: GitActionsControlProps) {
   const gt = useGT();
   const messages = useMessages();
   const progressLabelId = useId();
   const gitCwd = target?.cwd ?? null;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
+  const changesAnchorRef = useRef<HTMLDivElement | null>(null);
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const canWriteSourceControl = useEnvironmentScope(
     activeEnvironmentId,
@@ -1725,67 +1730,101 @@ function CheckoutGitActionsControl({
       )}
 
       {showChanges && isRepo && !quietEmptyDraft ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <ThreadDetailsControl
-                type="button"
-                variant="ghost"
-                size="sm"
-                part="row"
-                disabled={!onOpenChanges}
-                onClick={onOpenChanges}
-              />
-            }
-          >
-            <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-            <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-              <span className="shrink-0">
-                <T>Changes</T>
-              </span>
-              {changesBaseLabel ? (
-                <SharedTooltipTrigger
-                  render={
-                    <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
-                  }
-                  label={changesBaseLabel}
-                  className="max-w-96 break-words"
-                >
-                  {changesBaseLabel}
-                </SharedTooltipTrigger>
-              ) : null}
-              <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
-                <span
-                  className={
-                    changesTotals.insertions
-                      ? "text-diff-addition-foreground"
-                      : "text-muted-foreground"
-                  }
-                >
-                  +{formatDiffCount(changesTotals.insertions)}
+        <div ref={changesAnchorRef} className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  part="primary"
+                  disabled={!onOpenChanges}
+                  onClick={onOpenChanges}
+                />
+              }
+            >
+              <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span className="shrink-0">
+                  <T>Changes</T>
                 </span>
-                <span
-                  className={
-                    changesTotals.deletions
-                      ? "text-diff-deletion-foreground"
-                      : "text-muted-foreground"
-                  }
-                >
-                  -{formatDiffCount(changesTotals.deletions)}
+                {changesBaseLabel ? (
+                  <SharedTooltipTrigger
+                    render={
+                      <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
+                    }
+                    label={changesBaseLabel}
+                    className="max-w-96 break-words"
+                  >
+                    {changesBaseLabel}
+                  </SharedTooltipTrigger>
+                ) : null}
+                <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+                  <span
+                    className={
+                      changesTotals.insertions
+                        ? "text-diff-addition-foreground"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    +{formatDiffCount(changesTotals.insertions)}
+                  </span>
+                  <span
+                    className={
+                      changesTotals.deletions
+                        ? "text-diff-deletion-foreground"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    -{formatDiffCount(changesTotals.deletions)}
+                  </span>
                 </span>
               </span>
-            </span>
-          </TooltipTrigger>
-          {changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
-            // Base UI fixes the popup width on open; remeasure when the breakdown changes.
-            <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
-              <ChangeBreakdownGrid
-                breakdown={changesBreakdown}
-                total={{ additions: changesTotals.insertions, deletions: changesTotals.deletions }}
-              />
-            </TooltipPopup>
-          ) : null}
-        </Tooltip>
+            </TooltipTrigger>
+            {changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
+              // Base UI fixes the popup width on open; remeasure when the breakdown changes.
+              <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
+                <ChangeBreakdownGrid
+                  breakdown={changesBreakdown}
+                  total={{
+                    additions: changesTotals.insertions,
+                    deletions: changesTotals.deletions,
+                  }}
+                />
+              </TooltipPopup>
+            ) : null}
+          </Tooltip>
+          <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+          <Menu>
+            <MenuTrigger
+              render={
+                <ThreadDetailsControl
+                  aria-label={gt("Changes options")}
+                  size="sm"
+                  variant="ghost"
+                  part="secondary"
+                />
+              }
+            >
+              <ChevronDownIcon aria-hidden="true" className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
+            </MenuTrigger>
+            <MenuPopup align="end" anchor={changesAnchorRef} className="w-(--anchor-width)">
+              <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
+                <FileDiffIcon aria-hidden />
+                <MenuItemLabel>
+                  <T>Changes</T>
+                </MenuItemLabel>
+              </MenuItem>
+              <MenuItem disabled={!onOpenSourceControl} onClick={onOpenSourceControl}>
+                <GitBranchIcon aria-hidden />
+                <MenuItemLabel>
+                  <T>Version Control</T>
+                </MenuItemLabel>
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        </div>
       ) : null}
 
       <Dialog

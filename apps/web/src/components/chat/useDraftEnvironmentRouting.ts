@@ -1,6 +1,8 @@
 import { msg, useGT } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
+import { retargetOpenSourceControlSurface } from "../ChatView.sourceControl";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
 import { useScratchProject } from "../../hooks/useScratchProject";
@@ -48,6 +50,7 @@ import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 interface DraftEnvironmentRoutingInput {
+  readonly activeThreadRef: ScopedThreadRef | null;
   readonly draftId: DraftId | null;
   readonly draftThread: DraftSessionState | null;
   readonly envLocked: boolean;
@@ -498,6 +501,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
       }
       carryFanoutSelections(currentDraft, target.environmentId);
+      if (input.activeThreadRef)
+        retargetOpenSourceControlSurface({
+          currentThreadRef: input.activeThreadRef,
+          nextThreadRef: scopeThreadRef(target.environmentId, input.activeThreadRef.threadId),
+        });
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(destination, projectGroupingSettings),

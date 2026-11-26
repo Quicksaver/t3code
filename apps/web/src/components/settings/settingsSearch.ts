@@ -1318,6 +1318,23 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
+    id: "all-remotes-fetch-interval",
+    title: msg("Version Control all remotes interval"),
+    to: "/settings/maintenance",
+    targetId: "background-activity",
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "commit-author-avatars",
+    title: msg("Commit author avatars"),
+    to: "/settings/source-control",
+    // Provider rows are discovery-dependent and may be collapsed.
+    targetId: "source-control",
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "source-control-writing-style",
     title: msg("Commit and pull request writing"),
     to: "/settings/source-control",

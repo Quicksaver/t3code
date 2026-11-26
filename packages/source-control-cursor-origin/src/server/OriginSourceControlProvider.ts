@@ -141,13 +141,21 @@ export const make = Effect.gen(function* () {
       },
     ),
 
+    getCommitAvatarUrl: Effect.fn("OriginSourceControlProvider.getCommitAvatarUrl")(function () {
+      return Effect.succeed(null);
+    }),
+
     listChangeRequests: Effect.fn("OriginSourceControlProvider.listChangeRequests")(
       function* (input) {
         const repository = yield* cli.resolveRepository(input);
-        const head = SourceControlProvider.sourceBranch(input);
+        const head =
+          input.source?.refName ??
+          (input.headSelector === undefined
+            ? undefined
+            : SourceControlProvider.sourceBranch({ headSelector: input.headSelector }));
         const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
         const query = new URLSearchParams({
-          head,
+          ...(head === undefined ? {} : { head }),
           state: input.state,
           pageSize: String(limit),
           sortBy: "updated",
@@ -163,7 +171,13 @@ export const make = Effect.gen(function* () {
         return (page.pullRequests ?? []).map(toOriginChangeRequest);
       },
       (effect, input) =>
-        effect.pipe(mapError("listChangeRequests", input.cwd, { reference: input.headSelector })),
+        effect.pipe(
+          mapError(
+            "listChangeRequests",
+            input.cwd,
+            input.headSelector === undefined ? {} : { reference: input.headSelector },
+          ),
+        ),
     ),
 
     getChangeRequest: Effect.fn("OriginSourceControlProvider.getChangeRequest")(

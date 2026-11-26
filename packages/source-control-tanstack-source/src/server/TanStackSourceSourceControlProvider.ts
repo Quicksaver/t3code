@@ -28,6 +28,7 @@ import { parseTanStackSourceAuthStatus } from "./tanStackSourceAuthStatus.ts";
 import * as TanStackSourceCredentials from "./TanStackSourceCredentials.ts";
 import * as Hosts from "./tanStackSourceHosts.ts";
 import * as Json from "./tanStackSourceJson.ts";
+import * as Listing from "./tanStackSourceListing.ts";
 
 const HOST = TanStackSource.TANSTACK_SOURCE_HOST;
 /** Pull requests from one branch name, across forks, read in full when looking one up. */
@@ -365,25 +366,68 @@ export const make = Effect.gen(function* () {
     kind: TanStackSource.definition.kind,
     repositoryNameFromRemoteUrl: (url) => Hosts.parseTanStackSourceRemote(url)?.repository ?? null,
     getChangeRequest: getPull,
+    getCommitAvatarUrl: Effect.fn("TanStackSourceSourceControlProvider.getCommitAvatarUrl")(() =>
+      Effect.succeed(null),
+    ),
     listChangeRequests: Effect.fn("TanStackSourceSourceControlProvider.listChangeRequests")(
       function* (input) {
         const target = yield* resolveTarget("listChangeRequests", input);
-        const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const branch = SourceControlProvider.sourceBranch(input);
+        const source =
+          input.source ??
+          (input.headSelector === undefined
+            ? undefined
+            : SourceControlProvider.parseSourceControlOwnerRef(input.headSelector));
+        const branch = source?.refName ?? input.headSelector?.trim();
         const limit = input.limit ?? 20;
-        const query = new URLSearchParams({ head: branch });
-        if (input.state !== "all") query.set("state", input.state);
-        const page = yield* read(
-          "listChangeRequests",
-          input.cwd,
-          { host: target.host, path: `/repos/${target.repository}/pulls?${query}` },
-          Json.SourcePulls,
-        );
-        // List rows name neither the base nor the head's repository, so matches are read in full
-        // and the limit counts only those whose head is the one asked for.
-        const matches = page.items
-          .filter((pull) => Json.headBranchName(pull.head) === branch)
-          .slice(0, MAX_BRANCH_MATCHES);
+        if (limit <= 0) return [];
+        const readPage = (query: URLSearchParams) =>
+          read(
+            "listChangeRequests",
+            input.cwd,
+            { host: target.host, path: `/repos/${target.repository}/pulls?${query}` },
+            Json.SourcePulls,
+          );
+        const matches = yield* Effect.gen(function* () {
+          if (branch !== undefined) {
+            const query = new URLSearchParams({ head: branch });
+            if (input.state !== "all") query.set("state", input.state);
+            const page = yield* readPage(query);
+            return page.items
+              .filter((pull) => Json.headBranchName(pull.head) === branch)
+              .slice(0, MAX_BRANCH_MATCHES);
+          }
+
+          const states =
+            input.state === "all"
+              ? ["open", "closed"]
+              : input.state === "open"
+                ? ["open"]
+                : ["closed"];
+          const rows: Json.SourcePull[] = [];
+          const seenCursors = new Set<string>();
+          let cursor: string | undefined;
+          do {
+            const page = yield* Listing.readMerged({
+              states,
+              cursor,
+              limit: limit - rows.length,
+              maxPages: 5,
+              readPage: (state, page) => {
+                const query = new URLSearchParams({ state });
+                if (page !== null) query.set("cursor", page);
+                return readPage(query);
+              },
+              keep: (row) => input.state === "all" || row.state === input.state,
+            });
+            rows.push(...page.items);
+            if (page.next === null || seenCursors.has(page.next)) break;
+            seenCursors.add(page.next);
+            cursor = page.next;
+          } while (rows.length < limit);
+          return rows;
+        });
+
+        // List rows omit both the base and the head's repository.
         const details = yield* Effect.forEach(
           matches,
           (pull) => readPull("listChangeRequests", input.cwd, target, pull.number),

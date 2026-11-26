@@ -35,6 +35,26 @@ A turn's diff shows only that turn's own edits, commits, and conflict fixes—ex
 - **Commit links**: Links to local commits open in the Diff pane (follows **Settings → Diffs → Open pull requests in T3 Code**; `Cmd/Ctrl+Click` opens in browser).
 - **Multi-repo projects**: Use the repository picker in the Diff pane and expand per-repo rows in thread details. See [Projects with several repositories](./multi-repo-projects.md).
 
+## Use the Version Control panel
+
+The web and desktop Version Control panel shows a repository's working tree changes, its worktrees, local branches with pending commits or pull requests, remotes, and stashes. On web and desktop, open it from the right panel's surface launcher, press `V` while the launcher is open, or choose **Version Control** from the dropdown beside **Changes** in the thread details panel. When the same project is open in several connected environments, the panel combines their items in one list. Hover over an item to see which environments have it. Project actions remain available from the thread details panel.
+
+Select files to commit or stash only those files. Branch sync buttons push or pull as needed; hold Option or Alt to fetch first. Hold Shift to force the sync: the panel asks for confirmation first and names what is overwritten, either the remote branch or your local commits.
+
+## Control background remote refreshes
+
+Choose **Advanced** under **Settings > Maintenance > Background activity** to configure two separate refresh intervals:
+
+- **Git fetch interval** refreshes the current branch's upstream status.
+- **Version Control all remotes interval** refreshes every remote shown by an open Version Control panel. Balanced mode uses five minutes, Performance uses one minute, and Battery saver disables it.
+
+Automatic all-remotes refreshes follow the shared Background Activity rules for low-power mode,
+battery state, and active clients. A locked host does not pause them while a client is actively
+viewing that repository's panel, so remote use of a locked machine keeps refs fresh. Set the
+all-remotes interval to `0` to prevent
+opening, focusing, or leaving the Version Control panel open from fetching remotes. The panel still
+refreshes local repository state, and its explicit **Fetch** action remains available.
+
 ## Create, review, and merge pull requests
 
 - **Create**: Commit, push, and open PRs from a thread's Git actions. Configure AI-generated commit/PR writing style in **Settings → Source control & issues → Commits & pull requests** (**Repository conventions** or **Custom instructions**).
