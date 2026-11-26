@@ -3,7 +3,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
+import { seedUpstreamLedger } from "../upstreamMigrationLedger.testFixtures.ts";
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 const updatedAt = "2026-09-01T00:00:00.000Z";
@@ -13,7 +13,7 @@ layer("075_SubagentDeliveryState", (it) => {
   it.effect("backfills delivery state without failing on an unreadable payload", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 74 });
+      yield* seedUpstreamLedger(74);
       const payloads = [
         ["delivered", deliveredPayload],
         ["unreadable", ""],
@@ -30,7 +30,7 @@ layer("075_SubagentDeliveryState", (it) => {
         `;
       }
 
-      yield* runMigrations({ toMigrationInclusive: 75 });
+      yield* seedUpstreamLedger(75);
       const rows = yield* sql`
         SELECT subagent_id, completion_delivery_state, payload_json
         FROM orchestration_v2_projection_subagents ORDER BY subagent_id

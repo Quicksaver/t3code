@@ -68,7 +68,7 @@ When tearing down a maintainer-owned worktree, remove its branch from the guard 
 
 **Worktree branch:** `none`
 
-The Windows and Mac databases have recorded the published fork migration IDs 1 through 138 in `effect_sql_migrations`. Preserve every published ID and migration body, including historical lineage, archive and Magi schema, when assembling main. Preserving schema does not restore retired features. Standalone branch migrations must not replace published main IDs. Read installed ledgers read-only and verify upgrades against isolated databases.
+The Windows and Mac databases have recorded the published fork migration IDs 1 through 139 in `effect_sql_migrations`. Preserve every published ID and migration body, including historical lineage, archive and Magi schema, when assembling main. Standalone branch migrations must not replace published main IDs. Read installed ledgers read-only and verify upgrades against isolated databases.
 
 The shared ledger retains the published pre-V2 tail through 68, followed by this canonical main sequence:
 

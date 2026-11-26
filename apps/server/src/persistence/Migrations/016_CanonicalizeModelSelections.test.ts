@@ -57,7 +57,8 @@ layer("016_CanonicalizeModelSelections", (it) => {
         VALUES
           ('thread-session', 'project-codex', 'Session thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
           ('thread-claude', 'project-claude', 'Claude thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
-          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
+          ('thread-codex', 'project-codex', 'Codex thread', 'gpt-5.4', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default'),
+          ('thread-legacy-options', 'project-claude', 'Legacy options thread', 'claude-opus-4-6', NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, 'full-access', 'default')
       `;
           yield* sql`
         INSERT INTO projection_thread_sessions (
@@ -245,6 +246,10 @@ layer("016_CanonicalizeModelSelections", (it) => {
               modelSelection: '{"provider":"codex","model":"gpt-5.4"}',
             },
             {
+              threadId: "thread-legacy-options",
+              modelSelection: '{"provider":"claudeAgent","model":"claude-opus-4-6"}',
+            },
+            {
               threadId: "thread-session",
               modelSelection: '{"provider":"claudeAgent","model":"gpt-5.4"}',
             },
@@ -366,11 +371,11 @@ layer("016_CanonicalizeModelSelections", (it) => {
   );
 });
 
-layer("044_ClearAutomaticProjectModelDefaults", (it) => {
+layer("055_ClearAutomaticProjectModelDefaults", (it) => {
   it.effect("clears create-time seeds and preserves explicit project defaults", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 43 });
+      yield* runMigrations({ toMigrationInclusive: 54 });
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -414,7 +419,7 @@ layer("044_ClearAutomaticProjectModelDefaults", (it) => {
           ('event-explicit-update', 'project', 'project-explicit', 1, 'project.meta-updated', '2026-08-02T00:00:00.000Z', 'command-explicit-update', NULL, 'command-explicit-update', 'client', '{"defaultModelSelection":{"instanceId":"codex","model":"gpt-5.6-sol","options":[{"id":"reasoningEffort","value":"high"}]}}', '{}')
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 44 });
+      yield* runMigrations({ toMigrationInclusive: 55 });
 
       const projects = yield* sql<{
         readonly projectId: string;

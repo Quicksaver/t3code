@@ -15,7 +15,7 @@ layer("100_TurnStartReadIndexes", (it) => {
   it.effect("keeps a user message with a malformed payload migratable", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 99 });
+      yield* runMigrations({ toMigrationInclusive: 118 });
       yield* sql`
         INSERT INTO orchestration_v2_projection_messages (
           message_id, thread_id, role, streaming, created_at, updated_at, payload_json

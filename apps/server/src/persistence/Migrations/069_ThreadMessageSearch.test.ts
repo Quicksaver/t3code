@@ -5,7 +5,14 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { rebuildMessageSearch } from "../../orchestration-v2/messageSearchIndex.ts";
-import { runMigrations } from "../Migrations.ts";
+import { migrationManifest, runMigrations } from "../Migrations.ts";
+
+const messageSearchMigrationId = migrationManifest.find(
+  ([, name]) => name === "ThreadMessageSearch",
+)![0];
+const placeholderExclusionMigrationId = migrationManifest.find(
+  ([, name]) => name === "ExcludeAttachmentPlaceholdersFromSearch",
+)![0];
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
@@ -13,7 +20,7 @@ layer("069_ThreadMessageSearch", (it) => {
   it.effect("backfills what users wrote and agents answered, then follows deletes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 68 });
+      yield* runMigrations({ toMigrationInclusive: messageSearchMigrationId - 1 });
       const insert = (
         id: string,
         role: string,
@@ -61,7 +68,12 @@ it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
   (path) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 68 : 73 });
+      yield* runMigrations({
+        toMigrationInclusive:
+          path === "backfilled"
+            ? messageSearchMigrationId - 1
+            : placeholderExclusionMigrationId - 1,
+      });
       if (path !== "backfilled") {
         // Pre-upgrade triggers indexed user text even when it was an attachment placeholder.
         yield* sql`DROP TRIGGER orchestration_v2_message_search_insert`;
@@ -124,7 +136,9 @@ it.effect.each(["inserted", "updated", "backfilled", "rebuilt"])(
           `;
         }
       }
-      yield* runMigrations({ toMigrationInclusive: path === "backfilled" ? 69 : undefined });
+      yield* runMigrations({
+        toMigrationInclusive: path === "backfilled" ? messageSearchMigrationId : undefined,
+      });
       if (path === "rebuilt") yield* rebuildMessageSearch(sql);
       const indexed = yield* sql<{ readonly messageId: string }>`
         SELECT messages.message_id AS "messageId"
@@ -144,7 +158,7 @@ it.effect.each(["message", "thread"])(
   (corrupt) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 68 });
+      yield* runMigrations({ toMigrationInclusive: messageSearchMigrationId - 1 });
       const timestamp = "2026-09-01T00:00:00.000Z";
       yield* sql`
         INSERT INTO orchestration_v2_projection_threads (
@@ -175,8 +189,7 @@ it.effect.each(["message", "thread"])(
             ('corrupt-user', 'thread-1', 'user', 0, ${timestamp}, ${timestamp}, '{not json')
         `;
       }
-      yield* runMigrations({ toMigrationInclusive: 99 });
-      // Migration 100's index still stops on a damaged user message, a separate fix.
+      yield* runMigrations({ toMigrationInclusive: 118 });
       yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'corrupt-user'`;
       yield* runMigrations();
       const indexed = () =>
