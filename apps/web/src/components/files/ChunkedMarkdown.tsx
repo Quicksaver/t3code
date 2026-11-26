@@ -176,11 +176,13 @@ export function ChunkedMarkdown(props: {
       onCopy={(event) => {
         // Select All only reaches rendered pieces; copying all of it copies the whole file.
         const list = event.currentTarget.firstElementChild;
-        const selection = window.getSelection();
-        if (!list || !selection?.rangeCount) return;
+        if (!list) return;
+        const doc = list.ownerDocument;
+        const selection = doc.getSelection();
+        if (!selection?.rangeCount) return;
         // Chromium's containsNode says false for a list selected through its parent's children.
         const range = selection.getRangeAt(0);
-        const listRange = document.createRange();
+        const listRange = doc.createRange();
         listRange.selectNode(list);
         if (
           range.compareBoundaryPoints(Range.START_TO_START, listRange) > 0 ||

@@ -70,7 +70,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     return event;
   }
 
-  function createHarness() {
+  function createHarness(detached = false) {
     vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
     const resizeTargets = new Map<(entries: { target: Element }[]) => void, Set<Element>>();
@@ -92,6 +92,9 @@ describe("GhosttyTerminalSurface visibility", () => {
       children: TerminalTestElement[] = [];
       private readonly captures = new Set<number>();
 
+      get ownerDocument() {
+        return fakeDocument;
+      }
       setAttribute() {}
       append(...children: TerminalTestElement[]) {
         for (const child of children) child.parentElement = this;
@@ -149,8 +152,11 @@ describe("GhosttyTerminalSurface visibility", () => {
       activeElement: null as TerminalTestElement | null,
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
+      get defaultView() {
+        return window;
+      },
     };
-    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("document", detached ? { activeElement: null } : fakeDocument);
     vi.stubGlobal(
       "window",
       Object.assign(new EventTarget(), {
@@ -165,6 +171,8 @@ describe("GhosttyTerminalSurface visibility", () => {
         matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
       }),
     );
+    // A getter, not an Object.assign value: tests re-stub navigator after creating the harness.
+    Object.defineProperty(window, "navigator", { get: () => navigator, configurable: true });
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -448,17 +456,23 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(reports()).toEqual([]);
   });
 
-  it("reports the blur of an input focused while the surface was still loading", async () => {
-    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
-    const harness = createHarness();
-    const pending = harness.create();
-    harness.mount.children[1]?.focus();
-    const surface = await pending;
+  it.each([
+    ["the main window", false],
+    ["a detached window", true],
+  ] as const)(
+    "reports the blur of an input focused during loading in %s",
+    async (_name, detached) => {
+      vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+      const harness = createHarness(detached);
+      const pending = harness.create();
+      harness.mount.children[1]?.focus();
+      const surface = await pending;
 
-    surface.write("\x1b[?1004h");
-    surface.input.dispatchEvent(new Event("blur"));
-    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[O"]);
-  });
+      surface.write("\x1b[?1004h");
+      surface.input.dispatchEvent(new Event("blur"));
+      expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[O"]);
+    },
+  );
 
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });

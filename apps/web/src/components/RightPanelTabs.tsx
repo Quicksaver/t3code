@@ -167,6 +167,11 @@ export interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
+  /** Present where tabs can move into their own windows (desktop conversations). */
+  detachedSurfaceIds?: ReadonlySet<string>;
+  canDetachSurface?: (surface: RightPanelSurface) => boolean;
+  onDetachSurface?: (surface: RightPanelSurface) => void;
+  onReattachSurface?: (surface: RightPanelSurface) => void;
   onMoveSurfaces?: (surfaceIds: readonly string[], targetId: string) => void;
   onCopyFilePath: (relativePath: string) => void;
   onDuplicateBrowser?: (surface: RightPanelSurface) => void;
@@ -226,6 +231,8 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
 
 type TabContextMenuAction =
   | "open-in-main-view"
+  | "detach"
+  | "reattach"
   | "rename"
   | "copy-path"
   | "duplicate"
@@ -465,7 +472,7 @@ function RightPanelEmptyState(props: {
   );
 }
 
-function surfaceTitle(
+export function surfaceTitle(
   surface: RightPanelSurface,
   sessions: Readonly<Record<string, PreviewSessionSnapshot>>,
   terminalLabelsById: ReadonlyMap<string, string>,
@@ -1217,6 +1224,11 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
     if ((surface.kind === "thread" || surface.kind === "linked-thread") && props.onOpenInMainView) {
       items.push({ id: "open-in-main-view", label: gt("Open in main view") });
     }
+    if (props.detachedSurfaceIds?.has(surface.id)) {
+      if (props.onReattachSurface) items.push({ id: "reattach", label: gt("Move back to panel") });
+    } else if (props.onDetachSurface && props.canDetachSurface?.(surface)) {
+      items.push({ id: "detach", label: gt("Open in new window") });
+    }
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: gt("Rename") });
     if (surface.kind === "file" && surface.attachment === undefined) {
@@ -1273,6 +1285,12 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
         if (surface.kind === "thread" || surface.kind === "linked-thread") {
           props.onOpenInMainView?.(surface);
         }
+        break;
+      case "detach":
+        props.onDetachSurface?.(surface);
+        break;
+      case "reattach":
+        props.onReattachSurface?.(surface);
         break;
       case "rename":
         setRenamingDevice(surface.id);

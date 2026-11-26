@@ -5,7 +5,9 @@ import "~/index.css";
 
 import { render } from "../../../test/render";
 
+import { mirrorCodeViewerElement } from "~/detachedPanels/detachedCustomElements";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { isMacPlatform } from "~/lib/utils";
 
 // The pool starts its workers before showing any code, which can outlast a cold CI browser.
 vi.mock(import("~/components/DiffWorkerPoolProvider"), () => ({
@@ -130,6 +132,55 @@ describe("ReadOnlySourcePreview", () => {
     expect(copiedText(rows()[0]!)).toBeNull();
     document.getSelection()!.setBaseAndExtent(firstText, 4, pre, pre.childNodes.length);
     expect(copiedText(rows()[0]!)).toBeNull();
+  });
+
+  it("renders, copies and seeds Find from a source preview in another window", async () => {
+    await getSyntaxHighlighterPromise("text");
+    const frame = document.body.appendChild(document.createElement("iframe"));
+    using _frame = { [Symbol.dispose]: () => frame.remove() };
+    const view = frame.contentWindow as Window & typeof globalThis;
+    const doc = view.document;
+    mirrorCodeViewerElement(view);
+    doc.head.appendChild(doc.createElement("style")).textContent =
+      ".file-preview-virtualizer { height: 120px; overflow: auto; }";
+    const container = doc.body.appendChild(doc.createElement("div"));
+    container.style.cssText = "display:flex;flex-direction:column;height:300px";
+    await using screen = await render(
+      <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />,
+      { container },
+    );
+    const root = () => screen.container.querySelector("diffs-container")!.shadowRoot!;
+    const rows = () => root().querySelectorAll("[data-line]");
+    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+    expect.soft(root().adoptedStyleSheets[0]).toBeInstanceOf(view.CSSStyleSheet);
+    expect(rows().length).toBeLessThan(LINE_COUNT);
+    doc.getSelection()!.selectAllChildren(root().querySelector("pre")!);
+    expect(copiedText(rows()[0]!)).toBe(text);
+
+    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
+    expect(copiedText(rows()[0]!)).toBe(text);
+
+    const row = rows()[0]!;
+    const selected = row.textContent;
+    doc.getSelection()!.setBaseAndExtent(row, 0, row, row.childNodes.length);
+    row.dispatchEvent(
+      new view.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: !isMacPlatform(view.navigator.platform),
+        metaKey: isMacPlatform(view.navigator.platform),
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      }),
+    );
+    await vi.waitFor(() => {
+      const find = screen.container
+        .querySelector("[data-search-panel]")
+        ?.shadowRoot?.querySelector<HTMLInputElement>("input");
+      expect(find?.value).toBe(selected);
+    });
   });
 
   it.each([

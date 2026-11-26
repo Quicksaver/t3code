@@ -15,7 +15,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
-import { useProject, useQuietThreadShell } from "../../state/entities";
+import { readProject, useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useKnownTerminalSessions } from "../../state/terminalSessions";
@@ -99,26 +99,51 @@ export function useThreadTerminalActions(
   /** place mounts the destination before the server open resolves. */
   const launchTerminal = (input: {
     readonly place: (terminalId: string) => void;
+    readonly destination?: ProjectActionDestination | undefined;
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
     readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
-    if (!threadRef || !canWrite() || !project) return null;
-    const location = input.location ?? defaultLaunchLocation();
+    const launchRef = input.destination
+      ? {
+          environmentId: input.destination.environmentId,
+          threadId: projectActionThreadId(input.destination),
+        }
+      : threadRef;
+    const launchProject = input.destination
+      ? readProject(scopeProjectRef(input.destination.environmentId, input.destination.projectId))
+      : project;
+    const projectCwd = input.destination?.projectCwd ?? launchProject?.workspaceRoot;
+    if (
+      !launchRef ||
+      !launchProject ||
+      !projectCwd ||
+      !readEnvironmentScope(launchRef.environmentId, AuthTerminalOperateScope)
+    ) {
+      return null;
+    }
+    const location =
+      input.location ??
+      (input.destination
+        ? { cwd: input.destination.projectCwd, worktreePath: null }
+        : defaultLaunchLocation());
     if (!location) return null;
-    const terminalId = input.terminalId ?? allocateTerminalId();
+    // This hook tracks sessions for its bound thread, so overridden destinations get a fresh id.
+    const terminalId =
+      input.terminalId ??
+      (input.destination ? nextTerminalId([], randomUUID()) : allocateTerminalId());
     input.place(terminalId);
     const result = openTerminalCommand({
-      environmentId: threadRef.environmentId,
+      environmentId: launchRef.environmentId,
       input: {
-        threadId: threadRef.threadId,
+        threadId: launchRef.threadId,
         terminalId,
         cwd: location.cwd,
         ...(location.worktreePath !== null ? { worktreePath: location.worktreePath } : {}),
         env: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
+          project: { cwd: projectCwd },
           worktreePath: location.worktreePath,
           ...(input.extraEnv ? { extraEnv: input.extraEnv } : {}),
         }),

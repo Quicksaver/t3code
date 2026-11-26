@@ -91,6 +91,14 @@ On web and desktop, subagents, side chats, and [threads on linked machines](./re
 - From a right-panel tab, choose **Open in main view** to promote it.
 - On mobile, they open in the inspector where available, or full screen otherwise.
 
+## Open panel tabs in their own windows
+
+In the desktop app, you can move a right-panel tab, such as a terminal, a browser, a device, Files or a diff, into its own window. Choose **Open in new window** beside the panel's maximize button, or right-click the tab. The tab stays in the panel as a placeholder with **Show window** and **Re-attach**.
+
+A detached window belongs to its thread. It shows while that thread is open and hides when you switch to another thread, a new draft, the Pull Requests page or the Issues page. Settings opens over the thread, so its windows stay visible. When you reopen T3 Code, a thread's windows come back at their last size and position the first time you open that thread. On macOS, a detached window that shows while T3 Code is in full screen opens in its own full-screen space, and macOS switches to it.
+
+Only the tab's own shortcuts work in its window, such as splitting or closing a terminal. Next and Previous Terminal follow the panel's tab and split order and focus the window that holds the destination, opening the docked panel when needed. App shortcuts stay with the main window. Closing the window closes the tab, with the same confirmation as closing it in the panel. Use **Re-attach** or **Move back to panel** to return the tab to the panel. A tab that [`mod+shift+t`](./keybindings.md) reopens comes back in its window. A browser reloads its page when it moves between the panel and a window. Side chats, subagents, linked threads and issues stay in the panel.
+
 ## Side chats
 
 Ask a quick side question about a thread without polluting its history. A side chat starts with the parent thread's context, folder, model, and permissions while the parent keeps working.

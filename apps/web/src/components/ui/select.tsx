@@ -6,6 +6,7 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { usePortalContainer } from "~/components/ui/portalContainer";
 
 const Select = SelectPrimitive.Root;
 
@@ -115,8 +116,9 @@ function SelectPopup({
   matchTriggerWidth?: boolean;
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
 }) {
+  const portalContainer = usePortalContainer();
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Positioner
         align={align}
         alignItemWithTrigger={alignItemWithTrigger}

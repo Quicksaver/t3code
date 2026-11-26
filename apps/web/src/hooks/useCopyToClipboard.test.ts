@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
-import { writePngToClipboard, writeTextToClipboard } from "./useCopyToClipboard";
+import {
+  setClipboardViewResolver,
+  writePngToClipboard,
+  writeTextToClipboard,
+} from "./useCopyToClipboard";
 
 describe("writeTextToClipboard", () => {
   it("reserves plain text even when an extra flavor attempts to replace it", async () => {
@@ -47,6 +51,23 @@ describe("writeTextToClipboard", () => {
     expect(writeText).not.toHaveBeenCalled();
     await expect(writeTextToClipboard("plain")).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith("plain");
+  });
+
+  it("copies through a focused detached window's clipboard", async () => {
+    const mainWriteText = vi.fn().mockResolvedValue(undefined);
+    const detachedWriteText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("window", {});
+    vi.stubGlobal("navigator", { clipboard: { writeText: mainWriteText } });
+    using _resolver = { [Symbol.dispose]: () => setClipboardViewResolver(null) };
+    setClipboardViewResolver(
+      () =>
+        ({ navigator: { clipboard: { writeText: detachedWriteText } } }) as unknown as Window &
+          typeof globalThis,
+    );
+
+    await expect(writeTextToClipboard("#42")).resolves.toBe(true);
+    expect(detachedWriteText).toHaveBeenCalledWith("#42");
+    expect(mainWriteText).not.toHaveBeenCalled();
   });
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -760,10 +760,7 @@ export default function FileBrowserPanel({
             if (!path || entryKindsRef.current.get(path) !== "file") return;
             const clickedSelectedRow = event.nativeEvent
               .composedPath()
-              .some(
-                (node) =>
-                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
-              );
+              .some((node) => (node as Partial<Element>).getAttribute?.("data-item-path") === path);
             if (!clickedSelectedRow) return;
             treeSelectionPathRef.current = path;
             onOpenFile(panelPath(path));

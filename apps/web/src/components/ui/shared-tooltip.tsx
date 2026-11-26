@@ -94,11 +94,13 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
     pending.current = null;
   };
   const findHoveredAncestor = (
+    anchor: HTMLElement,
     relatedTarget: EventTarget | null,
   ): [HTMLElement, HoveredTrigger] | null => {
-    let node: Node | null = relatedTarget instanceof Node ? relatedTarget : null;
+    const view = anchor.ownerDocument.defaultView ?? window;
+    let node: Node | null = relatedTarget instanceof view.Node ? relatedTarget : null;
     while (node) {
-      if (node instanceof HTMLElement) {
+      if (node instanceof view.HTMLElement) {
         const entry = hovered.current.get(node);
         if (entry) return [node, entry];
       }
@@ -149,7 +151,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         const isOwnPending = pending.current?.anchor === anchor;
         if (isOwnActive || isOwnPending) {
           // Moving back onto an enclosing trigger fires no pointerenter there, so restore it here.
-          const ancestor = findHoveredAncestor(relatedTarget);
+          const ancestor = findHoveredAncestor(anchor, relatedTarget);
           if (ancestor) {
             const [parentAnchor, parentEntry] = ancestor;
             hover(parentAnchor, parentEntry.content, parentEntry.onHover);
@@ -289,7 +291,8 @@ export function useSharedTooltip(
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
       // A wrapper's handler sees focus bubble from the control inside it, so check the focused element.
-      const focused = event.target instanceof Element ? event.target : event.currentTarget;
+      const view = event.currentTarget.ownerDocument.defaultView ?? window;
+      const focused = event.target instanceof view.Element ? event.target : event.currentTarget;
       if (enabled && focused.matches(":focus-visible")) {
         anchorRef.current = event.currentTarget;
         api.show(event.currentTarget, content, true);

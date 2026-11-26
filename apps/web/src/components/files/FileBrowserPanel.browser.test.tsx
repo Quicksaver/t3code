@@ -52,8 +52,8 @@ const downloadFile = vi.fn();
 vi.mock("./useFileDownload", () => ({ useFileDownload: () => downloadFile }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
 
-function findTreeRow(path: string): HTMLElement | null {
-  for (const host of document.querySelectorAll("*")) {
+function findTreeRow(path: string, parent: ParentNode = document): HTMLElement | null {
+  for (const host of parent.querySelectorAll("*")) {
     const row = host.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`);
     if (row) return row;
   }
@@ -224,6 +224,34 @@ describe("FileBrowserPanel", () => {
     // The selection stays put, so reopening the selected file must not depend on a selection change.
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens the selected file again in a Files panel rendered in another window", async () => {
+    const frame = document.body.appendChild(document.createElement("iframe"));
+    using _frame = { [Symbol.dispose]: () => frame.remove() };
+    const doc = frame.contentDocument!;
+    const container = doc.body.appendChild(doc.createElement("div"));
+    container.style.height = "200px";
+    const onOpenFile = vi.fn();
+    await using screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />,
+      { container },
+    );
+    const row = () => findTreeRow("README.md", screen.container);
+    await vi.waitFor(() => expect(row()).not.toBeNull());
+    row()!.click();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledExactlyOnceWith("README.md"));
+    expect(row()?.getAttribute("aria-selected")).toBe("true");
+    row()!.click();
+    expect(onOpenFile).toHaveBeenCalledTimes(2);
   });
 
   it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {

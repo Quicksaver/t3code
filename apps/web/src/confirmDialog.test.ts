@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
+  cancelConfirmDialogsIn,
   completeConfirmDialogClose,
   readConfirmDialogState,
   requestConfirmDialog,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
+  setConfirmDialogContainerResolver,
   subscribeConfirmDialogHost,
+  withConfirmDialogContainer,
 } from "./confirmDialog";
 
 const mountHost = () => subscribeConfirmDialogHost(() => {});
@@ -23,12 +26,23 @@ describe("confirm dialog coordinator", () => {
     resetConfirmDialogForTests();
   });
 
-  it("serializes concurrent confirmations", async () => {
+  it("serializes concurrent confirmations, each in its requested or focused window", async () => {
     const unregister = mountHost();
+    const detachedWindowBody = {} as HTMLElement;
+    const focusedWindowBody = {} as HTMLElement;
+    using _resolver = {
+      [Symbol.dispose]: () => setConfirmDialogContainerResolver(null),
+    };
     const first = requireConfirmation(
       requestConfirmDialog("Delete the project?", { initialFocus: "confirm" }),
     );
-    const second = requireConfirmation(requestConfirmDialog("Delete the worktree too?"));
+    setConfirmDialogContainerResolver(() => focusedWindowBody);
+    const second = requireConfirmation(
+      withConfirmDialogContainer(detachedWindowBody, () =>
+        requestConfirmDialog("Delete the worktree too?"),
+      ),
+    );
+    const third = requireConfirmation(requestConfirmDialog("Close the terminal?"));
 
     respondToConfirmDialog(false);
     await expect(first).resolves.toBe(false);
@@ -37,6 +51,7 @@ describe("confirm dialog coordinator", () => {
       message: "Delete the project?",
       variant: "default",
       initialFocus: "confirm",
+      container: null,
     });
 
     completeConfirmDialogClose();
@@ -44,12 +59,49 @@ describe("confirm dialog coordinator", () => {
       status: "confirming",
       message: "Delete the worktree too?",
       variant: "default",
+      container: detachedWindowBody,
+      initialFocus: undefined,
     });
 
     respondToConfirmDialog(true);
     await expect(second).resolves.toBe(true);
     completeConfirmDialogClose();
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      message: "Close the terminal?",
+      variant: "default",
+      container: focusedWindowBody,
+      initialFocus: undefined,
+    });
+
+    respondToConfirmDialog(true);
+    await expect(third).resolves.toBe(true);
+    completeConfirmDialogClose();
     expect(readConfirmDialogState()).toEqual({ status: "idle" });
+    unregister();
+  });
+
+  it("cancels a gone window's confirmations and shows the next one at once", async () => {
+    const unregister = mountHost();
+    const detachedWindowBody = {} as HTMLElement;
+    const inDetached = () =>
+      withConfirmDialogContainer(detachedWindowBody, () => requestConfirmDialog("Close it?"));
+    const active = requireConfirmation(inDetached());
+    const queuedMain = requireConfirmation(requestConfirmDialog("Archive the thread?"));
+    const queuedDetached = requireConfirmation(inDetached());
+
+    cancelConfirmDialogsIn(detachedWindowBody);
+
+    await expect(Promise.all([active, queuedDetached])).resolves.toEqual([false, false]);
+    expect(readConfirmDialogState()).toEqual({
+      status: "confirming",
+      message: "Archive the thread?",
+      variant: "default",
+      container: null,
+      initialFocus: undefined,
+    });
+    respondToConfirmDialog(true);
+    await expect(queuedMain).resolves.toBe(true);
     unregister();
   });
 

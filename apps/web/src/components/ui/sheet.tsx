@@ -5,6 +5,7 @@ import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/dialog";
+import { usePortalContainer } from "~/components/ui/portalContainer";
 
 function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
   return (
@@ -73,6 +74,7 @@ function SheetPopup({
   variant?: "default" | "inset";
 }) {
   const gt = useGT();
+  const portalContainer = usePortalContainer();
   const transitionStyle =
     transitionDurationMs === undefined
       ? undefined
@@ -80,7 +82,7 @@ function SheetPopup({
   const instant = transitionDurationMs === 0;
 
   return (
-    <SheetPortal keepMounted={keepMounted}>
+    <SheetPortal keepMounted={keepMounted} container={portalContainer}>
       <SheetBackdrop
         className={
           instant

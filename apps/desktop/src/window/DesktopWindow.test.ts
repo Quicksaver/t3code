@@ -377,6 +377,7 @@ function layerTest(input: {
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
           setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
+          enableMainWindowThrottling: () => Effect.void,
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -489,6 +490,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
             setMainWindow: () => Effect.void,
+            enableMainWindowThrottling: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -1652,7 +1654,13 @@ describe("DesktopWindow", () => {
           "https://example.com/docs",
         ]) {
           assert.deepEqual(
-            openHandler({ url } as Electron.HandlerDetails),
+            openHandler({
+              url,
+              frameName: "_blank",
+              features: "",
+              disposition: "foreground-tab",
+              referrer: { url: "", policy: "default" },
+            }),
             { action: "deny" },
             url,
           );

@@ -8,13 +8,41 @@ interface Subscription {
 }
 
 interface Target {
+  readonly observer: WindowObserver;
   readonly subscriptions: Set<Subscription>;
   waiting: Set<Subscription> | null;
   last: ResizeObserverEntry | null;
 }
 
-let observer: ResizeObserver | null = null;
+interface WindowObserver {
+  readonly observer: ResizeObserver;
+  targets: number;
+}
+
+// One observer per window: a detached panel window lays out, and reports sizes, on its own frames.
+const observers = new Map<Window | typeof globalThis, WindowObserver>();
 const targets = new Map<Element, Target>();
+
+function observerFor(element: Element): WindowObserver {
+  const view = element.ownerDocument.defaultView ?? globalThis;
+  let windowObserver = observers.get(view);
+  if (!windowObserver) {
+    const Observer = view.ResizeObserver ?? ResizeObserver;
+    windowObserver = { observer: new Observer(deliver), targets: 0 };
+    observers.set(view, windowObserver);
+  }
+  return windowObserver;
+}
+
+function releaseTarget(element: Element, target: Target) {
+  target.observer.observer.unobserve(element);
+  target.observer.targets -= 1;
+  if (target.observer.targets > 0) return;
+  target.observer.observer.disconnect();
+  for (const [view, windowObserver] of observers) {
+    if (windowObserver === target.observer) observers.delete(view);
+  }
+}
 
 function deliver(entries: readonly ResizeObserverEntry[]) {
   const batches = new Map<Subscription, ResizeObserverEntry[]>();
@@ -61,36 +89,38 @@ export function observeResize(
   callback: ResizeCallback,
 ): () => void {
   if (typeof ResizeObserver === "undefined") return () => {};
-  const shared = (observer ??= new ResizeObserver(deliver));
   const subscription: Subscription = { callback, active: true };
   const observed: readonly Element[] = Array.isArray(elements) ? elements : [elements as Element];
   for (const element of observed) {
     const target = targets.get(element);
     if (!target) {
-      targets.set(element, { subscriptions: new Set([subscription]), waiting: null, last: null });
-      shared.observe(element);
+      const windowObserver = observerFor(element);
+      windowObserver.targets += 1;
+      targets.set(element, {
+        observer: windowObserver,
+        subscriptions: new Set([subscription]),
+        waiting: null,
+        last: null,
+      });
+      windowObserver.observer.observe(element);
       continue;
     }
     target.subscriptions.add(subscription);
     if (!target.last) continue;
     (target.waiting ??= new Set()).add(subscription);
-    shared.unobserve(element);
-    shared.observe(element);
+    target.observer.observer.unobserve(element);
+    target.observer.observer.observe(element);
   }
   return () => {
     if (!subscription.active) return;
     subscription.active = false;
-    const unobserved = observed.filter((element) => {
+    for (const element of observed) {
       const target = targets.get(element);
-      if (!target?.subscriptions.delete(subscription)) return false;
+      if (!target?.subscriptions.delete(subscription)) continue;
       target.waiting?.delete(subscription);
-      return target.subscriptions.size === 0 && targets.delete(element);
-    });
-    if (targets.size > 0) {
-      for (const element of unobserved) shared.unobserve(element);
-    } else {
-      observer?.disconnect();
-      observer = null;
+      if (target.subscriptions.size > 0) continue;
+      targets.delete(element);
+      releaseTarget(element, target);
     }
   };
 }

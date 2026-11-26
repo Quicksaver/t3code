@@ -1,8 +1,12 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { projectActionThreadId } from "@t3tools/client-runtime/project-actions";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
+import {
+  detachedPanelWindowName,
+  useDetachedPanelStore,
+} from "../detachedPanels/detachedPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { readProject } from "../state/entities";
 import { readEnvironmentScope } from "../state/session";
@@ -193,3 +197,71 @@ it.each(["missing grant", "missing project"])(
     expect(active()).toBe("terminal:after");
   },
 );
+
+it("cycles across terminal windows and preserves the docked tab between detached terminals", () => {
+  const ref = setup();
+  const panels = useRightPanelStore.getState();
+  const panelState = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+  panels.openTerminal(ref, "a");
+  const splitSurfaceId = panelState().activeSurfaceId!;
+  panels.splitTerminal(ref, splitSurfaceId, "b");
+  panels.openTerminal(ref, "c", destination);
+  const singleSurfaceId = panelState().activeSurfaceId!;
+  panels.close(ref);
+  const detached = useDetachedPanelStore.getState();
+  detached.detach(ref, splitSurfaceId);
+  const remote = scopeThreadRef(destination.environmentId, projectActionThreadId(destination));
+  const focusRemoteTerminal = vi.fn(() => true);
+  using _focusTarget = {
+    [Symbol.dispose]: registerTerminalFocusTarget({
+      threadRef: remote,
+      terminalId: "c",
+      focus: focusRemoteTerminal,
+    }),
+  };
+  const focus = vi.fn(async () => {});
+  const revealWindow = vi.fn(async () => {});
+  vi.stubGlobal("window", { desktopBridge: { detachedPanels: { focus }, revealWindow } });
+  try {
+    expect(cycleThreadTerminal(ref, "right-panel", "previous", splitSurfaceId)).toBe(true);
+    expect(panelState()).toMatchObject({ isOpen: false, activeSurfaceId: singleSurfaceId });
+    expect(panelState().surfaces.find((surface) => surface.id === splitSurfaceId)).toMatchObject({
+      activeTerminalId: "a",
+    });
+
+    expect(cycleThreadTerminal(ref, "right-panel", "previous", splitSurfaceId)).toBe(true);
+    expect(panelState()).toMatchObject({ isOpen: true, activeSurfaceId: singleSurfaceId });
+    expect(revealWindow).toHaveBeenCalledOnce();
+    expect(focusRemoteTerminal).toHaveBeenCalledOnce();
+    expect(focus).not.toHaveBeenCalled();
+
+    detached.detach(ref, singleSurfaceId);
+    panels.close(ref);
+    expect(cycleThreadTerminal(ref, "right-panel", "next", singleSurfaceId)).toBe(true);
+    expect(panelState().isOpen).toBe(false);
+    expect(focus).toHaveBeenCalledExactlyOnceWith(
+      detachedPanelWindowName(scopedThreadKey(ref), splitSurfaceId),
+    );
+
+    panels.openFile(ref, "notes.md");
+    const fileSurfaceId = panelState().activeSurfaceId;
+    expect(cycleThreadTerminal(ref, "right-panel", "next", splitSurfaceId)).toBe(true);
+    expect(panelState()).toMatchObject({ isOpen: true, activeSurfaceId: fileSurfaceId });
+    expect(panelState().surfaces.find((surface) => surface.id === splitSurfaceId)).toMatchObject({
+      activeTerminalId: "b",
+    });
+    expect(cycleThreadTerminal(ref, "right-panel", "next", splitSurfaceId)).toBe(true);
+    expect(panelState()).toMatchObject({ isOpen: true, activeSurfaceId: fileSurfaceId });
+    expect(focus).toHaveBeenLastCalledWith(
+      detachedPanelWindowName(scopedThreadKey(ref), singleSurfaceId),
+    );
+    expect(focusRemoteTerminal).toHaveBeenCalledTimes(2);
+    panels.closeSurface(ref, splitSurfaceId);
+    expect(cycleThreadTerminal(ref, "right-panel", "next", singleSurfaceId)).toBe(true);
+    expect(panelState()).toMatchObject({ isOpen: true, activeSurfaceId: fileSurfaceId });
+  } finally {
+    vi.unstubAllGlobals();
+    useDetachedPanelStore.setState({ byName: {} });
+  }
+});

@@ -155,3 +155,11 @@ export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-lo
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
 
 export const START_FILE_DRAG_CHANNEL = "desktop:start-file-drag";
+
+export const DETACHED_PANELS_SYNC_CHANNEL = "desktop:detached-panels-sync";
+export const DETACHED_PANELS_REVEAL_CHANNEL = "desktop:detached-panels-reveal";
+export const DETACHED_PANELS_FOCUS_CHANNEL = "desktop:detached-panels-focus";
+export const DETACHED_PANELS_CLOSE_CHANNEL = "desktop:detached-panels-close";
+export const DETACHED_PANELS_CLOSE_REQUESTED_CHANNEL = "desktop:detached-panels-close-requested";
+export const DETACHED_PANELS_BOUNDS_CHANNEL = "desktop:detached-panels-bounds";
+export const DETACHED_PANELS_PREVIEW_COMMAND_CHANNEL = "desktop:detached-panels-preview-command";

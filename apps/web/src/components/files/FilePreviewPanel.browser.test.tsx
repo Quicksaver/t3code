@@ -915,6 +915,59 @@ describe("rendered Markdown select all", () => {
     document.execCommand("copy");
     expect(copied).toBe(contents);
   });
+
+  it("copies unmounted Markdown chunks from the preview's own window", async () => {
+    using _settings = setup();
+    const frame = document.body.appendChild(document.createElement("iframe"));
+    using _frame = { [Symbol.dispose]: () => frame.remove() };
+    const view = frame.contentWindow as Window & typeof globalThis;
+    const doc = view.document;
+    doc.head.appendChild(doc.createElement("style")).textContent = appCss;
+    const container = doc.body.appendChild(doc.createElement("div"));
+    container.style.cssText = "display:flex;flex-direction:column;height:140px;overflow:hidden";
+    const contents = Array.from(
+      { length: 96 },
+      (_, index) => `Paragraph ${index}. ${"word ".repeat(60)}`,
+    ).join("\n\n");
+    await using screen = await render(
+      <>
+        <p>Transcript outside the file.</p>
+        {markdownPreview(false, contents)}
+      </>,
+      { container },
+    );
+    const first = () =>
+      [...screen.container.querySelectorAll("p")].find((node) =>
+        node.textContent.startsWith("Paragraph 0."),
+      );
+    await vi.waitFor(() => expect(first()).toBeDefined());
+    expect(screen.container.textContent).not.toContain("Paragraph 95.");
+    first()!.dispatchEvent(
+      new view.KeyboardEvent("keydown", {
+        key: "a",
+        ctrlKey: !isMacPlatform(view.navigator.platform),
+        metaKey: isMacPlatform(view.navigator.platform),
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(doc.getSelection()!.toString()).toContain("Paragraph 0.");
+    expect(doc.getSelection()!.toString()).not.toContain("Transcript outside the file.");
+    const copy = () => {
+      const clipboardData = new view.DataTransfer();
+      const handled = !first()!.dispatchEvent(
+        new view.ClipboardEvent("copy", {
+          clipboardData,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      return handled ? clipboardData.getData("text/plain") : undefined;
+    };
+    expect(copy()).toContain("Paragraph 95.");
+    doc.getSelection()!.selectAllChildren(first()!);
+    expect(copy()).toBeUndefined();
+  });
 });
 
 describe("rendered Markdown relative images", () => {

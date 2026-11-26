@@ -28,7 +28,14 @@ const layerUnusedLifecycleRuntime = Layer.mergeAll(
       {} as DesktopEnvironment.DesktopEnvironment["Service"],
     ),
   ),
-  Layer.mock(DesktopWindow.DesktopWindow, {}),
+  Layer.mock(DesktopWindow.DesktopWindow, {
+    detachedPanels: {
+      sync: () => Effect.void,
+      reveal: () => Effect.void,
+      focus: () => Effect.void,
+      close: () => Effect.void,
+    },
+  }),
   Layer.mock(ElectronApp.ElectronApp, {}),
   Layer.mock(ElectronTheme.ElectronTheme, {}),
 );

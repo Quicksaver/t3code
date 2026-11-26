@@ -10,7 +10,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
-import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+import { usePortalContainer, usePortalTitlebarHeight } from "~/components/ui/portalContainer";
 
 // Base UI's default, restated because a padding object zeroes the sides it omits.
 const COLLISION_PADDING = 5;
@@ -144,7 +144,7 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
 }
 
 function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
-  const titlebarHeight = useNativeTitlebarHeight();
+  const titlebarHeight = usePortalTitlebarHeight();
   const holdPositionOnExit = use(TooltipScrollContext)?.holdPositionOnExit;
   return (
     <TooltipPrimitive.Positioner
@@ -183,8 +183,9 @@ function TooltipPopup({
   children,
   ...props
 }: TooltipPopupProps) {
+  const portalContainer = usePortalContainer();
   return (
-    <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Portal container={portalContainer}>
       <TooltipPositioner align={align} anchor={anchor} side={side} sideOffset={sideOffset}>
         <TooltipPrimitive.Popup
           className={cn(

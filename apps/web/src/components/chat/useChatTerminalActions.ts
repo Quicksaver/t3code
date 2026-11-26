@@ -341,34 +341,64 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
-  const addTerminalSurface = () => {
+  const panelTerminalSurface = (surfaceId?: string) => {
+    if (!activeThreadRef) return null;
+    const surface =
+      surfaceId === undefined
+        ? activeRightPanelSurface
+        : selectThreadRightPanelState(
+            useRightPanelStore.getState().byThreadKey,
+            activeThreadRef,
+          ).surfaces.find((entry) => entry.id === surfaceId);
+    return surface?.kind === "terminal" ? surface : null;
+  };
+  const panelTerminalRef = (
+    owner: ScopedThreadRef,
+    surface: Extract<RightPanelSurface, { kind: "terminal" }>,
+  ): ScopedThreadRef =>
+    surface.actionTarget
+      ? {
+          environmentId: surface.actionTarget.environmentId,
+          threadId: projectActionThreadId(surface.actionTarget),
+        }
+      : owner;
+  const addTerminalSurface = (surfaceId?: string) => {
     if (!activeThreadRef) return;
-    const launched = panelTerminalActions.launchTerminal({
+    const surface = surfaceId === undefined ? null : panelTerminalSurface(surfaceId);
+    if (surfaceId !== undefined && !surface) return;
+    const destination = surface ? surface.actionTarget : panelActionTarget;
+    const actions = surface ? terminalActions : panelTerminalActions;
+    const launched = actions.launchTerminal({
+      destination: surface?.actionTarget,
       place: (terminalId) =>
-        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, panelActionTarget),
+        useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId, destination),
     });
     if (!launched) return;
-    focusActivePanelTerminal(activeThreadRef);
+    if (surface) focusTerminal(panelTerminalRef(activeThreadRef, surface), launched.terminalId);
+    else focusActivePanelTerminal(activeThreadRef);
     void launched.result;
   };
-  const addTerminalSurfaceStable = useStableCallback(addTerminalSurface);
-  const splitPanelTerminal = (direction: "horizontal" | "vertical" = "horizontal") => {
-    if (
-      !activeThreadRef ||
-      activeRightPanelSurface?.kind !== "terminal" ||
-      activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
-    ) {
+  const addTerminalSurfaceStable = useStableCallback(() => addTerminalSurface());
+  const addTerminalFromSurfaceStable = useStableCallback(addTerminalSurface);
+  const splitPanelTerminal = (
+    direction: "horizontal" | "vertical" = "horizontal",
+    targetSurfaceId?: string,
+  ) => {
+    const surface = panelTerminalSurface(targetSurfaceId);
+    if (!activeThreadRef || !surface || surface.terminalIds.length >= MAX_TERMINALS_PER_GROUP) {
       return;
     }
-    const surfaceId = activeRightPanelSurface.id;
-    const launched = panelTerminalActions.launchTerminal({
+    const surfaceId = surface.id;
+    const actions = targetSurfaceId === undefined ? panelTerminalActions : terminalActions;
+    const launched = actions.launchTerminal({
+      destination: targetSurfaceId === undefined ? undefined : surface.actionTarget,
       place: (terminalId) =>
         useRightPanelStore
           .getState()
           .splitTerminal(activeThreadRef, surfaceId, terminalId, direction),
     });
     if (!launched) return;
-    focusActivePanelTerminal(activeThreadRef);
+    focusTerminal(panelTerminalRef(activeThreadRef, surface), launched.terminalId);
     void launched.result;
   };
   const splitPanelTerminalStable = useStableCallback(splitPanelTerminal);
@@ -376,30 +406,37 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     splitPanelTerminal("vertical");
   };
   const splitPanelTerminalVerticalStable = useStableCallback(splitPanelTerminalVertical);
-  const activatePanelTerminal = (terminalId: string) => {
-    if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-    useRightPanelStore
-      .getState()
-      .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-    focusActivePanelTerminal(activeThreadRef);
+  const activatePanelTerminal = (terminalId: string, targetSurfaceId?: string) => {
+    const surface = panelTerminalSurface(targetSurfaceId);
+    if (!activeThreadRef || !surface) return;
+    useRightPanelStore.getState().activateTerminal(activeThreadRef, surface.id, terminalId);
+    focusTerminal(panelTerminalRef(activeThreadRef, surface), terminalId);
   };
   const activatePanelTerminalStable = useStableCallback(activatePanelTerminal);
-  const closePanelTerminal = (terminalId: string, target = activeThreadRef) => {
+  const closePanelTerminal = (terminalId: string, target = activeThreadRef, surfaceId?: string) => {
     if (!target) return;
     const store = useRightPanelStore.getState();
     const surface = selectThreadRightPanelState(store.byThreadKey, target).surfaces.find(
-      (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
+      (entry) =>
+        entry.kind === "terminal" &&
+        (surfaceId === undefined || entry.id === surfaceId) &&
+        entry.terminalIds.includes(terminalId),
     );
     if (surface?.kind !== "terminal") return;
     const destination = surface.actionTarget;
-    const terminalRef = destination
-      ? { environmentId: destination.environmentId, threadId: projectActionThreadId(destination) }
-      : target;
+    const terminalRef = panelTerminalRef(target, surface);
     if (!readEnvironmentScope(terminalRef.environmentId, AuthTerminalOperateScope)) return;
     terminalActions.closeTerminalSession(terminalId, terminalRef);
     if (!destination) storeCloseTerminal(target, terminalId);
     store.closeTerminal(target, surface.id, terminalId);
-    focusActivePanelTerminal(target);
+    // A surface that keeps other splits focuses its next one, even when detached.
+    const remaining = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      target,
+    ).surfaces.find((entry) => entry.id === surface.id);
+    if (remaining?.kind === "terminal")
+      focusTerminal(panelTerminalRef(target, remaining), remaining.activeTerminalId);
+    else focusActivePanelTerminal(target);
   };
   const closePanelTerminalStable = useStableCallback(closePanelTerminal);
   const requestCloseTerminal = (terminalId: string) => {
@@ -412,15 +449,18 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     });
   };
   const requestCloseTerminalStable = useStableCallback(requestCloseTerminal);
-  const requestClosePanelTerminal = (terminalId: string) => {
-    if (!panelTerminalActions.canWrite()) return;
+  const requestClosePanelTerminal = (terminalId: string, surfaceId?: string) => {
+    const surface = panelTerminalSurface(surfaceId);
+    if (!activeThreadRef || !surface) return;
+    const terminalRef = panelTerminalRef(activeThreadRef, surface);
+    if (!readEnvironmentScope(terminalRef.environmentId, AuthTerminalOperateScope)) return;
     const label =
-      panelActionTarget?.label ??
+      surface.actionTarget?.label ??
       activeTerminalLabelsById.get(terminalId) ??
       getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
-      if (confirmed && panelTerminalActions.canWrite()) {
-        closePanelTerminal(terminalId);
+      if (confirmed) {
+        closePanelTerminal(terminalId, activeThreadRef, surface.id);
       }
     });
   };
@@ -498,6 +538,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
     shortcuts,
     activatePanelTerminalStable,
     addTerminalContextToDraftStable,
+    addTerminalFromSurfaceStable,
     addTerminalSurfaceStable,
     closePanelTerminalStable,
     createNewTerminalStable,

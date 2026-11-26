@@ -50,6 +50,9 @@ export default function ReadOnlySourcePreview(props: {
   }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the document's selection, which only it reports
   useEffect(() => {
+    const doc = wrapper.current?.ownerDocument;
+    const view = doc?.defaultView;
+    if (!doc || !view) return;
     const root = () => wrapper.current?.querySelector("diffs-container")?.shadowRoot;
     const sync = () => {
       const shadowRoot = root();
@@ -60,20 +63,18 @@ export default function ReadOnlySourcePreview(props: {
       const shadowRoot = root();
       if (shadowRoot) selection.release(shadowRoot, text);
     };
-    document.addEventListener("selectionchange", sync);
-    window.addEventListener("pointerup", release, true);
-    window.addEventListener("pointercancel", release, true);
+    doc.addEventListener("selectionchange", sync);
+    view.addEventListener("pointerup", release, true);
+    view.addEventListener("pointercancel", release, true);
     return () => {
-      document.removeEventListener("selectionchange", sync);
-      window.removeEventListener("pointerup", release, true);
-      window.removeEventListener("pointercancel", release, true);
+      doc.removeEventListener("selectionchange", sync);
+      view.removeEventListener("pointerup", release, true);
+      view.removeEventListener("pointercancel", release, true);
     };
   }, [selection, text]);
   const copySelection = (event: ClipboardEvent<HTMLDivElement>) => {
-    const root =
-      event.target instanceof Element
-        ? event.target.closest("diffs-container")?.shadowRoot
-        : undefined;
+    const target = event.target as Partial<Element>;
+    const root = target.closest?.("diffs-container")?.shadowRoot;
     const copied = root ? selection.copy(root, text) : undefined;
     if (copied === undefined) return;
     event.clipboardData.setData("text/plain", copied);
@@ -105,7 +106,8 @@ export default function ReadOnlySourcePreview(props: {
       className="contents"
       onCopy={copySelection}
       onPointerDown={(event) => {
-        if (event.target instanceof Element && event.target.closest("[data-search-panel]")) return;
+        const target = event.target as Partial<Element>;
+        if (target.closest?.("[data-search-panel]")) return;
         selection.press(event.button !== 0 || event.shiftKey);
       }}
       // Scrolling unmounts rows, and a selection made in the same task has not been reported yet.

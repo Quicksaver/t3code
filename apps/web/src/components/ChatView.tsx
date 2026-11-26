@@ -205,6 +205,7 @@ import {
   selectActiveRightPanelSurface,
   selectThreadPanelOpen,
   selectThreadRightPanelState,
+  type RightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
 import { isPreviewSupportedInRuntime, useThreadPreviewState } from "../previewStateStore";
@@ -235,7 +236,30 @@ import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { shortcutLabelForCommand } from "../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { surfaceTitle } from "./RightPanelTabs";
+import { isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
+import {
+  preventRepeatedTerminalCloseShortcut,
+  preventTerminalCloseShortcut,
+} from "../lib/terminalCloseShortcut";
+import { dispatchPreviewAction, PREVIEW_COMMAND_ACTIONS } from "./preview/previewActionBus";
+import {
+  canDetachSurface,
+  detachPanelSurface,
+  reattachPanelSurface,
+} from "../detachedPanels/detachedPanelActions";
+import {
+  type DetachableSurface,
+  isDetachedPanelsSupported,
+  selectThreadDetachedSurfaceIds,
+  useDetachedPanelStore,
+} from "../detachedPanels/detachedPanelStore";
+import {
+  DetachedPanelSurfaces,
+  DetachedSurfacePlaceholder,
+  detachedPanelWindowTitle,
+} from "../detachedPanels/DetachedPanelSurfaces";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
@@ -263,6 +287,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
 import { useRememberedWorktreeRepositories } from "../worktreeRepositoryChoiceStore";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
+import { cycleThreadTerminal } from "../lib/cycleThreadTerminal";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { draftModelSelectionApplies, threadHasStarted } from "../lib/chatThreadActions";
@@ -348,6 +373,7 @@ import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
   PanelLayoutControls,
   type PanelLayoutControlsProps,
+  RightPanelDetachControl,
   RightPanelMaximizeControl,
   ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
@@ -1209,6 +1235,9 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
+  const detachedSurfaceIdList = useDetachedPanelStore(
+    useShallow((state) => selectThreadDetachedSurfaceIds(state.byName, activeThreadKey)),
+  );
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -1371,11 +1400,6 @@ export default function ChatView(props: ChatViewProps) {
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const activeFileSurface =
     renderedRightPanelSurface?.kind === "file" ? renderedRightPanelSurface : null;
-  const sourceControlPanelTarget = resolveSourceControlPanelTarget({
-    activeThreadRef,
-    gitCwd,
-    surface: renderedRightPanelSurface,
-  });
   const handleNewThreadInActiveProject = () => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   };
@@ -2166,9 +2190,11 @@ export default function ChatView(props: ChatViewProps) {
   const {
     activatePanelTerminalStable,
     addTerminalContextToDraftStable,
+    addTerminalFromSurfaceStable,
     addTerminalSurfaceStable,
     closePanelTerminalStable,
     lastInvokedScriptByProjectId,
+    requestClosePanelTerminalStable,
     runProjectScriptStable,
     runShellCommandStable,
     splitPanelTerminalStable,
@@ -3579,70 +3605,189 @@ export default function ChatView(props: ChatViewProps) {
     return embedded ? null : <NoActiveThreadState />;
   }
 
+  const detachedPanelsAvailable = isDetachedPanelsSupported() && isServerThread && !embedded;
+  const detachedSurfaceIds = new Set(detachedPanelsAvailable ? detachedSurfaceIdList : []);
+  const activeSurfaceDetachable =
+    detachedPanelsAvailable &&
+    activeRightPanelSurface !== null &&
+    canDetachSurface(activeRightPanelSurface) &&
+    !detachedSurfaceIds.has(activeRightPanelSurface.id);
+  /** A detached surface passes its id so its terminal actions act on it, not the panel's active tab. */
+  const renderRightPanelSurface = (
+    threadRef: ScopedThreadRef,
+    surface: RightPanelSurface | null,
+    presentation: { readonly visible: boolean; readonly detachedSurfaceId?: string },
+  ) => {
+    const detachedSurfaceId = presentation.detachedSurfaceId;
+    const fileCwd = surface?.kind === "file" ? surface.cwd : undefined;
+    const sourceControlPanelTarget = resolveSourceControlPanelTarget({
+      activeThreadRef: threadRef,
+      gitCwd,
+      surface,
+    });
+    return (
+      <RightPanelSurfaceContent
+        surface={surface}
+        activeSurfaceId={detachedSurfaceId ?? activeRightPanelSurface?.id ?? null}
+        threadRef={threadRef}
+        environmentId={activeThread.environmentId}
+        visible={presentation.visible}
+        composerDraftTarget={composerDraftTarget}
+        keybindings={keybindings}
+        configuredPreviewUrls={configuredPreviewUrls}
+        workspaceMutationId={workspaceMutationId}
+        workspaceRevision={workspaceRevision.revision}
+        getShortcutContext={getShortcutContextStable}
+        onSendAnnotation={sendPreviewAnnotationStable}
+        onCloseSurface={closeRightPanelSurface}
+        sideChatParentPanel={sideChatParentPanel}
+        sourceControl={
+          sourceControlPanelTarget
+            ? {
+                ...sourceControlPanelTarget,
+                worktreePath: activeThreadWorktreePath,
+                environments: sourceControlPanelEnvironments,
+                onThreadRefChange: handleSourceControlThreadRefChange,
+              }
+            : null
+        }
+        terminal={{
+          launchContext: activeTerminalLaunchContext ?? null,
+          keybindings,
+          onAddTerminalContext: addTerminalContextToDraftStable,
+          onSplitTerminal:
+            detachedSurfaceId === undefined
+              ? splitPanelTerminalStable
+              : () => splitPanelTerminalStable("horizontal", detachedSurfaceId),
+          onSplitTerminalVertical:
+            detachedSurfaceId === undefined
+              ? splitPanelTerminalVerticalStable
+              : () => splitPanelTerminalStable("vertical", detachedSurfaceId),
+          onNewTerminal:
+            detachedSurfaceId === undefined
+              ? addTerminalSurfaceStable
+              : () => addTerminalFromSurfaceStable(detachedSurfaceId),
+          onActiveTerminalChange:
+            detachedSurfaceId === undefined
+              ? activatePanelTerminalStable
+              : (terminalId) => activatePanelTerminalStable(terminalId, detachedSurfaceId),
+          onCloseTerminal:
+            detachedSurfaceId === undefined
+              ? closePanelTerminalStable
+              : (terminalId) => closePanelTerminalStable(terminalId, threadRef, detachedSurfaceId),
+          splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
+          splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
+          newShortcutLabel: newTerminalShortcutLabel ?? undefined,
+          closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
+        }}
+        pullRequest={{
+          capabilityKnown: pullRequestsCapabilityKnown,
+          supported: supportsPullRequests,
+          projectId: activeThread.projectId,
+          pullRequests: visiblePullRequests,
+          linkedPullRequest: linkedThreadPullRequest,
+          branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
+          onBack:
+            pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
+              ? addPullRequestsSurfaceStable
+              : undefined,
+        }}
+        issuesSupported={serverConfig?.environment.capabilities.issues === true}
+        files={{
+          projectId: activeProject?.id,
+          projectName: activeProject?.title ?? null,
+          workspaceRoot: activeWorkspaceRoot,
+          availableEditors,
+          pendingSurfaceIds: pendingFileSurfaceIds,
+          // A detached explorer's own opens take its place, so its window follows them.
+          onOpenFile:
+            detachedSurfaceId === undefined
+              ? openFileSurfaceStable
+              : (relativePath) =>
+                  useRightPanelStore
+                    .getState()
+                    .openFile(threadRef, relativePath, undefined, fileCwd, {
+                      replacing: detachedSurfaceId,
+                    }),
+          onPendingChange: handleFilePendingChangeStable,
+        }}
+      />
+    );
+  };
   const rightPanelContent = activeThreadRef ? (
-    <RightPanelSurfaceContent
-      surface={renderedRightPanelSurface}
-      activeSurfaceId={activeRightPanelSurface?.id ?? null}
-      threadRef={activeThreadRef}
-      environmentId={activeThread.environmentId}
-      visible={rightPanelOpen}
-      composerDraftTarget={composerDraftTarget}
-      keybindings={keybindings}
-      configuredPreviewUrls={configuredPreviewUrls}
-      workspaceMutationId={workspaceMutationId}
-      workspaceRevision={workspaceRevision.revision}
-      getShortcutContext={getShortcutContextStable}
-      onSendAnnotation={sendPreviewAnnotationStable}
-      onCloseSurface={closeRightPanelSurface}
-      sideChatParentPanel={sideChatParentPanel}
-      sourceControl={
-        sourceControlPanelTarget
-          ? {
-              ...sourceControlPanelTarget,
-              worktreePath: activeThreadWorktreePath,
-              environments: sourceControlPanelEnvironments,
-              onThreadRefChange: handleSourceControlThreadRefChange,
-            }
-          : null
-      }
-      terminal={{
-        launchContext: activeTerminalLaunchContext ?? null,
-        keybindings,
-        onAddTerminalContext: addTerminalContextToDraftStable,
-        onSplitTerminal: splitPanelTerminalStable,
-        onSplitTerminalVertical: splitPanelTerminalVerticalStable,
-        onNewTerminal: addTerminalSurfaceStable,
-        onActiveTerminalChange: activatePanelTerminalStable,
-        onCloseTerminal: closePanelTerminalStable,
-        splitShortcutLabel: splitTerminalShortcutLabel ?? undefined,
-        splitVerticalShortcutLabel: splitTerminalVerticalShortcutLabel ?? undefined,
-        newShortcutLabel: newTerminalShortcutLabel ?? undefined,
-        closeShortcutLabel: closeTerminalShortcutLabel ?? undefined,
-      }}
-      pullRequest={{
-        capabilityKnown: pullRequestsCapabilityKnown,
-        supported: supportsPullRequests,
-        projectId: activeThread.projectId,
-        pullRequests: visiblePullRequests,
-        linkedPullRequest: linkedThreadPullRequest,
-        branchPullRequest: activeThreadShell?.branchPullRequest ?? activeThread.branchPullRequest,
-        onBack:
-          pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
-            ? addPullRequestsSurfaceStable
-            : undefined,
-      }}
-      issuesSupported={serverConfig?.environment.capabilities.issues === true}
-      files={{
-        projectId: activeProject?.id,
-        projectName: activeProject?.title ?? null,
-        workspaceRoot: activeWorkspaceRoot,
-        availableEditors,
-        pendingSurfaceIds: pendingFileSurfaceIds,
-        onOpenFile: openFileSurfaceStable,
-        onPendingChange: handleFilePendingChangeStable,
-      }}
-    />
+    renderedRightPanelSurface !== null && detachedSurfaceIds.has(renderedRightPanelSurface.id) ? (
+      <DetachedSurfacePlaceholder threadRef={activeThreadRef} surface={renderedRightPanelSurface} />
+    ) : (
+      renderRightPanelSurface(activeThreadRef, renderedRightPanelSurface, {
+        visible: rightPanelOpen,
+      })
+    )
   ) : null;
+  const detachedSurfaceTitle = (surface: DetachableSurface) =>
+    detachedPanelWindowTitle(
+      surface,
+      surfaceTitle(surface, activePreviewState.sessions, activeTerminalLabelsById, messages),
+      activeThread.title,
+      messages,
+    );
+  // Only a detached panel's own chords work in its window; app-wide shortcuts stay with the main one.
+  const handleDetachedPanelKeyDown = (
+    surface: RightPanelSurface,
+    event: KeyboardEvent,
+    detachedWindow: Window & typeof globalThis,
+  ) => {
+    // Elements come from the detached window's realm, so match by shape rather than instanceof.
+    const target = event.target as Partial<Element> | null;
+    const closest = (selector: string) =>
+      typeof target?.closest === "function" ? target.closest(selector) : null;
+    if (closest('[role="alertdialog"]') !== null) return false;
+    if (preventRepeatedTerminalCloseShortcut(event, keybindings)) return true;
+    if (surface.kind === "preview") {
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: { previewFocus: true, previewOpen: true },
+      });
+      const action = PREVIEW_COMMAND_ACTIONS[command ?? ""];
+      if (action === undefined) return false;
+      dispatchPreviewAction(action, detachedWindow);
+      return true;
+    }
+    if (surface.kind !== "terminal") return false;
+    const terminalFocus = closest("[data-terminal-owner]") !== null;
+    if (terminalFocus && isTerminalCloseConfirmPending()) {
+      return preventTerminalCloseShortcut(event, keybindings);
+    }
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: { terminalFocus, terminalOpen: true },
+    });
+    switch (command) {
+      case "terminal.previous":
+      case "terminal.next":
+        return (
+          terminalFocus &&
+          activeThreadRef !== null &&
+          cycleThreadTerminal(
+            activeThreadRef,
+            "right-panel",
+            command === "terminal.next" ? "next" : "previous",
+            surface.id,
+          )
+        );
+      case "terminal.split":
+        splitPanelTerminalStable("horizontal", surface.id);
+        return true;
+      case "terminal.splitVertical":
+        splitPanelTerminalStable("vertical", surface.id);
+        return true;
+      case "terminal.new":
+        addTerminalFromSurfaceStable(surface.id);
+        return true;
+      case "terminal.close":
+        requestClosePanelTerminalStable(surface.activeTerminalId, surface.id);
+        return true;
+      default:
+        return false;
+    }
+  };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
@@ -3677,6 +3822,11 @@ export default function ChatView(props: ChatViewProps) {
       maximized={rightPanelMaximized}
       onToggleMaximized={toggleRightPanelMaximizedStable}
       maximizeShortcutLabel={rightPanelMaximizeShortcutLabel}
+      onDetach={
+        activeSurfaceDetachable && activeThreadRef && activeRightPanelSurface
+          ? () => detachPanelSurface(activeThreadRef, activeRightPanelSurface)
+          : undefined
+      }
     >
       {panelToggleControls}
     </WorkspaceTitlebarControls>
@@ -4400,6 +4550,11 @@ export default function ChatView(props: ChatViewProps) {
           layoutControls={
             rightPanelOpen ? (
               <div className="mr-px flex items-center gap-1">
+                {activeSurfaceDetachable && activeRightPanelSurface ? (
+                  <RightPanelDetachControl
+                    onDetach={() => detachPanelSurface(activeThreadRef, activeRightPanelSurface)}
+                  />
+                ) : null}
                 <RightPanelMaximizeControl
                   maximized={rightPanelMaximized}
                   onToggle={toggleRightPanelMaximizedStable}
@@ -4429,6 +4584,16 @@ export default function ChatView(props: ChatViewProps) {
           onCloseOtherSurfaces={closeOtherRightPanelSurfacesStable}
           onCloseSurfacesToRight={closeRightPanelSurfacesToRightStable}
           onCloseAllSurfaces={closeAllRightPanelSurfacesStable}
+          {...(detachedPanelsAvailable
+            ? {
+                detachedSurfaceIds,
+                canDetachSurface,
+                onDetachSurface: (surface: RightPanelSurface) =>
+                  detachPanelSurface(activeThreadRef, surface),
+                onReattachSurface: (surface: RightPanelSurface) =>
+                  reattachPanelSurface(activeThreadRef, surface.id),
+              }
+            : {})}
           onMoveSurfaces={moveRightPanelSurfacesStable}
           onCopyFilePath={copyRightPanelFilePathStable}
           onAddBrowser={() => createBrowserSurface()}
@@ -4455,6 +4620,20 @@ export default function ChatView(props: ChatViewProps) {
         >
           {rightPanelContent}
         </ChatRightPanel>
+      ) : null}
+      {detachedPanelsAvailable && activeThreadRef ? (
+        <DetachedPanelSurfaces
+          threadRef={activeThreadRef}
+          surfaces={rightPanelState.surfaces}
+          titleFor={detachedSurfaceTitle}
+          renderSurface={(surface, visible) =>
+            renderRightPanelSurface(activeThreadRef, surface, {
+              visible,
+              detachedSurfaceId: surface.id,
+            })
+          }
+          onKeyDown={handleDetachedPanelKeyDown}
+        />
       ) : null}
 
       <RevertConfirmHost

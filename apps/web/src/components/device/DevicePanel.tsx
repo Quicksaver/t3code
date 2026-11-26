@@ -42,6 +42,7 @@ import {
 } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
+import { useDetachedPanelWindow } from "~/detachedPanels/detachedPanelContext";
 
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
@@ -170,6 +171,7 @@ export function DevicePanel(props: {
     if (failure?._tag === "Failure") setStopError(formatEnvironmentQueryError(failure.cause));
   };
 
+  const detachedWindow = useDetachedPanelWindow();
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(props.threadRef, {
@@ -299,7 +301,7 @@ export function DevicePanel(props: {
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
               visible={props.visible}
-              onFloat={floatActive}
+              onFloat={detachedWindow ? undefined : floatActive}
               onClose={() => closeActive(false)}
               onPowerOff={() => closeActive(true)}
             />

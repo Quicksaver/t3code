@@ -34,7 +34,7 @@ function sameRange(a: StaticRange | undefined, b: StaticRange | undefined) {
 }
 
 function rowOf(node: Node) {
-  const element = node instanceof Element ? node : node.parentElement;
+  const element = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
   return element?.closest<HTMLElement>("[data-line]") ?? null;
 }
 
@@ -102,7 +102,7 @@ export class SourceSelection {
   /** `inRow` is false for a point between rows, which is where an unmounted row leaves one. */
   #offsetOf(point: Point, side: "start" | "end", mounted: Mounted) {
     const row = rowOf(point.node);
-    const range = document.createRange();
+    const range = point.node.ownerDocument!.createRange();
     if (row) {
       const line = Number(row.dataset.line) - 1;
       range.setStart(row, 0);
@@ -137,7 +137,7 @@ export class SourceSelection {
     const row = mounted.rows[line - mounted.firstLine];
     if (!row) return { node: mounted.rows[0]!, offset: 0 };
     let column = clamped - this.#starts[line]!;
-    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+    const walker = row.ownerDocument.createTreeWalker(row, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const length = node.nodeValue?.length ?? 0;
       if (column <= length) return { node, offset: column };
@@ -152,7 +152,7 @@ export class SourceSelection {
    * (`afterRender`) keeps every end its unmounted row left between rows.
    */
   #read(root: ShadowRoot, afterRender: boolean) {
-    const selection = document.getSelection();
+    const selection = root.ownerDocument.getSelection();
     let range: StaticRange | undefined;
     try {
       range = selection?.getComposedRanges({ shadowRoots: [root] })[0];
@@ -233,7 +233,7 @@ export class SourceSelection {
     if (!mounted || !this.#ends) return;
     const anchor = this.#pointAt(this.#ends.anchor, mounted);
     const focus = this.#pointAt(this.#ends.focus, mounted);
-    const selection = document.getSelection();
+    const selection = root.ownerDocument.getSelection();
     const range = selection?.getComposedRanges({ shadowRoots: [root] })[0];
     const { anchor: anchorOffset, focus: focusOffset } = this.#ends;
     const clipped =

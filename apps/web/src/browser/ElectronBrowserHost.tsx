@@ -1,4 +1,4 @@
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
   type DesktopPreviewBridge,
@@ -9,8 +9,15 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { type ComponentProps, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { DetachedPanelPortal } from "~/detachedPanels/DetachedPanelPortal";
+import {
+  detachedPanelWindowName,
+  useDetachedPanelStore,
+} from "~/detachedPanels/detachedPanelStore";
+import { useDetachedWindows } from "~/detachedPanels/detachedWindows";
 
 import { isElectron } from "~/env";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
@@ -136,13 +143,23 @@ export function ElectronBrowserHost() {
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
   const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
+  const detachedNames = useDetachedPanelStore(useShallow((state) => Object.keys(state.byName)));
+  const detachedWindows = useDetachedWindows();
 
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
       {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
         const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-        return (
+        // A detached tab's webview lives in its window; moving it there reloads the page once.
+        const detachedName = detachedPanelWindowName(
+          scopedThreadKey(threadRef),
+          `browser:${snapshot.tabId}`,
+        );
+        const detached = detachedNames.includes(detachedName);
+        const detachedWindow = detached ? detachedWindows.get(detachedName) : undefined;
+        if (detached && !detachedWindow) return null;
+        const webview = (
           <AuthorizedBrowserWebview
             key={runtimeTabId}
             threadRef={threadRef}
@@ -163,6 +180,17 @@ export function ElectronBrowserHost() {
                 }
               : {})}
           />
+        );
+        return detachedWindow ? (
+          <DetachedPanelPortal
+            key={runtimeTabId}
+            detachedWindow={detachedWindow}
+            target="webviewRoot"
+          >
+            {webview}
+          </DetachedPanelPortal>
+        ) : (
+          webview
         );
       })}
     </div>

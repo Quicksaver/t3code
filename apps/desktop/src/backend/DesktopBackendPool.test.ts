@@ -220,6 +220,12 @@ function layerPool(
           runMainContentsCommand:
             options.onMainContentsCommand ?? (() => Effect.die("unexpected main contents command")),
           syncAppearance: Effect.void,
+          detachedPanels: {
+            sync: () => Effect.void,
+            reveal: () => Effect.void,
+            focus: () => Effect.void,
+            close: () => Effect.void,
+          },
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
     ),

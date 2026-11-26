@@ -1179,6 +1179,8 @@ function EditableFileSurface({
 }
 
 function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>) {
+  const { ownerDocument } = event.currentTarget;
+  const NodeConstructor = ownerDocument.defaultView?.Node ?? Node;
   const mac = isMacPlatform(navigator.platform);
   const selectAll =
     event.key.toLowerCase() === "a" &&
@@ -1188,13 +1190,13 @@ function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>
   // React bubbles keys from portaled children (the image dialog) through this surface.
   if (
     !selectAll ||
-    !(event.target instanceof Node) ||
+    !(event.target instanceof NodeConstructor) ||
     !event.currentTarget.contains(event.target)
   ) {
     return;
   }
   event.preventDefault();
-  window.getSelection()?.selectAllChildren(event.currentTarget);
+  ownerDocument.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
 function RenderedMarkdownSurface({

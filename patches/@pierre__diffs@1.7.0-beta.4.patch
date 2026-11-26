@@ -1,3 +1,34 @@
+diff --git a/dist/components/CodeView.js b/dist/components/CodeView.js
+index 0b14f541214c7319e259bc88b9747c543f295d5d..46408f7dd3fa76c6f31955aba37ec9bd1d8d9fa6 100644
+--- a/dist/components/CodeView.js
++++ b/dist/components/CodeView.js
+@@ -597,7 +597,7 @@ var CodeView = class CodeView {
+ 			if (selected == null || selected.collapsed) continue;
+ 			const line = getCodeLineElement(selected.startContainer);
+ 			if (line == null || !shadowRoot.contains(line) || line !== getCodeLineElement(selected.endContainer)) continue;
+-			const range = document.createRange();
++			const range = shadowRoot.ownerDocument.createRange();
+ 			range.setStart(selected.startContainer, selected.startOffset);
+ 			range.setEnd(selected.endContainer, selected.endOffset);
+ 			const text = range.toString();
+@@ -938,7 +938,7 @@ var CodeView = class CodeView {
+ 		this.promotePendingPooledElements();
+ 		let element = this.elementPool.pop();
+ 		while (element != null && !this.isElementPoolGenerationCurrent(element)) element = this.elementPool.pop();
+-		element ??= document.createElement(DIFFS_TAG_NAME);
++		element ??= (this.root?.ownerDocument ?? document).createElement(DIFFS_TAG_NAME);
+ 		this.markElementPoolGenerationCurrent(element);
+ 		return element;
+ 	}
+@@ -2777,7 +2777,7 @@ function hasItemLayoutOptionChanged(previousOptions, nextOptions) {
+ 	return (previousOptions.overflow ?? "scroll") !== (nextOptions.overflow ?? "scroll") || (previousOptions.disableLineNumbers ?? false) !== (nextOptions.disableLineNumbers ?? false) || (previousOptions.disableFileHeader ?? false) !== (nextOptions.disableFileHeader ?? false) || previousOptions.unsafeCSS !== nextOptions.unsafeCSS || (previousOptions.diffStyle ?? "split") !== (nextOptions.diffStyle ?? "split") || (previousOptions.diffIndicators ?? "bars") !== (nextOptions.diffIndicators ?? "bars") || (previousOptions.hunkSeparators ?? "line-info") !== (nextOptions.hunkSeparators ?? "line-info") || (previousOptions.expandUnchanged ?? false) !== (nextOptions.expandUnchanged ?? false) || (previousOptions.collapsedContextThreshold ?? 1) !== (nextOptions.collapsedContextThreshold ?? 1);
+ }
+ function getCodeLineElement(node) {
+-	return (node instanceof Element ? node : node.parentElement)?.closest("[data-line]") ?? void 0;
++	return (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)?.closest("[data-line]") ?? void 0;
+ }
+ function hasSearchIndexOptionChanged(previousOptions, nextOptions) {
+ 	return (previousOptions.diffStyle ?? "split") !== (nextOptions.diffStyle ?? "split") || (previousOptions.expandUnchanged ?? false) !== (nextOptions.expandUnchanged ?? false) || (previousOptions.collapsedContextThreshold ?? 1) !== (nextOptions.collapsedContextThreshold ?? 1);
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
 index b4c280390b52434f63fbe7916d81b150d9006fb4..db87ba385f927d793a80d908cd575216d22a09a7 100644
 --- a/dist/editor/editor.js
@@ -313,6 +344,19 @@ index 96d4fb137ea683b66381b1ce6e47e8708a89366c..13f2564897a5bf53a8f311300003b3ea
  	}
  	/**
  	* Re-measure the '0' character width against the font that is loaded right
+diff --git a/dist/utils/getComposedSelectionRange.js b/dist/utils/getComposedSelectionRange.js
+index acdec2ce50fc47572b9fd8db7d630e08e4a54066..153b78098f9b128ec0fc5a55c75a722e7ee45b21 100644
+--- a/dist/utils/getComposedSelectionRange.js
++++ b/dist/utils/getComposedSelectionRange.js
+@@ -23,7 +23,7 @@ function getShadowRootRange(shadowRoot) {
+ 	};
+ }
+ function getComposedSelectionRange(shadowRoot) {
+-	const selection = document.getSelection();
++	const selection = shadowRoot.ownerDocument.getSelection();
+ 	if (selection == null) return;
+ 	return typeof selection.getComposedRanges === "function" ? getComposedRange(selection, shadowRoot) : getShadowRootRange(shadowRoot);
+ }
 diff --git a/dist/utils/parsePatchFiles.js b/dist/utils/parsePatchFiles.js
 index 48568bd6f669ba4826de17ba03caad466e1f0000..f27123f7c812c728ee8393792665ba288141771c 100644
 --- a/dist/utils/parsePatchFiles.js

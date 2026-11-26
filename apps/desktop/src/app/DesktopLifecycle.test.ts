@@ -106,6 +106,12 @@ function layerDesktopWindow(
     zoomMain: () => Effect.void,
     runMainContentsCommand: () => Effect.void,
     syncAppearance: Effect.void,
+    detachedPanels: {
+      sync: () => Effect.void,
+      reveal: () => Effect.void,
+      focus: () => Effect.void,
+      close: () => Effect.void,
+    },
   });
 }
 

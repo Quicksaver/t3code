@@ -24,14 +24,17 @@ export function useInlineActionConfirm(scopeKey: string) {
         const controller = new AbortController();
         const { signal } = controller;
         const release = () => setArmed((current) => (current === entry ? null : current));
-        document.addEventListener(
+        // A detached panel window has its own document, events and realm.
+        const doc = node.ownerDocument;
+        const view = doc.defaultView ?? window;
+        doc.addEventListener(
           "pointerdown",
           (event) => {
-            if (event.target instanceof Node && !node.contains(event.target)) release();
+            if (event.target instanceof view.Node && !node.contains(event.target)) release();
           },
           { capture: true, signal },
         );
-        window.addEventListener(
+        view.addEventListener(
           "keydown",
           (event) => {
             if (event.key !== "Escape") return;
@@ -41,11 +44,11 @@ export function useInlineActionConfirm(scopeKey: string) {
           },
           { capture: true, signal },
         );
-        window.addEventListener("blur", release, { signal });
-        const timeout = window.setTimeout(release, 3000);
+        view.addEventListener("blur", release, { signal });
+        const timeout = view.setTimeout(release, 3000);
         return () => {
           controller.abort();
-          window.clearTimeout(timeout);
+          view.clearTimeout(timeout);
           release();
         };
       },
