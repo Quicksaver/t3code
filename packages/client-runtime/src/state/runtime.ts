@@ -7,6 +7,7 @@ import { reuseUnchanged } from "./serverConfigProjection.ts";
 export { runStreamInEnvironment, followStreamInEnvironment } from "./environmentStreams.ts";
 import {
   type ClientGuardedRpcTag,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   type EnvironmentId as EnvironmentIdType,
 } from "@t3tools/contracts";
@@ -439,8 +440,9 @@ export const awaitAtomResult = <A, E>(
 ): Effect.Effect<A, E> =>
   Effect.scoped(
     Effect.gen(function* () {
+      const hasCachedNode = options.refresh === true && registry.getNodes().has(atom);
       yield* AtomRegistry.mount(registry, atom);
-      if (options.refresh) {
+      if (hasCachedNode) {
         yield* Effect.sync(() => {
           const current = registry.get(atom);
           if (current._tag !== "Initial" && !current.waiting) {

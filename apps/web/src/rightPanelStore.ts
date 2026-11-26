@@ -27,6 +27,7 @@ const RIGHT_PANEL_KINDS = [
   "preview",
   "device",
   "terminal",
+  "source-control",
   "pull-request",
   "pull-requests",
   "issue",
@@ -48,6 +49,7 @@ export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | { id: "source-control"; kind: "source-control" }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -66,6 +68,8 @@ export type RightPanelSurface =
   | {
       id: `file:${string}` | `attachment:${string}`;
       kind: "file";
+      /** Workspace-relative, or absolute for a host file outside the workspace. */
+      cwd?: string;
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
@@ -130,7 +134,7 @@ export function decodeThreadSurface(surface: object): ThreadSurface | null {
 }
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+const RIGHT_PANEL_STORAGE_VERSION = 17;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -198,7 +202,7 @@ interface RightPanelStoreState {
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
-  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openFile: (ref: ScopedThreadRef, relativePath: string, line?: number, cwd?: string) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
     ref: ScopedThreadRef,
@@ -299,6 +303,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "source-control":
+      return { id: "source-control", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -309,13 +315,19 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
 
+export function fileSurfaceId(relativePath: string, cwd?: string): `file:${string}` {
+  return `file:${encodeURIComponent(JSON.stringify([cwd ?? null, relativePath]))}`;
+}
+
 const fileSurface = (
   relativePath: string,
   revealLine: number | null,
   revealRequestId: number,
+  cwd?: string,
 ): RightPanelSurface => ({
-  id: `file:${relativePath}`,
+  id: fileSurfaceId(relativePath, cwd),
   kind: "file",
+  ...(cwd ? { cwd } : {}),
   relativePath,
   revealLine,
   revealRequestId,
@@ -608,6 +620,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
             .map(([threadKey, threadState]) => {
               const validThreadState =
                 threadState && typeof threadState === "object" ? threadState : null;
+              const migratedSurfaceIds = new Map<string, string>();
               const surfaces = Array.isArray(validThreadState?.surfaces)
                 ? validThreadState.surfaces.flatMap<RightPanelSurface>((surface) => {
                     if (!surface || typeof surface !== "object") return [];
@@ -631,6 +644,9 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       surface = rest;
                     }
                     if (surface.kind === "file") {
+                      if (typeof surface.relativePath !== "string") return [];
+                      const { cwd: _persistedCwd, ...surfaceWithoutCwd } = surface;
+                      const cwd = typeof _persistedCwd === "string" ? _persistedCwd : undefined;
                       const revealLine =
                         typeof surface.revealLine === "number" &&
                         Number.isFinite(surface.revealLine)
@@ -642,7 +658,17 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         surface.revealRequestId >= 0
                           ? surface.revealRequestId
                           : 0;
-                      return [{ ...surface, revealLine, revealRequestId }];
+                      if (surface.attachment !== undefined) {
+                        return [{ ...surface, revealLine, revealRequestId }];
+                      }
+                      const migratedSurface = fileSurface(
+                        surfaceWithoutCwd.relativePath,
+                        revealLine,
+                        revealRequestId,
+                        cwd,
+                      );
+                      migratedSurfaceIds.set(surface.id, migratedSurface.id);
+                      return [migratedSurface];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -719,10 +745,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 savedActiveSurfaceId.startsWith("side-chat:")
                   ? `thread:${savedActiveSurfaceId.slice("side-chat:".length)}`
                   : savedActiveSurfaceId;
+              const migratedActiveSurfaceId =
+                typeof rawActiveSurfaceId === "string"
+                  ? (migratedSurfaceIds.get(rawActiveSurfaceId) ?? rawActiveSurfaceId)
+                  : rawActiveSurfaceId;
               const persistedActiveSurfaceId = surfaces.some(
-                (surface) => surface.id === rawActiveSurfaceId,
+                (surface) => surface.id === migratedActiveSurfaceId,
               )
-                ? (rawActiveSurfaceId ?? null)
+                ? (migratedActiveSurfaceId ?? null)
                 : rawActiveSurfaceId === "pull-request"
                   ? (surfaces.find((surface) => surface.kind === "pull-request")?.id ?? null)
                   : null;
@@ -1008,10 +1038,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
-      openFile: (ref, requestedPath, line) =>
+      openFile: (ref, requestedPath, line, cwd) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            if (requestedPath === ".") {
+            if (requestedPath === "." && !cwd) {
               return upsertSurface(current, singletonSurface("files"));
             }
             // Workspace entry paths use '/', including on Windows.
@@ -1021,7 +1051,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const withoutStandaloneExplorer = current.surfaces.filter(
               (surface) => surface.kind !== "files",
             );
-            const surfaceId = `file:${relativePath}` as const;
+            const surfaceId = fileSurfaceId(relativePath, cwd);
             const existing = withoutStandaloneExplorer.find(
               (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
                 surface.id === surfaceId && surface.kind === "file",
@@ -1030,6 +1060,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               relativePath,
               normalizeRevealLine(line),
               ++lastFileRevealRequestId,
+              cwd,
             );
             return {
               ...current,
@@ -1048,12 +1079,14 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (index < 0) return current;
+            const source = current.surfaces[index]!;
+            const cwd = source.kind === "file" ? source.cwd : undefined;
             const trail = folderTrail === relativePath ? {} : { folderTrail };
             const target: RightPanelSurface =
-              relativePath === ""
+              relativePath === "" && !cwd
                 ? { ...singletonSurface("files"), ...trail }
-                : { ...fileSurface(relativePath, null, 1), ...trail };
-            const source = current.surfaces[index]!;
+                : { ...fileSurface(relativePath || ".", null, 1, cwd), ...trail };
+            // A tab already showing the target wins, so its state is never replaced.
             const existing = current.surfaces.some(
               (surface, i) => i !== index && surface.id === target.id,
             );

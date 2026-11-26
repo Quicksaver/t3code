@@ -142,5 +142,44 @@ export declare namespace PullRequestByNumber {
   export type Result = typeof PullRequestByNumber.result.Type
 }
 
+/** A repository contains the content for a project. */
+export const RepositoryPullRequestsRepositoryRepository = Schema.Struct({
+  /** A list of pull requests that have been opened in the repository. */
+  history: PullRequestConnection
+})
+export interface RepositoryPullRequestsRepositoryRepository extends Schema.Struct.Type<typeof RepositoryPullRequestsRepositoryRepository.fields> {}
+
+/** `query RepositoryPullRequests` */
+export const RepositoryPullRequests = GraphQL.query("RepositoryPullRequests", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "states", body: "[PullRequestState!]" },
+      { name: "limit", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){history:pullRequests(states:$", "states", " first:$", "limit", " orderBy:{field:CREATED_AT direction:DESC}){nodes{...PullRequestNode}}}"] }
+    ],
+    fragments: [
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+    ]
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    states: Schema.optional(Schema.NullOr(Schema.Array(Shared.PullRequestState))),
+    limit: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(RepositoryPullRequestsRepositoryRepository)
+  })
+})
+export declare namespace RepositoryPullRequests {
+  export type Variables = typeof RepositoryPullRequests.variables.Type
+  export type Result = typeof RepositoryPullRequests.result.Type
+}
+
 /** Every operation in sourceControlProvider.graphql. */
-export const SourceControlProviderGraphQLGroup = GraphQLGroup.make(PullRequestsByHead, PullRequestByNumber)
+export const SourceControlProviderGraphQLGroup = GraphQLGroup.make(PullRequestsByHead, PullRequestByNumber, RepositoryPullRequests)

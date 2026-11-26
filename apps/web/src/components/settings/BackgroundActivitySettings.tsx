@@ -106,6 +106,9 @@ function BackgroundActivityAdvancedDialog({
   const automaticGitFetchIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.automaticGitFetchInterval,
   );
+  const sourceControlAllRemotesFetchIntervalSeconds = durationToSeconds(
+    resolvedBackgroundActivity.sourceControlAllRemotesFetchInterval,
+  );
   const providerHealthRefreshIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.providerHealthRefreshInterval,
   );
@@ -201,6 +204,44 @@ function BackgroundActivityAdvancedDialog({
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         { automaticGitFetchInterval: Duration.seconds(seconds) },
+                      ),
+                      options,
+                    )
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  <T>seconds</T>
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">
+                  <T>Version Control all remotes interval</T>
+                </div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  <T>Refresh every remote shown by an open Version Control panel.</T>
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <IntervalSecondsField
+                  labels={{
+                    decrease: gt("Decrease all-remotes fetch interval"),
+                    input: gt("All-remotes fetch interval in seconds"),
+                    increase: gt("Increase all-remotes fetch interval"),
+                  }}
+                  value={sourceControlAllRemotesFetchIntervalSeconds}
+                  min={0}
+                  step={30}
+                  onCommit={(seconds, options) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          sourceControlAllRemotesFetchInterval: Duration.seconds(seconds),
+                        },
                       ),
                       options,
                     )

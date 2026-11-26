@@ -35,6 +35,107 @@ const PULL = {
   changedFiles: null,
 };
 
+describe("TanStackSourceSourceControlProvider.listChangeRequests", () => {
+  it.effect.each([
+    { headSelector: undefined, query: "state=open", expected: [44, 43, 42] },
+    { headSelector: "bob:fix-thing", query: "head=fix-thing&state=open", expected: [42] },
+  ])(
+    "lists open pull requests with head selector $headSelector",
+    ({ headSelector, query, expected }) => {
+      const otherPull = { ...PULL, number: 43, author: "alice", headRepo: "alice/web" };
+      const otherBranch = { ...PULL, number: 44, head: "another-branch" };
+      const api = TanStackSourceApi.TanStackSourceApi.of({
+        request: ({ path }) => {
+          if (path === `/repos/acme/web/pulls?${query}`) {
+            return Effect.succeed(
+              JSON.stringify({ items: [otherBranch, otherPull, PULL], next: null }),
+            );
+          }
+          if (path === "/repos/acme/web/pulls/42") return Effect.succeed(JSON.stringify(PULL));
+          if (path === "/repos/acme/web/pulls/43") return Effect.succeed(JSON.stringify(otherPull));
+          if (path === "/repos/acme/web/pulls/44")
+            return Effect.succeed(JSON.stringify(otherBranch));
+          return Effect.die(`unexpected ${path}`);
+        },
+        response: () => Effect.die("unexpected response read"),
+      });
+      return Effect.gen(function* () {
+        const provider = yield* TanStackSourceSourceControlProvider.make;
+        const pulls = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          repository: "acme/web",
+          state: "open",
+          ...(headSelector === undefined ? {} : { headSelector }),
+        });
+        assert.deepStrictEqual(
+          pulls.map((pull) => pull.number),
+          [...expected],
+        );
+      }).pipe(
+        Effect.provideService(TanStackSourceApi.TanStackSourceApi, api),
+        Effect.provide(Layer.merge(TestSourceControlHost.layer({}), FileSystem.layerNoop({}))),
+      );
+    },
+  );
+  it.effect.each([
+    { state: "open", expected: [42, 43] },
+    { state: "closed", expected: [45, 46] },
+    { state: "merged", expected: [47, 48] },
+    { state: "all", expected: [47, 42] },
+  ] as const)("fills $state listings across pages before hydrating", ({ state, expected }) => {
+    const pulls = [
+      PULL,
+      { ...PULL, number: 43, createdAt: 500 },
+      { ...PULL, number: 47, state: "merged", createdAt: 1200 },
+      { ...PULL, number: 45, state: "closed", createdAt: 900 },
+      { ...PULL, number: 48, state: "merged", createdAt: 800 },
+      { ...PULL, number: 46, state: "closed", createdAt: 700 },
+    ];
+    const pages = {
+      "/repos/acme/web/pulls?state=open": { items: pulls.slice(0, 1), next: "older-open" },
+      "/repos/acme/web/pulls?state=open&cursor=older-open": {
+        items: pulls.slice(1, 2),
+        next: null,
+      },
+      "/repos/acme/web/pulls?state=closed": { items: pulls.slice(2, 4), next: "older-closed" },
+      "/repos/acme/web/pulls?state=closed&cursor=older-closed": {
+        items: pulls.slice(4),
+        next: null,
+      },
+    };
+    const readDetails: number[] = [];
+    const api = TanStackSourceApi.TanStackSourceApi.of({
+      request: ({ path }) => {
+        if (Object.hasOwn(pages, path)) {
+          return Effect.succeed(JSON.stringify(pages[path as keyof typeof pages]));
+        }
+        const pull = pulls.find((p) => path === "/repos/acme/web/pulls/" + p.number);
+        if (!pull) return Effect.die("unexpected " + path);
+        readDetails.push(pull.number);
+        return Effect.succeed(JSON.stringify(pull));
+      },
+      response: () => Effect.die("unexpected response read"),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* TanStackSourceSourceControlProvider.make;
+      const results = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        repository: "acme/web",
+        state,
+        limit: 2,
+      });
+      assert.deepStrictEqual(
+        results.map((result) => result.number),
+        [...expected],
+      );
+      assert.sameMembers(readDetails, [...expected]);
+    }).pipe(
+      Effect.provideService(TanStackSourceApi.TanStackSourceApi, api),
+      Effect.provide(Layer.merge(TestSourceControlHost.layer({}), FileSystem.layerNoop({}))),
+    );
+  });
+});
+
 function checkout(options: {
   readonly recordedOwner: string | null;
   readonly isAncestor: boolean;

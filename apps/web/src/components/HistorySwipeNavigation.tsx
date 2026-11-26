@@ -73,7 +73,7 @@ function lockSwipeAxis(
       (node) =>
         node instanceof Element &&
         node.matches(
-          '[role="dialog"], [role="alertdialog"], [data-preview-panel-mode], [data-preview-viewport], [data-server-browser-surface]',
+          '[role="dialog"], [role="alertdialog"], [data-preview-panel-mode], [data-preview-viewport], [data-server-browser-surface], [data-history-swipe="disabled"]',
         ),
     )
   ) {
