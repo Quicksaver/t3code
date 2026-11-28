@@ -316,9 +316,9 @@ Regression coverage executes bootstrap and device-command payloads through the n
 
 **Worktree branch:** `t3/project-usage-breakdown`
 
-[PR #29931](https://github.com/pingdotgg/t3code/pull/29931) is open and **externally owned / pull-only**. The published source is `saphid/t3code:t3/project-usage-breakdown` at `e9a809ad84`, based on upstream `4c8a324e8f`. The protected local ref tracks `upstream/pr-29931` without a checkout. Its ownership records are in the Git common directory under `maintainer-protection/branches/t3--project-usage-breakdown/`.
+[PR #29931](https://github.com/pingdotgg/t3code/pull/29931) is open and **externally owned / pull-only**. The published source is `saphid/t3code:t3/project-usage-breakdown` at `d617792ff3d`, based on upstream `1dc4f822da6`. The protected local ref tracks `upstream/pr-29931` without a checkout. Its ownership records are in the Git common directory under `maintainer-protection/branches/t3--project-usage-breakdown/`.
 
-Usage offers Project beside Model and Day for both Cost and Tokens on web, desktop, and mobile. Attribution follows T3 sessions and their recovered history. Ambiguous or unattributed activity remains in No project. The rows reconcile with usage totals and respect the selected environments, period, and models. Costs remain API-equivalent estimates.
+Usage offers Project beside Model and Day for both Cost and Tokens on web, desktop, and mobile. Attribution follows T3 sessions and their recovered history. Ambiguous or unattributed activity remains in No project. The rows reconcile with usage totals and respect the selected environments, period, models, and upstream's usage permissions. Costs remain API-equivalent estimates.
 
 Assemble the published delta against the merge commit's upstream parent, including its usage guide resolution. On main, canonicalize Pi session directories before matching transcript paths to project rows.
 
