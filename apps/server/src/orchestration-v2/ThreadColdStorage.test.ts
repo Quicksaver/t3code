@@ -640,6 +640,7 @@ it.effect.each([
       yield* TestClock.adjust("1 day");
       const later = yield* DateTime.now;
       const silentRunId = RunId.make(`run:${key}:silent`);
+      const laterRunId = RunId.make(`run:${key}:later`);
       const silentMessageId = MessageId.make(`message:${key}:silent`);
       const linkItemId = TurnItemId.make(`turn-item:link-request:${key}`);
       const linkRequestId = RuntimeRequestId.make(linkItemId);
@@ -732,7 +733,6 @@ it.effect.each([
         } else if (summary === "stale-link-after-run") {
           yield* TestClock.adjust("1 second");
           const requestedAt = yield* DateTime.now;
-          const laterRunId = RunId.make(`run:${key}:later`);
           yield* commit(threadId, `${key}:later`, [
             {
               id: EventId.make(`event:${key}:later-run`),
@@ -754,6 +754,10 @@ it.effect.each([
         }
       }
       const expected = yield* projections.getThreadShell(threadId);
+      assert.equal(
+        expected?.latestRunId,
+        summary === "stale-link-after-run" ? laterRunId : projection.runs[0]!.id,
+      );
       yield* cold.archive(threadId, Effect.void);
       yield* sql`UPDATE thread_archive_manifests SET status = ${status} WHERE thread_id = ${threadId}`;
       if (summary === "silent") {
