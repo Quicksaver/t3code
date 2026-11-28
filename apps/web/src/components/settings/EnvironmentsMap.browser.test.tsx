@@ -40,6 +40,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
         serverConfig: null,
       },
     ],
+    environmentIds: new Set([EnvironmentId.make("desk")]),
     presentationById: new Map(),
   }),
 }));

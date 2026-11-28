@@ -624,6 +624,8 @@ it.effect.each([
   { status: "cold", summary: "silent" },
   { status: "moving", summary: "silent" },
   { status: "cold", summary: "stale-link" },
+  { status: "cold", summary: "stale-link-after-run" },
+  { status: "cold", summary: "legacy-current-link" },
   { status: "cold", summary: "current-link" },
 ] as const)(
   "reconciles a $summary shell summary in $status storage through the lifecycle",
@@ -727,10 +729,31 @@ it.effect.each([
               },
             },
           ]);
+        } else if (summary === "stale-link-after-run") {
+          yield* TestClock.adjust("1 second");
+          const requestedAt = yield* DateTime.now;
+          const laterRunId = RunId.make(`run:${key}:later`);
+          yield* commit(threadId, `${key}:later`, [
+            {
+              id: EventId.make(`event:${key}:later-run`),
+              type: "run.created",
+              threadId,
+              runId: laterRunId,
+              occurredAt: requestedAt,
+              payload: {
+                ...projection.runs[0]!,
+                id: laterRunId,
+                ordinal: 2,
+                status: "completed",
+                requestedAt,
+                startedAt: requestedAt,
+                completedAt: requestedAt,
+              },
+            },
+          ]);
         }
       }
       const expected = yield* projections.getThreadShell(threadId);
-      assert.equal(expected?.latestRunId, projection.runs[0]!.id);
       yield* cold.archive(threadId, Effect.void);
       yield* sql`UPDATE thread_archive_manifests SET status = ${status} WHERE thread_id = ${threadId}`;
       if (summary === "silent") {
@@ -744,25 +767,28 @@ it.effect.each([
         ) WHERE thread_id = ${threadId}
       `;
         assert.equal((yield* projections.getThreadShell(threadId))?.latestRunId, silentRunId);
-      } else if (summary === "stale-link") {
+      } else {
+        const stale = summary === "stale-link" || summary === "stale-link-after-run";
         const pending = JSON.stringify({
           id: linkRequestId,
           kind: "user_input",
           createdAt: DateTime.formatIso(later),
           blocking: true,
         });
-        yield* sql`
-          UPDATE thread_archive_manifests SET shell_json = json_set(
-            shell_json, '$.pendingRuntimeRequest', json(${pending})
-          ) WHERE thread_id = ${threadId}
-        `;
+        if (summary !== "current-link") {
+          yield* sql`
+            UPDATE thread_archive_manifests SET shell_json = json_set(
+              json_remove(shell_json, '$.linkRequestChecksLaterRuns'),
+              '$.pendingRuntimeRequest', json(${pending})
+            ) WHERE thread_id = ${threadId}
+          `;
+        }
         assert.equal(
           (yield* projections.getThreadShell(threadId))?.pendingRuntimeRequest?.id,
           linkRequestId,
         );
-        assert.isNull(expected?.pendingRuntimeRequest);
-      } else {
-        assert.equal(expected?.pendingRuntimeRequest?.id, linkRequestId);
+        if (stale) assert.isNull(expected?.pendingRuntimeRequest);
+        else assert.equal(expected?.pendingRuntimeRequest?.id, linkRequestId);
       }
       const needsRefresh = summary !== "current-link";
       yield* cold.reconcile;
