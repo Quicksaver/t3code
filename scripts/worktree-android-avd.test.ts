@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
 
 import {
   resolveCommandInvocation,
@@ -7,14 +9,15 @@ import {
 } from "./worktree-android-avd.ts";
 
 describe("worktree-android-avd", () => {
-  it("derives a stable filesystem-safe name from the worktree path", () => {
-    expect(worktreeAvdName("E:\\Projects\\t3code.worktrees\\feature one")).toMatch(
-      /^T3_feature-one_[a-f0-9]{10}$/,
-    );
-    expect(worktreeAvdName("E:\\Projects\\t3code.worktrees\\feature one")).toBe(
-      worktreeAvdName("e:\\projects\\t3code.worktrees\\feature one"),
-    );
-  });
+  it.effect("derives a stable filesystem-safe name from the worktree path", () =>
+    Effect.gen(function* () {
+      const worktree = "Projects/t3code.worktrees/feature one";
+      expect(worktreeAvdName(worktree)).toMatch(/^T3_feature-one_[a-f0-9]{10}$/);
+      if (yield* HostProcess.isWindows) {
+        expect(worktreeAvdName(worktree)).toBe(worktreeAvdName(worktree.toLowerCase()));
+      }
+    }),
+  );
 
   it("disables every Quick Boot input idempotently", () => {
     const configured = withoutQuickBoot(
