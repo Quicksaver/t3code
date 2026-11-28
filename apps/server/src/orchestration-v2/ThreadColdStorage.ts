@@ -416,8 +416,7 @@ const make = Effect.gen(function* () {
     CASE WHEN json_valid(shell_json) THEN
       json_type(shell_json, '$.latestRunSilent') IS NOT NULL OR COALESCE(
         json_extract(shell_json, '$.pendingRuntimeRequest.id') GLOB 'turn-item:link-request:*'
-        AND julianday(json_extract(shell_json, '$.latestUserAuthoredMessageAt'))
-          > julianday(json_extract(shell_json, '$.pendingRuntimeRequest.createdAt')),
+        AND json_type(shell_json, '$.linkRequestChecksLaterRuns') IS NULL,
         0
       )
     ELSE 0 END
@@ -515,7 +514,8 @@ const make = Effect.gen(function* () {
         )
         VALUES (
           ${input.threadId}, ${input.status}, ${input.archivedAt},
-          ${input.bumpGeneration === true ? 1 : 0}, ${input.shellJson ?? null},
+          ${input.bumpGeneration === true ? 1 : 0},
+          json_set(${input.shellJson ?? null}, '$.linkRequestChecksLaterRuns', json('true')),
           ${input.originalBytes ?? 0}, ${input.compressedBytes ?? 0}, ${updatedAt}
         )
         ON CONFLICT(thread_id) DO UPDATE SET
