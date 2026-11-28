@@ -211,6 +211,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
     Math.max(1, Math.floor(width * scale)),
     Math.max(1, Math.floor(height * scale)),
     "srgb",
+    doc,
   );
   if (!surface) throw new Error("A canvas is unavailable for the table image.");
   const { canvas, context } = surface;

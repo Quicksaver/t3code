@@ -163,15 +163,18 @@ export function createCanvas(
   width: number,
   height: number,
   colorSpace: PredefinedColorSpace,
+  doc?: Document,
 ): Canvas2D | null {
+  const OffscreenCanvas = doc ? doc.defaultView?.OffscreenCanvas : globalThis.OffscreenCanvas;
   if (typeof OffscreenCanvas === "function") {
     const canvas = new OffscreenCanvas(width, height);
     const context = canvas.getContext("2d", { colorSpace });
     if (!context) return null;
     return { canvas, context };
   }
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
+  const canvasDocument = doc ?? globalThis.document;
+  if (!canvasDocument) return null;
+  const canvas = canvasDocument.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d", { colorSpace });
@@ -186,10 +189,10 @@ export const encodeCanvasOnThisThread: EncodeCanvas = async (
   mimeType,
 ) => {
   let blob: Blob | null;
-  if (typeof HTMLCanvasElement !== "undefined" && canvas instanceof HTMLCanvasElement) {
+  if ("toBlob" in canvas) {
     blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mimeType, quality));
   } else {
-    blob = await (canvas as OffscreenCanvas).convertToBlob({ type: mimeType, quality });
+    blob = await canvas.convertToBlob({ type: mimeType, quality });
   }
   return blob?.type === mimeType ? blob : null;
 };

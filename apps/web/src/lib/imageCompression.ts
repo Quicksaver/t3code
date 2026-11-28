@@ -256,11 +256,7 @@ async function runInImageWorker<Task extends ImageWorkerTask>(
 }
 
 export const encodeCanvas: EncodeCanvas = async (canvas, colorSpace, quality, mimeType) => {
-  if (
-    typeof OffscreenCanvas === "function" &&
-    canvas instanceof OffscreenCanvas &&
-    startImageWorker()
-  ) {
+  if (!("toBlob" in canvas) && startImageWorker()) {
     const bitmap = await createImageBitmap(canvas);
     // The worker may have failed during the snapshot; then this falls back below.
     const encoded = await runInImageWorker(

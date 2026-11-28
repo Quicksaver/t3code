@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vite-plus/test";
+import interUrl from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { renderTablePng } from "./tablePng";
 
@@ -75,6 +76,12 @@ describe("renderTablePng", () => {
         realm === "detached" ? document.body.appendChild(document.createElement("iframe")) : null;
       using _frame = { [Symbol.dispose]: () => frame?.remove() };
       const doc = frame?.contentDocument ?? document;
+      if (frame) {
+        Object.defineProperty(doc.defaultView!, "devicePixelRatio", {
+          value: devicePixelRatio === 1 ? 2 : 1,
+        });
+      }
+      const pixelRatio = doc.defaultView!.devicePixelRatio;
       using mounted = mountTable(
         `<tr><td style="border-bottom: 2px solid rgb(255, 0, 0); padding: 8px">Name</td><td style="padding: 8px"></td></tr>`,
         // A fractional height, so the canvas size is rounded.
@@ -83,10 +90,8 @@ describe("renderTablePng", () => {
       );
       const { table } = mounted;
       const pixels = await readPng(await renderTablePng(table), table);
-      expect(pixels.width).toBe(Math.floor((pixels.origin.width + MARGIN * 2) * devicePixelRatio));
-      expect(pixels.height).toBe(
-        Math.floor((pixels.origin.height + MARGIN * 2) * devicePixelRatio),
-      );
+      expect(pixels.width).toBe(Math.floor((pixels.origin.width + MARGIN * 2) * pixelRatio));
+      expect(pixels.height).toBe(Math.floor((pixels.origin.height + MARGIN * 2) * pixelRatio));
       expect(pixels.cornerAlpha).toBe(255);
 
       // The margin shows the backdrop, the rule keeps its color, and the empty cell stays empty.
@@ -101,6 +106,26 @@ describe("renderTablePng", () => {
       );
     },
   );
+
+  it("draws with a font loaded only in the detached document and encodes in the worker", async () => {
+    const frame = document.body.appendChild(document.createElement("iframe"));
+    using _frame = { [Symbol.dispose]: () => frame.remove() };
+    const doc = frame.contentDocument!;
+    const view = doc.defaultView!;
+    const font = new view.FontFace("Detached Table Fixture", `url("${interUrl}")`);
+    doc.fonts.add(await font.load());
+    using mounted = mountTable(
+      `<tr><td><span style="font: 24px 'Detached Table Fixture', monospace">MMMMMMMM</span></td></tr>`,
+      "",
+      doc,
+    );
+    using mainThreadEncode = vi.spyOn(view.OffscreenCanvas.prototype, "convertToBlob");
+    const { table } = mounted;
+    const pixels = await readPng(await renderTablePng(table), table);
+    const [text] = textRects(table.querySelector("span")!);
+    expect(pixels.hasInk(new DOMRect(text!.right - 8, text!.top, 8, text!.height))).toBe(true);
+    expect(mainThreadEncode).not.toHaveBeenCalled();
+  });
 
   it("draws every line of wrapped text where layout put it", async () => {
     using mounted = mountTable(
