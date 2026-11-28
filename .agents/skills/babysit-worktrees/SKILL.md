@@ -1,0 +1,17 @@
+---
+name: babysit-worktrees
+description: Address pull request comments for every active non-main worktree.
+disable-model-invocation: true
+---
+
+# Babysit worktrees
+
+This skill requires unsandboxed execution. If the environment is sandboxed, report that blocker and stop.
+
+Load `$spawn-worktrees`.
+
+Instruct each subagent to use the global `$babysit` skill. Do not load `$babysit` or perform its work yourself.
+
+Be silent while you patiently wait for each subagent terminal result.
+
+As subagents finish, cherrypick any new commits created on their branches onto local `main` that are not already present; ensure `base/fork` documentation is also updated as needed. The branches' `BRANCH_DETAILS.md` and accessory documentation are purposefully git-ignored, so read updates from the worktrees: reflect them in `FORK.md` and refresh the tracked accessory copies in `base/fork`.

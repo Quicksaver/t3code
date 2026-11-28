@@ -47,7 +47,7 @@ Of note: Most T3 Code contributions will come from T3 Code itself, often control
 
 ## The three ways to hurt yourself
 
-1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or `kill` a PID you found by matching a name, path, or worktree string. Your own agent process has this worktree's path in its argv, and this machine runs several other dev servers at once. Kill only a PID you captured at spawn, or the owner of your port from `ss -H -ltnp` after confirming `/proc/<pid>/cwd` is your worktree.
+1. **Process ownership.** You may kill processes started by this thread or its delegated tasks, including surviving children and detached helpers. Prefer tracked PIDs; otherwise verify process identity and task ownership before stopping them. A matching name or worktree path alone is insufficient. Ask only when ownership or impact on unrelated work remains unclear.
 2. **Writing to the live install.** `~/.t3/userdata` is the developer's real T3 Code database, in use while you work. Reading or copying from it is fine. Never start a server against it, never open it read-write, never clean it up.
 3. **Baking in origins.** Never set `VITE_HTTP_URL` or `VITE_WS_URL` for dev. Dev is single-origin and Vite proxies `/api`, `/ws`, `/oauth`, and `/.well-known`. Setting them bakes localhost into the bundle and silently breaks every remote browser.
 
@@ -70,6 +70,7 @@ The most common defect in this repo is a change that works on the path you teste
 See [00_development.md](docs/operations/00_development.md) for setup, ports, seeding (`vp run migrate-dev-db`), and [reusable dev auth](docs/operations/00_development.md#reusable-dev-credential). Agent-specific rules:
 
 - **Worktree setup:** Wait while `.t3/setup-running` names a live PID; do not run `vp i` concurrently. If no `.t3/setup-*` marker exists, run `vp i` yourself.
+- **Dev home:** An explicit `--home-dir` overrides the development default. The runner treats the live `~/.t3` home as unset when choosing backend state and the Electron profile.
 - **Process lifecycle:** Start dev servers, Metro, and builds from your own shell so they exit with your session—never detach with `systemd-run`, `nohup`, `setsid`, or `tmux` unless asked. Stop background tasks with your harness's own stop (`vp` does not forward SIGTERM to child Vite/server processes).
 - **Sharing (`vp run dev --share`):** Wait for `pairingUrl:` and hand the full URL to the user. Never wire `tailscale serve` by hand, open the URL yourself, or consume the user's one-time pairing link. Mint another with `node apps/server/src/bin.ts pair` if needed.
 - **Test data:** Always copy in (never symlink) and refresh `statev2.sqlite`, not `state.sqlite`. Bring `secrets` / `settings.json` only if the flow under test needs them.
@@ -155,3 +156,15 @@ Read the matching doc before changing code in that area; code review enforces th
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
 - Security matters, but do not over-index on dev-mode or maintainer-only features. Read [SECURITY.md](SECURITY.md) before auditing or triaging reports.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
+## Fork
+
+This main checkout is a fork of the original `upstream` branch.
+
+- When performing or evaluating implementation work in this checkout, study `FORK.md` before acting.
+- Otherwise, when the task is only to orchestrate worktree subagents, follow only the referenced instructions instead without reading any additional documentation files.
+- The information about each customization line of work recorded in `FORK.md` is synced to each branch's own `BRANCH_DETAILS.md` file. That file and any accessory documentation referenced in it are purposefully git-ignored through the repository's `.git/info/exclude`: keep them accurate and updated with ongoing development in the worktree, but never commit them to the branch. `base/fork` tracks copies of the accessory documentation.
+- Any changes to `AGENTS.md` or `FORK.md` must remain mirrored between `main` and `base/fork`.
+- After creating a worktree on Windows, run the `Setup Worktree` T3 task in that worktree before doing any other work there.
+- A feature or fix branch applies migrations directly after the `base/main` migration tail. Use the next migration number and fold the branch's final schema and data work into that migration; branch-only intermediate states are not part of its upstream merge history.
+- `fork/main` may have already run intermediate development migrations. Before integrating or renumbering branch migrations there, inspect the applied database ledger and schema, preserve every published fork migration, and add only the migration work that the running database has not applied. All server migrations share `effect_sql_migrations`; feature-specific ledgers are not used.

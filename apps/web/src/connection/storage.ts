@@ -48,7 +48,8 @@ import { projectFaviconCache } from "../assets/projectFaviconCache";
 import { browserThreadTriageOutboxStore } from "./threadTriageOutboxStore";
 
 const DATABASE_NAME = "t3code:connection-runtime";
-const DATABASE_VERSION = 5;
+// Version 7 is already installed; adding the query store needs a newer version.
+const DATABASE_VERSION = 8;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
 const THREAD_STORE_NAME = "thread";
@@ -66,6 +67,7 @@ const QUERY_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 const QUERY_PRUNE_BATCH_ROWS = 32;
 const QUERY_PRUNE_BATCH_BYTES = 1024 * 1024;
 const CATALOG_KEY = "document";
+const ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION = 7;
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
@@ -146,6 +148,37 @@ function persistenceError(operation: keyof typeof PERSISTENCE_FAILURE, cause: un
   });
 }
 
+export function upgradeConnectionDatabase(
+  database: IDBDatabase,
+  transaction: IDBTransaction | null,
+  oldVersion: number,
+) {
+  if (!database.objectStoreNames.contains(CATALOG_STORE_NAME)) {
+    database.createObjectStore(CATALOG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SHELL_STORE_NAME)) {
+    database.createObjectStore(SHELL_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(THREAD_STORE_NAME)) {
+    database.createObjectStore(THREAD_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
+    database.createObjectStore(SERVER_CONFIG_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
+    database.createObjectStore(VCS_REFS_STORE_NAME);
+  }
+  if (!database.objectStoreNames.contains(QUERY_STORE_NAME)) {
+    database
+      .createObjectStore(QUERY_STORE_NAME)
+      .createIndex(QUERY_UPDATED_INDEX_NAME, ["environmentId", "updatedAt", "bytes"]);
+  }
+
+  if (oldVersion > 0 && oldVersion < ARCHIVED_THREAD_CACHE_EVICTION_DATABASE_VERSION) {
+    transaction?.objectStore(THREAD_STORE_NAME).clear();
+  }
+}
+
 const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* () {
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
@@ -158,27 +191,8 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
     }
     try {
       const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-      request.addEventListener("upgradeneeded", () => {
-        if (!request.result.objectStoreNames.contains(CATALOG_STORE_NAME)) {
-          request.result.createObjectStore(CATALOG_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(SHELL_STORE_NAME)) {
-          request.result.createObjectStore(SHELL_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(THREAD_STORE_NAME)) {
-          request.result.createObjectStore(THREAD_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(SERVER_CONFIG_STORE_NAME)) {
-          request.result.createObjectStore(SERVER_CONFIG_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(VCS_REFS_STORE_NAME)) {
-          request.result.createObjectStore(VCS_REFS_STORE_NAME);
-        }
-        if (!request.result.objectStoreNames.contains(QUERY_STORE_NAME)) {
-          request.result
-            .createObjectStore(QUERY_STORE_NAME)
-            .createIndex(QUERY_UPDATED_INDEX_NAME, ["environmentId", "updatedAt", "bytes"]);
-        }
+      request.addEventListener("upgradeneeded", (event) => {
+        upgradeConnectionDatabase(request.result, request.transaction, event.oldVersion);
       });
       request.addEventListener("error", () => {
         resume(
