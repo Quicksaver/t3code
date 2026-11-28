@@ -98,6 +98,14 @@ describe("cooperative shell cache encoding", () => {
   const stored = {
     schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
     environmentId: ENVIRONMENT_ID,
+    origin: {
+      serverVersion: "1.0.0",
+      databaseMigration: 81,
+      omitIdleSubagents: true,
+      omitOlderSettled: true,
+      shellThreadMembership: true,
+      snapshotAt: 1_800_000_000_000,
+    },
     snapshot: {
       ...SHELL_SNAPSHOT,
       projects: SHELL_SNAPSHOT.projects.map((project) => ({
@@ -130,6 +138,7 @@ describe("cooperative shell cache encoding", () => {
       const actual = yield* encodeStoredShellSnapshot(stored);
       expect(actual).toBe(expected);
       const parsed = JSON.parse(actual);
+      expect(parsed.origin).toEqual(stored.origin);
       expect(parsed).not.toHaveProperty("unexpected");
       expect(parsed.snapshot).not.toHaveProperty("unexpected");
       expect(parsed.snapshot.projects[0]).not.toHaveProperty("unexpected");

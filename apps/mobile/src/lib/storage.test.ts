@@ -42,7 +42,7 @@ const mocks = vi.hoisted(() => {
       ),
       getFirstAsync: vi.fn((sql: string) => {
         if (sql.includes("PRAGMA user_version")) {
-          return Promise.resolve({ user_version: 1 });
+          return Promise.resolve({ user_version: 2 });
         }
         if (loadPreferencesFails) {
           return Promise.reject(new Error("database unavailable"));

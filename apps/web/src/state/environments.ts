@@ -44,6 +44,7 @@ export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const environmentIds = new Set(catalog.entries.keys());
 
   const environments = [...presentationById.entries()].map(([environmentId, presentation]) =>
     projectEnvironmentPresentation(environmentId, presentation),
@@ -52,6 +53,7 @@ export function useEnvironments() {
   return {
     isReady: catalog.isReady,
     networkStatus,
+    environmentIds,
     environments,
     presentationById,
   };

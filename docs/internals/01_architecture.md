@@ -46,6 +46,14 @@ The event log retains only a bounded replay window, so projections cannot be reb
 from the log. Retained events must remain decodable across upgrades: schema changes affect stored
 history at startup, not just live RPC traffic.
 
+## Archived conversation storage
+
+An archived thread's conversation rows and non-lifecycle events may live only in `archivev2.sqlite`. [ThreadColdStorage](../../apps/server/src/orchestration-v2/ThreadColdStorage.ts) moves and restores them. A direct `ProjectionStore` or `Orchestrator` read can see an empty conversation. Conversation reads and commands that need these rows go through [ThreadManagementService](../../apps/server/src/orchestration-v2/ThreadManagementService.ts) to keep the thread hot while they run. An empty-field `getThreadRecords` call and `listAppOwnedChildThreadIds` hydrate pending legacy data without restoring the conversation. Shell rows and subagent links stay hot, so cancellation can check descendant permissions through the child-ID query. [AssetAccess](../../apps/server/src/assets/AssetAccess.ts) restores archived attachments and leases inline image lookups. Cold storage leaves `thread.*` events and the newest stream event hot. [ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) can prune older lifecycle events, at which point stale cursors fall back to a snapshot. Any new shell field derived from moved rows belongs in `COLD_SHELL_DERIVED_FIELDS` in [ProjectionStore](../../apps/server/src/orchestration-v2/ProjectionStore.ts). A change to shell derivation needs to refresh existing frozen summaries from the rows in their bundles.
+
+Run forks, pending merge-backs into live threads, and unfinished delegated tasks can still need an archived or deleted source's conversation. Cold storage preserves those dependencies before moving or purging a thread. Once deletion is eligible, cold storage removes the bundle and files first. [ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) waits for the purge manifest before redacting the hot tombstone and remaining lifecycle records.
+
+A new table holding per-thread conversation data belongs in the cold or purge lists in `ThreadColdStorage`. Restore inserts the original projection rows. Schema changes must either stay compatible with the stored columns, dropping removed columns and defaulting new ones on restore, or migrate existing bundles. A migration that backfills a derived column needs a corresponding restore path for bundles written before that migration. Restoring older events preserves the replay boundary. Versions without cold storage cannot read moved histories, so unarchive before downgrading.
+
 ## Turn completion and checkpoints
 
 A provider turn ending and follow-up work settling (checkpoints, diffs, PR sync) are separate

@@ -2897,6 +2897,7 @@
   "b6ba792408b8a5d5": "No se pudo cargar el hilo: {cause}",
   "ce5217104c2f32a2": "No se pudo guardar el hilo: {cause}",
   "b28a9c986945141e": "No se pudo quitar el hilo: {cause}",
+  "007399134de6b31e": "No se pudieron listar los hilos: {cause}",
   "b9b5a912ad529a01": "No se pudo cargar la configuración del servidor: {cause}",
   "5f47bce0c7f17c60": "No se pudo guardar la configuración del servidor: {cause}",
   "3b942b2ded4a3705": "No se pudieron cargar las refs de VCS: {cause}",

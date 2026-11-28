@@ -2898,6 +2898,7 @@
   "b6ba792408b8a5d5": "Thread konnte nicht geladen werden: {cause}",
   "ce5217104c2f32a2": "Thread konnte nicht gespeichert werden: {cause}",
   "b28a9c986945141e": "Thread konnte nicht entfernt werden: {cause}",
+  "007399134de6b31e": "Threads konnten nicht aufgelistet werden: {cause}",
   "b9b5a912ad529a01": "Serverkonfiguration konnte nicht geladen werden: {cause}",
   "5f47bce0c7f17c60": "Serverkonfiguration konnte nicht gespeichert werden: {cause}",
   "3b942b2ded4a3705": "VCS-Refs konnten nicht geladen werden: {cause}",

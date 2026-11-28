@@ -1,4 +1,5 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -92,6 +93,10 @@ import {
   startAttachmentUpload,
   useAttachmentUploadStore,
 } from "./attachmentUploadQueue";
+import {
+  releaseArchivedComposerDraftUploads,
+  releaseComposerDraftUploads,
+} from "./composerDraftUploads";
 
 type ProgressListener = (event: {
   readonly lengthComputable: boolean;
@@ -147,6 +152,19 @@ class TestXmlHttpRequest {
     this.status = status;
     this.listeners.get("load")?.();
   }
+}
+
+function nextUploadRequest(): Promise<TestXmlHttpRequest> {
+  const { promise, resolve } = Promise.withResolvers<TestXmlHttpRequest>();
+  vi.stubGlobal(
+    "XMLHttpRequest",
+    class extends TestXmlHttpRequest {
+      override send(): void {
+        resolve(this);
+      }
+    },
+  );
+  return promise;
 }
 
 const firstEnvironment = EnvironmentId.make("environment-1");
@@ -795,6 +813,99 @@ describe("attachmentUploadQueue", () => {
         expect.anything(),
       ],
     ]);
+  });
+
+  it.each(["archive then discard", "direct discard"] as const)(
+    "releases the right ready draft uploads on %s",
+    async (action) => {
+      const thread = scopeThreadRef(firstEnvironment, ThreadId.make("thread-archive-uploads"));
+      const drafts = useComposerDraftStore.getState();
+      const image = makeImage("archive-screenshot");
+      const file = {
+        ...makeFile("archive-report"),
+        file: null,
+        uploadedAttachmentId: "pending-archive-report-pdf",
+        uploadEnvironmentId: firstEnvironment,
+      };
+      const removedIds = () =>
+        mocks.runAtomCommand.mock.calls.flatMap(([, command, target]) =>
+          command === mocks.removeUpload ? [target.input.attachmentId] : [],
+        );
+      drafts.addImage(thread, image);
+      drafts.addFiles(thread, [file]);
+      try {
+        const started = nextUploadRequest();
+        startAttachmentUpload({ environmentId: firstEnvironment, image, draftTarget: thread });
+        startAttachmentUpload({
+          environmentId: firstEnvironment,
+          image: file,
+          draftTarget: thread,
+        });
+        const request = await started;
+        const settled = awaitAttachmentUploads([image.id, file.id]);
+        request.complete();
+        await settled;
+
+        const imageAttachmentId = "pending-environment-1-archive-screenshot.png";
+        expect(readAttachmentUpload(image.id)).toMatchObject({
+          status: "ready",
+          attachmentId: imageAttachmentId,
+        });
+        expect(readAttachmentUpload(file.id)).toMatchObject({
+          status: "ready",
+          attachmentId: file.uploadedAttachmentId,
+        });
+        if (action === "archive then discard") {
+          releaseArchivedComposerDraftUploads(thread);
+
+          expect(removedIds()).toEqual([imageAttachmentId]);
+          expect(readAttachmentUpload(image.id)).toBeUndefined();
+          expect(readAttachmentUpload(file.id)).toMatchObject({
+            status: "ready",
+            attachmentId: file.uploadedAttachmentId,
+          });
+          expect(drafts.getComposerDraft(thread)?.files).toEqual([file]);
+        }
+
+        releaseComposerDraftUploads(thread);
+
+        expect(removedIds()).toEqual([imageAttachmentId, file.uploadedAttachmentId]);
+        expect(readAttachmentUpload(image.id)).toBeUndefined();
+        expect(readAttachmentUpload(file.id)).toBeUndefined();
+      } finally {
+        drafts.clearComposerContent(thread);
+      }
+    },
+  );
+
+  it("lets a pending file upload finish after its thread is archived", async () => {
+    const thread = scopeThreadRef(firstEnvironment, ThreadId.make("thread-archive-pending"));
+    const drafts = useComposerDraftStore.getState();
+    const file = makeFile("archive-notes");
+    drafts.addFiles(thread, [file]);
+    try {
+      const started = nextUploadRequest();
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: thread });
+      const request = await started;
+
+      releaseArchivedComposerDraftUploads(thread);
+      const settled = awaitAttachmentUploads([file.id]);
+      request.complete();
+      await settled;
+
+      expect(
+        mocks.runAtomCommand.mock.calls.some(([, command]) => command === mocks.removeUpload),
+      ).toBe(false);
+      expect(drafts.getComposerDraft(thread)?.files).toMatchObject([
+        {
+          id: file.id,
+          uploadedAttachmentId: "pending-environment-1-archive-notes.pdf",
+          uploadEnvironmentId: firstEnvironment,
+        },
+      ]);
+    } finally {
+      drafts.clearComposerContent(thread);
+    }
   });
 
   it("releases an upload URL that resolves after its image was removed", async () => {
