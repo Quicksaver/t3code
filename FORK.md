@@ -558,7 +558,7 @@ Upstream owns the SQLite writer worker, reader pool, graceful close and writer b
 
 Cold storage retains upstream pending-question cache safeguards and query persistence. Mobile cache writes retain upstream removal ordering and invalidation. Snapshot fixtures share the runtime-driven availability predicate while preserving socket-first delivery. The main connection cache uses IndexedDB version 8 to add the query store to installed version-7 profiles. Standalone migration 120 maps to published main migration 71.
 
-The standalone source is `0734b732db` above `base/main`. Upstream run-count reads take a cold-storage lease. Restoring older bundles reconstructs missing inline-output flags and uses upstream's archive membership column. Frozen historical link prompts refresh after a later authored reply while current prompts stay cold.
+The standalone source begins at `d3ef9e9aebf` above `base/main`. Upstream run-count reads take a cold-storage lease. Restoring older bundles reconstructs missing inline-output flags and uses upstream's archive membership column. Frozen historical link prompts refresh after a later authored reply while current prompts stay cold.
 
 Archived conversations move out of the active database (`userdata/statev2.sqlite`) into gzip chunks in `userdata/archivev2.sqlite`, and come back whenever something reads or changes them. `apps/server/src/orchestration-v2/ThreadColdStorage.ts` owns every transition and runs each one under the thread's `ThreadCommandExecutor` lock, so it is serialized with command dispatch for that thread.
 
