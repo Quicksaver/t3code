@@ -43,6 +43,7 @@ export interface ProjectionMaintenanceV2Shape {
    */
   readonly purgeDeletedThread: (
     threadId: ThreadId,
+    requireStoragePurge?: boolean,
   ) => Effect.Effect<number, ProjectionMaintenanceError>;
 }
 
@@ -86,9 +87,9 @@ type MetadataRow = {
   readonly updated_at: string;
 };
 
-export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlClient> = Layer.effect(
-  ProjectionMaintenanceV2,
-  Effect.gen(function* () {
+const make = Effect.fn("ProjectionMaintenance.make")(
+  // The sweep cannot remove attachment inventory before cold storage purges it.
+  function* (requireStoragePurgeForSweep: boolean) {
     const sql = yield* SqlClient.SqlClient;
 
     const writeMetadata = (name: string, sequence: number, at: DateTime.Utc) => sql`
@@ -291,7 +292,10 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     // A run fork shows its source's history without copying it, through any chain of forks, and a
     // pending merge-back still reads its source. Such a deleted thread keeps its content until
     // every live thread that shows it is deleted too.
-    const purgeableThreads = (deletedThreadId: ThreadId | undefined) =>
+    const purgeableThreads = (
+      deletedThreadId: ThreadId | undefined,
+      requireStoragePurge: boolean,
+    ) =>
       sql<{
         readonly thread_id: string;
       }>`
@@ -347,13 +351,21 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         AND thread.thread_id NOT IN (SELECT thread_id FROM shown WHERE thread_id IS NOT NULL)
         -- An older cascade can read a deleted descendant's retained membership history.
         AND thread.thread_id NOT IN (SELECT thread_id FROM legacy_cascade_threads)
+        AND ${
+          requireStoragePurge
+            ? sql`EXISTS (
+                SELECT 1 FROM thread_archive_manifests AS manifest
+                WHERE manifest.thread_id = thread.thread_id AND manifest.status = 'purged'
+              )`
+            : sql`1 = 1`
+        }
         -- Earlier effects still read the thread; a later purge or sweep takes it.
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_v2_effect_outbox AS effect
           WHERE effect.thread_id = thread.thread_id
             AND effect.status IN ('pending', 'running')
             -- Title generation has its own lane and needs nothing the purge removes.
-            AND effect.effect_type NOT IN ('thread-content.purge', 'thread-title.generate')
+            AND effect.effect_type NOT IN ('thread-content.purge', 'thread.storage-purge', 'thread-title.generate')
         )
         -- A live parent settles its delegated task from this child's runs.
         AND NOT EXISTS (
@@ -397,7 +409,7 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
                 sql`EXISTS (
                   SELECT 1 FROM orchestration_v2_effect_outbox AS effect
                   WHERE effect.thread_id = thread.thread_id
-                    AND effect.effect_type <> 'thread-content.purge'
+                    AND effect.effect_type NOT IN ('thread-content.purge', 'thread.storage-purge')
                     AND (
                       effect.status IN ('succeeded', 'cancelled')
                       OR (effect.status = 'failed' AND effect.last_error IS NOT NULL)
@@ -414,8 +426,9 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     const purgeThreads = Effect.fnUntraced(function* (
       deletedThreadId: ThreadId | undefined,
       betweenPages: Effect.Effect<void>,
+      requireStoragePurge: boolean,
     ) {
-      const threads = yield* purgeableThreads(deletedThreadId);
+      const threads = yield* purgeableThreads(deletedThreadId, requireStoragePurge);
       const now = DateTime.formatIso(yield* DateTime.now);
       let purged = 0;
       // Each statement commits on its own, so a huge thread never holds the writer for long.
@@ -531,8 +544,11 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
       return purged;
     });
 
-    const purgeDeletedThread: ProjectionMaintenanceV2Shape["purgeDeletedThread"] = (threadId) =>
-      purgeThreads(threadId, Effect.void).pipe(
+    const purgeDeletedThread: ProjectionMaintenanceV2Shape["purgeDeletedThread"] = (
+      threadId,
+      requireStoragePurge = false,
+    ) =>
+      purgeThreads(threadId, Effect.void, requireStoragePurge).pipe(
         Effect.withSpan("ProjectionMaintenance.purgeDeletedThread"),
         Effect.mapError(
           (cause) => new ProjectionMaintenanceError({ operation: "purge deleted thread", cause }),
@@ -580,7 +596,11 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
 
         // Catches threads deleted before purging existed, and any purge a crash interrupted.
         // It runs first so the legacy prune below takes the v1 events of threads it marks.
-        const purgedRowCount = yield* purgeThreads(undefined, betweenPages);
+        const purgedRowCount = yield* purgeThreads(
+          undefined,
+          betweenPages,
+          requireStoragePurgeForSweep,
+        );
 
         const legacy = yield* pruneImportedLegacyHistory(
           head,
@@ -607,5 +627,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     );
 
     return ProjectionMaintenanceV2.of({ pruneEventStore, purgeDeletedThread });
-  }),
+  },
 );
+
+export const layer = Layer.effect(ProjectionMaintenanceV2, make(false));
+export const layerWithColdStorage = Layer.effect(ProjectionMaintenanceV2, make(true));

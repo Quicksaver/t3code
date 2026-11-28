@@ -2897,6 +2897,7 @@
   "b6ba792408b8a5d5": "Nie udało się wczytać wątku: {cause}",
   "ce5217104c2f32a2": "Nie udało się zapisać wątku: {cause}",
   "b28a9c986945141e": "Nie udało się usunąć wątku: {cause}",
+  "007399134de6b31e": "Nie udało się pobrać listy wątków: {cause}",
   "b9b5a912ad529a01": "Nie udało się wczytać konfiguracji serwera: {cause}",
   "5f47bce0c7f17c60": "Nie udało się zapisać konfiguracji serwera: {cause}",
   "3b942b2ded4a3705": "Nie udało się wczytać refów vcs: {cause}",

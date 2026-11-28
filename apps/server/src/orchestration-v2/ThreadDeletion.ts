@@ -237,12 +237,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       request: { type: "attachment.cleanup", attachmentIds },
     });
   }
-  // A purge claimed before its cascade would skip the thread and leave it to the sweep.
+  // Cascades finish before storage purge, which also needs the attachment inventory intact.
   effects.push(...(input.subagentCascades ?? []), {
-    id: `effect:${command.commandId}:thread-content.purge`,
+    id: `effect:${command.commandId}:thread.storage-purge`,
     commandId: command.commandId,
     threadId: command.threadId,
-    request: { type: "thread-content.purge" },
+    request: { type: "thread.storage-purge" },
   });
   return { events, effects };
 });

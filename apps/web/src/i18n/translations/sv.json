@@ -2897,6 +2897,7 @@
   "b6ba792408b8a5d5": "Kunde inte läsa in tråden: {cause}",
   "ce5217104c2f32a2": "Kunde inte spara tråden: {cause}",
   "b28a9c986945141e": "Kunde inte ta bort tråden: {cause}",
+  "007399134de6b31e": "Kunde inte lista trådarna: {cause}",
   "b9b5a912ad529a01": "Kunde inte läsa in serverkonfigurationen: {cause}",
   "5f47bce0c7f17c60": "Kunde inte spara serverkonfigurationen: {cause}",
   "3b942b2ded4a3705": "Kunde inte läsa in VCS-refs: {cause}",

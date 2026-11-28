@@ -36,6 +36,7 @@ import {
   type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as Persistence from "../platform/persistence.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   makeThreadTriageOutboxStore,
@@ -150,6 +151,21 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
   );
   const runtime = Atom.runtime(
     Layer.mergeAll(
+      Layer.succeed(Persistence.EnvironmentCacheStore, {
+        loadShell: () => Effect.succeedNone,
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeedNone,
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        listThreadIds: () => Effect.succeed([]),
+        loadServerConfig: () => Effect.succeedNone,
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeedNone,
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      }),
       Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, {
         run: (_environmentId, effect) =>
           Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),

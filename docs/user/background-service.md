@@ -19,6 +19,7 @@ Install the `t3` CLI first ([Command line](./install.md#command-line)), then run
 
 - Pairing codes are never written to logs; run `t3 pair` or `t3 up` on the host to connect a device.
 - `t3 update` asks before restarting (pass `--yes` in scripts). Pin a version with `t3 update 0.0.42`, switch tracks with `--channel nightly`, or downgrade with `--allow-downgrade`.
+- Versions without compressed archive storage cannot read archived conversations once a newer version has compressed them, including conversations archived before you updated. Unarchive any conversations you need before downgrading; changing the version alone does not restore archived history.
 
 ## Local network access
 

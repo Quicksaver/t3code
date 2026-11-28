@@ -132,6 +132,7 @@ const PERSISTENCE_FAILURE = {
   "load-thread": msg("Could not load thread: {cause}"),
   "save-thread": msg("Could not save thread: {cause}"),
   "remove-thread": msg("Could not remove thread: {cause}"),
+  "list-threads": msg("Could not list threads: {cause}"),
   "load-server-config": msg("Could not load server config: {cause}"),
   "save-server-config": msg("Could not save server config: {cause}"),
   "load-vcs-refs": msg("Could not load vcs refs: {cause}"),
@@ -348,6 +349,29 @@ function removeDatabaseValueOnConnection(
   }).pipe(Effect.withSpan("web.connectionStorage.removeDatabaseValue"));
 }
 
+function readDatabaseKeysInRangeOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  range: IDBKeyRange,
+) {
+  return Effect.callback<ReadonlyArray<IDBValidKey>, ConnectionTransientError>((resume) => {
+    try {
+      const request = database
+        .transaction(storeName, "readonly")
+        .objectStore(storeName)
+        .getAllKeys(range);
+      request.addEventListener("error", () => {
+        resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
+      });
+      request.addEventListener("success", () => {
+        resume(Effect.succeed(request.result));
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("read", cause)));
+    }
+  }).pipe(Effect.withSpan("web.connectionStorage.readDatabaseKeysInRange"));
+}
+
 function removeDatabaseValuesInRangeOnConnection(
   database: IDBDatabase,
   storeName: string,
@@ -461,6 +485,12 @@ function saveQueryOnConnection(
       resume(Effect.fail(catalogError("write", cause)));
     }
   }).pipe(Effect.withSpan("web.connectionStorage.saveQuery"));
+}
+
+function readDatabaseKeysInRange(database: DatabaseHandle, storeName: string, range: IDBKeyRange) {
+  return withDatabase(database, (opened) =>
+    readDatabaseKeysInRangeOnConnection(opened, storeName, range),
+  );
 }
 
 function readDatabaseValue(database: DatabaseHandle, storeName: string, key: IDBValidKey) {
@@ -1094,6 +1124,22 @@ export const layer = Layer.effectContext(
             THREAD_STORE_NAME,
             threadCacheKey(environmentId, threadId),
           ).pipe(Effect.mapError((cause) => persistenceError("remove-thread", cause)));
+        },
+      ),
+      listThreadIds: Effect.fn("Persistence.EnvironmentCacheStore.listThreadIds")(
+        function (environmentId) {
+          return readDatabaseKeysInRange(
+            database,
+            THREAD_STORE_NAME,
+            IDBKeyRange.bound(`${environmentId}:`, `${environmentId}:￿`),
+          ).pipe(
+            Effect.map((keys) =>
+              keys.flatMap((key) =>
+                typeof key === "string" ? [ThreadId.make(key.slice(environmentId.length + 1))] : [],
+              ),
+            ),
+            Effect.mapError((cause) => persistenceError("list-threads", cause)),
+          );
         },
       ),
       clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {

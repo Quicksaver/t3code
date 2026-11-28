@@ -242,9 +242,17 @@ const make = Effect.gen(function* () {
       const result = yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* lockExclusively(databasePath);
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const manifests = yield* sql`
+          SELECT 1 FROM main.sqlite_schema WHERE type = 'table' AND name = 'thread_archive_manifests'
+        `;
+        const maintenanceLayer =
+          manifests.length > 0
+            ? ProjectionMaintenance.layerWithColdStorage
+            : ProjectionMaintenance.layer;
         yield* onStep("prune-events");
-        const summary = yield* maintenance.pruneEventStore();
+        const summary = yield* ProjectionMaintenance.ProjectionMaintenanceV2.use((maintenance) =>
+          maintenance.pruneEventStore(),
+        ).pipe(Effect.provide(maintenanceLayer));
         yield* onStep("vacuum");
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
@@ -254,13 +262,7 @@ const make = Effect.gen(function* () {
         yield* onStep("checkpoint");
         yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
         return summary;
-      }).pipe(
-        Effect.provide(
-          ProjectionMaintenance.layer.pipe(
-            Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
-          ),
-        ),
-      );
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: databasePath })));
       const afterBytes = Number((yield* fs.stat(databasePath)).size);
       return {
         beforeBytes,
