@@ -13376,5 +13376,11 @@
   "f5ab3575ab507a41": "Create branch from commit",
   "f5ce06789db51a99": "Loading interrupted.",
   "f9e8eb7086c07ce9": "Stash message (optional)",
-  "fcf3ed5d7085f478": "Provide a message, or leave it blank to auto-generate one."
+  "fcf3ed5d7085f478": "Provide a message, or leave it blank to auto-generate one.",
+  "ca7affe349524b6f": "Move back to panel",
+  "857c40e25a3162fd": "Open in new window",
+  "e96b2911a5d12031": "File",
+  "9adb474d32ca4ce3": "Re-attach",
+  "b0bb75d07aed2952": "This tab is open in its own window.",
+  "42b160509203f90d": "Show window"
 }
