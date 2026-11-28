@@ -246,11 +246,10 @@ export async function writePngToClipboard(
   png: () => Promise<Blob>,
   target?: ClipboardTarget,
 ): Promise<boolean> {
-  if (
-    typeof navigator === "undefined" ||
-    !navigator.clipboard?.write ||
-    typeof ClipboardItem === "undefined"
-  ) {
+  const view = detachedClipboardView();
+  const navigator = view?.navigator ?? globalThis.navigator;
+  const ClipboardItem = view?.ClipboardItem ?? globalThis.ClipboardItem;
+  if (!navigator?.clipboard?.write || ClipboardItem === undefined) {
     throw new ClipboardApiUnavailableError(clipboardTargetFields(target, "unavailable"));
   }
   try {

@@ -127,6 +127,29 @@ describe("writePngToClipboard", () => {
     await expect(copied).resolves.toBe(true);
   });
 
+  it("starts the PNG write in the focused detached window", async () => {
+    const mainWrite = vi.fn().mockResolvedValue(undefined);
+    const detachedWrite = vi.fn().mockResolvedValue(undefined);
+    class DetachedClipboardItem {
+      constructor(readonly data: Record<string, Promise<Blob>>) {}
+    }
+    vi.stubGlobal("navigator", { clipboard: { write: mainWrite } });
+    vi.stubGlobal("ClipboardItem", undefined);
+    using _resolver = { [Symbol.dispose]: () => setClipboardViewResolver(null) };
+    setClipboardViewResolver(
+      () =>
+        ({
+          navigator: { clipboard: { write: detachedWrite } },
+          ClipboardItem: DetachedClipboardItem,
+        }) as unknown as Window & typeof globalThis,
+    );
+
+    const png = Promise.resolve(new Blob([], { type: "image/png" }));
+    await expect(writePngToClipboard(() => png)).resolves.toBe(true);
+    expect(detachedWrite).toHaveBeenCalledWith([new DetachedClipboardItem({ "image/png": png })]);
+    expect(mainWrite).not.toHaveBeenCalled();
+  });
+
   it("leaves no unhandled rejection when the clipboard refuses before reading the image", async () => {
     vi.stubGlobal("navigator", {
       clipboard: { write: vi.fn().mockRejectedValue(new Error("denied")) },

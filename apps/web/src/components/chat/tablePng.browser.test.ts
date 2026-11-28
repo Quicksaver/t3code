@@ -50,11 +50,11 @@ async function readPng(blob: Blob, table: HTMLTableElement): Promise<Pixels> {
 }
 
 /** Mounts a table over a known backdrop; disposing removes it. */
-function mountTable(cells: string, style = "") {
-  const host = document.createElement("div");
+function mountTable(cells: string, style = "", doc = document) {
+  const host = doc.createElement("div");
   host.style.cssText = `background: rgb(${BACKDROP.join(",")}); color: white; padding: 40px; font: 14px/20px sans-serif;`;
   host.innerHTML = `<table style="border-collapse: collapse; ${style}"><tbody>${cells}</tbody></table>`;
-  document.body.append(host);
+  doc.body.append(host);
   return {
     table: host.querySelector("table")!,
     [Symbol.dispose]: () => host.remove(),
@@ -62,35 +62,45 @@ function mountTable(cells: string, style = "") {
 }
 
 function textRects(element: Element): DOMRect[] {
-  const range = document.createRange();
+  const range = element.ownerDocument.createRange();
   range.selectNodeContents(element);
   return [...range.getClientRects()];
 }
 
 describe("renderTablePng", () => {
-  it("draws the table at its layout size over the backdrop behind it", async () => {
-    using mounted = mountTable(
-      `<tr><td style="border-bottom: 2px solid rgb(255, 0, 0); padding: 8px">Name</td><td style="padding: 8px"></td></tr>`,
-      // A fractional height, so the canvas size is rounded.
-      "width: 300px; height: 40.6px",
-    );
-    const { table } = mounted;
-    const pixels = await readPng(await renderTablePng(table), table);
-    expect(pixels.width).toBe(Math.floor((pixels.origin.width + MARGIN * 2) * devicePixelRatio));
-    expect(pixels.height).toBe(Math.floor((pixels.origin.height + MARGIN * 2) * devicePixelRatio));
-    expect(pixels.cornerAlpha).toBe(255);
+  it.each(["main", "detached"])(
+    "draws the table at its layout size in the %s document",
+    async (realm) => {
+      const frame =
+        realm === "detached" ? document.body.appendChild(document.createElement("iframe")) : null;
+      using _frame = { [Symbol.dispose]: () => frame?.remove() };
+      const doc = frame?.contentDocument ?? document;
+      using mounted = mountTable(
+        `<tr><td style="border-bottom: 2px solid rgb(255, 0, 0); padding: 8px">Name</td><td style="padding: 8px"></td></tr>`,
+        // A fractional height, so the canvas size is rounded.
+        "width: 300px; height: 40.6px",
+        doc,
+      );
+      const { table } = mounted;
+      const pixels = await readPng(await renderTablePng(table), table);
+      expect(pixels.width).toBe(Math.floor((pixels.origin.width + MARGIN * 2) * devicePixelRatio));
+      expect(pixels.height).toBe(
+        Math.floor((pixels.origin.height + MARGIN * 2) * devicePixelRatio),
+      );
+      expect(pixels.cornerAlpha).toBe(255);
 
-    // The margin shows the backdrop, the rule keeps its color, and the empty cell stays empty.
-    expect(pixels.at(pixels.origin.left - MARGIN / 2, pixels.origin.top)).toEqual([...BACKDROP]);
-    const [nameCell, emptyCell] = table.querySelectorAll("td");
-    const name = nameCell!.getBoundingClientRect();
-    expect(pixels.at(name.left + name.width / 2, name.bottom - 1)).toEqual([255, 0, 0]);
-    expect(pixels.hasInk(textRects(nameCell!)[0]!)).toBe(true);
-    const empty = emptyCell!.getBoundingClientRect();
-    expect(pixels.hasInk(new DOMRect(empty.left, empty.top, empty.width, empty.height - 2))).toBe(
-      false,
-    );
-  });
+      // The margin shows the backdrop, the rule keeps its color, and the empty cell stays empty.
+      expect(pixels.at(pixels.origin.left - MARGIN / 2, pixels.origin.top)).toEqual([...BACKDROP]);
+      const [nameCell, emptyCell] = table.querySelectorAll("td");
+      const name = nameCell!.getBoundingClientRect();
+      expect(pixels.at(name.left + name.width / 2, name.bottom - 1)).toEqual([255, 0, 0]);
+      expect(pixels.hasInk(textRects(nameCell!)[0]!)).toBe(true);
+      const empty = emptyCell!.getBoundingClientRect();
+      expect(pixels.hasInk(new DOMRect(empty.left, empty.top, empty.width, empty.height - 2))).toBe(
+        false,
+      );
+    },
+  );
 
   it("draws every line of wrapped text where layout put it", async () => {
     using mounted = mountTable(

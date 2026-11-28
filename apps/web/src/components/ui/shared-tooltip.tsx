@@ -230,7 +230,8 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
             onMouseEnter={() => api.holdOpen()}
             onMouseLeave={(event) => {
               const next = event.relatedTarget;
-              if (next instanceof Node && state.anchor.contains(next)) return;
+              const view = state.anchor.ownerDocument.defaultView ?? window;
+              if (next instanceof view.Node && state.anchor.contains(next)) return;
               api.hide(state.anchor);
             }}
           >

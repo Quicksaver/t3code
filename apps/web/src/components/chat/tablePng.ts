@@ -194,11 +194,13 @@ function paintOps(
 export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
   // A detached table measures 0 x 0 and would copy an empty image over the clipboard.
   if (!table.isConnected) throw new Error("The table left the page before it was drawn.");
+  const doc = table.ownerDocument;
+  const view = doc.defaultView ?? window;
   const bounds = table.getBoundingClientRect();
   const width = bounds.width + MARGIN * 2;
   const height = bounds.height + MARGIN * 2;
   const scale = Math.min(
-    Math.max(window.devicePixelRatio || 1, 1),
+    Math.max(view.devicePixelRatio || 1, 1),
     MAX_SCALE,
     MAX_CANVAS_SIDE / width,
     MAX_CANVAS_SIDE / height,
@@ -226,7 +228,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
   const blockOps: DrawOp[] = [];
   const contentOps: DrawOp[] = [];
   const objectUrls: string[] = [];
-  const range = document.createRange();
+  const range = doc.createRange();
   const fontMetrics = new Map<string, { ascent: number; descent: number }>();
   let graphemes: Intl.Segmenter | undefined;
 
@@ -447,14 +449,14 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
     if (rect.width <= 0 || rect.height <= 0) return;
     const clone = svg.cloneNode(true) as SVGSVGElement;
     // Sprite icons point at a shared <symbol> elsewhere in the document; carry it along.
-    const defs = document.createElementNS(svg.namespaceURI, "defs");
+    const defs = doc.createElementNS(svg.namespaceURI, "defs");
     const copied = new Set<string>();
     const pending = [...clone.querySelectorAll("use")];
     for (let use = pending.pop(); use; use = pending.pop()) {
       const href = use.getAttribute("href") ?? use.getAttributeNS(XLINK_NAMESPACE, "href");
       const id = href?.startsWith("#") ? href.slice(1) : null;
       if (!id || copied.has(id) || svg.querySelector(`#${CSS.escape(id)}`)) continue;
-      const target = document.getElementById(id);
+      const target = doc.getElementById(id);
       if (!target) continue;
       copied.add(id);
       const copy = target.cloneNode(true) as Element;
@@ -473,7 +475,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
       new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" }),
     );
     objectUrls.push(url);
-    const image = new Image();
+    const image = new view.Image();
     image.src = url;
     contentOps.push({
       kind: "image",
@@ -492,7 +494,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
     // answers with CORS headers, so a CORS load of the same URL can be drawn.
     let source: Promise<CanvasImageSource | null> = Promise.resolve(image);
     if (!isReadable(image)) {
-      const corsImage = new Image();
+      const corsImage = new view.Image();
       corsImage.crossOrigin = "anonymous";
       corsImage.src = image.currentSrc || image.src;
       source = corsImage.decode().then(
@@ -519,7 +521,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
   };
 
   const visitElement = (element: Element, parent: Scope | null) => {
-    const style = getComputedStyle(element);
+    const style = view.getComputedStyle(element);
     // Clipping hides visually hidden labels; other clip shapes are skipped too.
     const clipRect = style.getPropertyValue("clip");
     if (
@@ -532,13 +534,13 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
     const alpha = (parent?.alpha ?? 1) * (Number.parseFloat(style.opacity) || 0);
     if (alpha <= 0) return;
     const visible = style.visibility === "visible";
-    if (element instanceof SVGSVGElement) {
+    if (element instanceof view.SVGSVGElement) {
       if (visible) visitSvg(element, style, alpha);
       return;
     }
     // Shapes inside an SVG belong to its root; MathML still descends to its text.
-    if (element instanceof SVGElement) return;
-    if (element instanceof HTMLImageElement) {
+    if (element instanceof view.SVGElement) return;
+    if (element instanceof view.HTMLImageElement) {
       if (visible) visitImage(element, style, alpha);
       return;
     }
@@ -585,8 +587,8 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
       ellipsis,
     };
     for (const child of element.childNodes) {
-      if (child instanceof Element) visitElement(child, scope);
-      else if (child instanceof Text) visitText(child, scope);
+      if (child instanceof view.Element) visitElement(child, scope);
+      else if (child instanceof view.Text) visitText(child, scope);
     }
     if (clip) {
       blockOps.push({ kind: "unclip" });
@@ -597,7 +599,7 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
   // The backdrop: the nearest opaque background behind the table and every layer above it.
   const backdrops: string[] = [];
   for (let element = table.parentElement; element; element = element.parentElement) {
-    const color = getComputedStyle(element).backgroundColor;
+    const color = view.getComputedStyle(element).backgroundColor;
     if (isTransparent(color)) continue;
     backdrops.push(color);
     if (isOpaque(color)) break;

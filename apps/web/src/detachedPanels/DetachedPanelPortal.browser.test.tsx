@@ -4,7 +4,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { SharedTooltipProvider, SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
-import { render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import { DetachedPanelPortal } from "./DetachedPanelPortal";
 
 function createPanelDocument() {
@@ -38,6 +38,7 @@ function createPanelDocument() {
         const popup = doc.getElementById(id!);
         expect(popup?.textContent).toBe(description);
         expect(portalRoot.querySelector('[data-slot="tooltip-popup"]')).toBe(popup);
+        return popup!;
       });
     },
     [Symbol.dispose]: () => frame.remove(),
@@ -88,4 +89,28 @@ it("restores an enclosing shared tooltip when the pointer leaves a nested detach
   await panel.expectDescription(inner, "Action description");
   move(inner, "pointerout", outer);
   await panel.expectDescription(outer, "Panel description");
+});
+
+it("keeps a shared tooltip open when the pointer returns to its detached trigger", async () => {
+  using panel = createPanelDocument();
+  await using _screen = await panel.renderPanel(
+    <SharedTooltipTrigger label="Detached description" render={<button type="button" />}>
+      Detached action
+    </SharedTooltipTrigger>,
+  );
+
+  const trigger = panel.panelRoot.querySelector("button")!;
+  trigger.dispatchEvent(
+    new panel.view.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }),
+  );
+  const popup = await panel.expectDescription(trigger, "Detached description");
+
+  using _timers = fakeTimers();
+  await act(async () => {
+    popup.dispatchEvent(
+      new panel.view.MouseEvent("mouseout", { bubbles: true, relatedTarget: trigger }),
+    );
+    vi.advanceTimersByTime(100);
+  });
+  expect(trigger.getAttribute("aria-describedby")).toBe(popup.id);
 });
